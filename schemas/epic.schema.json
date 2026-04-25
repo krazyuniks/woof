@@ -1,12 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://woof.dev/schemas/v1/epic.schema.json",
+  "$id": "https://woof.dev/schemas/epic.schema.json",
   "title": "woof EPIC.md front-matter",
-  "description": "YAML front-matter of .woof/epics/E<N>/EPIC.md. Captures Definition-stage commitments: observable outcomes, contract decisions, acceptance criteria. Free-form prose may follow the front-matter; only the structured header is validated. After Definition closes, outcome IDs and contract-decision IDs are append-only (per E1 rule); ID removal requires gate-driven deprecation.",
+  "description": "YAML front-matter of .woof/epics/E<N>/EPIC.md. Captures Definition-stage commitments: observable outcomes (user-facing acceptance) and contract decisions (technical contracts realising those outcomes). Free-form prose may follow the front-matter; only the structured header is validated. After Definition closes, outcome IDs and contract-decision IDs are append-only; ID removal requires gate-driven deprecation. Contract decisions reference standard contract artefacts (OpenAPI documents, Pydantic models, JSON Schema files); woof verifies via the artefact's native tooling (schemathesis, Pydantic, ajv-cli) rather than reinventing validation.",
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "schema_version",
     "epic_id",
     "title",
     "observable_outcomes",
@@ -14,10 +13,6 @@
     "acceptance_criteria"
   ],
   "properties": {
-    "schema_version": {
-      "type": "string",
-      "const": "1"
-    },
     "epic_id": {
       "type": "integer",
       "minimum": 1,
@@ -53,7 +48,7 @@
     "observable_outcome": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "statement", "evidence", "verification"],
+      "required": ["id", "statement", "verification"],
       "properties": {
         "id": {
           "type": "string",
@@ -64,31 +59,24 @@
           "minLength": 1,
           "description": "User-perspective verifiable assertion (prose)."
         },
-        "evidence": {
-          "type": "array",
-          "minItems": 1,
-          "items": { "type": "string", "minLength": 1 },
-          "description": "Prose strings naming surfaces (route, CLI, DB row, UI element). Stage 5 Check 4 greps for surface patterns in the diff."
-        },
         "verification": {
           "type": "string",
           "enum": ["automated", "manual", "hybrid"]
         },
         "deprecated": {
           "type": "boolean",
-          "description": "True iff this outcome was deprecated post-Definition via gate revision (per E1). Deprecated IDs remain in the array for traceability; new work targets a replacement ID."
+          "description": "True iff this outcome was deprecated post-Definition via gate revision. Deprecated IDs remain in the array for traceability; new work targets a replacement ID."
         },
         "replaced_by": {
           "type": "string",
-          "pattern": "^O[1-9]\\d*$",
-          "description": "When deprecated=true, the outcome ID that replaces this one. Optional; absent means deprecated outright."
+          "pattern": "^O[1-9]\\d*$"
         }
       }
     },
     "contract_decision": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "related_outcomes", "epic_contract", "resolution"],
+      "required": ["id", "related_outcomes", "title"],
       "properties": {
         "id": {
           "type": "string",
@@ -98,26 +86,31 @@
           "type": "array",
           "minItems": 1,
           "uniqueItems": true,
-          "items": { "type": "string", "pattern": "^O[1-9]\\d*$" }
+          "items": { "type": "string", "pattern": "^O[1-9]\\d*$" },
+          "description": "Outcome IDs this CD realises."
         },
-        "epic_contract": {
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "openapi_ref": {
           "type": "string",
           "minLength": 1,
-          "description": "Canonical surface declared by the epic (route, schema, data shape, user-visible string)."
+          "description": "JSON-Pointer-style reference into a project OpenAPI document. Example: 'spec/openapi.yaml#/paths/~1api~1v1~1comments/post'. Stage 5 Check 4 verifies conformance via schemathesis or equivalent."
         },
-        "repo_convention": {
-          "type": "string",
-          "description": "Pre-existing repo pattern, if different from epic_contract. Optional."
-        },
-        "resolution": {
-          "type": "string",
-          "enum": ["epic", "bridge"],
-          "description": "epic = canonical surface wins, repo convention not preserved. bridge = both kept, adapter declared. The 'repo' resolution is intentionally absent (E146 invariant)."
-        },
-        "bridge": {
+        "pydantic_ref": {
           "type": "string",
           "minLength": 1,
-          "description": "Adapter description. Required when resolution=bridge."
+          "description": "Module-and-class reference to a Pydantic model. Example: 'webapp/schemas/comment.py:CommentCreate'. Stage 5 Check 4 imports the module and verifies the model class exists."
+        },
+        "json_schema_ref": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Path to a JSON Schema file. Example: 'schemas/audit-event.schema.json'. Stage 5 Check 4 validates the schema is shipped at the declared path."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Free-form prose. Use for rationale, not for contract content (which lives in the referenced artefact)."
         },
         "deprecated": { "type": "boolean" },
         "replaced_by": {
@@ -125,14 +118,10 @@
           "pattern": "^CD[1-9]\\d*$"
         }
       },
-      "allOf": [
-        {
-          "if": {
-            "properties": { "resolution": { "const": "bridge" } },
-            "required": ["resolution"]
-          },
-          "then": { "required": ["bridge"] }
-        }
+      "anyOf": [
+        { "required": ["openapi_ref"] },
+        { "required": ["pydantic_ref"] },
+        { "required": ["json_schema_ref"] }
       ]
     }
   }

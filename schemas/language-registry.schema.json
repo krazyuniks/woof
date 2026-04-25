@@ -1,16 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://woof.dev/schemas/v1/language-registry.schema.json",
+  "$id": "https://woof.dev/schemas/language-registry.schema.json",
   "title": "woof language registry entry",
   "description": "Tool-side declaration at woof/languages/<lang>.toml. One file per supported language (python, typescript, rust, go, ...). Provides the install commands and verification snippets that just wf-preflight uses to satisfy a project's prerequisites.toml. Adding a new supported language = drop a TOML matching this schema into woof/languages/.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "lsp", "tree-sitter"],
+  "required": ["lsp", "tree-sitter"],
   "properties": {
-    "schema_version": {
-      "type": "string",
-      "const": "1"
-    },
     "lsp": {
       "type": "object",
       "additionalProperties": false,

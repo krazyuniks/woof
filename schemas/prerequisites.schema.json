@@ -1,16 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://woof.dev/schemas/v1/prerequisites.schema.json",
+  "$id": "https://woof.dev/schemas/prerequisites.schema.json",
   "title": "woof project prerequisites",
   "description": "Project-side declaration at .woof/prerequisites.toml. Tells woof what infrastructure, languages, and indexing tools the project depends on. The tool-side language registry (woof/languages/<lang>.toml) provides the install instructions per language. just wf-preflight verifies everything declared here. Two-tier caching: floor checks (binaries/versions/grammars/LSP plugins) cached 24h, hashed on this file plus referenced language registry tomls.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "infra", "wrappers", "github"],
+  "required": ["infra", "wrappers", "github"],
   "properties": {
-    "schema_version": {
-      "type": "string",
-      "const": "1"
-    },
     "infra": {
       "type": "object",
       "additionalProperties": {
@@ -21,13 +17,13 @@
     "wrappers": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["cld", "cod"],
+      "required": ["cld", "cod", "agent-sync"],
       "properties": {
         "cld": { "$ref": "#/$defs/version_spec" },
         "cod": { "$ref": "#/$defs/version_spec" },
         "agent-sync": { "$ref": "#/$defs/version_spec" }
       },
-      "description": "Required dispatch wrappers. cld and cod are mandatory; agent-sync is optional but is a dependency of cod's preamble injection."
+      "description": "Required dispatch wrappers. All three are mandatory: cld for Claude subprocesses, cod for Codex subprocesses (which depends on agent-sync's mirroring of CC config into ~/.codex/)."
     },
     "github": {
       "type": "object",

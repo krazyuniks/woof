@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://woof.dev/schemas/agents.schema.json",
+  "title": "woof agent role configuration",
+  "description": "Project-side declaration at .woof/agents.toml. Defines which dispatch wrapper (cld/cod), which model, and which extra flags are used per role. Woof builds the full subprocess invocation dynamically from these entries via 'woof dispatch claude --role X' / 'woof dispatch codex --role X' adapter commands; no hard-coded model IDs or shell aliases anywhere in the tool. If absent, defaults apply (in-session planner, cld -p story-executor with default model, cod critiquer with default model, all with empty MCP set).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["roles"],
+  "properties": {
+    "roles": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "orchestrator": { "$ref": "#/$defs/in_session_role" },
+        "planner": { "$ref": "#/$defs/dispatchable_role" },
+        "story-executor": { "$ref": "#/$defs/dispatchable_role" },
+        "critiquer": { "$ref": "#/$defs/dispatchable_role" },
+        "gate-resolver": { "$ref": "#/$defs/in_session_role" }
+      },
+      "description": "Roles invoked by woof. Any subset may be defined; missing roles fall back to defaults. orchestrator and gate-resolver are constrained to in-session execution (they share the user's interactive Claude Code session) and so use the in_session_role schema; the other three use dispatchable_role."
+    },
+    "timeouts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "default_minutes": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 30,
+          "description": "Per-subprocess timeout. Driver wraps cld/cod invocations with `timeout`. Hitting the timeout writes gate.md with triggered_by=['timeout']."
+        }
+      }
+    },
+    "review_valve": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Periodic review configuration (Stage 5 Check 9). Opens a review_gate every N completed stories AND once before epic close, surfacing accumulated minor critique findings.",
+      "properties": {
+        "every_n_stories": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 5,
+          "description": "Open a review_gate after every N successful story commits."
+        },
+        "end_of_epic": {
+          "type": "boolean",
+          "default": true,
+          "description": "Open a review_gate after the last story completes, before epic close. Recommended on."
+        }
+      }
+    }
+  },
+  "$defs": {
+    "in_session_role": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["harness"],
+      "properties": {
+        "harness": {
+          "type": "string",
+          "const": "in-session",
+          "description": "orchestrator and gate-resolver must share the user's interactive Claude Code session; they cannot dispatch to a subprocess."
+        },
+        "notes": { "type": "string" }
+      }
+    },
+    "dispatchable_role": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["harness"],
+      "properties": {
+        "harness": {
+          "type": "string",
+          "enum": ["cld", "cod", "in-session"],
+          "description": "Dispatch wrapper. cld for Claude subprocesses, cod for Codex subprocesses, in-session for roles that should share the user's interactive session even though they could be dispatched."
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "think": {
+          "type": "boolean",
+          "description": "cld only. Toggles extended thinking via the wrapper's -t flag. Schema does not enforce the cld-only constraint; runtime ignores think when harness=cod."
+        },
+        "mcp": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true,
+          "description": "MCP server names. Empty array (default) = no MCPs."
+        },
+        "flags": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Additional pass-through args appended after the wrapper's '--' separator."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "harness": { "const": "in-session" } },
+            "required": ["harness"]
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                { "required": ["model"] },
+                { "required": ["think"] },
+                { "required": ["mcp"] },
+                { "required": ["flags"] }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+}

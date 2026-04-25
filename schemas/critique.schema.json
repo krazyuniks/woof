@@ -1,16 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://woof.dev/schemas/v1/critique.schema.json",
+  "$id": "https://woof.dev/schemas/critique.schema.json",
   "title": "woof critique front-matter",
   "description": "YAML front-matter of .woof/epics/E<N>/critique/<artefact>.md. Used at Stage 3 (critique/plan.md, critiques the breakdown) and Stage 5 (critique/story-S<k>.md, critiques a story diff). Top-level severity drives the gate-asymmetry rule: plan-gate always opens; story-gate opens when severity=blocker. Findings list is advisory and unconstrained in count.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "target", "target_id", "severity", "timestamp", "harness"],
+  "required": ["target", "target_id", "severity", "timestamp", "harness"],
   "properties": {
-    "schema_version": {
-      "type": "string",
-      "const": "1"
-    },
     "target": {
       "type": "string",
       "enum": ["plan", "story"],

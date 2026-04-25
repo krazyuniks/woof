@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://woof.dev/schemas/docs-paths.schema.json",
+  "title": "woof docs-paths mapping",
+  "description": "Project-side declaration at .woof/docs-paths.toml. Tells Stage 5 Check 8 (docs drift) which doc paths are required when given code paths are touched. Each mapping says: 'if a story modifies any file matching code_pattern, the same diff must include a change to a file matching doc_pattern'. Stage 5 Check 8 is a no-op when this file is absent.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["mappings"],
+  "properties": {
+    "mappings": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/mapping" },
+      "description": "Ordered list of code-to-doc requirements. All matching mappings apply to a given diff."
+    }
+  },
+  "$defs": {
+    "mapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code_pattern", "doc_pattern"],
+      "properties": {
+        "code_pattern": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Glob pattern for code paths that trigger this requirement (e.g. 'webapp/api/**/*.py')."
+        },
+        "doc_pattern": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Glob pattern for required doc paths (e.g. 'docs/api/**/*.md'). Stage 5 Check 8 fails when code_pattern matched files exist in the diff but no doc_pattern file does."
+        },
+        "rationale": {
+          "type": "string",
+          "description": "Why this mapping exists. Helps gate conversations when the rule fires."
+        }
+      }
+    }
+  }
+}

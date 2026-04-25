@@ -1,19 +1,18 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://woof.dev/schemas/v1/test-markers.schema.json",
+  "$id": "https://woof.dev/schemas/test-markers.schema.json",
   "title": "woof test-marker configuration",
   "description": "Project-side declaration at .woof/test-markers.toml. Tells Stage 5 Check 2 (spec coverage) where to look for tests and how to recognise outcome markers in source. Per-language; ships with python and typescript defaults that consumers extend. Marker regex is anchored on word boundaries by default (\\bO\\d+\\b) to prevent substring false-positives.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version"],
+  "required": ["languages"],
   "properties": {
-    "schema_version": {
-      "type": "string",
-      "const": "1"
+    "languages": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "$ref": "#/$defs/language_block" },
+      "description": "Map of language name (python, typescript, rust, go, ...) to its marker configuration. Use lowercase ASCII names matching woof/languages/<lang>.toml entries."
     }
-  },
-  "patternProperties": {
-    "^[a-z][a-z0-9_-]*$": { "$ref": "#/$defs/language_block" }
   },
   "$defs": {
     "language_block": {
@@ -36,7 +35,7 @@
         "cd_marker_regex": {
           "type": "string",
           "minLength": 1,
-          "description": "Regex matching contract-decision IDs. Default '\\bCD\\d+\\b'. Optional; falls back to a CD-equivalent of marker_regex when absent."
+          "description": "Regex matching contract-decision IDs. Default '\\bCD\\d+\\b'. Optional."
         },
         "docstring_keyword": {
           "type": "string",

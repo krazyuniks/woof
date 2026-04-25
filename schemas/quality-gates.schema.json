@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://woof.dev/schemas/quality-gates.schema.json",
+  "title": "woof quality-gates configuration",
+  "description": "Project-side declaration at .woof/quality-gates.toml. Tells Stage 5 Check 1 (project quality command) what to run after each story to verify build/lint/type/test all pass. Single command per gate; each must exit 0 or Stage 5 Check 1 fails.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["gates"],
+  "properties": {
+    "gates": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "$ref": "#/$defs/gate" },
+      "description": "Named quality gates run in declaration order. Suggested keys: build, lint, type, test."
+    }
+  },
+  "$defs": {
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command"],
+      "properties": {
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Shell command. Run from repo root. Must exit 0 to pass."
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Hard timeout. Hitting it is treated as a check failure."
+        },
+        "blocking": {
+          "type": "boolean",
+          "default": true,
+          "description": "If false, a non-zero exit logs a finding but does not fail Stage 5 Check 1."
+        }
+      }
+    }
+  }
+}

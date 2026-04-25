@@ -1,32 +1,28 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://woof.dev/schemas/v1/gate.schema.json",
+  "$id": "https://woof.dev/schemas/gate.schema.json",
   "title": "woof gate front-matter",
-  "description": "YAML front-matter of .woof/epics/E<N>/gate.md. Validates the structured header only; the prose sections (## Context, ## Findings, ## Claude's position) are unconstrained markdown.",
+  "description": "YAML front-matter of .woof/epics/E<N>/gate.md. Validates the structured header only; the prose sections (## Context, ## Findings, ## Claude's position) are unconstrained markdown. The gate.md represents an OPEN gate; resolution is recorded as a jsonl event with a decision drawn from the taxonomy in jsonl-events.schema.json (gate_resolved.decision).",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "type", "stage", "story_id", "triggered_by", "timestamp"],
+  "required": ["type", "stage", "story_id", "triggered_by", "timestamp"],
   "properties": {
-    "schema_version": {
-      "type": "string",
-      "const": "1"
-    },
     "type": {
       "type": "string",
-      "enum": ["plan_gate", "story_gate"],
-      "description": "plan_gate (Stage 4, always opens) vs story_gate (Stage 6, opens conditionally on Stage 5 check failure or critique blocker)."
+      "enum": ["plan_gate", "story_gate", "review_gate"],
+      "description": "plan_gate (Stage 4, always opens). story_gate (Stage 6, conditional on Stage 5 check failure or critique blocker). review_gate (periodic; opens every-N stories or before epic close to surface accumulated minor critique findings)."
     },
     "stage": {
       "type": "integer",
-      "enum": [4, 6],
-      "description": "Stage that wrote the gate. Coupled to type: plan_gate=4, story_gate=6 (enforced by allOf below)."
+      "enum": [4, 5, 6],
+      "description": "Stage that wrote the gate. plan_gate=4, story_gate=6, review_gate=5 (post-story rollup) or 6 (end-of-epic)."
     },
     "story_id": {
       "oneOf": [
         { "type": "string", "pattern": "^S[1-9]\\d*$" },
         { "type": "null" }
       ],
-      "description": "Story this gate is for. Required (non-null) when type=story_gate; null when type=plan_gate."
+      "description": "Story this gate is for. Required (non-null) when type=story_gate; null for plan_gate. For review_gate, may be null (end-of-epic) or the boundary story (every-N rollup)."
     },
     "triggered_by": {
       "type": "array",
@@ -44,29 +40,31 @@
           "check_6_critique_blocker",
           "check_7_completion",
           "check_8_docs_drift",
+          "check_9_periodic_review",
+          "empty_diff_review",
           "timeout",
           "subprocess_crash",
           "codex_unreachable",
           "incomplete_subprocess",
           "schema_validation_failed",
+          "github_sync_conflict",
           "manual"
         ]
       },
-      "description": "Reasons the gate opened. plan_review fires automatically at Stage 4 (gate always opens). check_1..check_8 map to Stage 5 deterministic failure classes A..H. Driver-level: timeout, subprocess_crash (with exit_code), codex_unreachable, incomplete_subprocess (re-entry from in_progress without gate). schema_validation_failed when Stage 3 self-validation exhausts the 2-attempt cap. manual for human-opened gates."
+      "description": "Reasons the gate opened. plan_review fires automatically at Stage 4 (gate always opens). check_1..check_9 map to Stage 5 deterministic failure classes (1-8 are A-H from the failure-class taxonomy; 9 is the periodic-review valve). empty_diff_review opens when a story finishes with no diff. Driver-level: timeout, subprocess_crash (with exit_code), codex_unreachable, incomplete_subprocess. schema_validation_failed when Stage 3 self-validation exhausts the 2-attempt cap. github_sync_conflict when push detects remote-issue changes. manual for human-opened gates."
     },
     "timestamp": {
       "type": "string",
-      "format": "date-time",
-      "description": "ISO 8601 timestamp when gate.md was written."
+      "format": "date-time"
     },
     "exit_code": {
       "type": "integer",
-      "description": "Subprocess exit code. Required when triggered_by contains subprocess_crash; absent otherwise."
+      "description": "Subprocess exit code. Required when triggered_by contains subprocess_crash."
     },
     "harness_session_id": {
       "type": "string",
       "minLength": 1,
-      "description": "CC session UUID or Codex audit-file path of the subprocess that caused the gate. Optional; populated when relevant for audit linkage."
+      "description": "CC session UUID or Codex audit-file path of the subprocess that caused the gate."
     }
   },
   "allOf": [

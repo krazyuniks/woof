@@ -1,0 +1,186 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://woof.dev/schemas/v1/jsonl-events.schema.json",
+  "title": "woof JSONL event",
+  "description": "One line of .woof/epics/E<N>/epic.jsonl (stage-level narrative) or .woof/epics/E<N>/dispatch.jsonl (subprocess events). Both streams share this schema; the event field discriminates. Per-event payload fields validate via the conditional rules in allOf. Cross-line invariants (subprocess_returned matches a prior subprocess_spawned by pid; gate_resolved follows gate_opened; status transitions are monotonic) are helper-enforced, not schema-enforced.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schema_version", "event", "at"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1"
+    },
+    "event": {
+      "type": "string",
+      "enum": [
+        "spark_created",
+        "discovery_started",
+        "discovery_synthesised",
+        "definition_started",
+        "definition_closed",
+        "plan_generated",
+        "plan_critiqued",
+        "plan_gate_opened",
+        "plan_gate_resolved",
+        "story_started",
+        "story_completed",
+        "story_gate_opened",
+        "story_gate_resolved",
+        "epic_completed",
+        "subprocess_spawned",
+        "subprocess_returned",
+        "subprocess_killed",
+        "preflight_run",
+        "github_synced",
+        "cartography_refreshed"
+      ],
+      "description": "Event kind. Stage events (epic.jsonl): spark_created, discovery_*, definition_*, plan_*, story_*, *_gate_*, epic_completed. Dispatch events (dispatch.jsonl): subprocess_*. Operational events (either): preflight_run, github_synced, cartography_refreshed."
+    },
+    "at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp the event occurred."
+    },
+    "epic_id": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Epic this event belongs to (gh issue number). Recommended on every line; helps when streams from multiple epics ever land in the same place."
+    },
+    "story_id": {
+      "type": "string",
+      "pattern": "^S[1-9]\\d*$"
+    },
+    "role": {
+      "type": "string",
+      "enum": ["orchestrator", "planner", "story-executor", "critiquer", "gate-resolver"],
+      "description": "Role from .woof/agents.toml under which a subprocess was dispatched."
+    },
+    "harness": {
+      "type": "string",
+      "enum": ["cld", "cod"],
+      "description": "Wrapper binary that spawned the subprocess."
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Model identifier passed to the harness."
+    },
+    "pid": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "exit_code": {
+      "type": "integer"
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "signal": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Signal name when subprocess_killed (SIGINT, SIGTERM, ...)."
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Free-form reason. Used by subprocess_killed (timeout, manual_cancel, ...) and gate_resolved (approved, revised, abandoned)."
+    },
+    "cc_session_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "CC session UUID. Cross-link into ~/.claude/projects/<slug>/<uuid>.jsonl for transcript reconstruction."
+    },
+    "codex_audit_path": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Path under .woof/epics/E<N>/audit/ where Codex prompt+output+meta were tee'd."
+    },
+    "empty_diff": {
+      "type": "boolean",
+      "description": "True iff a story_completed event corresponds to an empty-diff completion (no commit produced)."
+    },
+    "commit_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$",
+      "description": "Git commit SHA for story_completed (when empty_diff is false or absent)."
+    },
+    "gate_type": {
+      "type": "string",
+      "enum": ["plan_gate", "story_gate"]
+    },
+    "triggered_by": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1,
+      "uniqueItems": true,
+      "description": "Mirrors gate.md.triggered_by[] when emitting *_gate_opened."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "event": { "const": "subprocess_spawned" } },
+        "required": ["event"]
+      },
+      "then": { "required": ["role", "harness", "pid"] }
+    },
+    {
+      "if": {
+        "properties": { "event": { "const": "subprocess_returned" } },
+        "required": ["event"]
+      },
+      "then": { "required": ["pid", "exit_code", "duration_ms"] }
+    },
+    {
+      "if": {
+        "properties": { "event": { "const": "subprocess_killed" } },
+        "required": ["event"]
+      },
+      "then": { "required": ["pid", "signal", "reason"] }
+    },
+    {
+      "if": {
+        "properties": { "event": { "const": "story_started" } },
+        "required": ["event"]
+      },
+      "then": { "required": ["story_id"] }
+    },
+    {
+      "if": {
+        "properties": { "event": { "const": "story_completed" } },
+        "required": ["event"]
+      },
+      "then": { "required": ["story_id"] }
+    },
+    {
+      "if": {
+        "properties": { "event": { "const": "story_gate_opened" } },
+        "required": ["event"]
+      },
+      "then": { "required": ["story_id", "triggered_by"] }
+    },
+    {
+      "if": {
+        "properties": { "event": { "const": "story_gate_resolved" } },
+        "required": ["event"]
+      },
+      "then": { "required": ["story_id", "reason"] }
+    },
+    {
+      "if": {
+        "properties": { "event": { "const": "plan_gate_opened" } },
+        "required": ["event"]
+      },
+      "then": { "required": ["triggered_by"] }
+    },
+    {
+      "if": {
+        "properties": { "event": { "const": "plan_gate_resolved" } },
+        "required": ["event"]
+      },
+      "then": { "required": ["reason"] }
+    }
+  ]
+}

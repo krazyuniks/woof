@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://woof.dev/schemas/v1/language-registry.schema.json",
+  "title": "woof language registry entry",
+  "description": "Tool-side declaration at woof/languages/<lang>.toml. One file per supported language (python, typescript, rust, go, ...). Provides the install commands and verification snippets that just wf-preflight uses to satisfy a project's prerequisites.toml. Adding a new supported language = drop a TOML matching this schema into woof/languages/.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "lsp", "tree-sitter"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1"
+    },
+    "lsp": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["binary", "binary_install"],
+      "properties": {
+        "binary": {
+          "type": "string",
+          "minLength": 1,
+          "description": "LSP server binary name (pyright, tsserver, rust-analyzer, gopls)."
+        },
+        "binary_install": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Single-line install command shown to the user when the binary is missing."
+        },
+        "plugin": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Claude plugin identifier providing the LSP integration. Optional when LSP works without a CC plugin."
+        },
+        "plugin_install": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Single-line plugin install command. Required when plugin is set."
+        },
+        "gotchas": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Per-language pitfalls shown alongside the install command in failed-preflight output. The preflight output IS the per-language documentation."
+        }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["plugin"] },
+          "then": { "required": ["plugin_install"] }
+        }
+      ]
+    },
+    "tree-sitter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["grammar_install", "verify_snippet", "verify_scope"],
+      "properties": {
+        "grammar_install": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Single-line install command for the Tree-sitter grammar."
+        },
+        "verify_snippet": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Tiny syntactically-valid snippet of the language used by preflight to confirm the grammar parses correctly."
+        },
+        "verify_scope": {
+          "type": "string",
+          "pattern": "^source\\.[a-z][a-z0-9_-]*$",
+          "description": "Tree-sitter scope name applied to verify_snippet (e.g., source.python, source.rust)."
+        }
+      }
+    }
+  }
+}

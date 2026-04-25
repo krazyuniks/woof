@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://woof.dev/schemas/v1/gate.schema.json",
+  "title": "woof gate front-matter",
+  "description": "YAML front-matter of .woof/epics/E<N>/gate.md. Validates the structured header only; the prose sections (## Context, ## Findings, ## Claude's position) are unconstrained markdown.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "type", "stage", "story_id", "triggered_by", "timestamp"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1"
+    },
+    "type": {
+      "type": "string",
+      "enum": ["plan_gate", "story_gate"],
+      "description": "plan_gate (Stage 4, always opens) vs story_gate (Stage 6, opens conditionally on Stage 5 check failure or critique blocker)."
+    },
+    "stage": {
+      "type": "integer",
+      "enum": [4, 6],
+      "description": "Stage that wrote the gate. Coupled to type: plan_gate=4, story_gate=6 (enforced by allOf below)."
+    },
+    "story_id": {
+      "oneOf": [
+        { "type": "string", "pattern": "^S[1-9]\\d*$" },
+        { "type": "null" }
+      ],
+      "description": "Story this gate is for. Required (non-null) when type=story_gate; null when type=plan_gate."
+    },
+    "triggered_by": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": [
+          "plan_review",
+          "check_1_quality_gate",
+          "check_2_spec_coverage",
+          "check_3_scope",
+          "check_4_contract",
+          "check_5_plan_integrity",
+          "check_6_critique_blocker",
+          "check_7_completion",
+          "check_8_docs_drift",
+          "timeout",
+          "subprocess_crash",
+          "codex_unreachable",
+          "incomplete_subprocess",
+          "schema_validation_failed",
+          "manual"
+        ]
+      },
+      "description": "Reasons the gate opened. plan_review fires automatically at Stage 4 (gate always opens). check_1..check_8 map to Stage 5 deterministic failure classes A..H. Driver-level: timeout, subprocess_crash (with exit_code), codex_unreachable, incomplete_subprocess (re-entry from in_progress without gate). schema_validation_failed when Stage 3 self-validation exhausts the 2-attempt cap. manual for human-opened gates."
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when gate.md was written."
+    },
+    "exit_code": {
+      "type": "integer",
+      "description": "Subprocess exit code. Required when triggered_by contains subprocess_crash; absent otherwise."
+    },
+    "harness_session_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "CC session UUID or Codex audit-file path of the subprocess that caused the gate. Optional; populated when relevant for audit linkage."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "type": { "const": "plan_gate" } },
+        "required": ["type"]
+      },
+      "then": {
+        "properties": {
+          "stage": { "const": 4 },
+          "story_id": { "type": "null" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "type": { "const": "story_gate" } },
+        "required": ["type"]
+      },
+      "then": {
+        "properties": {
+          "stage": { "const": 6 },
+          "story_id": { "type": "string", "pattern": "^S[1-9]\\d*$" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "triggered_by": {
+            "type": "array",
+            "contains": { "const": "subprocess_crash" }
+          }
+        },
+        "required": ["triggered_by"]
+      },
+      "then": {
+        "required": ["exit_code"]
+      }
+    }
+  ]
+}

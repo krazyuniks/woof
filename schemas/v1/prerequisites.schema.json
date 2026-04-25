@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://woof.dev/schemas/v1/prerequisites.schema.json",
+  "title": "woof project prerequisites",
+  "description": "Project-side declaration at .woof/prerequisites.toml. Tells woof what infrastructure, languages, and indexing tools the project depends on. The tool-side language registry (woof/languages/<lang>.toml) provides the install instructions per language. just wf-preflight verifies everything declared here. Two-tier caching: floor checks (binaries/versions/grammars/LSP plugins) cached 24h, hashed on this file plus referenced language registry tomls.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "infra", "wrappers", "github"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1"
+    },
+    "infra": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/version_spec"
+      },
+      "description": "Required infrastructure binaries. Keys are binary names (docker, just, git, gh, ...); values are version specifications. Floor checks verify presence and minimum version."
+    },
+    "wrappers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cld", "cod"],
+      "properties": {
+        "cld": { "$ref": "#/$defs/version_spec" },
+        "cod": { "$ref": "#/$defs/version_spec" },
+        "agent-sync": { "$ref": "#/$defs/version_spec" }
+      },
+      "description": "Required dispatch wrappers. cld and cod are mandatory; agent-sync is optional but is a dependency of cod's preamble injection."
+    },
+    "github": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repo"],
+      "properties": {
+        "repo": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+          "description": "GitHub repository as <owner>/<name>. Verified via gh api at every /wf invocation."
+        }
+      }
+    },
+    "indexing": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ctags": { "$ref": "#/$defs/version_spec" },
+        "tree-sitter": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["cli", "grammars"],
+          "properties": {
+            "cli": { "$ref": "#/$defs/version_spec" },
+            "grammars": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "type": "string", "minLength": 1 },
+              "description": "Grammar names matching woof/languages/<name>.toml entries. Preflight parses each language's verify_snippet under verify_scope to confirm the grammar works."
+            }
+          }
+        }
+      }
+    },
+    "lsp": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["languages"],
+      "properties": {
+        "languages": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Languages requiring LSP. Preflight resolves each via woof/languages/<lang>.toml and verifies binary + plugin presence."
+        }
+      }
+    }
+  },
+  "$defs": {
+    "version_spec": {
+      "type": "string",
+      "pattern": "^(any|\\d+(\\.\\d+){0,2}\\+?)$",
+      "description": "Version specification. 'any' = presence-only check. 'X', 'X.Y', 'X.Y.Z' = exact-floor (preflight accepts equal-or-greater). Trailing '+' is permitted as documentation; the floor semantics apply either way."
+    }
+  }
+}

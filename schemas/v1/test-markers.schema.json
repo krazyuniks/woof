@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://woof.dev/schemas/v1/test-markers.schema.json",
+  "title": "woof test-marker configuration",
+  "description": "Project-side declaration at .woof/test-markers.toml. Tells Stage 5 Check 2 (spec coverage) where to look for tests and how to recognise outcome markers in source. Per-language; ships with python and typescript defaults that consumers extend. Marker regex is anchored on word boundaries by default (\\bO\\d+\\b) to prevent substring false-positives.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1"
+    }
+  },
+  "patternProperties": {
+    "^[a-z][a-z0-9_-]*$": { "$ref": "#/$defs/language_block" }
+  },
+  "$defs": {
+    "language_block": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["test_paths", "marker_regex"],
+      "properties": {
+        "test_paths": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Glob patterns under repo root. Stage 5 Check 2 scans only these paths."
+        },
+        "marker_regex": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Regex matching outcome IDs in test source. Default '\\bO\\d+\\b'. Word-boundary anchoring is essential to avoid substring matches (test_IO12 would otherwise match O1)."
+        },
+        "cd_marker_regex": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Regex matching contract-decision IDs. Default '\\bCD\\d+\\b'. Optional; falls back to a CD-equivalent of marker_regex when absent."
+        },
+        "docstring_keyword": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Keyword introducing an outcomes list inside a docstring or block comment, e.g. 'outcomes:' yields recognition of '\"\"\"outcomes: [O1, O2]\"\"\"'."
+        },
+        "comment_prefix": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Single-line comment introducer (#, //, --). Used when scanning adjacent lines above a test definition for marker comments."
+        },
+        "context_lines": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 3,
+          "description": "How many lines above a test definition to scan for marker comments."
+        }
+      }
+    }
+  }
+}

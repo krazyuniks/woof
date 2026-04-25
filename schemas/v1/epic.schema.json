@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://woof.dev/schemas/v1/epic.schema.json",
+  "title": "woof EPIC.md front-matter",
+  "description": "YAML front-matter of .woof/epics/E<N>/EPIC.md. Captures Definition-stage commitments: observable outcomes, contract decisions, acceptance criteria. Free-form prose may follow the front-matter; only the structured header is validated. After Definition closes, outcome IDs and contract-decision IDs are append-only (per E1 rule); ID removal requires gate-driven deprecation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "epic_id",
+    "title",
+    "observable_outcomes",
+    "contract_decisions",
+    "acceptance_criteria"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1"
+    },
+    "epic_id": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "GitHub issue number. Same value as plan.json.epic_id."
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Short epic title; mirrors gh issue title."
+    },
+    "observable_outcomes": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/observable_outcome" }
+    },
+    "contract_decisions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/contract_decision" }
+    },
+    "acceptance_criteria": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Prose statements that, taken together, define epic completion."
+    },
+    "open_questions": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Discovery-stage questions that survived into Definition unresolved. Should be empty when Definition closes; non-empty signals a Stage 2 incompletion."
+    }
+  },
+  "$defs": {
+    "observable_outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "statement", "evidence", "verification"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^O[1-9]\\d*$"
+        },
+        "statement": {
+          "type": "string",
+          "minLength": 1,
+          "description": "User-perspective verifiable assertion (prose)."
+        },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Prose strings naming surfaces (route, CLI, DB row, UI element). Stage 5 Check 4 greps for surface patterns in the diff."
+        },
+        "verification": {
+          "type": "string",
+          "enum": ["automated", "manual", "hybrid"]
+        },
+        "deprecated": {
+          "type": "boolean",
+          "description": "True iff this outcome was deprecated post-Definition via gate revision (per E1). Deprecated IDs remain in the array for traceability; new work targets a replacement ID."
+        },
+        "replaced_by": {
+          "type": "string",
+          "pattern": "^O[1-9]\\d*$",
+          "description": "When deprecated=true, the outcome ID that replaces this one. Optional; absent means deprecated outright."
+        }
+      }
+    },
+    "contract_decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "related_outcomes", "epic_contract", "resolution"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^CD[1-9]\\d*$"
+        },
+        "related_outcomes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^O[1-9]\\d*$" }
+        },
+        "epic_contract": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Canonical surface declared by the epic (route, schema, data shape, user-visible string)."
+        },
+        "repo_convention": {
+          "type": "string",
+          "description": "Pre-existing repo pattern, if different from epic_contract. Optional."
+        },
+        "resolution": {
+          "type": "string",
+          "enum": ["epic", "bridge"],
+          "description": "epic = canonical surface wins, repo convention not preserved. bridge = both kept, adapter declared. The 'repo' resolution is intentionally absent (E146 invariant)."
+        },
+        "bridge": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Adapter description. Required when resolution=bridge."
+        },
+        "deprecated": { "type": "boolean" },
+        "replaced_by": {
+          "type": "string",
+          "pattern": "^CD[1-9]\\d*$"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "resolution": { "const": "bridge" } },
+            "required": ["resolution"]
+          },
+          "then": { "required": ["bridge"] }
+        }
+      ]
+    }
+  }
+}

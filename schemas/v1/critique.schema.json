@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://woof.dev/schemas/v1/critique.schema.json",
+  "title": "woof critique front-matter",
+  "description": "YAML front-matter of .woof/epics/E<N>/critique/<artefact>.md. Used at Stage 3 (critique/plan.md, critiques the breakdown) and Stage 5 (critique/story-S<k>.md, critiques a story diff). Top-level severity drives the gate-asymmetry rule: plan-gate always opens; story-gate opens when severity=blocker. Findings list is advisory and unconstrained in count.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "target", "target_id", "severity", "timestamp", "harness"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1"
+    },
+    "target": {
+      "type": "string",
+      "enum": ["plan", "story"],
+      "description": "What was critiqued. plan = critique/plan.md (Stage 3 output). story = critique/story-S<k>.md (Stage 5 output for a specific story)."
+    },
+    "target_id": {
+      "oneOf": [
+        { "type": "string", "pattern": "^S[1-9]\\d*$" },
+        { "type": "null" }
+      ],
+      "description": "Story ID when target=story; null when target=plan. Coupled to target via allOf below."
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["info", "minor", "blocker"],
+      "description": "Roll-up severity over all findings. info = no concerns; minor = improvements but proceed; blocker = halt and review. Stage 5 Check 6 fails when this equals blocker."
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "harness": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Identifier of the agent that produced the critique, e.g. 'codex-gpt-5.4', 'claude-opus-4-7'. Used for audit linkage."
+    },
+    "session_ref": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Audit pointer to the agent's session: CC session UUID for claude harnesses, audit-file path under .woof/epics/E<N>/audit/ for codex. Optional but recommended."
+    },
+    "findings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/finding" },
+      "description": "Individual findings the critique surfaced. Empty array allowed when severity=info."
+    }
+  },
+  "$defs": {
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "severity", "summary"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^F[1-9]\\d*$",
+          "description": "Finding ID for cross-reference (F1, F2, ...). Sequential within the critique document."
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["info", "minor", "blocker"]
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "outcome_coverage",
+            "decomposition",
+            "scope_hygiene",
+            "dependency_correctness",
+            "contract_implementation",
+            "class_2_architectural",
+            "marker_semantic_mismatch",
+            "test_quality",
+            "other"
+          ],
+          "description": "Critique category. Stage 3 focus areas (outcome_coverage, decomposition, scope_hygiene, dependency_correctness, contract_implementation, class_2_architectural) plus Stage 5 areas (marker_semantic_mismatch, test_quality). Optional; absent => other."
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "description": "One-sentence prose statement of the finding."
+        },
+        "evidence": {
+          "type": "string",
+          "description": "Prose evidence for the finding. Optional."
+        },
+        "suggestion": {
+          "type": "string",
+          "description": "Prose suggested resolution. Optional; advisory only."
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "target": { "const": "plan" } },
+        "required": ["target"]
+      },
+      "then": {
+        "properties": { "target_id": { "type": "null" } }
+      }
+    },
+    {
+      "if": {
+        "properties": { "target": { "const": "story" } },
+        "required": ["target"]
+      },
+      "then": {
+        "properties": { "target_id": { "type": "string", "pattern": "^S[1-9]\\d*$" } }
+      }
+    }
+  ]
+}

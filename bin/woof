@@ -7,6 +7,7 @@
 
 Subcommands:
     validate    Validate artefacts against woof JSON Schemas via ajv-cli.
+    dispatch    Spawn a cld/cod subprocess for a role declared in agents.toml.
 
 Schemas live at ``woof/schemas/*.schema.json`` (JSON Schema 2020-12).
 Auto-detection maps filename to schema; ``--schema`` overrides.
@@ -16,12 +17,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import tomllib
+from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
@@ -213,6 +216,310 @@ def cmd_validate(args: argparse.Namespace) -> int:
     return 0 if overall_ok else 1
 
 
+# ---------------------------------------------------------------------------
+# dispatch
+# ---------------------------------------------------------------------------
+
+HARNESS_BY_TARGET = {"claude": "cld", "codex": "cod"}
+STORY_ID_RE = re.compile(r"^S[1-9]\d*$")
+
+
+def find_woof_root(start: Path) -> Path:
+    """Walk up from ``start`` to the first directory containing ``.woof/``."""
+    for candidate in (start, *start.parents):
+        if (candidate / ".woof").is_dir():
+            return candidate
+    sys.stderr.write(
+        f"woof: no .woof/ directory found at or above {start}; not a woof project\n"
+    )
+    sys.exit(2)
+
+
+def iso_utc(dt: datetime) -> str:
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def append_jsonl(path: Path, event: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(event, separators=(",", ":")) + "\n")
+
+
+def parse_claude_output(stdout: str) -> tuple[dict, str | None]:
+    """Extract token usage and session_id from ``claude -p --output-format json``."""
+    lines = [ln for ln in stdout.strip().splitlines() if ln.strip()]
+    if not lines:
+        return {}, None
+    try:
+        data = json.loads(lines[-1])
+    except json.JSONDecodeError:
+        return {}, None
+    usage = data.get("usage") or {}
+    tokens = {
+        "tokens_in": int(usage.get("input_tokens", 0) or 0),
+        "tokens_out": int(usage.get("output_tokens", 0) or 0),
+        "cache_read_tokens": int(usage.get("cache_read_input_tokens", 0) or 0),
+        "cache_write_tokens": int(usage.get("cache_creation_input_tokens", 0) or 0),
+    }
+    return tokens, data.get("session_id")
+
+
+def parse_codex_output(stdout: str) -> tuple[dict, str | None]:
+    """Sum token usage across ``turn.completed`` events from ``codex exec --json``."""
+    tokens_in = tokens_out = cache_read = 0
+    saw_turn = False
+    thread_id: str | None = None
+    for raw in stdout.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            evt = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        kind = evt.get("type")
+        if kind == "thread.started":
+            thread_id = evt.get("thread_id")
+        elif kind == "turn.completed":
+            saw_turn = True
+            usage = evt.get("usage") or {}
+            tokens_in += int(usage.get("input_tokens", 0) or 0)
+            tokens_out += int(usage.get("output_tokens", 0) or 0)
+            tokens_out += int(usage.get("reasoning_output_tokens", 0) or 0)
+            cache_read += int(usage.get("cached_input_tokens", 0) or 0)
+    if not saw_turn:
+        return {}, thread_id
+    return {
+        "tokens_in": tokens_in,
+        "tokens_out": tokens_out,
+        "cache_read_tokens": cache_read,
+    }, thread_id
+
+
+def build_argv(harness: str, role: dict, prompt: str) -> list[str]:
+    """Construct the cld/cod invocation argv from a role definition."""
+    argv: list[str] = [harness]
+    mcp = role.get("mcp") or []
+    flags = role.get("flags") or []
+    model = role.get("model")
+
+    if harness == "cld":
+        if role.get("think"):
+            argv.append("-t")
+        if mcp:
+            argv += ["-m", ",".join(mcp)]
+        argv += ["--", "-p", "--output-format", "json"]
+        if model:
+            argv += ["--model", model]
+        argv += flags
+    else:  # cod
+        if mcp:
+            argv += ["-m", ",".join(mcp)]
+        argv += ["--", "exec", "--json", "--skip-git-repo-check"]
+        if model:
+            argv += ["--model", model]
+        argv += flags
+    argv.append(prompt)
+    return argv
+
+
+def cmd_dispatch(args: argparse.Namespace) -> int:
+    ensure_ajv()
+
+    expected_harness = HARNESS_BY_TARGET[args.target]
+    repo_root = find_woof_root(Path.cwd().resolve())
+    agents_path = repo_root / ".woof" / "agents.toml"
+    if not agents_path.is_file():
+        sys.stderr.write(f"woof: {agents_path} not found; cannot dispatch\n")
+        return 2
+
+    with agents_path.open("rb") as fh:
+        agents = tomllib.load(fh)
+
+    schema_path = SCHEMA_DIR / SCHEMAS["agents"]
+    ok, output = run_ajv(schema_path, json.dumps(agents).encode())
+    if not ok:
+        sys.stderr.write(f"woof: {agents_path}: schema invalid\n{output}\n")
+        return 2
+
+    role = (agents.get("roles") or {}).get(args.role)
+    if role is None:
+        sys.stderr.write(
+            f"woof: role '{args.role}' not declared in {agents_path}\n"
+        )
+        return 2
+
+    if role["harness"] == "in-session":
+        sys.stderr.write(
+            f"woof: role '{args.role}' is in-session; cannot be dispatched\n"
+        )
+        return 2
+    if role["harness"] != expected_harness:
+        sys.stderr.write(
+            f"woof: role '{args.role}' has harness={role['harness']!r}; "
+            f"expected {expected_harness!r} for 'woof dispatch {args.target}'\n"
+        )
+        return 2
+
+    if args.story is not None and not STORY_ID_RE.match(args.story):
+        sys.stderr.write(f"woof: --story {args.story!r}: must match S<n> (n>=1)\n")
+        return 2
+
+    if args.prompt_file:
+        prompt = Path(args.prompt_file).read_text()
+    else:
+        prompt = sys.stdin.read()
+    if not prompt.strip():
+        sys.stderr.write("woof: empty prompt\n")
+        return 2
+
+    timeout_min = int(
+        (agents.get("timeouts") or {}).get("default_minutes", 30)
+    )
+    argv = build_argv(expected_harness, role, prompt)
+
+    if args.dry_run:
+        wrapped = ["timeout", f"{timeout_min}m", *argv]
+        print(json.dumps({
+            "argv": wrapped,
+            "epic": args.epic,
+            "story": args.story,
+            "role": args.role,
+            "harness": expected_harness,
+            "model": role.get("model"),
+            "mcp": role.get("mcp") or [],
+            "flags": role.get("flags") or [],
+            "timeout_min": timeout_min,
+        }))
+        return 0
+
+    epic_dir = repo_root / ".woof" / "epics" / f"E{args.epic}"
+    audit_dir = epic_dir / "audit"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    started_at = datetime.now(timezone.utc)
+    ts = started_at.strftime("%Y%m%dT%H%M%SZ")
+    base = audit_dir / f"{expected_harness}-{args.role}-{ts}"
+    prompt_file = base.with_suffix(".prompt")
+    output_file = base.with_suffix(".output")
+    stderr_file = base.with_suffix(".stderr")
+    meta_file = base.with_suffix(".meta")
+    prompt_file.write_text(prompt)
+
+    dispatch_jsonl = epic_dir / "dispatch.jsonl"
+    wrapped_argv = ["timeout", f"{timeout_min}m", *argv]
+
+    proc = subprocess.Popen(
+        wrapped_argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    )
+
+    spawned_event: dict = {
+        "event": "subprocess_spawned",
+        "at": iso_utc(started_at),
+        "epic_id": args.epic,
+        "role": args.role,
+        "harness": expected_harness,
+        "pid": proc.pid,
+    }
+    if args.story:
+        spawned_event["story_id"] = args.story
+    if role.get("model"):
+        spawned_event["model"] = role["model"]
+    append_jsonl(dispatch_jsonl, spawned_event)
+
+    try:
+        stdout, stderr = proc.communicate()
+    except KeyboardInterrupt:
+        proc.terminate()
+        stdout, stderr = proc.communicate()
+        ended_at = datetime.now(timezone.utc)
+        append_jsonl(dispatch_jsonl, {
+            "event": "subprocess_killed",
+            "at": iso_utc(ended_at),
+            "epic_id": args.epic,
+            "pid": proc.pid,
+            "signal": "SIGINT",
+            "reason": "manual_cancel",
+        })
+        output_file.write_text(stdout or "")
+        stderr_file.write_text(stderr or "")
+        return 130
+
+    ended_at = datetime.now(timezone.utc)
+    duration_ms = int((ended_at - started_at).total_seconds() * 1000)
+    output_file.write_text(stdout)
+    stderr_file.write_text(stderr)
+
+    if expected_harness == "cld":
+        tokens, session_id = parse_claude_output(stdout)
+        thread_id = None
+    else:
+        tokens, thread_id = parse_codex_output(stdout)
+        session_id = None
+
+    timed_out = proc.returncode == 124  # GNU timeout(1) exit code
+    if timed_out:
+        append_jsonl(dispatch_jsonl, {
+            "event": "subprocess_killed",
+            "at": iso_utc(ended_at),
+            "epic_id": args.epic,
+            "pid": proc.pid,
+            "signal": "SIGTERM",
+            "reason": "timeout",
+        })
+
+    returned: dict = {
+        "event": "subprocess_returned",
+        "at": iso_utc(ended_at),
+        "epic_id": args.epic,
+        "role": args.role,
+        "harness": expected_harness,
+        "pid": proc.pid,
+        "exit_code": proc.returncode,
+        "duration_ms": duration_ms,
+    }
+    if args.story:
+        returned["story_id"] = args.story
+    if role.get("model"):
+        returned["model"] = role["model"]
+    if tokens:
+        returned.update(tokens)
+    if session_id:
+        returned["cc_session_id"] = session_id
+    if expected_harness == "cod":
+        returned["codex_audit_path"] = str(base.relative_to(repo_root))
+    append_jsonl(dispatch_jsonl, returned)
+
+    meta = {
+        "harness": expected_harness,
+        "role": args.role,
+        "epic_id": args.epic,
+        "story_id": args.story,
+        "model": role.get("model"),
+        "mcp": role.get("mcp") or [],
+        "flags": role.get("flags") or [],
+        "argv": wrapped_argv,
+        "pid": proc.pid,
+        "started_at": iso_utc(started_at),
+        "ended_at": iso_utc(ended_at),
+        "duration_ms": duration_ms,
+        "exit_code": proc.returncode,
+        "timed_out": timed_out,
+        "tokens": tokens,
+    }
+    if session_id:
+        meta["cc_session_id"] = session_id
+    if thread_id:
+        meta["codex_thread_id"] = thread_id
+    meta_file.write_text(json.dumps(meta, indent=2) + "\n")
+
+    return proc.returncode
+
+
+# ---------------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------------
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="woof", description="workflow orchestrator CLI")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -225,6 +532,25 @@ def main() -> int:
         help="override schema auto-detection",
     )
     validate.set_defaults(func=cmd_validate)
+
+    dispatch = sub.add_parser(
+        "dispatch",
+        help="spawn a cld/cod subprocess for a role declared in agents.toml",
+    )
+    dispatch.add_argument("target", choices=sorted(HARNESS_BY_TARGET))
+    dispatch.add_argument("--role", required=True, help="role name from .woof/agents.toml")
+    dispatch.add_argument("--epic", type=int, required=True, help="epic id (gh issue number)")
+    dispatch.add_argument("--story", help="story id (e.g. S1); optional")
+    dispatch.add_argument(
+        "--prompt-file",
+        help="path to a file holding the prompt; if omitted, prompt is read from stdin",
+    )
+    dispatch.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print the resolved invocation as JSON and exit without spawning",
+    )
+    dispatch.set_defaults(func=cmd_dispatch)
 
     args = parser.parse_args()
     return args.func(args)

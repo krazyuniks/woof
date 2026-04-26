@@ -48,6 +48,31 @@
           "description": "Open a review_gate after the last story completes, before epic close. Recommended on."
         }
       }
+    },
+    "audit": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Audit policy for committed artefacts written by woof dispatch. Controls conservative redaction and per-file size cap (Stage 5 Check 8, realised in S2).",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Apply redaction and size cap before writing audit artefacts. Set to false to disable both filters (not recommended for production use)."
+        },
+        "max_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 262144,
+          "description": "Per-file size cap in bytes. Audit artefacts exceeding this are truncated at commit time; the full output overflows to the gitignored audit/raw/ path. Default 262144 (256 KB)."
+        },
+        "redact_patterns": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true,
+          "default": [],
+          "description": "Additional project-specific regex patterns to redact. Each pattern is matched against each output line; matching text is replaced with a [REDACTED:<reason>] marker. Built-in patterns (JWT, AWS keys, bearer tokens) are always applied when enabled=true."
+        }
+      }
     }
   },
   "$defs": {

@@ -6,8 +6,10 @@
 """woof — workflow orchestrator CLI.
 
 Subcommands:
-    validate    Validate artefacts against woof JSON Schemas via ajv-cli.
-    dispatch    Spawn a cld/cod subprocess for a role declared in agents.toml.
+    validate     Validate artefacts against woof JSON Schemas via ajv-cli.
+    dispatch     Spawn a cld/cod subprocess for a role declared in agents.toml.
+    render-epic  Render EPIC.md front-matter into the gh issue body; optionally
+                 sync to GitHub with conflict detection (.last-sync).
 
 Schemas live at ``woof/schemas/*.schema.json`` (JSON Schema 2020-12).
 Auto-detection maps filename to schema; ``--schema`` overrides.
@@ -16,6 +18,7 @@ Auto-detection maps filename to schema; ``--schema`` overrides.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -516,6 +519,255 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# render-epic
+# ---------------------------------------------------------------------------
+
+WOOF_SENTINEL = (
+    "<!-- woof — structured sections above are rewritten on Definition/plan "
+    "changes. Free-form prose above `## Observable Outcomes` is preserved on "
+    "overwrite. Do not edit structured sections directly in gh. -->"
+)
+STRUCTURED_HEADING = "## Observable Outcomes"
+
+
+def split_front_matter(path: Path) -> tuple[dict, str]:
+    """Return (front-matter dict, body prose) from a YAML-front-mattered file."""
+    text = path.read_text()
+    if not text.startswith("---\n"):
+        raise ValueError(f"{path}: no YAML front-matter (file must start with '---\\n')")
+    end = text.find("\n---\n", 4)
+    if end < 0:
+        raise ValueError(f"{path}: unterminated YAML front-matter")
+    front = yaml.safe_load(text[4:end]) or {}
+    prose = text[end + len("\n---\n") :]
+    return front, prose
+
+
+def first_paragraph(prose: str) -> str:
+    """First non-empty paragraph of ``prose`` (delimited by a blank line)."""
+    paragraphs = re.split(r"\n\s*\n", prose.strip())
+    for para in paragraphs:
+        stripped = para.strip()
+        if stripped:
+            return stripped
+    return ""
+
+
+def _deprecation_suffix(item: dict) -> str:
+    if not item.get("deprecated"):
+        return ""
+    rb = item.get("replaced_by")
+    return f" _(deprecated → {rb})_" if rb else " _(deprecated)_"
+
+
+def _contract_ref(cd: dict) -> str:
+    if cd.get("openapi_ref"):
+        return f"`openapi: {cd['openapi_ref']}`"
+    if cd.get("pydantic_ref"):
+        return f"`pydantic: {cd['pydantic_ref']}`"
+    if cd.get("json_schema_ref"):
+        return f"`json_schema: {cd['json_schema_ref']}`"
+    return ""
+
+
+def render_epic_body(front: dict, prose: str, remote_body: str | None = None) -> str:
+    """Deterministic transform from EPIC front-matter to gh issue body markdown.
+
+    Preservation rule: if ``remote_body`` contains ``## Observable Outcomes``,
+    everything before that heading is preserved as the prefix; everything from
+    the heading onward is rewritten. On first push (no remote, or remote
+    without the marker), the prefix is the first paragraph of ``prose``.
+    """
+    out: list[str] = []
+
+    if remote_body and STRUCTURED_HEADING in remote_body:
+        prefix, _ = remote_body.split(STRUCTURED_HEADING, 1)
+        out.append(prefix.rstrip() + "\n\n")
+    else:
+        intent = first_paragraph(prose)
+        out.append((intent or "_(intent pending)_") + "\n\n")
+
+    out.append("## Observable Outcomes\n\n")
+    for o in front["observable_outcomes"]:
+        suffix = _deprecation_suffix(o)
+        out.append(f"- **{o['id']}** — {o['statement']}{suffix}\n")
+        out.append(f"  - Verification: {o['verification']}\n")
+    out.append("\n")
+
+    cds = front.get("contract_decisions") or []
+    if cds:
+        out.append("## Contract Decisions\n\n")
+        out.append("| ID | Related Outcomes | Title | Contract Reference |\n")
+        out.append("|---|---|---|---|\n")
+        for cd in cds:
+            related = ", ".join(cd["related_outcomes"])
+            title = cd["title"] + _deprecation_suffix(cd)
+            out.append(
+                f"| {cd['id']} | {related} | {title} | {_contract_ref(cd)} |\n"
+            )
+        out.append("\n")
+
+    out.append("## Acceptance Criteria\n\n")
+    for c in front["acceptance_criteria"]:
+        out.append(f"- {c}\n")
+    out.append("\n")
+
+    open_qs = front.get("open_questions") or []
+    if open_qs:
+        out.append("## Open Questions\n\n")
+        for q in open_qs:
+            out.append(f"- {q}\n")
+        out.append("\n")
+
+    out.append("---\n\n")
+    out.append(WOOF_SENTINEL + "\n")
+    return "".join(out)
+
+
+def _gh_repo(repo_root: Path) -> str:
+    prereq = repo_root / ".woof" / "prerequisites.toml"
+    if not prereq.is_file():
+        raise SystemExit(f"woof: {prereq} not found; cannot resolve [github].repo")
+    with prereq.open("rb") as fh:
+        data = tomllib.load(fh)
+    repo = (data.get("github") or {}).get("repo")
+    if not repo:
+        raise SystemExit(f"woof: {prereq} missing [github].repo")
+    return repo
+
+
+def _gh_fetch_issue(repo: str, number: int) -> dict:
+    proc = subprocess.run(
+        [
+            "gh", "api",
+            f"/repos/{repo}/issues/{number}",
+            "-H", "Accept: application/vnd.github+json",
+        ],
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        raise SystemExit(
+            f"woof: gh api /repos/{repo}/issues/{number} failed:\n{proc.stderr.strip()}"
+        )
+    return json.loads(proc.stdout)
+
+
+def _gh_edit_body(repo: str, number: int, body_path: Path) -> None:
+    proc = subprocess.run(
+        ["gh", "issue", "edit", str(number), "--repo", repo, "--body-file", str(body_path)],
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        raise SystemExit(
+            f"woof: gh issue edit {number} failed:\n{proc.stderr.strip()}"
+        )
+
+
+def _last_sync_path(epic_dir: Path) -> Path:
+    return epic_dir / ".last-sync"
+
+
+def _read_last_sync(epic_dir: Path) -> dict | None:
+    p = _last_sync_path(epic_dir)
+    if not p.is_file():
+        return None
+    return json.loads(p.read_text())
+
+
+def _write_last_sync(epic_dir: Path, payload: dict) -> None:
+    p = _last_sync_path(epic_dir)
+    tmp = p.with_suffix(".last-sync.tmp")
+    tmp.write_text(json.dumps(payload, indent=2) + "\n")
+    tmp.replace(p)
+
+
+def _sha256(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def cmd_render_epic(args: argparse.Namespace) -> int:
+    ensure_ajv()
+    repo_root = find_woof_root(Path.cwd().resolve())
+    epic_dir = repo_root / ".woof" / "epics" / f"E{args.epic}"
+    epic_md = epic_dir / "EPIC.md"
+    if not epic_md.is_file():
+        sys.stderr.write(f"woof: {epic_md} not found\n")
+        return 2
+
+    try:
+        front, prose = split_front_matter(epic_md)
+    except (ValueError, yaml.YAMLError) as exc:
+        sys.stderr.write(f"woof: {epic_md}: {exc}\n")
+        return 2
+
+    schema_path = SCHEMA_DIR / SCHEMAS["epic"]
+    ok, output = run_ajv(schema_path, json.dumps(front).encode())
+    if not ok:
+        sys.stderr.write(f"woof: {epic_md}: front-matter invalid\n{output}\n")
+        return 2
+
+    if not args.sync:
+        body = render_epic_body(front, prose, remote_body=None)
+        if args.output:
+            Path(args.output).write_text(body)
+        else:
+            sys.stdout.write(body)
+        return 0
+
+    # --sync: fetch remote, conflict-check, push, update .last-sync
+    repo = _gh_repo(repo_root)
+    remote = _gh_fetch_issue(repo, args.epic)
+    remote_updated_at = remote.get("updated_at") or ""
+    remote_body = remote.get("body") or ""
+
+    last_sync = _read_last_sync(epic_dir)
+    if last_sync and last_sync.get("updated_at") != remote_updated_at:
+        ts = iso_utc(datetime.now(timezone.utc))
+        append_jsonl(epic_dir / "epic.jsonl", {
+            "event": "github_sync_conflict",
+            "at": ts,
+            "epic_id": args.epic,
+        })
+        sys.stderr.write(
+            f"woof: github_sync_conflict for E{args.epic}\n"
+            f"  last-sync updated_at: {last_sync.get('updated_at')}\n"
+            f"  remote   updated_at: {remote_updated_at}\n"
+            "  push aborted — resolve via /wf gate\n"
+        )
+        return 3
+
+    body = render_epic_body(front, prose, remote_body=remote_body)
+    with tempfile.NamedTemporaryFile(
+        "w", suffix=".md", delete=False, encoding="utf-8"
+    ) as fh:
+        fh.write(body)
+        body_path = Path(fh.name)
+    try:
+        _gh_edit_body(repo, args.epic, body_path)
+    finally:
+        body_path.unlink(missing_ok=True)
+
+    new_remote = _gh_fetch_issue(repo, args.epic)
+    _write_last_sync(epic_dir, {
+        "issue_number": args.epic,
+        "updated_at": new_remote.get("updated_at") or "",
+        "body_sha256": _sha256(body),
+        "body": body,
+    })
+    append_jsonl(epic_dir / "epic.jsonl", {
+        "event": "github_synced",
+        "at": iso_utc(datetime.now(timezone.utc)),
+        "epic_id": args.epic,
+    })
+
+    if args.output:
+        Path(args.output).write_text(body)
+    else:
+        sys.stdout.write(body)
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
 
@@ -551,6 +803,19 @@ def main() -> int:
         help="print the resolved invocation as JSON and exit without spawning",
     )
     dispatch.set_defaults(func=cmd_dispatch)
+
+    render = sub.add_parser(
+        "render-epic",
+        help="render EPIC.md front-matter into the gh issue body",
+    )
+    render.add_argument("--epic", type=int, required=True, help="epic id (gh issue number)")
+    render.add_argument("--output", help="write rendered body to PATH instead of stdout")
+    render.add_argument(
+        "--sync",
+        action="store_true",
+        help="fetch remote, conflict-check against .last-sync, push if clean, update .last-sync",
+    )
+    render.set_defaults(func=cmd_render_epic)
 
     args = parser.parse_args()
     return args.func(args)

@@ -37,11 +37,6 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_DIR = REPO_ROOT / "woof" / "schemas"
 
-# Load audit helpers from woof/lib — not a package import; insert lib dir.
-sys.path.insert(0, str(REPO_ROOT / "woof" / "lib"))
-from audit_config import load_audit_config  # noqa: E402
-from audit_filter import filter_audit_output  # noqa: E402
-
 SCHEMAS: dict[str, str] = {
     "epic": "epic.schema.json",
     "plan": "plan.schema.json",
@@ -352,8 +347,6 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         sys.stderr.write(f"woof: {agents_path}: schema invalid\n{output}\n")
         return 2
 
-    audit_cfg = load_audit_config(agents)
-
     role = (agents.get("roles") or {}).get(args.role)
     if role is None:
         sys.stderr.write(
@@ -452,33 +445,13 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
             "signal": "SIGINT",
             "reason": "manual_cancel",
         })
-        raw_output_path = audit_dir / "raw" / output_file.name
-        output_file.write_text(
-            filter_audit_output(
-                stdout or "",
-                enabled=audit_cfg.enabled,
-                max_bytes=audit_cfg.max_bytes,
-                redact_patterns=audit_cfg.redact_patterns,
-                raw_path=raw_output_path,
-                epic_id=args.epic,
-            )
-        )
+        output_file.write_text(stdout or "")
         stderr_file.write_text(stderr or "")
         return 130
 
     ended_at = datetime.now(timezone.utc)
     duration_ms = int((ended_at - started_at).total_seconds() * 1000)
-    raw_output_path = audit_dir / "raw" / output_file.name
-    output_file.write_text(
-        filter_audit_output(
-            stdout,
-            enabled=audit_cfg.enabled,
-            max_bytes=audit_cfg.max_bytes,
-            redact_patterns=audit_cfg.redact_patterns,
-            raw_path=raw_output_path,
-            epic_id=args.epic,
-        )
-    )
+    output_file.write_text(stdout)
     stderr_file.write_text(stderr)
 
     if expected_harness == "cld":

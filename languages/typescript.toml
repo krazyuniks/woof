@@ -1,0 +1,21 @@
+# woof language registry — TypeScript
+#
+# Schema: woof/schemas/language-registry.schema.json
+# Validate: just woof-validate woof/languages/typescript.toml
+#
+# Consumed by `just wf-preflight` to install/verify TypeScript tooling when a
+# project's prerequisites declare TypeScript as a target language.
+
+[lsp]
+binary = "typescript-language-server"
+binary_install = "npm install -g typescript typescript-language-server"
+gotchas = [
+  "typescript-language-server speaks standard LSP and shells out to tsserver",
+  "Requires the typescript package on PATH (bundled in the install command)",
+  "Per-project tsconfig.json drives type resolution; absent config falls back to loose defaults",
+]
+
+[tree-sitter]
+grammar_install = "npm install -g tree-sitter-typescript"
+verify_snippet = "const x: number = 0;"
+verify_scope = "source.typescript"

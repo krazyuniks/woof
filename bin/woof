@@ -1,0 +1,234 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["pyyaml>=6"]
+# ///
+"""woof — workflow orchestrator CLI.
+
+Subcommands:
+    validate    Validate artefacts against woof JSON Schemas via ajv-cli.
+
+Schemas live at ``woof/schemas/*.schema.json`` (JSON Schema 2020-12).
+Auto-detection maps filename to schema; ``--schema`` overrides.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import tomllib
+from pathlib import Path
+
+import yaml
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SCHEMA_DIR = REPO_ROOT / "woof" / "schemas"
+
+SCHEMAS: dict[str, str] = {
+    "epic": "epic.schema.json",
+    "plan": "plan.schema.json",
+    "gate": "gate.schema.json",
+    "critique": "critique.schema.json",
+    "jsonl-events": "jsonl-events.schema.json",
+    "prerequisites": "prerequisites.schema.json",
+    "agents": "agents.schema.json",
+    "test-markers": "test-markers.schema.json",
+    "language-registry": "language-registry.schema.json",
+    "quality-gates": "quality-gates.schema.json",
+    "docs-paths": "docs-paths.schema.json",
+}
+
+# Filename → schema (basename match)
+FILENAME_RULES: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"^EPIC\.md$"), "epic"),
+    (re.compile(r"^plan\.json$"), "plan"),
+    (re.compile(r"^gate\.md$"), "gate"),
+    (re.compile(r"^.+\.jsonl$"), "jsonl-events"),
+    (re.compile(r"^prerequisites\.toml$"), "prerequisites"),
+    (re.compile(r"^agents\.toml$"), "agents"),
+    (re.compile(r"^test-markers\.toml$"), "test-markers"),
+    (re.compile(r"^quality-gates\.toml$"), "quality-gates"),
+    (re.compile(r"^docs-paths\.toml$"), "docs-paths"),
+]
+
+# Path-suffix → schema (for files distinguished by parent dir)
+PATH_RULES: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"(^|/)critique/[^/]+\.md$"), "critique"),
+    (re.compile(r"(^|/)languages/[^/]+\.toml$"), "language-registry"),
+]
+
+
+def detect_schema(path: Path) -> str | None:
+    """Return schema name for ``path`` or None if no rule matches."""
+    name = path.name
+    for pattern, schema in FILENAME_RULES:
+        if pattern.match(name):
+            return schema
+    posix = path.as_posix()
+    for pattern, schema in PATH_RULES:
+        if pattern.search(posix):
+            return schema
+    return None
+
+
+def extract_front_matter(path: Path) -> object:
+    """Parse YAML front-matter (delimited by ``---`` on its own line)."""
+    text = path.read_text()
+    if not text.startswith("---\n"):
+        raise ValueError(f"{path}: no YAML front-matter (file must start with '---\\n')")
+    end = text.find("\n---\n", 4)
+    if end < 0:
+        end_alt = text.find("\n---", 4)
+        if end_alt < 0 or text[end_alt:].rstrip() != "---":
+            raise ValueError(f"{path}: unterminated YAML front-matter")
+        end = end_alt
+    block = text[4:end]
+    return yaml.safe_load(block) or {}
+
+
+def load_payload(path: Path, schema: str) -> object:
+    """Extract the structured payload appropriate for ``schema``."""
+    if schema in {"epic", "gate", "critique"}:
+        return extract_front_matter(path)
+    if schema == "plan":
+        return json.loads(path.read_text())
+    if schema in {
+        "prerequisites",
+        "agents",
+        "test-markers",
+        "language-registry",
+        "quality-gates",
+        "docs-paths",
+    }:
+        with path.open("rb") as fh:
+            return tomllib.load(fh)
+    raise ValueError(f"load_payload: unhandled schema '{schema}'")
+
+
+def run_ajv(schema_path: Path, data_json: bytes) -> tuple[bool, str]:
+    """Run ajv-cli; return (ok, combined-output)."""
+    with tempfile.NamedTemporaryFile("wb", suffix=".json", delete=False) as fh:
+        fh.write(data_json)
+        data_path = fh.name
+    try:
+        proc = subprocess.run(
+            [
+                "ajv",
+                "validate",
+                "--spec=draft2020",
+                "-c",
+                "ajv-formats",
+                "-s",
+                str(schema_path),
+                "-d",
+                data_path,
+            ],
+            capture_output=True,
+            text=True,
+        )
+    finally:
+        Path(data_path).unlink(missing_ok=True)
+    output = (proc.stdout + proc.stderr).strip()
+    return proc.returncode == 0, output
+
+
+def ensure_ajv() -> None:
+    """Exit non-zero if ajv-cli is not on PATH."""
+    if shutil.which("ajv") is None:
+        sys.stderr.write(
+            "woof: ajv-cli not found on PATH.\n"
+            "Install: volta install ajv-cli ajv-formats\n"
+        )
+        sys.exit(2)
+
+
+def validate_jsonl(path: Path, schema_path: Path) -> tuple[bool, list[str]]:
+    """Validate every non-blank line of a JSONL file."""
+    messages: list[str] = []
+    all_ok = True
+    line_count = 0
+    for lineno, raw in enumerate(path.read_text().splitlines(), 1):
+        line = raw.strip()
+        if not line:
+            continue
+        line_count += 1
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError as exc:
+            all_ok = False
+            messages.append(f"{path}:{lineno}: invalid JSON: {exc}")
+            continue
+        ok, output = run_ajv(schema_path, json.dumps(payload).encode())
+        if not ok:
+            all_ok = False
+            messages.append(f"{path}:{lineno}: INVALID\n{output}")
+    if all_ok:
+        messages.append(f"{path}: valid (jsonl-events, {line_count} line(s))")
+    return all_ok, messages
+
+
+def validate_path(path: Path, schema_override: str | None) -> tuple[bool, list[str]]:
+    """Validate one file. Returns ``(ok, messages)``."""
+    schema = schema_override or detect_schema(path)
+    if schema is None:
+        return False, [f"{path}: no schema rule matches; pass --schema explicitly"]
+    if schema not in SCHEMAS:
+        return False, [f"{path}: unknown schema '{schema}'"]
+    schema_path = SCHEMA_DIR / SCHEMAS[schema]
+
+    if schema == "jsonl-events":
+        return validate_jsonl(path, schema_path)
+
+    try:
+        payload = load_payload(path, schema)
+    except (ValueError, json.JSONDecodeError, yaml.YAMLError, tomllib.TOMLDecodeError) as exc:
+        return False, [f"{path}: parse error: {exc}"]
+
+    ok, output = run_ajv(schema_path, json.dumps(payload).encode())
+    msg = f"{path}: {'valid' if ok else 'INVALID'} ({schema})"
+    if not ok:
+        msg += "\n" + output
+    return ok, [msg]
+
+
+def cmd_validate(args: argparse.Namespace) -> int:
+    ensure_ajv()
+    overall_ok = True
+    for raw in args.paths:
+        path = Path(raw)
+        if not path.is_file():
+            sys.stderr.write(f"woof: {raw}: not a file\n")
+            overall_ok = False
+            continue
+        ok, messages = validate_path(path, args.schema)
+        for line in messages:
+            print(line)
+        if not ok:
+            overall_ok = False
+    return 0 if overall_ok else 1
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="woof", description="workflow orchestrator CLI")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    validate = sub.add_parser("validate", help="validate woof artefacts against schemas")
+    validate.add_argument("paths", nargs="+", help="paths to validate")
+    validate.add_argument(
+        "--schema",
+        choices=sorted(SCHEMAS),
+        help="override schema auto-detection",
+    )
+    validate.set_defaults(func=cmd_validate)
+
+    args = parser.parse_args()
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

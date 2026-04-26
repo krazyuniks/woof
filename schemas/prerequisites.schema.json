@@ -5,7 +5,7 @@
   "description": "Project-side declaration at .woof/prerequisites.toml. Tells woof what infrastructure, languages, and indexing tools the project depends on. The tool-side language registry (woof/languages/<lang>.toml) provides the install instructions per language. just wf-preflight verifies everything declared here. Two-tier caching: floor checks (binaries/versions/grammars/LSP plugins) cached 24h, hashed on this file plus referenced language registry tomls.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["infra", "wrappers", "github"],
+  "required": ["infra", "wrappers", "validators", "github"],
   "properties": {
     "infra": {
       "type": "object",
@@ -24,6 +24,17 @@
         "agent-sync": { "$ref": "#/$defs/version_spec" }
       },
       "description": "Required dispatch wrappers. All three are mandatory: cld for Claude subprocesses, cod for Codex subprocesses (which depends on agent-sync's mirroring of CC config into ~/.codex/)."
+    },
+    "validators": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ajv", "ajv-formats"],
+      "properties": {
+        "ajv": { "$ref": "#/$defs/version_spec" },
+        "ajv-formats": { "$ref": "#/$defs/version_spec" },
+        "schemathesis": { "$ref": "#/$defs/version_spec" }
+      },
+      "description": "Required schema validators. ajv and ajv-formats are mandatory: woof validate uses ajv-cli for all internal artefact validation, and three schemas (gate, critique, jsonl-events) use the format keyword which ajv-cli only enforces when ajv-formats is loaded via -c ajv-formats. schemathesis is required only when contract decisions reference openapi documents."
     },
     "github": {
       "type": "object",

@@ -171,7 +171,7 @@ def validate_jsonl(path: Path, schema_path: Path) -> tuple[bool, list[str]]:
             all_ok = False
             messages.append(f"{path}:{lineno}: invalid JSON: {exc}")
             continue
-        ok, output = run_ajv(schema_path, json.dumps(payload).encode())
+        ok, output = run_ajv(schema_path, json.dumps(payload, default=str).encode())
         if not ok:
             all_ok = False
             messages.append(f"{path}:{lineno}: INVALID\n{output}")
@@ -197,7 +197,7 @@ def validate_path(path: Path, schema_override: str | None) -> tuple[bool, list[s
     except (ValueError, json.JSONDecodeError, yaml.YAMLError, tomllib.TOMLDecodeError) as exc:
         return False, [f"{path}: parse error: {exc}"]
 
-    ok, output = run_ajv(schema_path, json.dumps(payload).encode())
+    ok, output = run_ajv(schema_path, json.dumps(payload, default=str).encode())
     msg = f"{path}: {'valid' if ok else 'INVALID'} ({schema})"
     if not ok:
         msg += "\n" + output

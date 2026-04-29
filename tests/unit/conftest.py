@@ -29,6 +29,14 @@ def _require_host_tools() -> None:
             pytest.skip(f"{tool} not on PATH; woof tests require host tooling")
 
 
+@pytest.fixture(autouse=True)
+def _clear_git_hook_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep nested temporary git repositories independent under git hooks."""
+
+    for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX"):
+        monkeypatch.delenv(name, raising=False)
+
+
 @pytest.fixture
 def run_woof() -> Callable[..., subprocess.CompletedProcess[str]]:
     """Invoke ``woof <args>`` and return the CompletedProcess."""

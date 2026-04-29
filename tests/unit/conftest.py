@@ -17,6 +17,23 @@ if TYPE_CHECKING:
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WOOF_BIN = REPO_ROOT / "bin" / "woof"
+GIT_LOCAL_ENV_VARS = (
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_CONFIG",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_GRAFT_FILE",
+    "GIT_INDEX_FILE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_PREFIX",
+    "GIT_SHALLOW_FILE",
+    "GIT_COMMON_DIR",
+)
 
 
 pytestmark = pytest.mark.host_only
@@ -27,6 +44,14 @@ def _require_host_tools() -> None:
     for tool in ("uv", "ajv"):
         if shutil.which(tool) is None:
             pytest.skip(f"{tool} not on PATH; woof tests require host tooling")
+
+
+@pytest.fixture(autouse=True)
+def _clear_hook_git_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep nested temp-repo Git commands independent from Git hook environments."""
+
+    for name in GIT_LOCAL_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
 
 
 @pytest.fixture

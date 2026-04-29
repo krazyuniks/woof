@@ -65,7 +65,7 @@ def test_registry_exports_nine_canonical_ids_O2() -> None:
 
 
 def test_self_test_exits_nonzero_when_runner_unimplemented_O2() -> None:
-    """O2: --self-test exits non-zero because checks 1-5,7-9 raise NotImplementedError."""
+    """O2: --self-test exits non-zero while checks 4, 8, and 9 are placeholders."""
     proc = _run("check", "stage-5", "--self-test")
     assert proc.returncode != 0, (
         f"Expected non-zero exit (unimplemented runners) but got 0.\n{proc.stdout}{proc.stderr}"
@@ -76,25 +76,31 @@ def test_self_test_exits_nonzero_when_runner_unimplemented_O2() -> None:
 
 
 def test_self_test_distinguishes_implemented_from_placeholder_O2() -> None:
-    """O2: check_6 (implemented) is not reported as failing by --self-test."""
+    """O2: implemented checks are not reported as placeholder failures."""
     import sys
 
     sys.path.insert(0, str(REPO_ROOT))
     from woof.checks.registry import REGISTRY
 
-    # Run only check_6 in isolation — should not appear in failures
     failures: list[str] = []
-    check = REGISTRY["check_6_critique_blocker"]
-    try:
-        check.runner(None)  # type: ignore[arg-type]
-    except NotImplementedError:
-        failures.append("check_6_critique_blocker")
-    except Exception:
-        pass  # implemented runner raised for a real reason (None context)
+    implemented_ids = [
+        "check_1_quality_gates",
+        "check_2_outcome_markers",
+        "check_3_scope",
+        "check_5_plan_crossrefs",
+        "check_6_critique_blocker",
+        "check_7_commit_transaction",
+    ]
+    for check_id in implemented_ids:
+        check = REGISTRY[check_id]
+        try:
+            check.runner(None)  # type: ignore[arg-type]
+        except NotImplementedError:
+            failures.append(check_id)
+        except Exception:
+            pass  # implemented runner raised for a real reason (None context)
 
-    assert "check_6_critique_blocker" not in failures, (
-        "check_6_critique_blocker incorrectly identified as unimplemented"
-    )
+    assert failures == []
 
 
 # ---------------------------------------------------------------------------
@@ -218,12 +224,7 @@ def test_check_stage_5_treats_placeholders_as_info_during_bootstrap(tmp_path: Pa
     by_id = {c["id"]: c for c in result["checks"]}
 
     placeholder_ids = [
-        "check_1_quality_gates",
-        "check_2_outcome_markers",
-        "check_3_scope",
         "check_4_contract_refs",
-        "check_5_plan_crossrefs",
-        "check_7_commit_transaction",
         "check_8_docs_drift",
         "check_9_review_valve",
     ]

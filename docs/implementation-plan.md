@@ -90,6 +90,28 @@ The plan is working when these outcomes remain true:
 | WF-003 | Ready | Stabilise `woof wf --format json` output. | JSON output has schema-backed fields for node status, next state, gate path, and validation summary; tests assert stable keys for success and gate cases. | JSON contract tests plus `just check`. | `feat(graph): stabilise wf json output` |
 | WF-004 | Ready | Expand graph transition and transaction-manifest coverage. | Unit tests cover successor selection, gate re-entry, manifest/index verification, and empty-diff handling. | Targeted graph tests plus `just check`. | `test(graph): cover stage five transitions` |
 
+## Post-WF-002 Execution Workstreams
+
+After `WF-002` is complete, implementation no longer needs to proceed as one prompt per row. The remaining work should run as larger execution workstreams, with each workstream allowed to contain multiple conventional commits when that keeps review and rollback clean.
+
+Workstream rules:
+
+- Pick a workstream, not an isolated row, unless the workstream says a specific item must lead.
+- Keep file ownership explicit before parallel sessions start.
+- Parallel workers may update disjoint runner, test, schema, or docs files. One integrator session owns shared wiring files.
+- Shared wiring files include `src/woof/checks/registry.py`, `src/woof/cli/main.py`, graph transition tables, and this implementation plan.
+- A workstream is complete only when all included rows are marked `Completed`, validation is recorded, changes are pushed, and GitHub CI is terminal green.
+
+| Workstream | Items | Concurrency model | Integrator ownership | Notes |
+|---|---|---|---|---|
+| A: Graph output and coverage | `WF-003`, `WF-004` | Sequential or one session; these touch shared graph contracts. | `src/woof/graph/`, CLI JSON output tests, schema-backed output assertions. | Do this before broad graph consumers depend on unstable output. |
+| B: Core cheap checks | `CHK-001`, `CHK-002`, `CHK-003`, `CHK-005`, `CHK-007` | Parallel by runner/test pair after an integrator reserves registry wiring. | `src/woof/checks/registry.py`, common `CheckContext` helpers, shared fixtures. | Prefer one commit per check unless helper extraction spans checks. |
+| C: Policy-heavy checks | `CHK-004`, `CHK-008`, `CHK-009` | Parallel only if file ownership is explicit; these have more design surface. | Contract-ref helper boundaries, docs-drift config semantics, review-valve state semantics. | Start after Workstream B exposes enough runner patterns. |
+| D: Preflight and local tooling | `ENV-001`, `ENV-002`, `ENV-003`, `ENV-004` | `ENV-001` then `ENV-002`; `ENV-003` and `ENV-004` can run independently. | CLI command wiring, cache file policy, hook installation semantics. | Reconcile `ENV-003` with the existing bootstrap/hook foundation before coding. |
+| E: GitHub sync | `GH-001`, `GH-002`, `GH-003`, `GH-004`, `GH-005` | Split into state initialisation (`GH-001`, `GH-002`) and rendering/sync/conflict (`GH-003`..`GH-005`). | GitHub adapter boundary, `.last-sync` format, gate opening on conflict. | No offline fallback; all auth/network failures fail loud. |
+| F: Stage 1-4 graph migration | `STG-001`, `STG-002`, `STG-003`, `STG-004`, `STG-005` | `STG-001` must lead; after schemas land, producer-node groups can split. | Stage graph transition ownership and producer prompt/orchestration boundary. | Keep prompts pure producers; orchestration stays in Python. |
+| G: Consumer and evidence polish | `DOG-001`, `GTS-001`, `GTS-002`, `DOC-001`, `DOC-002`, `DOC-003` | Parallel docs/examples work after relevant behaviour exists. | README/architecture cross-links and curated example policy. | Avoid documenting speculative behaviour ahead of code. |
+
 ### Phase 2: Stage-5 Check Runners
 
 Checks should land one runner at a time. Each runner must replace placeholder or permissive behaviour with structured findings and tests.
@@ -168,7 +190,7 @@ Read first:
 4. Any architecture, schema, or source file directly touched by the selected work item
 
 Goal:
-Continue the Woof implementation plan. Select the first Ready item from docs/implementation-plan.md unless an item is already In progress. Before editing, run git status --short --branch and use just --list to confirm project commands. Update the ledger when starting and completing the item. Keep code, schemas, tests, and docs aligned.
+Continue the Woof implementation plan from the Post-WF-002 Execution Workstreams section. If an item is already In progress, finish it; otherwise pick the first incomplete workstream by order and select an appropriately sized slice from that workstream. Before editing, run git status --short --branch and use just --list to confirm project commands. Update the ledger when starting and completing work. Keep code, schemas, tests, and docs aligned.
 
 Workflow:
 - Use just for project commands.
@@ -180,5 +202,5 @@ Workflow:
 - In the final response, paste this complete continuation prompt block so it can be copied into a new session.
 
 Start with:
-WF-003: Stabilise `woof wf --format json` output.
+Workstream A: Graph output and coverage (`WF-003`, then `WF-004`).
 ```

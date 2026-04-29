@@ -202,5 +202,5 @@ Workflow:
 - In the final response, paste this complete continuation prompt block so it can be copied into a new session.
 
 Start with:
-Workstream A: Graph output and coverage (`WF-003`, then `WF-004`).
+Workstream B: Core cheap checks (`CHK-001`, `CHK-002`, `CHK-003`, `CHK-005`, `CHK-007`). Start with `CHK-001` unless an item is already `In progress`.
 ```

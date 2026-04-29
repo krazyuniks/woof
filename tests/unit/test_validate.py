@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -288,11 +289,14 @@ def test_schema_override(tmp_path: Path, run_woof) -> None:
     assert "valid (prerequisites)" in proc.stdout
 
 
-def test_missing_ajv_fails_loud(run_woof) -> None:
+def test_missing_ajv_fails_loud(tmp_path: Path, run_woof) -> None:
     """Stripping ajv from PATH must produce a clear install hint, exit 2."""
+    uv_path = shutil.which("uv")
+    assert uv_path is not None
+    (tmp_path / "uv").symlink_to(uv_path)
+
     env = os.environ.copy()
-    # Keep uv on PATH (script shebang requires it) but drop the volta dir
-    env["PATH"] = ":".join(p for p in env["PATH"].split(":") if "/.volta/" not in p)
+    env["PATH"] = str(tmp_path)
     proc = run_woof("validate", str(REPO_ROOT / ".woof" / "prerequisites.toml"), env=env)
     assert proc.returncode == 2
     assert "ajv-cli not found" in proc.stderr

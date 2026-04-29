@@ -307,26 +307,26 @@ ID is the spine. Lose it and traceability collapses.
 
 Generic across languages — Stage 5 Check 2 is a regex grep, not a parse. Authors pick whichever fits the language idiom.
 
-**Marker regex precision.** Word-boundary anchored to prevent substring false-positives:
+**Marker regex precision.** Alphanumeric-boundary anchored to prevent substring false-positives while still allowing idiomatic separators such as `_O1` in test names:
 
 ```
-\bO\d+\b      # outcomes
-\bCD\d+\b     # contract decisions
+(?<![A-Za-z0-9])O\d+(?![A-Za-z0-9])      # outcomes
+(?<![A-Za-z0-9])CD\d+(?![A-Za-z0-9])     # contract decisions
 ```
 
 Codified per-language in `.woof/test-markers.toml`; consumers override per project idiom:
 
 ```toml
-[python]
+[languages.python]
 test_paths = ["tests/", "src/**/test_*.py"]
-marker_regex = '\bO\d+\b'
+marker_regex = '(?<![A-Za-z0-9])O\d+(?![A-Za-z0-9])'
 docstring_keyword = "outcomes:"
 comment_prefix = "#"
 context_lines = 3
 
-[typescript]
+[languages.typescript]
 test_paths = ["tests/", "src/**/*.test.ts"]
-marker_regex = '\bO\d+\b'
+marker_regex = '(?<![A-Za-z0-9])O\d+(?![A-Za-z0-9])'
 docstring_keyword = "outcomes:"
 comment_prefix = "//"
 context_lines = 3

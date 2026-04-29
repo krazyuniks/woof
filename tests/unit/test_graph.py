@@ -7,7 +7,7 @@ from pathlib import Path
 from woof.graph.manifest import build_story_manifest, verify_staged_manifest
 from woof.graph.runner import run_graph
 from woof.graph.state import NodeInput, NodeOutput, NodeStatus, NodeType, StorySpec
-from woof.graph.transitions import epic_dir, mark_story_status
+from woof.graph.transitions import epic_dir, mark_story_status, next_node
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WOOF_BIN = REPO_ROOT / "bin" / "woof"
@@ -46,6 +46,53 @@ def _run_woof(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
     )
+
+
+def _init_git_repo(root: Path) -> None:
+    subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=root, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=root, check=True)
+
+
+def _write_ready_commit_state(root: Path, epic_id: int = 1) -> Path:
+    directory = _write_plan(root, epic_id)
+    plan = json.loads((directory / "plan.json").read_text())
+    plan["stories"][0]["status"] = "done"
+    (directory / "plan.json").write_text(json.dumps(plan))
+    (directory / "dispatch.jsonl").write_text("{}\n")
+    (directory / "executor_result.json").write_text(
+        json.dumps(
+            {
+                "epic_id": epic_id,
+                "story_id": "S1",
+                "outcome": "staged_for_verification",
+                "commit_body": "done",
+                "position": None,
+            }
+        )
+    )
+    (directory / "check-result.json").write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "stage": 5,
+                "epic_id": epic_id,
+                "story_id": "S1",
+                "triggered_by": [],
+                "checks": [],
+            }
+        )
+    )
+    critique_dir = directory / "critique"
+    critique_dir.mkdir()
+    (critique_dir / "story-S1.md").write_text("---\nseverity: info\n---\n")
+    audit_dir = directory / "audit"
+    audit_dir.mkdir()
+    (audit_dir / "cod-critiquer-1.prompt").write_text("prompt")
+    src = root / "src"
+    src.mkdir()
+    (src / "app.py").write_text("print('O1')\n")
+    return directory
 
 
 def test_graph_runs_executor_then_critique_then_verification_then_commit(tmp_path: Path) -> None:
@@ -125,6 +172,60 @@ def test_graph_runs_executor_then_critique_then_verification_then_commit(tmp_pat
         NodeType.COMMIT,
     ]
     assert outputs[-1].status == NodeStatus.EPIC_COMPLETE
+
+
+def test_graph_resumes_interrupted_commit_transaction(tmp_path: Path) -> None:
+    _init_git_repo(tmp_path)
+    directory = _write_ready_commit_state(tmp_path, 1)
+    (directory / "epic.jsonl").write_text(
+        json.dumps({"event": "story_completed", "epic_id": 1, "story_id": "S1"}) + "\n"
+    )
+
+    assert next_node(tmp_path, 1) == (NodeType.COMMIT, "S1")
+
+    outputs = run_graph(tmp_path, 1)
+
+    assert outputs[0].node_type == NodeType.COMMIT
+    assert outputs[-1].status == NodeStatus.EPIC_COMPLETE
+    events = [json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines()]
+    assert [event["event"] for event in events].count("story_completed") == 1
+    assert [event["event"] for event in events].count("transaction_manifest_verified") == 1
+    assert not (directory / "executor_result.json").exists()
+    assert not (directory / "check-result.json").exists()
+    status = subprocess.run(
+        ["git", "status", "--porcelain=v1"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert status.stdout == ""
+
+
+def test_complete_epic_cleans_stale_transient_files(tmp_path: Path) -> None:
+    _init_git_repo(tmp_path)
+    directory = _write_ready_commit_state(tmp_path, 1)
+    subprocess.run(
+        [
+            "git",
+            "add",
+            "src/app.py",
+            ".woof/epics/E1/plan.json",
+            ".woof/epics/E1/epic.jsonl",
+            ".woof/epics/E1/dispatch.jsonl",
+            ".woof/epics/E1/critique/story-S1.md",
+            ".woof/epics/E1/audit/cod-critiquer-1.prompt",
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(["git", "commit", "-m", "seed"], cwd=tmp_path, check=True, capture_output=True)
+
+    outputs = run_graph(tmp_path, 1)
+
+    assert outputs[-1].status == NodeStatus.EPIC_COMPLETE
+    assert not (directory / "executor_result.json").exists()
+    assert not (directory / "check-result.json").exists()
 
 
 def test_wf_epic_reports_complete_epic_as_json(tmp_path: Path) -> None:

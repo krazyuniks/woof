@@ -16,7 +16,7 @@ from woof.graph.git import git, staged_paths
 from woof.graph.manifest import build_story_manifest, verify_staged_manifest
 from woof.graph.state import NodeInput, NodeOutput, NodeStatus, NodeType
 from woof.graph.transitions import (
-    append_epic_event,
+    append_epic_event_once,
     epic_dir,
     load_plan,
     mark_story_status,
@@ -271,7 +271,7 @@ def commit_node(inp: NodeInput) -> NodeOutput:
         )
 
     mark_story_status(inp.repo_root, inp.epic_id, inp.story_id, "done")
-    append_epic_event(
+    append_epic_event_once(
         inp.repo_root,
         inp.epic_id,
         {
@@ -280,6 +280,8 @@ def commit_node(inp: NodeInput) -> NodeOutput:
             "epic_id": inp.epic_id,
             "story_id": inp.story_id,
         },
+        event="story_completed",
+        story_id=inp.story_id,
     )
 
     git(inp.repo_root, "add", "--", *manifest.expected_paths)
@@ -309,7 +311,7 @@ def commit_node(inp: NodeInput) -> NodeOutput:
             message=position,
         )
 
-    append_epic_event(
+    append_epic_event_once(
         inp.repo_root,
         inp.epic_id,
         {
@@ -319,6 +321,8 @@ def commit_node(inp: NodeInput) -> NodeOutput:
             "story_id": inp.story_id,
             "manifest": manifest.model_dump(),
         },
+        event="transaction_manifest_verified",
+        story_id=inp.story_id,
     )
     git(inp.repo_root, "add", "--", f".woof/epics/E{inp.epic_id}/epic.jsonl")
 

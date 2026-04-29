@@ -426,6 +426,8 @@ Nine checks, derived from a failure-class taxonomy. Checks 1–8 run after the s
 6. `commit` computes the transaction manifest, stages the exact expected file set, verifies the index, appends graph events, commits, and removes transient `executor_result.json` / `check-result.json`.
 7. Existing `gate.md` halts at `human_review` until `woof wf --epic <N> --resolve <decision>` records the structured gate decision and removes the gate.
 
+If a process dies during the commit transition after the plan has been marked `done` but before the git commit exists, the next `woof wf --epic <N>` run reconstitutes the interrupted transaction from `executor_result.json`, `check-result.json`, the critique, and uncommitted manifest paths. It resumes the `commit` node without duplicating durable JSONL events, then removes transient result files after the transaction is committed or after a previously committed transaction is detected.
+
 **No auto-revision after `gate.md`.** First check is final within the block; revision authority lies with the human at Stage 6 (principle #2).
 
 **Atomic writes.** Every structured artefact (`plan.json`, `EPIC.md` front-matter, `critique/*.md`) is written via tmp-file + `mv`. Logs (`epic.jsonl`, `dispatch.jsonl`) are appended under an advisory file lock to prevent torn writes when the driver and the story subprocess race.

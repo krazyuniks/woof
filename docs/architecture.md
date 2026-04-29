@@ -1,31 +1,31 @@
 # Woof
 
-> **Purpose:** Active architecture spec for **Woof** — an inner-loop SDLC tool for AI-assisted development. Principles, architecture, open questions.
+> **Purpose:** Active architecture spec for **Woof** — an inner-loop SDLC tool for AI-assisted development. Principles, architecture, contracts, and operating model.
 > **Position:** Inner-loop counterpart to outer-loop / programme-level systems. Where outer-loop systems govern enterprise adoption across teams, providers, and lifecycle stages, Woof governs the developer's own AI-assisted work cycle: discovery → definition → breakdown → execution → gate, with schema-governed contracts and a JSONL audit trail per epic.
-> **Evidence base:** `Workflow-Research.md` (framework evaluation, E146 lessons, rejected axioms).
+> **Evidence base:** `docs/research.md`.
 > **Status:** Active. `guitar-tone-shootout` is Woof's first external consumer.
 > **Rule:** All design work lives here. No parallel design docs. `.woof/` is runtime-state only.
 
-> **ADR-001 update:** Stage-5 orchestration is now graph-owned Python (`woof wf --epic <N>`). Historical text below that describes `/wf` or `just wf-run` as the orchestrator is retained as design lineage; ADR-001 supersedes that topology for implementation.
+> **ADR-001:** Stage-5 orchestration is graph-owned Python (`woof wf --epic <N>`). LLM prompts are producer nodes only.
 
 ---
 
 ## 0. Current implementation boundary
 
-The extracted Woof repository currently implements the ADR-001 Stage-5 execution path:
+The Woof repository currently implements the ADR-001 Stage-5 execution path:
 
 - `woof wf --epic <N>` is the operator entry point for the deterministic Python graph.
 - Graph nodes dispatch the story executor, dispatch Codex critique, run Stage-5 verification, open gates, and commit through a transaction manifest.
 - `.claude/commands/wf*.md` are thin wrappers or producer-node prompts. They do not own successor selection, critique dispatch, gate writing, or commits.
-- Discovery, Definition, Breakdown, GitHub issue sync, and the full preflight/cartography lifecycle remain design targets unless their command implementation exists under `src/woof/cli/`.
+- Discovery, Definition, Breakdown, GitHub issue sync, and the full preflight/cartography lifecycle are implemented only where command code exists under `src/woof/cli/`; remaining work is tracked in `docs/backlog.md`.
 
 When this document conflicts with `docs/adr/001-orchestration-topology.md` or the current source under `src/woof/`, source and ADR-001 win.
 
 ## 1. Principles
 
-1. **Epic contract is law.** User-facing observable outcomes are canonical. Implementation may bridge repo conventions; it must never replace the epic contract. (E146 lesson — `Workflow-Research.md` §2.)
+1. **Epic contract is law.** User-facing observable outcomes are canonical. Implementation may bridge repo conventions; it must never replace the epic contract. (See `docs/research.md` §2.)
 2. **Gates are human conversations, opened with a Context block.** Validator or critic produces structured findings → agent surfaces each with its own position → user dialogue → convergence. No auto-revision loops, no binary approval menus, no silent self-fixes. Context block: working doc, source inputs, stage, last decision.
-3. **Evolutionary rebuild; Python where it serves.** Start from the old workflow's proven strengths (`Workflow-Research.md` §1). Remove the deadlocking agent loop. Add the missing capabilities from the evaluation. The "no Python" axiom is rejected — infrastructure is a tool, not an enemy.
+3. **Python owns orchestration where determinism matters.** The graph is code; LLMs and humans are typed nodes. Infrastructure is selected by contract fit, not by prompt convenience.
 4. **No silent degradation.** Required infrastructure must be present at invocation. Fail loud if missing; no fallbacks.
 5. **`.woof/` is runtime only.** Epic execution artefacts live at `.woof/epics/E<N>/`. System-design work does not live in `.woof/`.
 
@@ -121,7 +121,7 @@ timestamp: <ISO 8601>
 Two complementary advisory layers, both surfaced via conversational gates (principle #2):
 
 - **Structural validation** — deterministic checks against typed artefact schemas (JSON Schema). Fast, mechanical. Produces structured findings.
-- **Cross-AI critique** — multi-provider (Claude + Codex) per `Workflow-Research.md` §1 strength #3. Codex writes the critique document at `.woof/epics/E<N>/critique/<artefact>.md`. Claude reads and synthesises.
+- **Cross-AI critique** — multi-provider critique. Codex writes the critique document at `.woof/epics/E<N>/critique/<artefact>.md`. Claude reads and synthesises.
 
 Neither auto-rejects. Neither runs in a loop. Both produce findings the agent surfaces with its own position for the human to engage with.
 
@@ -141,11 +141,11 @@ JSONL event logs (`epic.jsonl`, `dispatch.jsonl`) enable crash-resume and post-h
 
 - Each `audit/codex-*.{prompt,output}` file is run through a redaction filter that strips known secret patterns (env-var values from `env.local.sh`, JWT tokens, OAuth bearer tokens, AWS keys, `.gts-auth.json` token blobs). The filter is conservative — false positives leave a `[REDACTED:<reason>]` marker; false negatives are an audit failure.
 - Per-file size cap (default 256 KB). Output exceeding the cap is truncated to the cap with a `... [truncated, full output at .woof/epics/E<N>/audit/raw/]` footer; the raw output stays in `.woof/epics/E<N>/audit/raw/` which is gitignored.
-- Retention: audit files older than the epic's close timestamp + 90 days are eligible for archival via `just wf-audit-archive <E<N>>` which moves them to a separate archive path (post-MVP recipe).
+- Retention: audit files older than the epic's close timestamp + 90 days are eligible for archival via the configured archive command.
 
-**Token usage logging.** Every subprocess return event (`subprocess_returned`) includes `tokens_in`, `tokens_out`, `cache_read_tokens`, `cache_write_tokens`, `duration_ms`, and `artefacts_loaded[]` (paths read into the prompt). In-session work logs `token_usage` events at stage transitions. This is the data source for any future token-budget analysis (#171); woof captures it from day one even though the dashboard is post-MVP.
+**Token usage logging.** Every subprocess return event (`subprocess_returned`) includes `tokens_in`, `tokens_out`, `cache_read_tokens`, `cache_write_tokens`, `duration_ms`, and `artefacts_loaded[]` (paths read into the prompt). In-session work logs `token_usage` events at stage transitions.
 
-**Dispatch adapter layer.** Subprocesses are spawned via `woof dispatch <claude|codex> --role <role-name>`, not via direct calls to `cld`/`cod`. The adapter reads `.woof/agents.toml`, constructs the wrapper invocation, and emits dispatch events. This boundary stops `cld`/`cod` interface drift from breaking woof and makes the eventual standalone extraction (when woof leaves the GTS bootstrap) a matter of swapping the adapter's underlying implementation, not rewriting call sites.
+**Dispatch adapter layer.** Subprocesses are spawned via `woof dispatch <claude|codex> --role <role-name>`, not via direct calls to `cld`/`cod`. The adapter reads `.woof/agents.toml`, constructs the wrapper invocation, and emits dispatch events. This boundary stops wrapper interface drift from breaking Woof call sites.
 
 ### GitHub integration
 
@@ -173,12 +173,12 @@ All gh invocations pass `--repo <scope>` explicitly (consumer's project rule).
 
 | Event | Direction | Action |
 |---|---|---|
-| `/wf E<N>` with no local dir | gh → fs | Fetch issue body; bootstrap `.woof/epics/E<N>/`; seed `spark.md` (title + prose); seed `EPIC.md` front-matter from structured sections if present |
-| `/wf new "<spark>"` | fs → gh → fs | `gh issue create` with stub body; capture returned number `<N>`; mkdir `.woof/epics/E<N>/`; write `spark.md`; set `.woof/.current-epic = E<N>` |
+| `woof wf --epic <N>` with no local dir | gh → fs | Fetch issue body; initialise `.woof/epics/E<N>/`; seed `spark.md` (title + prose); seed `EPIC.md` front-matter from structured sections if present |
+| `woof wf new "<spark>"` | fs → gh → fs | `gh issue create` with stub body; capture returned number `<N>`; mkdir `.woof/epics/E<N>/`; write `spark.md`; set `.woof/.current-epic = E<N>` |
 | Definition close (`EPIC.md` schema-valid) | fs → gh | Render `EPIC.md` front-matter to markdown per schema below; overwrite issue body |
 | Plan gate approved | fs → gh | Append "Plan summary" section listing story IDs + titles; update body |
 | Epic complete (all stories `done`) | fs → gh | Append closing summary; `gh issue close` |
-| `/wf E<N>` where neither local nor gh has it | — | Fail loud: "E<N> not found. Use `/wf new \"<spark>\"` to start a new epic — gh assigns the issue number." |
+| `woof wf --epic <N>` where neither local nor gh has it | — | Fail loud: "E<N> not found. Use `woof wf new \"<spark>\"` to start a new epic — gh assigns the issue number." |
 
 **Push policy.** Local is authoritative on push, but push is conflict-detected. Each successful push records the gh issue's `updatedAt` timestamp and the SHA-256 of the rendered body in `.woof/epics/E<N>/.last-sync`. Before the next push, `gh api /repos/.../issues/<N>` is fetched: if the remote `updatedAt` differs from the recorded value, woof opens a `gate.md` with `triggered_by: ["github_sync_conflict"]` containing a three-way diff (last-pushed body, current remote body, current local render). Resolution is via gate conversation: keep local, accept remote, or hand-merge. No silent overwrite. Worktree-level handover convention still holds: an epic is active in exactly one worktree at a time; `.last-sync` is per-worktree.
 
@@ -434,76 +434,21 @@ Nine checks, derived from a failure-class taxonomy. Checks 1–8 run after the s
 
 **Story commit transaction model.** Code changes and `.woof` state updates ship in one commit. This makes audit reconstruction trivial (one commit per story), keeps `git status` clean between stories, and avoids the failure mode where code commits succeed but metadata writes fail. The cost is that `git diff` for a story commit shows a mixture of code and workflow files; tooling that reads the diff must filter `.woof/` paths if it only wants code changes.
 
-### Autonomous driver lifecycle
+### Graph execution lifecycle
 
-ADR-001 supersedes the historical Bash-loop driver. The implemented driver is the Python graph behind `woof wf --epic <N>`. Historical lifecycle notes below are retained as design lineage where they describe failure modes still relevant to the graph implementation.
+`woof wf --epic <N>` is the Stage-5 graph entry point. The graph owns story selection, dispatch, verification, gate opening, gate resolution, and commit transactions.
 
-**Story selection.** Read `plan.json`; pick first `status: pending` story whose `depends_on[]` are all `status: done`. Tie-break on `id` ascending (deterministic, replayable). Mark `status: in_progress` before dispatch; on subprocess success the inner skill sets `done`; on failure see crash recovery below.
+**Story selection.** The graph reads `plan.json`, selects the first dependency-ready `pending` story, and marks it `in_progress` before executor dispatch. Selection is deterministic: dependency readiness first, then story ID order.
 
-**Subprocess dispatch.** Driver constructs invocation per `agents.toml.roles.story-executor`; example:
+**Dispatch.** The graph invokes producer nodes through `woof dispatch <claude|codex> --role <role-name>`. Producers receive structured input, write declared output artefacts, and do not choose successor nodes.
 
-```bash
-timeout "${timeout_min}m" \
-  cld -p "<bootstrap-prompt>" -- --model "${model}" \
-  > >(tee -a "${log}") \
-  2> >(tee -a "${log}" >&2)
-child_pid=$!
-```
+**Timeouts and crashes.** Role timeouts are configured in `.woof/agents.toml`. Timeout, non-zero subprocess exit, missing declared output, or malformed output opens a gate with a structured trigger and evidence. There is no automatic retry.
 
-Bootstrap prompt is minimal (~200 tokens):
+**Re-entry.** On every invocation, the graph reconstitutes state from the filesystem. Existing gates halt at `human_review`. Incomplete `in_progress` work opens a gate or requires an explicit structured reset decision; it is never silently re-executed.
 
-```
-You are executing story S<k> in epic E<N>.
-Read in order:
-  1. .woof/.current-epic (verify E<N>)
-  2. .woof/epics/E<N>/plan.json (find S<k>)
-  3. .woof/epics/E<N>/EPIC.md (front-matter for outcomes / contract decisions)
-  4. CLAUDE.md / AGENTS.md (project conventions)
-Then invoke /wf:execute-story.
-```
+**Streaming.** Human-facing stdout uses structured event lines. Durable state is recorded in `epic.jsonl` and `dispatch.jsonl`; stdout is visibility only.
 
-The Stage 5 inner sequence playbook lives in the `/wf:execute-story` skill body, not in the dispatch prompt.
-
-**Subprocess timeouts.** `agents.toml.roles.<role>.timeout` (default 30 min). Driver wraps with `timeout` command. Fire → kill subprocess → write `gate.md` with `triggered_by: ["timeout"]`.
-
-**Subprocess crash (non-zero exit).** No retry — per principle #2 ("no auto-revision"). Driver reverts story `status: in_progress` → `pending`, writes `gate.md` with `triggered_by: ["subprocess_crash"]` and exit code in front-matter, exits.
-
-**SIGINT propagation.** Driver traps SIGINT/SIGTERM, sends INT to child, waits for clean exit, records the interruption to `dispatch.jsonl`, exits 130. Without explicit propagation, Bash kills the loop while orphaning the child subprocess.
-
-**Driver-loop exit detection.** Three terminal states distinguished by filesystem:
-
-| Exit | Signal | Parent `/wf` action |
-|---|---|---|
-| `gate.md` exists | Halt | Stage 6 conversation |
-| All stories `status: done` | Success | Push gh "epic complete", `gh issue close`, celebrate |
-| Story `status: in_progress` + no gate | Driver crashed | See "Re-entry from in_progress" below |
-
-**Re-entry from `in_progress`.** State after driver crash: plan.json story marked `in_progress`, possibly dirty git tree, possibly half-staged files, possibly partial `critique/story-S<k>.md`. `/wf` reconstitution detects this and prompts the human:
-
-> S<k> was in progress when the driver exited. Discard work and reset to `pending`, or open a story_gate to review the partial state?
-
-On reset: `git restore --staged <files>; git checkout -- <files>`; revert plan.json status; clear partial critique. On gate: synthesise `gate.md` with `triggered_by: ["incomplete_subprocess"]` and the partial-state inventory, drive Stage 6.
-
-No automatic re-execution.
-
-**Driver streaming UX.** One structured line per story event to stdout, surfaced into the parent `/wf` conversation as Bash tool result:
-
-```
-[wf-run E17] S3: starting (cld claude-sonnet-4-6, no MCPs, timeout 30m)
-[wf-run E17] S3: done in 4m12s (commit abc1234)
-[wf-run E17] S4: starting
-[wf-run E17] S4: gate fired (triggered_by: scope_violation, critique_blocker) — driver halted
-```
-
-Durable record is `dispatch.jsonl`; stdout summary is for human visibility only.
-
-**Concurrency lockfile.** Mandatory at `.woof/epics/E<N>/.wf.lock`. Format:
-
-```json
-{"pid": 12345, "invoker": "wf-run", "started_at": "2026-04-25T14:32:11Z", "host": "<hostname>"}
-```
-
-Written on entry; checked on entry. If present and PID alive → fail loud ("Another woof process holds the lock; PID 12345 since 14:32. Wait or kill it."). PID not alive → stale; auto-cleanup with warning. Released on clean exit. Both `/wf` and `just wf-run` honour the lockfile.
+**Concurrency lockfile.** The graph uses `.woof/epics/E<N>/.wf.lock` to prevent concurrent mutation of one epic. Live locks fail loud. Stale locks are removed with an audit event.
 
 **Post-commit hook installation.** Explicit and idempotent. `just wf-preflight install-hook` appends a fenced block to `.git/hooks/post-commit`:
 
@@ -519,7 +464,7 @@ Re-running detects the fenced block and skips. User-owned hook content above and
 
 ### Codebase mapping
 
-Cartography that serves outside-Claude consumers (deterministic gate checks, Codex critique, fresh sessions bootstrapping fast). Inside-Claude semantic queries are handled by Claude Code's native LSP — no on-disk caching of LSP results.
+Cartography that serves outside-Claude consumers: deterministic gate checks, Codex critique, and fresh-session context. Inside-Claude semantic queries are handled by Claude Code's native LSP — no on-disk caching of LSP results.
 
 **Stack:**
 
@@ -566,7 +511,7 @@ Cartography that serves outside-Claude consumers (deterministic gate checks, Cod
 
 `ajv-cli` ≠ `jq` — they solve different problems (validation vs. extraction). Use both, not interchangeably.
 
-JSON Schema files from the deleted `workflow/schemas/` (git history, commit `38bac9d9^`) are reusable language-agnostically. Python modules from the deleted `workflow/` tree are *not* assumed to be resurrected.
+JSON Schema is the canonical contract format. Runtime implementations may use Pydantic, zod, or shell helpers, but those implementations do not replace the schema contract.
 
 **Standalone, opinionated, portable.** Woof assumes `just`, Docker, GitHub, worktrees, and the `.woof/` convention. Does *not* assume an existing project — Stages 1–2 support blank-project starts. `guitar-tone-shootout` is Woof's first external consumer.
 
@@ -694,7 +639,7 @@ Re-run `woof preflight` after installing.
 
 Both cache files are gitignored.
 
-**Schema versioning.** Schemas are tool-level (`woof/schemas/*.schema.json`). Each artefact (`plan.json`, `gate.md`, `critique/*.md`) carries a `schema_version` field in front-matter. Validation chooses the schema by version; tool ships with current schema set plus prior versions for migration. Migration tooling (`just wf-migrate-schemas E<N> v1 v2`) is post-MVP.
+**Schema versioning.** Schemas are tool-level (`schemas/*.schema.json`). Artefacts do not carry `schema_version`. The repository ships a single current schema set; breaking contract changes require explicit artefact migration in the same change that updates the schema.
 
 **`.woof/` commit policy.**
 
@@ -722,7 +667,7 @@ Required `.gitignore` entries (consumer adds at first setup):
 
 **Cross-worktree epic activity.** An epic is active in exactly one worktree at a time. `.woof/` is per-worktree by convention; cross-worktree handover happens via gh issue (the canonical contract), not by copying `.woof/`. No mechanical enforcement; document-level rule.
 
-**Config bootstrapping.** `just wf-preflight` on first run, with no `.woof/prerequisites.toml` present, emits a template with `<replace>` placeholders and exits non-zero. Subsequent configs (`agents.toml`, `test-markers.toml`) use built-in defaults if absent — opt-in customisation, not required.
+**Config initialisation.** Preflight with no `.woof/prerequisites.toml` emits a template with `<replace>` placeholders and exits non-zero. Subsequent configs (`agents.toml`, `test-markers.toml`) use built-in defaults if absent — opt-in customisation, not required.
 
 ### Agent role configuration
 
@@ -791,145 +736,31 @@ The `--` separator hands subsequent flags to the underlying CLI; the wrapper con
 - `cod` runs `agent-sync --quiet` first, mirroring CC skills/rules/commands into `~/.codex/` so woof's playbooks are visible to Codex on every invocation
 - Both wrappers pass `--dangerously-skip-permissions` (CC) / `-s danger-full-access -a never` (Codex) automatically — fits trusted-automation context for Stage 5
 
-**Hard prereq.** `cld`, `cod`, `agent-sync` must be in `PATH`. `just wf-preflight` verifies. Absent → fail loud (no fallback to raw `claude`/`codex` invocations). Standalone-extraction post-dogfood: woof vendors simplified copies of the wrappers under its own `scripts/`.
+**Hard prereq.** `cld`, `cod`, `agent-sync` must be in `PATH`. Preflight verifies them. Absent → fail loud; there is no fallback to raw `claude`/`codex` invocations.
 
-**Implementation uncertainties to verify at MVP start:**
+**Implementation constraints:**
 
-- Whether `cld -p` paired with `--output-format stream-json` exposes the CC session UUID in a parsable form (needed for audit linkage; see Storage section).
-- Whether Codex CLI 0.121.0 supports an `--effort` flag, or whether effort must be embedded in the prompt body. Either way, `flags = ["..."]` in `agents.toml` carries it.
+- Dispatch must record a stable harness session reference or an audit-file path for every subprocess.
+- Role-specific model and effort settings must be declared through `.woof/agents.toml`; command-specific flag details stay inside the dispatch adapter.
 
 ### User surface
 
-Three commands total. The skill drives all sequencing conversationally; the user remembers nothing beyond the entry point.
+The CLI is the operator surface. Prompt wrappers may call these commands, but they are not authoritative orchestration surfaces.
 
 | Surface | Use |
 |---|---|
-| `/wf` | Single slash command. Reads `.woof/epics/E<N>/` state, drives conversation for whatever stage is next — Discovery sub-phases, Definition, Breakdown, gate review, status. |
-| `just wf-run` | Autonomous driver for Stage 5. Shell loop that spawns fresh `claude -p` per story until a `gate.md` appears. |
-| `just wf-preflight` | Hard-gate infrastructure check (per "Infrastructure prerequisites" above). Run once at setup. |
+| `woof wf --epic <N>` | Run the deterministic graph for the current epic. |
+| `woof wf --epic <N> --resolve <decision>` | Resolve an open gate with a structured decision. |
+| `woof validate ...` | Validate JSON, TOML, JSONL, and front-matter artefacts against shipped schemas. |
+| `woof check stage-5 --epic <N> --story <S<k>>` | Run Stage-5 checks and emit structured results. |
+| `woof dispatch <claude|codex> --role <role-name>` | Invoke configured producer subprocesses and record dispatch events. |
+| `woof render-epic` | Render `EPIC.md` structured front-matter to a managed GitHub issue body. |
+| `woof gate write` | Write a structured gate artefact. |
 
-**No flag-soup, no menus.** Discovery sub-phases (`research`, `brainstorm`, `synthesise`) live inside `/wf`'s conversation, not on the command line. The skill suggests a next move based on current `.woof/` state; the user redirects with a word; it proceeds. Single questions, never multiple-choice prompts.
-
-**Single CC session throughout.** The user stays in Claude Code:
-
-1. **Stages 1–4** (Discovery → Definition → Breakdown → Plan gate): all inside `/wf` conversation. No shell switch.
-2. **Stage 5 autonomous execution:** `/wf` shells out via Bash to the driver loop. Each story spawns a fresh `claude -p` subprocess so the parent session's context doesn't blow up; the parent waits on Bash with zero token consumption.
-3. **Stage 6 gate firing mid-execution:** Bash loop exits → `/wf` returns control with the gate conversation, in the same session.
-4. **Gate resolution → loop resumes** automatically.
-
-`Ctrl-Z` is never needed. The only reason to use a separate terminal is if the user explicitly wants to detach the Stage-5 driver into a `tmux`/screen pane and walk away — optional, not required.
+`just` recipes in this repository are development conveniences. Consumer projects may wrap the CLI, but the graph remains the source of truth.
 
 ---
 
-## 3. Open Questions
+## 3. Roadmap
 
-All major architectural questions resolved (see Resolved). No residual design questions.
-
-### Implementation tasks (not architectural)
-
-**Done:**
-
-- [x] **Path rename** — `workflow/`→`woof/`, `.workflow/`+`.planning/`→`.woof/`, `<woof>/`→`woof/`. Wiki commit `503585a` (2026-04-25).
-- [x] **JSON Schemas** — 11 schema files at `woof/schemas/`: `plan`, `gate`, `critique`, `jsonl-events`, `epic`, `prerequisites`, `agents`, `test-markers`, `language-registry`, `quality-gates`, `docs-paths`. Single-version (no `schema_version` field). Cross-artefact invariants deferred to Stage-5 helpers.
-- [x] **Spec rewrite per cod_report (2026-04-25)** — contract refs (openapi/pydantic/json_schema), story scope as glob list, contract-decision split (implements vs uses), GitHub conflict detection, story commit transaction, periodic review valve, gate decision taxonomy, audit redaction, token logging, dispatch adapter layer.
-- [x] **Stage-5 graph entry point** — `woof wf --epic <N>` runs the ADR-001 deterministic graph for story execution, critique, verification, gates, and commit transactions.
-- [x] **Dispatch adapter** — `woof dispatch <claude|codex> --role <role-name>` reads `.woof/agents.toml`, invokes the declared wrapper, and records dispatch events.
-- [x] **Schema validation command** — `woof validate` validates JSON, TOML, JSONL, and front-matter artefacts against the shipped schemas.
-- [x] **GitHub issue renderer** — `woof render-epic` renders `EPIC.md` structured front-matter to a managed GitHub issue body and supports conflict-detected sync.
-- [x] **Producer prompts** — `.claude/commands/wf*.md` are reduced to thin wrappers / pure producer-node prompts.
-- [x] **Acknowledgements file** — root `ACKNOWLEDGEMENTS.md` records lineage and future third-party prompt attribution requirements.
-
-**Pending:**
-
-- [ ] **E146 contract-fidelity fixture** — first dogfood test: epic spec says `POST /api/v1/comments` with `body`; repo convention is different. Plan that substitutes the repo convention must fail Stage 5 Check 4. Single most important regression test.
-- [ ] Replace bootstrap-tolerant placeholder runners for Stage-5 Checks 1-5 and 7-9 with full implementations.
-- [ ] Promote Stage-3 planning into the Python graph.
-- [ ] Promote Discovery and Definition into the Python graph.
-- [ ] Author `woof/languages/{python,typescript,rust,go}.toml` registry entries.
-- [ ] Port taches-derived Discovery playbooks into `skills/wf/playbooks/{think,research}/*.md` (copy-with-attribution; wrap with preconditions + persist sections).
-- [ ] Write the post-commit cartography hook.
-- [ ] Dogfood: bootstrap woof's own first epic using these designs (the dogfood epic IS the workflow tool itself, post-extraction-prep).
-
-### Backlog (post-MVP)
-
-- **Log-analysis tooling.** Token accounting per stage/role (prompt + completion separately; cache-read vs cache-write). Turn-count distribution per stage. Playbook utilisation (which thinking/research models actually get invoked). Re-dispatch frequency. Gate-cycle wall-clock (open → resolve, agent thinking time vs human dwell). Model/effort A/B comparisons (does Opus-max planning yield fewer story-gate failures than Sonnet-medium?).
-- **KB-search integration.** Personal Obsidian-based deep-search system at `~/Work/obsidian-personal/docs/` (under development). When ready, a new `research-search` role in `agents.toml` lets `playbooks/research/*.md` dispatch queries to it for grounded research instead of conversational synthesis.
-- **Standalone extraction vendor step.** When woof splits into its own repo, vendor simplified copies of `cld`/`cod` under `scripts/` so the tool stops depending on user dotfiles. Maintain interface compatibility with the user's wrappers so consumers using either work transparently.
-- **Effort-flag CLI migration.** When `claude` / `codex` CLIs expose `--effort` (or equivalent) directly, deprecate the prompt-prefix workaround and switch `agents.toml.flags` to use the flag form.
-- **GSD decision-categorisation enrichment.** Extend `EPIC.md.open_questions[]` schema with `resolution: locked | deferred | discretion` field if Definition-stage ambiguity surfaces during dogfood.
-- **AST-based scope verification.** Tree-sitter currently handles syntactic checks at Stage 5 Check 4. Upgrade to per-language AST tooling only if RAG-style code-embedding chunking is added to Codebase mapping.
-
-### Resolved (2026-04-18 → 2026-04-19)
-
-- **Stage model** — six stages + autonomous driver; Option-C-intent-inside-Option-B-boundary for Stages 1–2.
-- **Discovery/Definition seam** — direction vs surface; confirmed via CRDT/OT, OAuth, pgmq worked examples.
-- **Brainstorming boundary** (previously OQ2) — absorbed into Discovery Stage 1 `discovery/thinking/` sub-folder; thinking-model skills (taches-style) invoked as needed.
-- **Python resurrection commitment** — rejected; skill-first with per-helper language decisions; JSON Schemas reused language-agnostically.
-- **Per-stage typed contracts** — adopted. JSON Schema as canonical contract format; `ajv-cli` for structural validation; small helpers for cross-artefact invariants (language per-helper). Pydantic / zod / equivalents are implementations of a contract, not alternatives.
-- **Stage 5 deterministic gate checks** — eight checks derived from a failure-class taxonomy (build/test, spec coverage, scope, contract fidelity, plan integrity, critique blocker, completion, docs drift). All run against staged-but-uncommitted state; failures collate into `gate.md.triggered_by[]`; no auto-revision.
-- **Observable Outcomes contract** — `O<n>` sequential IDs; lean schema (`statement`, prose `evidence[]`, `verification`); `contract_decisions[]` separate with `CD<n>` IDs (E146 invariant: `resolution ∈ {epic, bridge}`, no `repo`); test→outcome marker convention (3 forms accepted); ID is the traceability spine across Discovery → Definition → Breakdown → tests.
-- **Stage 3 Breakdown prompt philosophy** — outcome-driven granularity (1–3 outcomes per story); exhaustive non-overlapping scope; explicit deps; one-to-one contract-decision ownership; no implementation pseudocode; test surface estimated not enumerated; ~30–40k token story heuristic; self-validation before Codex (≤2 internal iterations).
-- **Plan-gate vs story-gate asymmetry** — plan gate always opens (Class-2 prevention); story gate conditional (autonomy enabler).
-- **Codebase mapping** — cartography stack on disk (ctags + tree.txt + summary.md + freshness.json); Tree-sitter on-demand for structural queries; Claude Code native LSP for in-session semantic depth (no on-disk caching); post-commit hook refreshes static artefacts; AST deferred until RAG layer (if ever); Codex critique covers semantic 5% gap.
-- **Infrastructure prerequisites (hard-gated)** — two-tier config (project declares languages, tool registry declares install commands + gotchas); preflight runs at every invocation, fails loud with inline install instructions; preflight output IS the per-language documentation; floor-with-latest-preferred version policy.
-- **User surface** — three commands total: `/wf` (single conversational entry, drives all stages and gates from `.woof/` state), `just wf-run` (autonomous Stage-5 driver), `just wf-preflight` (one-time infra check). No flag-soup, no menus; sub-phases sequenced inside `/wf` conversation. Single CC session throughout; autonomous loop runs as Bash subprocess that doesn't consume parent context. `Ctrl-Z` never needed; `tmux` detach optional.
-- **`/wf` multi-epic re-entry** — per-worktree `.woof/` scope; `/wf` enumerates `.woof/epics/E*/` on invocation, classifies each by filesystem signature, priority-orders (open gate > mid-execution > approved-pending-execution > mid-plan > mid-definition > mid-discovery > spark > complete), auto-selects highest-priority epic with mtime tie-break, announces full active set to user. `.woof/.current-epic` marker is an optimisation, not authority; filesystem state is canonical. `/wf E<N>` explicit override; `/wf new "<spark>"` creates a new epic.
-- **Discovery as brainstorm meta-stage; playbooks pattern** — Stage 1 Discovery is a single conversational meta-stage; thinking/research/brainstorm are sub-phases invoked inside `/wf`'s conversation, not separately-registered skills. Content lives as on-demand playbook files under `skills/wf/playbooks/{think,research,brainstorm}/*.md` that `/wf` reads via Read tool when the conversation calls for them. Keeps the Skill tool autocomplete uncluttered (one `/wf` entry only; `/wf:execute-story` is the sole sibling skill, used only by the Stage 5 subprocess). Discovery playbooks authored from taches-derived prose (12 thinking + 8 research) copied with blanket MIT attribution in `ACKNOWLEDGEMENTS.md`; output captured by `/wf` and written to `.woof/epics/E<N>/discovery/<subphase>/<model>-<topic-slug>.md`. Topic-slug filenames; overwrite on same-topic re-application. Superpowers-inspired convergence-gate language embedded directly in `/wf` prompt (not a separate playbook). GSD decision-categorisation deferred post-v1 as a schema enrichment on `EPIC.md.open_questions[]` if Definition ambiguity proves painful in dogfood.
-- **GitHub integration** — gh issue owns the epic-level contract (intent prose, `observable_outcomes[]`, `contract_decisions[]`, `acceptance_criteria[]`); filesystem owns runtime (everything else). Unified IDs (`E<N>` ≡ gh issue `#<N>`; no local-only epics; gh assigns numbers). Always-online; `gh` + repo access verified on every `/wf` invocation, not only at `just wf-preflight`. Local is authoritative on push; issue body overwritten wholesale via deterministic markdown render from `EPIC.md` front-matter; free-form prose above `## Observable Outcomes` preserved. No conflict detection (operator responsibility). Sync points: pull at `/wf E<N>` cold-start, push at Definition close, plan-gate approval (append), epic complete (append + close issue).
-- **Default-supported languages** — `python | typescript | rust | go`. Each has a `woof/languages/<lang>.toml` shipped with woof (LSP binary + install, plugin + install, Tree-sitter grammar + verify snippet/scope, gotchas). Consumer's `.woof/prerequisites.toml` declares a subset. `just wf-preflight` verifies: binary in PATH, version floor, Tree-sitter grammar parses verify_snippet, LSP plugin present.
-- **Token discipline & session hygiene** — `/wf` reconstitutes state from filesystem on every invocation; reads only the artefacts the current stage requires (not cascades). Playbooks load progressively during Discovery only. Natural `/clear` boundaries at stage transitions (Discovery → Definition most important). Stage 5 subprocess (`claude -p`) is auto-isolated; parent session's context is irrelevant. No `/clear` needed mid-stage — only at stage boundaries.
-- **Agent role configuration** — `.woof/agents.toml` declares dispatch wrappers (`cld` for Claude, `cod` for Codex), models, MCP sets, and effort flags per role (orchestrator / planner / story-executor / critiquer / gate-resolver). Woof builds invocations dynamically; no hard-coded model IDs or shell aliases. MVP defaults if absent: in-session planner, `cld -p` for story executor, `cod` for critiquer, all with empty MCP set (token-saving). `cld`/`cod`/`agent-sync` are hard prereqs in `PATH`. `cod`'s preamble injects project rules + auto-memory into Codex prompts automatically, so critiques see project context without coordination.
-- **Audit-trail reconstruction** — dispatch logs (`dispatch.jsonl`) record CC session UUIDs and Codex audit-file paths; CC transcripts referenced in-place at `~/.claude/projects/<slug>/<uuid>.jsonl`; Codex output tee'd to `.woof/epics/E<N>/audit/codex-*.{prompt,output,meta}` because Codex CLI lacks standard persistence. `just wf-audit-bundle` archives referenced CC transcripts on demand.
-- **Autonomous driver lifecycle** — `just wf-run` is a Bash loop with mandatory plumbing: per-role `timeout` (default 30 min) → `gate.md` on fire; non-zero subprocess exit → revert `in_progress`→`pending` + `gate.md` (no retry); SIGINT propagation to child + clean exit; driver-exit detection distinguishes gate / all-done / crash by filesystem state; `/wf` re-entry from `in_progress`+no-gate prompts human (reset or review-gate, never auto-re-execute); structured stdout streaming surfaces story events to parent conversation; mandatory lockfile at `.woof/epics/E<N>/.wf.lock` (PID-aware stale detection); explicit idempotent post-commit hook install via `just wf-preflight install-hook` (fenced block preserves user content); cartography runtime artefacts (`tags`, `tree.txt`, `freshness.json`) gitignored; `summary.md` committed. Atomic plan.json writes via tmp+mv. Empty-diff stories complete via `empty_diff: true` flag without a commit.
-- **Traceability spine maintenance** — outcome and CD IDs are append-only post-Definition; ID removal requires explicit deprecation via gate revision; `/wf` lists every reference (plan.json `satisfies[]` + test markers) on EPIC.md edits affecting IDs. Plan-level: pre-commit stories freely revisable, post-commit stories immutable (new work → new stories). Marker regex word-boundary anchored (`\bO\d+\b`); per-language config in `.woof/test-markers.toml`. No cross-epic ID linkage; surface-string queries cover cross-epic traceability. Codex critique semantically verifies each marker's test asserts the named outcome (covers regex-blind cases as `severity: minor`).
-- **Operational discipline** — preflight two-tier cached (floor 24h via prereq-hash, runtime 5min for gh/codex auth); subprocesses inherit parent runtime cache. Schemas tool-level (single version, no `schema_version` field in artefacts — see 2026-04-25 entry). `.woof/` commit policy: durable narrative+audit committed, runtime/lock/sync/cartography-runtime gitignored. Cross-worktree handover via gh issue only (epics active in exactly one worktree at a time). Bootstrap: prerequisites.toml template emitted on first preflight; agents.toml + test-markers.toml use built-in defaults.
-- **Tool name** — **woof** (Workflow Orchestrator Flow). Slash command `/wf`, just recipes `wf-run` / `wf-preflight`. Repo creation deferred as a separate extraction exercise after first dogfood run.
-
-### Resolved (2026-04-25 — post-cod_report rewrite)
-
-- **Contract decisions reference standard contract artefacts.** Replaces the earlier `epic_contract: string` / `repo_convention` / `resolution: epic|bridge` / `bridge` model. Each CD now declares one of `openapi_ref`, `pydantic_ref`, or `json_schema_ref` pointing at the project's existing contract artefact. Stage 5 Check 4 delegates verification to that artefact's native tooling (schemathesis, Pydantic, ajv-cli) rather than reinventing surface-grep. CDs that don't fit any of those three artefact types should be expressed as `acceptance_criteria` prose instead. The E146 invariant becomes "the implementation conforms to the referenced contract artefact"; "bridges" (parallel canonical + legacy routes) are encoded by declaring both paths in the OpenAPI doc.
-- **Plan story scope = git-pathspec globs.** `scope.{create,modify}` collapsed into a single `paths[]` array of glob patterns. Stage 5 Check 3 verifies the diff's touched files are subset of the declared globs. Drops the create/modify split (the planner doesn't always know which path will be created vs modified; git tells you at diff time anyway).
-- **Plan stories split contract-decision ownership from consumption.** Each story declares `implements_contract_decisions[]` (one-to-one ownership: the surface creator) and `uses_contract_decisions[]` (consumers; any number). Stage 5 Check 5 helper validates that every CD in `EPIC.md.contract_decisions[]` is implemented by exactly one story.
-- **Story commit transaction.** Code changes and `.woof` state updates ship in one commit per story. Stage 5 stages `story.paths[]` plus `.woof/epics/E<N>/{plan.json, critique/story-S<k>.md, epic.jsonl}` as one transaction; atomic for audit reconstruction and crash recovery.
-- **GitHub conflict detection.** Pre-push, woof fetches the gh issue's `updatedAt`; if it differs from `.last-sync`, opens `gate.md` with `triggered_by: ["github_sync_conflict"]` and a three-way diff. Replaces the earlier "blind overwrite, operator responsibility" rule.
-- **Periodic review valve (Stage 5 Check 9).** Conditional story-gate asymmetry preserved, but a new periodic-review valve opens a `review_gate` every N completed stories (configurable, default 5) AND once before epic close. Surfaces accumulated `severity: minor` critique findings before they compound into architectural rot. Replaces "story gates only fire on blockers".
-- **Empty-diff stories open a gate during dogfood.** Empty-diff completion is no longer auto-success; until empirical confidence is established, an empty diff opens a `story_gate` with `triggered_by: ["empty_diff_review"]` for operator confirmation that the outcome was actually realised.
-- **Gate decision taxonomy.** `gate_resolved` and `*_gate_resolved` events carry a structured `decision` field with enum values: `approve`, `revise_epic_contract`, `revise_plan`, `revise_story_scope`, `split_story`, `abandon_story`, `abandon_epic`. Replaces free-form `reason` prose, which becomes audit context only.
-- **Stage 5 Check 4 operates on repo HEAD + staged.** Surface presence is verified against the full repo state at story-end, not just the diff. A surface created by S1 and committed earlier is still present in HEAD when S3 runs.
-- **Test-markers config restructured.** `.woof/test-markers.toml` now nests language blocks under a top-level `languages:` map (was patternProperties at root, which collided with future top-level keys). Schema fix.
-- **In-session-only roles enforced in schema.** `agents.toml` schema constrains `orchestrator` and `gate-resolver` to `harness: in-session`. The other three roles (planner, story-executor, critiquer) accept `cld` / `cod` / `in-session`.
-- **`agent-sync` is a required wrapper prereq.** Aligned with prose. `prerequisites.schema.json` `wrappers` block requires all three of `cld`, `cod`, `agent-sync`.
-- **Trigger names align with schema enum.** All `triggered_by[]` values in driver UX, prose, and examples use the `check_<n>_<class>` form matching `gate.schema.json` (e.g., `check_3_scope`, not `scope_violation`).
-- **Stale `truth.id` term removed.** All references replaced with `outcome_id` to match the schema.
-- **Single-version schemas, no `schema_version` field.** `woof/schemas/v1/` collapsed into `woof/schemas/`. Artefact front-matter no longer carries `schema_version`. F2 schema-versioning model dropped; future breaking changes will be handled by manual artefact migration.
-- **Two extra schemas authored.** `quality-gates.schema.json` and `docs-paths.schema.json` cover Stage 5 Check 1 and Check 8 configs.
-- **Stub `/epic-gate` reference removed.** Gates are inline within `/wf` (the only public skill). No separate gate skill.
-- **Audit redaction + size cap.** Codex prompt and output files committed under `.woof/epics/E<N>/audit/` are redacted (env-var values, JWTs, OAuth tokens, AWS keys, T3K auth blobs) before commit. Per-file size cap 256 KB; raw output overflows to gitignored `.woof/epics/E<N>/audit/raw/`.
-- **Token-usage logging from day one.** Every `subprocess_returned` event records `tokens_in`, `tokens_out`, cache reads/writes, duration_ms, and `artefacts_loaded[]`. In-session work logs `token_usage` events at stage transitions. The dashboard is post-MVP; the data capture is not.
-- **Dispatch adapter layer.** Subprocesses are spawned via `woof dispatch <claude|codex> --role <role-name>` rather than direct `cld`/`cod` calls, so wrapper interface drift doesn't break woof and standalone extraction is a one-file swap.
-
-### Evaluation residuals
-
-Defaults stated but not yet confirmed through implementation:
-
-- **S3** (JSONL audit + crash-resume) — schemas reused; implementation skill-first
-- **S4–S7** (hooks, worktrees, testing, auto-teardown) — already kept; confirm no regression
-- **G2** (context / token awareness) — separate stream (#171)
-- **G3** (debugging) — separate stream (#168)
-- **G5** (extensibility) — taches installed ephemerally; don't reinvent
-
----
-
-## Appendix — Related GitHub Issues
-
-- **#165** — Parent epic (augment capabilities)
-- **#163** — Cleanup stale references
-- **#168** — Debugging skill
-- **#170** — Per-story code review (two-stage)
-- **#171** — Context / token awareness
-- **#174** — Wire discovery → planning (wording reflects contaminated design; revisit after v2 architecture lands)
-- **#175** — Codebase mapping (Open Question 4)
-- **#176** — Observable Outcomes (Open Question 3)
-- **#179** — Standalone investigation tools (v2)
-
-Issue bodies will be updated after the v2 architecture is concrete.
+The implementation roadmap lives in `docs/backlog.md`. Architecture changes that alter graph topology or stage contracts require an ADR.

@@ -1,9 +1,8 @@
 # Woof — Research & Evidence Base
 
 > **Purpose:** Stable reference for Woof's design decisions. Updates when new evidence arrives, not during design iteration.
-> **Consolidates:** `AI-Workflow-Evaluation.md`, `AI-Workflow-Evaluation-Prompt.md`, `Epic-Workflow.md` (E146 section), `Superpowers-Review.md`, `SKILLS-UNIFICATION.md`, `.planning/discovery-design/*` — all deleted after extraction on 2026-04-18.
-> **Active architecture doc:** `architecture.md` (Woof repo) — formerly `Workflow.md` in the bootstrap-consumer wiki.
-> **Naming note:** "GTS" throughout this document refers to the **predecessor pipeline** (the pre-Woof Python orchestrator + 13 shell hooks deleted on 2026-04-18 from the `guitar-tone-shootout` repo) — *not* to the current Guitar Tone Shootout application that hosts Woof during the bootstrap phase. Where Woof's lineage matters in the comparisons below, GTS = predecessor.
+> **Active architecture doc:** `docs/architecture.md`.
+> **Naming note:** "GTS" in this document refers to the predecessor workflow pipeline, not the current Guitar Tone Shootout consumer application.
 
 ---
 
@@ -38,8 +37,6 @@ Four AI workflow frameworks compared across 15 capability areas. Local clones pr
 | 14 | Enforcement | **GTS** (13 hard-gate hooks) | Superpowers (iron law prompts) |
 | 15 | Extensibility | taches (5 meta-skills) | Superpowers (TDD for skills) |
 
-Full capability-by-capability detail preserved in git history: `wiki/AI-Workflow-Evaluation.md` at commit `d35a164` (2026-03-26).
-
 ### GTS Strengths to Keep (7)
 
 1. **Hard enforcement hooks** — 13 hooks that actually block bad behaviour
@@ -59,10 +56,6 @@ Full capability-by-capability detail preserved in git history: `wiki/AI-Workflow
 5. **Extensibility** — taches installed ephemerally at `~/Work/taches-cc-resources/`; don't reinvent
 6. **Architecture decisions** — adopt locked/deferred/discretion (GSD)
 
-### Reusable Evaluation Prompt
-
-Original at `wiki/AI-Workflow-Evaluation-Prompt.md` (git history, commit `d35a164`). Regenerable on demand — not copied here.
-
 ---
 
 ## 2. E146 Contract Fidelity Failure
@@ -80,7 +73,7 @@ Epic #146 (prompt-hardening) exposed a **planner–verifier deadlock**:
 
 Root cause: no invariant that **the epic contract is law**. The planner had implicit permission to substitute repo convention. Phase A was structurally valid but not contract-fidelity-checked.
 
-### Designed Fix (not yet implemented)
+### Contract-Fidelity Requirements
 
 1. **Schema** — add `ContractDecision` as first-class typed data on the plan. Fields: decision ID, epic contract, repo convention, canonical resolution (`epic` | `bridge` — *no `repo`* option), bridge description, affected stories.
 2. **Curation** — surfaces mismatches neutrally, does not recommend winners
@@ -93,7 +86,7 @@ Root cause: no invariant that **the epic contract is law**. The planner had impl
 
 > **Epic's observable outcomes define the canonical user-facing contract. Repo conventions may inform implementation shape, adapters, aliases, redirects, or bridge code — but they may never replace the epic contract.**
 
-Full original at `wiki/Epic-Workflow.md` "Contract Fidelity Redesign" section (git history, commit `c2bfb61a2fdda1ae76c0ba6a437c10f4e2d0fd00` parent, before deletion marker).
+The current architecture encodes this invariant through `contract_decisions[]` and Stage-5 Check 4.
 
 ---
 
@@ -121,21 +114,4 @@ Discovery output is only valuable if the planner *reads* and *respects* it. The 
 
 ### 3.4 Silent degradation is banned
 
-If required infrastructure is missing, stop and report — don't produce inferior output with thinner evidence. Workarounds are banned (per `AGENTS.md`).
-
----
-
-## 4. Git History References
-
-When you need the original detail, use these commits:
-
-| Artefact | Commit / path |
-|---|---|
-| Deleted pipeline code (`workflow/`, `wf`, etc.) | `git log --all -- workflow/` — last commit before deletion: parent of `38bac9d9` |
-| Original `Epic-Workflow.md` (full) | `git log --all -- wiki/Epic-Workflow.md` |
-| Original 15-capability evaluation detail | `wiki/AI-Workflow-Evaluation.md` at commit `d35a164` |
-| Reusable evaluation prompt | `wiki/AI-Workflow-Evaluation-Prompt.md` at commit `d35a164` |
-| Superpowers review (old, pre-v5.0) | `wiki/Superpowers-Review.md` at commit `537e113` |
-| Cross-provider skills unification analysis | `wiki/SKILLS-UNIFICATION.md` at commit `b1c7de3` |
-| Contaminated discovery design (2026-04-08) | `wiki/Discovery-Workflow-Design.md` at commit `8f19bd6` |
-| Contaminated design critiques | `.planning/discovery-design/*` at commit `2921c33b` |
+If required infrastructure is missing, stop and report — don't produce inferior output with thinner evidence. Workarounds are banned.

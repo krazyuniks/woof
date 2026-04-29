@@ -118,7 +118,7 @@ Checks should land one runner at a time. Each runner must replace placeholder or
 
 | ID | Status | Work item | Observable outcomes | Validation | Commit |
 |---|---|---|---|---|---|
-| CHK-001 | Ready | Implement Check 1: `check_1_quality_gates`. | Reads `.woof/quality-gates.toml`, runs configured commands with timeouts, captures output, and returns structured pass/fail findings. | Runner unit tests with passing, failing, timeout, and missing-command cases; `just check`. | `feat(checks): run configured quality gates` |
+| CHK-001 | Completed | Implement Check 1: `check_1_quality_gates`. | Reads `.woof/quality-gates.toml`, runs configured commands with timeouts, captures output, and returns structured pass/fail findings. Registry wiring intentionally unchanged per Workstream B integrator ownership. | Targeted runner tests passed: 4 tests for passing, failing, timeout, and missing-command cases. `just check` passed: Ruff lint, Ruff format check, and 115 tests. | `feat(checks): run configured quality gates` |
 | CHK-002 | Ready | Implement Check 2: `check_2_outcome_markers`. | Resolves story `satisfies[]`, inspects staged test diff using `.woof/test-markers.toml`, and requires each outcome marker. | Runner tests for present, missing, and malformed markers; `just check`. | `feat(checks): verify outcome markers` |
 | CHK-003 | Ready | Implement Check 3: `check_3_scope`. | Compares staged paths with `story.paths[]` plus allowed durable `.woof/` paths using git pathspec semantics. | Runner tests for allowed paths, forbidden paths, deleted files, and pathspec edge cases; `just check`. | `feat(checks): enforce story path scope` |
 | CHK-004 | Ready | Implement Check 4: `check_4_contract_refs`. | Verifies owned contract refs through native tooling for OpenAPI/Schemathesis, Pydantic import and resolution, and JSON Schema/ajv; preserves the E146 invariant. | E146 regression fixture plus runner tests for each supported contract type; `just check`. | `feat(checks): validate contract references` |
@@ -202,5 +202,5 @@ Workflow:
 - In the final response, paste this complete continuation prompt block so it can be copied into a new session.
 
 Start with:
-Workstream B: Core cheap checks (`CHK-001`, `CHK-002`, `CHK-003`, `CHK-005`, `CHK-007`). Start with `CHK-001` unless an item is already `In progress`.
+Workstream B: Core cheap checks (`CHK-001`, `CHK-002`, `CHK-003`, `CHK-005`, `CHK-007`). Start with `CHK-002` unless an item is already `In progress`.
 ```

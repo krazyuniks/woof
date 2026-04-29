@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import yaml
 
+from woof.graph.git import git_env
 from woof.graph.manifest import build_story_manifest, verify_staged_manifest
 from woof.graph.runner import run_graph
 from woof.graph.state import NodeInput, NodeOutput, NodeStatus, NodeType, StorySpec
@@ -50,10 +52,14 @@ def _run_woof(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _git(root: Path, *args: str, **kwargs: Any) -> subprocess.CompletedProcess[Any]:
+    return subprocess.run(["git", *args], cwd=root, env=git_env(), **kwargs)
+
+
 def _init_git_repo(root: Path) -> None:
-    subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True)
-    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=root, check=True)
-    subprocess.run(["git", "config", "user.name", "Test"], cwd=root, check=True)
+    _git(root, "init", check=True, capture_output=True)
+    _git(root, "config", "user.email", "test@example.com", check=True)
+    _git(root, "config", "user.name", "Test", check=True)
 
 
 def _read_gate_fm(gate_path: Path) -> dict:
@@ -211,9 +217,10 @@ def test_graph_resumes_interrupted_commit_transaction(tmp_path: Path) -> None:
     assert [event["event"] for event in events].count("transaction_manifest_verified") == 1
     assert not (directory / "executor_result.json").exists()
     assert not (directory / "check-result.json").exists()
-    status = subprocess.run(
-        ["git", "status", "--porcelain=v1"],
-        cwd=tmp_path,
+    status = _git(
+        tmp_path,
+        "status",
+        "--porcelain=v1",
         check=True,
         capture_output=True,
         text=True,
@@ -224,21 +231,18 @@ def test_graph_resumes_interrupted_commit_transaction(tmp_path: Path) -> None:
 def test_complete_epic_cleans_stale_transient_files(tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     directory = _write_ready_commit_state(tmp_path, 1)
-    subprocess.run(
-        [
-            "git",
-            "add",
-            "src/app.py",
-            ".woof/epics/E1/plan.json",
-            ".woof/epics/E1/epic.jsonl",
-            ".woof/epics/E1/dispatch.jsonl",
-            ".woof/epics/E1/critique/story-S1.md",
-            ".woof/epics/E1/audit/cod-critiquer-1.prompt",
-        ],
-        cwd=tmp_path,
+    _git(
+        tmp_path,
+        "add",
+        "src/app.py",
+        ".woof/epics/E1/plan.json",
+        ".woof/epics/E1/epic.jsonl",
+        ".woof/epics/E1/dispatch.jsonl",
+        ".woof/epics/E1/critique/story-S1.md",
+        ".woof/epics/E1/audit/cod-critiquer-1.prompt",
         check=True,
     )
-    subprocess.run(["git", "commit", "-m", "seed"], cwd=tmp_path, check=True, capture_output=True)
+    _git(tmp_path, "commit", "-m", "seed", check=True, capture_output=True)
 
     outputs = run_graph(tmp_path, 1)
 
@@ -588,9 +592,9 @@ def test_wf_resolve_records_gate_decision_and_removes_gate(tmp_path: Path) -> No
 
 
 def test_transaction_manifest_requires_audit_and_rejects_extra_staged_file(tmp_path: Path) -> None:
-    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)
-    subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True)
+    _git(tmp_path, "init", check=True, capture_output=True)
+    _git(tmp_path, "config", "user.email", "test@example.com", check=True)
+    _git(tmp_path, "config", "user.name", "Test", check=True)
     directory = _write_plan(tmp_path, 1)
     (directory / "dispatch.jsonl").write_text("{}\n")
     critique_dir = directory / "critique"
@@ -617,9 +621,7 @@ def test_transaction_manifest_requires_audit_and_rejects_extra_staged_file(tmp_p
     assert ".woof/epics/E1/critique/story-S1.md" in manifest.expected_paths
     assert "src/app.py" in manifest.expected_paths
 
-    subprocess.run(
-        ["git", "add", "--", *manifest.expected_paths, "extra.txt"], cwd=tmp_path, check=True
-    )
+    _git(tmp_path, "add", "--", *manifest.expected_paths, "extra.txt", check=True)
     result = verify_staged_manifest(tmp_path, manifest)
 
     assert result.ok is False
@@ -651,7 +653,7 @@ def test_transaction_manifest_reports_missing_expected_index_paths(tmp_path: Pat
     staged_subset = [
         path for path in manifest.expected_paths if not path.endswith("dispatch.jsonl")
     ]
-    subprocess.run(["git", "add", "--", *staged_subset], cwd=tmp_path, check=True)
+    _git(tmp_path, "add", "--", *staged_subset, check=True)
 
     result = verify_staged_manifest(tmp_path, manifest)
 

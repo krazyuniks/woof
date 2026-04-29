@@ -18,8 +18,34 @@ if TYPE_CHECKING:
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WOOF_BIN = REPO_ROOT / "bin" / "woof"
 
+_GIT_LOCAL_ENV_VARS = (
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_CONFIG",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_GRAFT_FILE",
+    "GIT_INDEX_FILE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_PREFIX",
+    "GIT_SHALLOW_FILE",
+    "GIT_COMMON_DIR",
+)
+
 
 pytestmark = pytest.mark.host_only
+
+
+@pytest.fixture(autouse=True)
+def _clear_git_hook_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Let tests create nested git repos while running inside Git hooks."""
+
+    for name in _GIT_LOCAL_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
 
 
 @pytest.fixture(scope="session", autouse=True)

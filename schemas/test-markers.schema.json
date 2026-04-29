@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://woof.dev/schemas/test-markers.schema.json",
   "title": "woof test-marker configuration",
-  "description": "Project-side declaration at .woof/test-markers.toml. Tells Stage 5 Check 2 (spec coverage) where to look for tests and how to recognise outcome markers in source. Per-language; ships with python and typescript defaults that consumers extend. Marker regex is anchored on word boundaries by default (\\bO\\d+\\b) to prevent substring false-positives.",
+  "description": "Project-side declaration at .woof/test-markers.toml. Tells Stage 5 Check 2 (spec coverage) where to look for tests and how to recognise outcome markers in source. Per-language; ships with python and typescript defaults that consumers extend. Marker regex is anchored on alphanumeric boundaries by default ((?<![A-Za-z0-9])O\\d+(?![A-Za-z0-9])) to prevent substring false-positives while allowing separators such as _O1.",
   "type": "object",
   "additionalProperties": false,
   "required": ["languages"],
@@ -30,12 +30,12 @@
         "marker_regex": {
           "type": "string",
           "minLength": 1,
-          "description": "Regex matching outcome IDs in test source. Default '\\bO\\d+\\b'. Word-boundary anchoring is essential to avoid substring matches (test_IO12 would otherwise match O1)."
+          "description": "Regex matching outcome IDs in test source. Default '(?<![A-Za-z0-9])O\\d+(?![A-Za-z0-9])'. Alphanumeric-boundary anchoring is essential to avoid substring matches (test_IO12 would otherwise match O12) while allowing common separators such as _O1."
         },
         "cd_marker_regex": {
           "type": "string",
           "minLength": 1,
-          "description": "Regex matching contract-decision IDs. Default '\\bCD\\d+\\b'. Optional."
+          "description": "Regex matching contract-decision IDs. Default '(?<![A-Za-z0-9])CD\\d+(?![A-Za-z0-9])'. Optional."
         },
         "docstring_keyword": {
           "type": "string",

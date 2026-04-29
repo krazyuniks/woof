@@ -12,7 +12,7 @@ from pathlib import Path
 from woof.gate.write import write_gate_for_trigger, write_gate_from_check_result
 from woof.graph.git import git, staged_paths
 from woof.graph.manifest import build_story_manifest, verify_staged_manifest
-from woof.graph.state import NodeInput, NodeOutput, NodeStatus, NodeType
+from woof.graph.state import NodeInput, NodeOutput, NodeStatus, NodeType, ValidationSummary
 from woof.graph.transitions import (
     append_epic_event_once,
     epic_dir,
@@ -31,6 +31,36 @@ def _now() -> str:
 
 def _woof_bin() -> Path:
     return tool_root() / "bin" / "woof"
+
+
+def _gate_path(epic_id: int) -> str:
+    return f".woof/epics/E{epic_id}/gate.md"
+
+
+def _validation_summary(check_result: dict) -> ValidationSummary:
+    checks = check_result.get("checks")
+    if not isinstance(checks, list):
+        checks = []
+    triggered_by = check_result.get("triggered_by")
+    if not isinstance(triggered_by, list):
+        triggered_by = []
+    stage = check_result.get("stage")
+    return ValidationSummary(
+        ok=bool(check_result.get("ok", False)),
+        stage=stage if isinstance(stage, int) else None,
+        triggered_by=[str(item) for item in triggered_by],
+        check_count=len(checks),
+        failed_check_count=sum(
+            1 for check in checks if isinstance(check, dict) and not check.get("ok")
+        ),
+    )
+
+
+def _validation_summary_from_path(path: Path) -> ValidationSummary | None:
+    try:
+        return _validation_summary(json.loads(path.read_text()))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
 
 
 def _write_prompt_file(text: str) -> Path:
@@ -107,6 +137,7 @@ def executor_dispatch_node(inp: NodeInput) -> NodeOutput:
             status=NodeStatus.GATE_OPENED,
             epic_id=inp.epic_id,
             story_id=inp.story_id,
+            gate_path=_gate_path(inp.epic_id),
             triggered_by=["subprocess_crash"],
             message=proc.stderr.strip(),
         )
@@ -144,6 +175,7 @@ def critique_dispatch_node(inp: NodeInput) -> NodeOutput:
             status=NodeStatus.GATE_OPENED,
             epic_id=inp.epic_id,
             story_id=inp.story_id,
+            gate_path=_gate_path(inp.epic_id),
             triggered_by=["codex_unreachable"],
             message=proc.stderr.strip(),
         )
@@ -178,6 +210,7 @@ def verification_node(inp: NodeInput) -> NodeOutput:
     )
     if proc.stdout.strip():
         result_path.write_text(proc.stdout)
+    validation_summary = _validation_summary_from_path(result_path)
     if proc.returncode != 0:
         if result_path.exists():
             write_gate_from_check_result(
@@ -199,6 +232,9 @@ def verification_node(inp: NodeInput) -> NodeOutput:
             status=NodeStatus.GATE_OPENED,
             epic_id=inp.epic_id,
             story_id=inp.story_id,
+            gate_path=_gate_path(inp.epic_id),
+            validation_summary=validation_summary,
+            triggered_by=validation_summary.triggered_by if validation_summary else [],
             message=proc.stderr.strip(),
         )
     return NodeOutput(
@@ -207,6 +243,7 @@ def verification_node(inp: NodeInput) -> NodeOutput:
         epic_id=inp.epic_id,
         story_id=inp.story_id,
         next_node=NodeType.COMMIT,
+        validation_summary=validation_summary,
         paths=[str(result_path.relative_to(inp.repo_root))],
     )
 
@@ -240,6 +277,7 @@ def commit_node(inp: NodeInput) -> NodeOutput:
             status=NodeStatus.GATE_OPENED,
             epic_id=inp.epic_id,
             story_id=inp.story_id,
+            gate_path=_gate_path(inp.epic_id),
             triggered_by=["check_7_commit_transaction"],
             message="transaction manifest has no audit files",
         )
@@ -264,6 +302,7 @@ def commit_node(inp: NodeInput) -> NodeOutput:
             status=NodeStatus.GATE_OPENED,
             epic_id=inp.epic_id,
             story_id=inp.story_id,
+            gate_path=_gate_path(inp.epic_id),
             triggered_by=["check_7_commit_transaction"],
             message=position,
         )
@@ -305,6 +344,7 @@ def commit_node(inp: NodeInput) -> NodeOutput:
             status=NodeStatus.GATE_OPENED,
             epic_id=inp.epic_id,
             story_id=inp.story_id,
+            gate_path=_gate_path(inp.epic_id),
             triggered_by=["check_7_commit_transaction"],
             message=position,
         )
@@ -353,6 +393,7 @@ def gate_open_node(inp: NodeInput) -> NodeOutput:
             node_type=inp.node_type,
             status=NodeStatus.GATE_OPENED,
             epic_id=inp.epic_id,
+            gate_path=_gate_path(inp.epic_id),
             triggered_by=[inp.reason or "manual"],
         )
 
@@ -403,6 +444,8 @@ def gate_open_node(inp: NodeInput) -> NodeOutput:
                 status=NodeStatus.GATE_OPENED,
                 epic_id=inp.epic_id,
                 story_id=inp.story_id,
+                gate_path=_gate_path(inp.epic_id),
+                validation_summary=_validation_summary(check_result),
                 triggered_by=check_result.get("triggered_by") or ["schema_validation_failed"],
             )
     elif outcome != "staged_for_verification":
@@ -430,6 +473,7 @@ def gate_open_node(inp: NodeInput) -> NodeOutput:
         status=NodeStatus.GATE_OPENED,
         epic_id=inp.epic_id,
         story_id=inp.story_id,
+        gate_path=_gate_path(inp.epic_id),
         triggered_by=[trigger],
     )
 
@@ -457,6 +501,7 @@ def _write_incomplete_stage_gate(inp: NodeInput, position: str) -> NodeOutput:
         status=NodeStatus.GATE_OPENED,
         epic_id=inp.epic_id,
         story_id=inp.story_id,
+        gate_path=_gate_path(inp.epic_id),
         triggered_by=["incomplete_stage_state"],
         message=position,
     )
@@ -468,6 +513,7 @@ def human_review_node(inp: NodeInput) -> NodeOutput:
         status=NodeStatus.HALTED,
         epic_id=inp.epic_id,
         story_id=inp.story_id,
+        gate_path=_gate_path(inp.epic_id),
         message=f"gate open at .woof/epics/E{inp.epic_id}/gate.md",
     )
 

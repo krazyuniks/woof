@@ -4,7 +4,18 @@
   "title": "woof graph node output",
   "type": "object",
   "additionalProperties": false,
-  "required": ["node_type", "status", "epic_id", "triggered_by", "message", "paths"],
+  "required": [
+    "node_type",
+    "status",
+    "epic_id",
+    "story_id",
+    "next_node",
+    "gate_path",
+    "validation_summary",
+    "triggered_by",
+    "message",
+    "paths"
+  ],
   "properties": {
     "node_type": {
       "type": "string",
@@ -42,6 +53,41 @@
             "gate_resolve",
             "human_review"
           ]
+        },
+        { "type": "null" }
+      ]
+    },
+    "gate_path": {
+      "oneOf": [
+        { "type": "string", "pattern": "^\\.woof/epics/E[1-9]\\d*/gate\\.md$" },
+        { "type": "null" }
+      ]
+    },
+    "validation_summary": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ok",
+            "stage",
+            "triggered_by",
+            "check_count",
+            "failed_check_count"
+          ],
+          "properties": {
+            "ok": { "type": "boolean" },
+            "stage": {
+              "oneOf": [{ "type": "integer", "minimum": 1 }, { "type": "null" }]
+            },
+            "triggered_by": {
+              "type": "array",
+              "items": { "type": "string" },
+              "uniqueItems": true
+            },
+            "check_count": { "type": "integer", "minimum": 0 },
+            "failed_check_count": { "type": "integer", "minimum": 0 }
+          }
         },
         { "type": "null" }
       ]

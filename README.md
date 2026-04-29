@@ -45,7 +45,7 @@ Run the deterministic Stage-5 graph from a consumer checkout that has `.woof/` s
 woof wf --epic <N>
 ```
 
-Use `--once` to run a single graph node, `--format json` for machine-readable node output, and `--resolve <decision>` to close an open `gate.md` with a structured gate decision.
+Use `--once` to run a single graph node, `--format json` for machine-readable node output conforming to `schemas/node-output.schema.json`, and `--resolve <decision>` to close an open `gate.md` with a structured gate decision.
 
 ## Components
 

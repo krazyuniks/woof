@@ -9,7 +9,7 @@ import yaml
 from woof.graph.manifest import build_story_manifest, verify_staged_manifest
 from woof.graph.runner import run_graph
 from woof.graph.state import NodeInput, NodeOutput, NodeStatus, NodeType, StorySpec
-from woof.graph.transitions import epic_dir, mark_story_status, next_node
+from woof.graph.transitions import StageStateError, epic_dir, mark_story_status, next_node
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WOOF_BIN = REPO_ROOT / "bin" / "woof"
@@ -59,6 +59,18 @@ def _init_git_repo(root: Path) -> None:
 def _read_gate_fm(gate_path: Path) -> dict:
     text = gate_path.read_text()
     return yaml.safe_load(text[4 : text.find("\n---\n", 4)])
+
+
+def _assert_node_output_schema(tmp_path: Path, payload: dict) -> None:
+    path = tmp_path / "node-output.json"
+    path.write_text(json.dumps(payload))
+    proc = subprocess.run(
+        [str(WOOF_BIN), "validate", "--schema", "node-output", str(path)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
 
 
 def _write_ready_commit_state(root: Path, epic_id: int = 1) -> Path:
@@ -251,6 +263,7 @@ def test_in_progress_story_missing_executor_result_opens_incomplete_state_gate(
             status=NodeStatus.GATE_OPENED,
             epic_id=1,
             story_id="S1",
+            gate_path=".woof/epics/E1/gate.md",
             triggered_by=["incomplete_stage_state"],
             message="Required Stage-5 artefact missing: .woof/epics/E1/executor_result.json",
         )
@@ -358,6 +371,91 @@ def test_failed_check_result_reopens_structured_gate_on_reentry(tmp_path: Path) 
     assert gate_fm["triggered_by"] == ["check_6_critique_blocker"]
 
 
+def test_successor_selection_respects_dependency_closure(tmp_path: Path) -> None:
+    directory = _write_plan(tmp_path, 12)
+    plan = json.loads((directory / "plan.json").read_text())
+    plan["stories"] = [
+        {
+            **plan["stories"][0],
+            "id": "S1",
+            "title": "first",
+            "status": "done",
+            "depends_on": [],
+        },
+        {
+            **plan["stories"][0],
+            "id": "S2",
+            "title": "second",
+            "status": "pending",
+            "depends_on": ["S1"],
+        },
+    ]
+    (directory / "plan.json").write_text(json.dumps(plan))
+
+    assert next_node(tmp_path, 12) == (NodeType.EXECUTOR_DISPATCH, "S2")
+
+
+def test_successor_selection_fails_loud_when_dependencies_are_unsatisfied(
+    tmp_path: Path,
+) -> None:
+    directory = _write_plan(tmp_path, 13)
+    plan = json.loads((directory / "plan.json").read_text())
+    plan["stories"][0]["depends_on"] = ["S99"]
+    (directory / "plan.json").write_text(json.dumps(plan))
+
+    try:
+        next_node(tmp_path, 13)
+    except StageStateError as exc:
+        assert "no story has satisfied dependencies" in str(exc)
+    else:
+        raise AssertionError("expected StageStateError")
+
+
+def test_gate_reentry_halts_at_human_review_with_gate_path(tmp_path: Path) -> None:
+    directory = _write_plan(tmp_path, 14)
+    (directory / "gate.md").write_text("---\ntype: story_gate\n---\n")
+
+    assert next_node(tmp_path, 14) == (NodeType.HUMAN_REVIEW, None)
+
+    outputs = run_graph(tmp_path, 14)
+
+    assert outputs == [
+        NodeOutput(
+            node_type=NodeType.HUMAN_REVIEW,
+            status=NodeStatus.HALTED,
+            epic_id=14,
+            gate_path=".woof/epics/E14/gate.md",
+            message="gate open at .woof/epics/E14/gate.md",
+        )
+    ]
+
+
+def test_empty_diff_executor_result_opens_review_gate(tmp_path: Path) -> None:
+    directory = _write_plan(tmp_path, 15)
+    mark_story_status(tmp_path, 15, "S1", "in_progress")
+    (directory / "executor_result.json").write_text(
+        json.dumps(
+            {
+                "epic_id": 15,
+                "story_id": "S1",
+                "outcome": "empty_diff",
+                "commit_body": None,
+                "position": "No diff was needed.",
+            }
+        )
+    )
+
+    assert next_node(tmp_path, 15) == (NodeType.GATE_OPEN, "S1")
+
+    outputs = run_graph(tmp_path, 15)
+
+    assert outputs[0].status == NodeStatus.GATE_OPENED
+    assert outputs[0].gate_path == ".woof/epics/E15/gate.md"
+    assert outputs[0].triggered_by == ["empty_diff_review"]
+    gate_fm = _read_gate_fm(directory / "gate.md")
+    assert gate_fm["triggered_by"] == ["empty_diff_review"]
+
+
 def test_wf_epic_reports_complete_epic_as_json(tmp_path: Path) -> None:
     directory = _write_plan(tmp_path, 7)
     plan = json.loads((directory / "plan.json").read_text())
@@ -375,11 +473,14 @@ def test_wf_epic_reports_complete_epic_as_json(tmp_path: Path) -> None:
             "epic_id": 7,
             "story_id": None,
             "next_node": None,
+            "gate_path": None,
+            "validation_summary": None,
             "triggered_by": [],
             "message": "E7 complete",
             "paths": [],
         }
     ]
+    _assert_node_output_schema(tmp_path, lines[0])
 
 
 def test_wf_reports_missing_plan_as_structured_failure(tmp_path: Path) -> None:
@@ -400,6 +501,74 @@ def test_wf_epic_halts_when_gate_is_open(tmp_path: Path) -> None:
 
     assert proc.returncode == 0, proc.stderr
     assert "woof wf: human_review -> halted: gate open at .woof/epics/E8/gate.md" in proc.stdout
+
+
+def test_wf_gate_case_reports_stable_json_contract(tmp_path: Path) -> None:
+    directory = _write_plan(tmp_path, 11)
+    mark_story_status(tmp_path, 11, "S1", "in_progress")
+    (directory / "executor_result.json").write_text(
+        json.dumps(
+            {
+                "epic_id": 11,
+                "story_id": "S1",
+                "outcome": "staged_for_verification",
+                "commit_body": "done",
+                "position": None,
+            }
+        )
+    )
+    critique_dir = directory / "critique"
+    critique_dir.mkdir()
+    (critique_dir / "story-S1.md").write_text("---\nseverity: blocker\n---\n")
+    (directory / "check-result.json").write_text(
+        json.dumps(
+            {
+                "ok": False,
+                "stage": 5,
+                "epic_id": 11,
+                "story_id": "S1",
+                "triggered_by": ["check_6_critique_blocker"],
+                "checks": [
+                    {
+                        "id": "check_6_critique_blocker",
+                        "ok": False,
+                        "severity": "blocker",
+                        "summary": "critique severity is blocker",
+                        "evidence": None,
+                        "paths": [],
+                        "command": None,
+                        "exit_code": None,
+                    }
+                ],
+            }
+        )
+    )
+
+    proc = _run_woof(tmp_path, "wf", "--epic", "11", "--format", "json")
+
+    assert proc.returncode == 0, proc.stderr
+    lines = [json.loads(line) for line in proc.stdout.splitlines()]
+    assert lines == [
+        {
+            "node_type": "gate_open",
+            "status": "gate_opened",
+            "epic_id": 11,
+            "story_id": "S1",
+            "next_node": None,
+            "gate_path": ".woof/epics/E11/gate.md",
+            "validation_summary": {
+                "ok": False,
+                "stage": 5,
+                "triggered_by": ["check_6_critique_blocker"],
+                "check_count": 1,
+                "failed_check_count": 1,
+            },
+            "triggered_by": ["check_6_critique_blocker"],
+            "message": "",
+            "paths": [],
+        }
+    ]
+    _assert_node_output_schema(tmp_path, lines[0])
 
 
 def test_wf_resolve_records_gate_decision_and_removes_gate(tmp_path: Path) -> None:
@@ -455,3 +624,36 @@ def test_transaction_manifest_requires_audit_and_rejects_extra_staged_file(tmp_p
 
     assert result.ok is False
     assert result.extra_paths == ["extra.txt"]
+
+
+def test_transaction_manifest_reports_missing_expected_index_paths(tmp_path: Path) -> None:
+    _init_git_repo(tmp_path)
+    directory = _write_plan(tmp_path, 16)
+    (directory / "dispatch.jsonl").write_text("{}\n")
+    critique_dir = directory / "critique"
+    critique_dir.mkdir()
+    (critique_dir / "story-S1.md").write_text("---\nseverity: info\n---\n")
+    audit_dir = directory / "audit"
+    audit_dir.mkdir()
+    (audit_dir / "cod-critiquer-1.prompt").write_text("prompt")
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "app.py").write_text("print('O1')\n")
+
+    story = StorySpec(
+        id="S1",
+        title="first",
+        paths=["src/*.py"],
+        satisfies=["O1"],
+        status="in_progress",
+    )
+    manifest = build_story_manifest(tmp_path, 16, story)
+    staged_subset = [
+        path for path in manifest.expected_paths if not path.endswith("dispatch.jsonl")
+    ]
+    subprocess.run(["git", "add", "--", *staged_subset], cwd=tmp_path, check=True)
+
+    result = verify_staged_manifest(tmp_path, manifest)
+
+    assert result.ok is False
+    assert result.missing_paths == [".woof/epics/E16/dispatch.jsonl"]

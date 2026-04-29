@@ -68,12 +68,22 @@ class NodeInput(BaseModel):
     model_config = {"arbitrary_types_allowed": True}
 
 
+class ValidationSummary(BaseModel):
+    ok: bool
+    stage: int | None = None
+    triggered_by: list[str] = Field(default_factory=list)
+    check_count: int = 0
+    failed_check_count: int = 0
+
+
 class NodeOutput(BaseModel):
     node_type: NodeType
     status: NodeStatus
     epic_id: int
     story_id: str | None = None
     next_node: NodeType | None = None
+    gate_path: str | None = None
+    validation_summary: ValidationSummary | None = None
     triggered_by: list[str] = Field(default_factory=list)
     message: str = ""
     paths: list[str] = Field(default_factory=list)

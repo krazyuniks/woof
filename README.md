@@ -25,12 +25,17 @@ Discovery, definition, and breakdown remain documented in [`docs/architecture.md
 ## Development
 
 ```bash
-just setup
-just check
-just install-hooks
+just bootstrap
 ```
 
-`uv.lock` is committed. Git hooks are installed with `prek` and run Ruff checks before commit.
+`just bootstrap` runs the first-time setup script, verifies host prerequisites, synchronises the locked `uv` environment, installs `prek` git hooks, and runs the local quality gate. After bootstrap, the regular inner loop is:
+
+```bash
+just check
+just woof --help
+```
+
+`uv.lock` is committed. Git hooks are installed with `prek`; pre-commit runs Ruff and Woof config schema validation, and pre-push runs the unit suite.
 
 ## Operator usage
 

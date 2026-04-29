@@ -5,7 +5,11 @@ default:
 
 # Install/synchronise the development environment.
 setup:
-    uv sync
+    uv sync --locked
+
+# First-time host bootstrap: prerequisites, hooks, and quality gate.
+bootstrap *ARGS:
+    ./scripts/first-time-setup.sh {{ARGS}}
 
 # Run the unit suite.
 test:
@@ -26,9 +30,9 @@ check: lint test
 
 # Install git hooks via prek.
 install-hooks:
-    prek install
+    uv run prek install
+    uv run prek install --hook-type pre-push
 
 # Run the Woof CLI from this checkout.
 woof *ARGS:
     ./bin/woof {{ARGS}}
-

@@ -15,6 +15,7 @@ woof = "woof.cli.main:main"
 
 [dependency-groups]
 dev = [
+    "prek>=0.3.11",
     "pytest>=8.3",
     "ruff>=0.15.1",
 ]

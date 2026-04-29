@@ -35,7 +35,8 @@ Every implementation turn must use this loop.
 10. Update this ledger before committing: mark the item `Completed`, `Blocked`, or `Split`; record validation evidence; record the conventional commit message to be used.
 11. Commit through normal hooks. Do not bypass pre-commit or pre-push hooks.
 12. Push normally. If hooks fail, fix the underlying issue or record the blocker in this ledger.
-13. Final handoff must include the pushed commit hash, validation result, and the next continuation prompt from this file.
+13. Monitor GitHub CI for the pushed commit until it reaches a terminal state. If CI fails, inspect the failing job, fix the underlying issue, commit and push the fix, then monitor the new run. If CI cannot be made green in the session, record the blocker in this ledger.
+14. Final handoff must include the pushed commit hash, local validation result, GitHub CI result, and the next continuation prompt from this file.
 
 ## Ledger Semantics
 
@@ -57,6 +58,7 @@ Default validation for code, schema, or command changes:
 - Run `just check` before committing.
 - Let pre-commit run Ruff, format checks, and Woof config validation.
 - Let pre-push run the configured unit suite.
+- After push, monitor GitHub CI for the pushed commit and treat a failed remote run as unfinished work.
 
 Docs-only changes still run `just check` unless the item states a narrower validation is acceptable. Any skipped command must be recorded with the blocker and reason.
 
@@ -131,6 +133,7 @@ GitHub sync must fail loud on auth, network, repo access, and rate-limit failure
 
 | ID | Status | Work item | Observable outcomes | Validation | Commit |
 |---|---|---|---|---|---|
+| CI-001 | Completed | Pin CI action versions to resolvable tags and require CI monitoring in the session finish loop. | GitHub CI can resolve all configured actions; this operating loop requires monitoring the pushed commit until CI passes or a blocker is recorded. | `just check` passed: Ruff lint, Ruff format check, and 98 tests. GitHub CI result is reported in the handoff for the pushed commit. | `ci(workflow): pin uv action for ci` |
 | ENV-001 | Ready | Implement preflight as a first-class CLI path. | Woof validates wrappers, GitHub access, language tools, LSP plugins, Tree-sitter parsing, quality-gate commands, and consumer config schemas through a single CLI entry point. | CLI tests with mocked prerequisites plus `just check`. | `feat(cli): add preflight command` |
 | ENV-002 | Ready | Cache preflight by prerequisite hash. | Stable prerequisites reuse cached results while network/auth checks remain short-lived runtime checks. | Cache unit tests plus `just check`. | `feat(preflight): cache prerequisite checks` |
 | ENV-003 | Ready | Install hooks idempotently through project tooling. | Hook installation preserves user-managed content and can be rerun without duplicate blocks. | Hook fixture tests plus `just check`. | `feat(hooks): install woof hooks idempotently` |
@@ -172,6 +175,7 @@ Workflow:
 - Run just check before handoff unless the ledger records an external blocker.
 - Commit through normal hooks with the commit message recorded on the selected item.
 - Push normally.
+- Monitor GitHub CI for the pushed commit until it passes. If it fails, inspect the failing job, fix the underlying issue, and repeat the commit/push/monitor loop.
 
 Start with:
 WF-001: Tighten woof wf transition idempotence and crash recovery.

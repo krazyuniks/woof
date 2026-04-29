@@ -17,9 +17,6 @@ if TYPE_CHECKING:
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WOOF_BIN = REPO_ROOT / "bin" / "woof"
-
-pytestmark = pytest.mark.host_only
-
 _GIT_LOCAL_ENV_VARS = (
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
     "GIT_CONFIG",
@@ -37,6 +34,8 @@ _GIT_LOCAL_ENV_VARS = (
     "GIT_SHALLOW_FILE",
     "GIT_COMMON_DIR",
 )
+
+pytestmark = pytest.mark.host_only
 
 
 @pytest.fixture(autouse=True)

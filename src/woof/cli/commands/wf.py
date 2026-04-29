@@ -9,7 +9,7 @@ from pathlib import Path
 
 from woof.graph.runner import run_graph
 from woof.graph.state import GateDecision
-from woof.graph.transitions import append_epic_event, epic_dir
+from woof.graph.transitions import StageStateError, append_epic_event, epic_dir
 from woof.paths import find_project_root
 
 
@@ -47,7 +47,11 @@ def cmd_wf(args: argparse.Namespace) -> int:
     if args.resolve:
         return _resolve_gate(repo_root, args.epic, args.resolve)
 
-    outputs = run_graph(repo_root, args.epic, once=args.once)
+    try:
+        outputs = run_graph(repo_root, args.epic, once=args.once)
+    except StageStateError as exc:
+        sys.stderr.write(f"woof wf: incomplete_stage_state: {exc}\n")
+        return 2
     for output in outputs:
         if args.format == "json":
             sys.stdout.write(output.model_dump_json() + "\n")

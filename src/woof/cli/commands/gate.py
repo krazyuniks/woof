@@ -106,7 +106,10 @@ def setup_gate_parser(sub: argparse._SubParsersAction) -> None:  # type: ignore[
     write_p.add_argument(
         "--triggered-by",
         dest="triggered_by",
-        help="trigger ID (subprocess_crash | executor_aborted | empty_diff_review | ...)",
+        help=(
+            "trigger ID (subprocess_crash | executor_aborted | "
+            "empty_diff_review | incomplete_stage_state | ...)"
+        ),
     )
     write_p.add_argument(
         "--exit-code",

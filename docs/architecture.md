@@ -422,7 +422,7 @@ Nine checks, derived from a failure-class taxonomy. Checks 1–8 run after the s
 2. `executor_dispatch` marks the story `in_progress` and dispatches the story-executor producer prompt. The producer writes `executor_result.json` only.
 3. `critique_dispatch` dispatches Codex critique and expects `critique/story-S<k>.md`.
 4. `verification` runs `woof check stage-5 --epic <N> --story <S<k>> --format json` and writes `check-result.json`.
-5. `gate_open` writes `gate.md` if the executor outcome, subprocess result, or verifier result requires human review.
+5. `gate_open` writes `gate.md` if the executor outcome, subprocess result, verifier result, or an incomplete Stage-5 handoff state requires human review.
 6. `commit` computes the transaction manifest, stages the exact expected file set, verifies the index, appends graph events, commits, and removes transient `executor_result.json` / `check-result.json`.
 7. Existing `gate.md` halts at `human_review` until `woof wf --epic <N> --resolve <decision>` records the structured gate decision and removes the gate.
 
@@ -444,7 +444,7 @@ If a process dies during the commit transition after the plan has been marked `d
 
 **Dispatch.** The graph invokes producer nodes through `woof dispatch <claude|codex> --role <role-name>`. Producers receive structured input, write declared output artefacts, and do not choose successor nodes.
 
-**Timeouts and crashes.** Role timeouts are configured in `.woof/agents.toml`. Timeout, non-zero subprocess exit, missing declared output, or malformed output opens a gate with a structured trigger and evidence. There is no automatic retry.
+**Timeouts, crashes, and incomplete state.** Role timeouts are configured in `.woof/agents.toml`. Timeout, non-zero subprocess exit, missing declared output, or malformed output opens a gate with a structured trigger and evidence. Missing or malformed graph-owned handoff artefacts use `triggered_by: ["incomplete_stage_state"]`. There is no automatic retry.
 
 **Re-entry.** On every invocation, the graph reconstitutes state from the filesystem. Existing gates halt at `human_review`. Incomplete `in_progress` work opens a gate or requires an explicit structured reset decision; it is never silently re-executed.
 

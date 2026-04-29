@@ -48,12 +48,13 @@
           "executor_aborted",
           "codex_unreachable",
           "incomplete_subprocess",
+          "incomplete_stage_state",
           "schema_validation_failed",
           "github_sync_conflict",
           "manual"
         ]
       },
-      "description": "Reasons the gate opened. plan_review fires automatically at Stage 4. check_1_quality_gates..check_9_review_valve map to Stage-5 registry check IDs (canonical names; these replace the legacy check_1_quality_gate etc.). empty_diff_review opens when a story finishes with no diff. Driver-level: subprocess_crash (executor process exited non-zero), subprocess_aborted (SIGTERM/timeout), executor_aborted (executor wrote outcome=aborted_with_position). schema_validation_failed when Stage 3 self-validation exhausts the 2-attempt cap. github_sync_conflict when push detects remote-issue changes. manual for human-opened gates."
+      "description": "Reasons the gate opened. plan_review fires automatically at Stage 4. check_1_quality_gates..check_9_review_valve map to Stage-5 registry check IDs (canonical names; these replace the legacy check_1_quality_gate etc.). empty_diff_review opens when a story finishes with no diff. Driver-level: subprocess_crash (executor process exited non-zero), subprocess_aborted (SIGTERM/timeout), executor_aborted (executor wrote outcome=aborted_with_position), incomplete_stage_state (required Stage-5 handoff artefact is missing or malformed). schema_validation_failed when Stage 3 self-validation exhausts the 2-attempt cap. github_sync_conflict when push detects remote-issue changes. manual for human-opened gates."
     },
     "timestamp": {
       "type": "string",

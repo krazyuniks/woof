@@ -4,6 +4,8 @@ import json
 import subprocess
 from pathlib import Path
 
+import yaml
+
 from woof.graph.manifest import build_story_manifest, verify_staged_manifest
 from woof.graph.runner import run_graph
 from woof.graph.state import NodeInput, NodeOutput, NodeStatus, NodeType, StorySpec
@@ -52,6 +54,11 @@ def _init_git_repo(root: Path) -> None:
     subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True)
     subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=root, check=True)
     subprocess.run(["git", "config", "user.name", "Test"], cwd=root, check=True)
+
+
+def _read_gate_fm(gate_path: Path) -> dict:
+    text = gate_path.read_text()
+    return yaml.safe_load(text[4 : text.find("\n---\n", 4)])
 
 
 def _write_ready_commit_state(root: Path, epic_id: int = 1) -> Path:
@@ -228,6 +235,129 @@ def test_complete_epic_cleans_stale_transient_files(tmp_path: Path) -> None:
     assert not (directory / "check-result.json").exists()
 
 
+def test_in_progress_story_missing_executor_result_opens_incomplete_state_gate(
+    tmp_path: Path,
+) -> None:
+    directory = _write_plan(tmp_path, 1)
+    mark_story_status(tmp_path, 1, "S1", "in_progress")
+
+    assert next_node(tmp_path, 1) == (NodeType.GATE_OPEN, "S1")
+
+    outputs = run_graph(tmp_path, 1)
+
+    assert outputs == [
+        NodeOutput(
+            node_type=NodeType.GATE_OPEN,
+            status=NodeStatus.GATE_OPENED,
+            epic_id=1,
+            story_id="S1",
+            triggered_by=["incomplete_stage_state"],
+            message="Required Stage-5 artefact missing: .woof/epics/E1/executor_result.json",
+        )
+    ]
+    gate_fm = _read_gate_fm(directory / "gate.md")
+    assert gate_fm["triggered_by"] == ["incomplete_stage_state"]
+
+
+def test_in_progress_story_malformed_executor_result_opens_incomplete_state_gate(
+    tmp_path: Path,
+) -> None:
+    directory = _write_plan(tmp_path, 1)
+    mark_story_status(tmp_path, 1, "S1", "in_progress")
+    (directory / "executor_result.json").write_text("{")
+
+    assert next_node(tmp_path, 1) == (NodeType.GATE_OPEN, "S1")
+
+    outputs = run_graph(tmp_path, 1)
+
+    assert outputs[0].status == NodeStatus.GATE_OPENED
+    assert outputs[0].triggered_by == ["incomplete_stage_state"]
+    assert "malformed JSON" in outputs[0].message
+    gate_fm = _read_gate_fm(directory / "gate.md")
+    assert gate_fm["triggered_by"] == ["incomplete_stage_state"]
+
+
+def test_malformed_check_result_opens_incomplete_state_gate(tmp_path: Path) -> None:
+    directory = _write_plan(tmp_path, 1)
+    mark_story_status(tmp_path, 1, "S1", "in_progress")
+    (directory / "executor_result.json").write_text(
+        json.dumps(
+            {
+                "epic_id": 1,
+                "story_id": "S1",
+                "outcome": "staged_for_verification",
+                "commit_body": "done",
+                "position": None,
+            }
+        )
+    )
+    critique_dir = directory / "critique"
+    critique_dir.mkdir()
+    (critique_dir / "story-S1.md").write_text("---\nseverity: info\n---\n")
+    (directory / "check-result.json").write_text("{")
+
+    assert next_node(tmp_path, 1) == (NodeType.GATE_OPEN, "S1")
+
+    outputs = run_graph(tmp_path, 1)
+
+    assert outputs[0].status == NodeStatus.GATE_OPENED
+    assert outputs[0].triggered_by == ["incomplete_stage_state"]
+    assert "check-result.json" in outputs[0].message
+    gate_fm = _read_gate_fm(directory / "gate.md")
+    assert gate_fm["triggered_by"] == ["incomplete_stage_state"]
+
+
+def test_failed_check_result_reopens_structured_gate_on_reentry(tmp_path: Path) -> None:
+    directory = _write_plan(tmp_path, 1)
+    mark_story_status(tmp_path, 1, "S1", "in_progress")
+    (directory / "executor_result.json").write_text(
+        json.dumps(
+            {
+                "epic_id": 1,
+                "story_id": "S1",
+                "outcome": "staged_for_verification",
+                "commit_body": "done",
+                "position": None,
+            }
+        )
+    )
+    critique_dir = directory / "critique"
+    critique_dir.mkdir()
+    (critique_dir / "story-S1.md").write_text("---\nseverity: blocker\n---\n")
+    (directory / "check-result.json").write_text(
+        json.dumps(
+            {
+                "ok": False,
+                "stage": 5,
+                "epic_id": 1,
+                "story_id": "S1",
+                "triggered_by": ["check_6_critique_blocker"],
+                "checks": [
+                    {
+                        "id": "check_6_critique_blocker",
+                        "ok": False,
+                        "severity": "blocker",
+                        "summary": "critique severity is blocker",
+                        "evidence": None,
+                        "paths": [],
+                        "command": None,
+                        "exit_code": None,
+                    }
+                ],
+            }
+        )
+    )
+
+    assert next_node(tmp_path, 1) == (NodeType.GATE_OPEN, "S1")
+
+    outputs = run_graph(tmp_path, 1)
+
+    assert outputs[0].status == NodeStatus.GATE_OPENED
+    assert outputs[0].triggered_by == ["check_6_critique_blocker"]
+    gate_fm = _read_gate_fm(directory / "gate.md")
+    assert gate_fm["triggered_by"] == ["check_6_critique_blocker"]
+
+
 def test_wf_epic_reports_complete_epic_as_json(tmp_path: Path) -> None:
     directory = _write_plan(tmp_path, 7)
     plan = json.loads((directory / "plan.json").read_text())
@@ -250,6 +380,16 @@ def test_wf_epic_reports_complete_epic_as_json(tmp_path: Path) -> None:
             "paths": [],
         }
     ]
+
+
+def test_wf_reports_missing_plan_as_structured_failure(tmp_path: Path) -> None:
+    (tmp_path / ".woof" / "epics" / "E10").mkdir(parents=True)
+
+    proc = _run_woof(tmp_path, "wf", "--epic", "10")
+
+    assert proc.returncode == 2
+    assert "woof wf: incomplete_stage_state:" in proc.stderr
+    assert "plan.json" in proc.stderr
 
 
 def test_wf_epic_halts_when_gate_is_open(tmp_path: Path) -> None:

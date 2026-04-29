@@ -9,8 +9,6 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
-from pydantic import ValidationError
-
 from woof.gate.write import write_gate_for_trigger, write_gate_from_check_result
 from woof.graph.git import git, staged_paths
 from woof.graph.manifest import build_story_manifest, verify_staged_manifest
@@ -358,26 +356,69 @@ def gate_open_node(inp: NodeInput) -> NodeOutput:
             triggered_by=[inp.reason or "manual"],
         )
 
-    result_path = epic_dir(inp.repo_root, inp.epic_id) / "executor_result.json"
+    directory = epic_dir(inp.repo_root, inp.epic_id)
+    result_path = directory / "executor_result.json"
+    check_result_path = directory / "check-result.json"
     trigger = inp.reason or "manual"
     position_path = None
-    if result_path.exists():
+
+    if not result_path.exists():
+        return _write_incomplete_stage_gate(
+            inp,
+            f"Required Stage-5 artefact missing: {result_path.relative_to(inp.repo_root)}",
+        )
+
+    try:
+        result = json.loads(result_path.read_text())
+    except json.JSONDecodeError:
+        return _write_incomplete_stage_gate(
+            inp,
+            f"Required Stage-5 artefact is malformed JSON: {result_path.relative_to(inp.repo_root)}",
+        )
+
+    outcome = result.get("outcome")
+    if outcome == "aborted_with_position":
+        trigger = "executor_aborted"
+    elif outcome == "empty_diff":
+        trigger = "empty_diff_review"
+    elif outcome == "staged_for_verification" and check_result_path.exists():
         try:
-            result = json.loads(result_path.read_text())
-        except (json.JSONDecodeError, ValidationError):
-            result = {}
-        outcome = result.get("outcome")
-        if outcome == "aborted_with_position":
-            trigger = "executor_aborted"
-        elif outcome == "empty_diff":
-            trigger = "empty_diff_review"
-        if result.get("position"):
-            position_path = epic_dir(inp.repo_root, inp.epic_id) / "gate-position.md"
-            position_path.write_text(result["position"])
+            check_result = json.loads(check_result_path.read_text())
+        except json.JSONDecodeError:
+            return _write_incomplete_stage_gate(
+                inp,
+                "Required Stage-5 artefact is malformed JSON: "
+                f"{check_result_path.relative_to(inp.repo_root)}",
+            )
+        if not check_result.get("ok", False):
+            write_gate_from_check_result(
+                check_result_path=check_result_path,
+                position_path=None,
+                epic_dir=directory,
+                story_id=inp.story_id,
+                schema_path=schema_dir() / "gate.schema.json",
+            )
+            return NodeOutput(
+                node_type=inp.node_type,
+                status=NodeStatus.GATE_OPENED,
+                epic_id=inp.epic_id,
+                story_id=inp.story_id,
+                triggered_by=check_result.get("triggered_by") or ["schema_validation_failed"],
+            )
+    elif outcome != "staged_for_verification":
+        return _write_incomplete_stage_gate(
+            inp,
+            "Required Stage-5 artefact has an unsupported executor outcome: "
+            f"{result_path.relative_to(inp.repo_root)} outcome={outcome!r}",
+        )
+
+    if result.get("position"):
+        position_path = directory / "gate-position.md"
+        position_path.write_text(result["position"])
 
     write_gate_for_trigger(
         trigger=trigger,
-        epic_dir=epic_dir(inp.repo_root, inp.epic_id),
+        epic_dir=directory,
         story_id=inp.story_id,
         position_path=position_path,
         schema_path=schema_dir() / "gate.schema.json",
@@ -390,6 +431,34 @@ def gate_open_node(inp: NodeInput) -> NodeOutput:
         epic_id=inp.epic_id,
         story_id=inp.story_id,
         triggered_by=[trigger],
+    )
+
+
+def _write_incomplete_stage_gate(inp: NodeInput, position: str) -> NodeOutput:
+    position_path = epic_dir(inp.repo_root, inp.epic_id) / "gate-position.md"
+    position_path.write_text(
+        f"{position}\n\n"
+        "The graph cannot safely infer or recreate this state. "
+        "Resolve the gate by restoring the required artefact, revising the story state, "
+        "or explicitly abandoning the story."
+    )
+    try:
+        write_gate_for_trigger(
+            trigger="incomplete_stage_state",
+            epic_dir=epic_dir(inp.repo_root, inp.epic_id),
+            story_id=inp.story_id,
+            position_path=position_path,
+            schema_path=schema_dir() / "gate.schema.json",
+        )
+    finally:
+        position_path.unlink(missing_ok=True)
+    return NodeOutput(
+        node_type=inp.node_type,
+        status=NodeStatus.GATE_OPENED,
+        epic_id=inp.epic_id,
+        story_id=inp.story_id,
+        triggered_by=["incomplete_stage_state"],
+        message=position,
     )
 
 

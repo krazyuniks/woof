@@ -11,13 +11,22 @@ from woof.graph.manifest import build_story_manifest
 from woof.graph.state import NodeType, Plan, StorySpec
 
 
+class StageStateError(RuntimeError):
+    """Filesystem state cannot be mapped to a valid Stage-5 graph node."""
+
+
 def epic_dir(repo_root: Path, epic_id: int) -> Path:
     return repo_root / ".woof" / "epics" / f"E{epic_id}"
 
 
 def load_plan(repo_root: Path, epic_id: int) -> Plan:
     path = epic_dir(repo_root, epic_id) / "plan.json"
-    return Plan.model_validate_json(path.read_text())
+    try:
+        return Plan.model_validate_json(path.read_text())
+    except FileNotFoundError as exc:
+        raise StageStateError(f"required Stage-5 artefact missing: {path}") from exc
+    except ValueError as exc:
+        raise StageStateError(f"required Stage-5 artefact is malformed: {path}") from exc
 
 
 def write_plan(repo_root: Path, plan: Plan) -> None:
@@ -94,6 +103,14 @@ def _load_json(path: Path) -> dict:
         return {}
 
 
+def _json_loads_ok(path: Path) -> bool:
+    try:
+        json.loads(path.read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return False
+    return True
+
+
 def _has_uncommitted_commit_work(repo_root: Path, epic_id: int, story: StorySpec) -> bool:
     try:
         manifest = build_story_manifest(repo_root, epic_id, story)
@@ -155,7 +172,9 @@ def next_node(repo_root: Path, epic_id: int) -> tuple[NodeType | None, str | Non
     if in_progress is None:
         ready = next_ready_story(plan)
         if ready is None:
-            return NodeType.GATE_OPEN, None
+            raise StageStateError(
+                f"E{epic_id} has pending stories, but no story has satisfied dependencies"
+            )
         return NodeType.EXECUTOR_DISPATCH, ready.id
 
     result_path = directory / "executor_result.json"
@@ -163,7 +182,9 @@ def next_node(repo_root: Path, epic_id: int) -> tuple[NodeType | None, str | Non
     check_result_path = directory / "check-result.json"
 
     if not result_path.exists():
-        return NodeType.EXECUTOR_DISPATCH, in_progress.id
+        return NodeType.GATE_OPEN, in_progress.id
+    if not _json_loads_ok(result_path):
+        return NodeType.GATE_OPEN, in_progress.id
 
     result = json.loads(result_path.read_text())
     outcome = result.get("outcome")
@@ -175,6 +196,8 @@ def next_node(repo_root: Path, epic_id: int) -> tuple[NodeType | None, str | Non
         return NodeType.CRITIQUE_DISPATCH, in_progress.id
     if not check_result_path.exists():
         return NodeType.VERIFICATION, in_progress.id
+    if not _json_loads_ok(check_result_path):
+        return NodeType.GATE_OPEN, in_progress.id
 
     check_result = json.loads(check_result_path.read_text())
     if not check_result.get("ok", False):

@@ -5,7 +5,6 @@ These tests run on host (not Docker) — woof requires uv and ajv-cli on PATH.
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -18,7 +17,6 @@ if TYPE_CHECKING:
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WOOF_BIN = REPO_ROOT / "bin" / "woof"
-
 
 pytestmark = pytest.mark.host_only
 
@@ -41,11 +39,12 @@ _GIT_LOCAL_ENV_VARS = (
 )
 
 
-@pytest.fixture(scope="session", autouse=True)
-def _clear_git_hook_env() -> None:
-    """Prevent hook-local Git variables leaking into temp repos created by tests."""
+@pytest.fixture(autouse=True)
+def _clear_git_hook_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Let tests create nested git repos while running inside Git hooks."""
+
     for name in _GIT_LOCAL_ENV_VARS:
-        os.environ.pop(name, None)
+        monkeypatch.delenv(name, raising=False)
 
 
 @pytest.fixture(scope="session", autouse=True)

@@ -5,6 +5,7 @@ These tests run on host (not Docker) — woof requires uv and ajv-cli on PATH.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -20,6 +21,31 @@ WOOF_BIN = REPO_ROOT / "bin" / "woof"
 
 
 pytestmark = pytest.mark.host_only
+
+_GIT_LOCAL_ENV_VARS = (
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_CONFIG",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_GRAFT_FILE",
+    "GIT_INDEX_FILE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_PREFIX",
+    "GIT_SHALLOW_FILE",
+    "GIT_COMMON_DIR",
+)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _clear_git_hook_env() -> None:
+    """Prevent hook-local Git variables leaking into temp repos created by tests."""
+    for name in _GIT_LOCAL_ENV_VARS:
+        os.environ.pop(name, None)
 
 
 @pytest.fixture(scope="session", autouse=True)

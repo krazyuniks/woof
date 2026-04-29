@@ -36,7 +36,7 @@ Every implementation turn must use this loop.
 11. Commit through normal hooks. Do not bypass pre-commit or pre-push hooks.
 12. Push normally. If hooks fail, fix the underlying issue or record the blocker in this ledger.
 13. Monitor GitHub CI for the pushed commit until it reaches a terminal state. If CI fails, inspect the failing job, fix the underlying issue, commit and push the fix, then monitor the new run. If CI cannot be made green in the session, record the blocker in this ledger.
-14. Final handoff must include the pushed commit hash, local validation result, GitHub CI result, and the next continuation prompt from this file.
+14. Final handoff must include the pushed commit hash, local validation result, GitHub CI result, and the full copy-pasteable `Next Continuation Prompt` block from this file. Do not summarise the prompt or provide only the next work-item ID.
 
 ## Ledger Semantics
 
@@ -177,6 +177,7 @@ Workflow:
 - Commit through normal hooks with the commit message recorded on the selected item.
 - Push normally.
 - Monitor GitHub CI for the pushed commit until it passes. If it fails, inspect the failing job, fix the underlying issue, and repeat the commit/push/monitor loop.
+- In the final response, paste this complete continuation prompt block so it can be copied into a new session.
 
 Start with:
 WF-002: Represent incomplete Stage-5 states as explicit graph states or gates.

@@ -180,5 +180,5 @@ Workflow:
 - In the final response, paste this complete continuation prompt block so it can be copied into a new session.
 
 Start with:
-WF-002: Represent incomplete Stage-5 states as explicit graph states or gates.
+WF-003: Stabilise `woof wf --format json` output.
 ```

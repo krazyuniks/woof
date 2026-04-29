@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://woof.dev/schemas/check-result.schema.json",
+  "title": "woof Stage-5 check result",
+  "description": "Structured output of 'woof check stage-5'. Top-level ok is true iff triggered_by is empty. The checks array contains one entry per registry slot in declaration order.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ok", "stage", "epic_id", "story_id", "triggered_by", "checks"],
+  "properties": {
+    "ok": {
+      "type": "boolean",
+      "description": "true iff all checks passed (triggered_by is empty)."
+    },
+    "stage": {
+      "type": "integer",
+      "const": 5
+    },
+    "epic_id": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "story_id": {
+      "type": "string",
+      "pattern": "^S[1-9]\\d*$"
+    },
+    "triggered_by": {
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true,
+      "description": "IDs of checks where ok == false."
+    },
+    "checks": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/check_entry" },
+      "description": "One entry per registry slot in stage-5 declaration order."
+    }
+  },
+  "$defs": {
+    "check_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "ok", "summary"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Registry check ID, e.g. check_6_critique_blocker."
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "severity": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "string", "enum": ["info", "minor", "blocker"] }
+          ],
+          "description": "Severity of this check's outcome; null when ok=true and no severity to report."
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "string" }
+          ]
+        },
+        "paths": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "command": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "string" }
+          ]
+        },
+        "exit_code": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "integer" }
+          ]
+        }
+      }
+    }
+  }
+}

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://woof.dev/schemas/gate.schema.json",
   "title": "woof gate front-matter",
-  "description": "YAML front-matter of .woof/epics/E<N>/gate.md. Validates the structured header only; the prose sections (## Context, ## Findings, ## Claude's position) are unconstrained markdown. The gate.md represents an OPEN gate; resolution is recorded as a jsonl event with a decision drawn from the taxonomy in jsonl-events.schema.json (gate_resolved.decision).",
+  "description": "YAML front-matter of .woof/epics/E<N>/gate.md. Validates the structured header only; the prose sections (## Context, ## Findings, ## Position) are unconstrained markdown. The gate.md represents an OPEN gate; resolution is recorded as a jsonl event with a decision drawn from the taxonomy in jsonl-events.schema.json (gate_resolved.decision). triggered_by[] enum values are registry-derived check IDs plus driver-level triggers; the enum is snapshot-tested against the registry in tests/unit/woof/test_check_stage_5_subcommand.py.",
   "type": "object",
   "additionalProperties": false,
   "required": ["type", "stage", "story_id", "triggered_by", "timestamp"],
@@ -10,7 +10,7 @@
     "type": {
       "type": "string",
       "enum": ["plan_gate", "story_gate", "review_gate"],
-      "description": "plan_gate (Stage 4, always opens). story_gate (Stage 6, conditional on Stage 5 check failure or critique blocker). review_gate (periodic; opens every-N stories or before epic close to surface accumulated minor critique findings)."
+      "description": "plan_gate (Stage 4, always opens). story_gate (Stage 6, conditional on Stage 5 check failure or executor halt). review_gate (periodic; opens every-N stories or before epic close to surface accumulated minor critique findings)."
     },
     "stage": {
       "type": "integer",
@@ -32,18 +32,20 @@
         "type": "string",
         "enum": [
           "plan_review",
-          "check_1_quality_gate",
-          "check_2_spec_coverage",
+          "check_1_quality_gates",
+          "check_2_outcome_markers",
           "check_3_scope",
-          "check_4_contract",
-          "check_5_plan_integrity",
+          "check_4_contract_refs",
+          "check_5_plan_crossrefs",
           "check_6_critique_blocker",
-          "check_7_completion",
+          "check_7_commit_transaction",
           "check_8_docs_drift",
-          "check_9_periodic_review",
+          "check_9_review_valve",
           "empty_diff_review",
           "timeout",
           "subprocess_crash",
+          "subprocess_aborted",
+          "executor_aborted",
           "codex_unreachable",
           "incomplete_subprocess",
           "schema_validation_failed",
@@ -51,7 +53,7 @@
           "manual"
         ]
       },
-      "description": "Reasons the gate opened. plan_review fires automatically at Stage 4 (gate always opens). check_1..check_9 map to Stage 5 deterministic failure classes (1-8 are A-H from the failure-class taxonomy; 9 is the periodic-review valve). empty_diff_review opens when a story finishes with no diff. Driver-level: timeout, subprocess_crash (with exit_code), codex_unreachable, incomplete_subprocess. schema_validation_failed when Stage 3 self-validation exhausts the 2-attempt cap. github_sync_conflict when push detects remote-issue changes. manual for human-opened gates."
+      "description": "Reasons the gate opened. plan_review fires automatically at Stage 4. check_1_quality_gates..check_9_review_valve map to Stage-5 registry check IDs (canonical names; these replace the legacy check_1_quality_gate etc.). empty_diff_review opens when a story finishes with no diff. Driver-level: subprocess_crash (executor process exited non-zero), subprocess_aborted (SIGTERM/timeout), executor_aborted (executor wrote outcome=aborted_with_position). schema_validation_failed when Stage 3 self-validation exhausts the 2-attempt cap. github_sync_conflict when push detects remote-issue changes. manual for human-opened gates."
     },
     "timestamp": {
       "type": "string",

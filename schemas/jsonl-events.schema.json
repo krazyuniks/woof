@@ -29,13 +29,16 @@
         "subprocess_spawned",
         "subprocess_returned",
         "subprocess_killed",
+        "executor_result_recorded",
+        "check_run",
+        "story_committed",
         "preflight_run",
         "github_synced",
         "github_sync_conflict",
         "cartography_refreshed",
         "token_usage"
       ],
-      "description": "Event kind. Stage events (epic.jsonl): spark_created, discovery_*, definition_*, plan_*, story_*, *_gate_*, epic_completed. Dispatch events (dispatch.jsonl): subprocess_*. Operational events (either): preflight_run, github_synced, github_sync_conflict, cartography_refreshed, token_usage."
+      "description": "Event kind. Stage events (epic.jsonl): spark_created, discovery_*, definition_*, plan_*, story_*, *_gate_*, epic_completed, executor_result_recorded, check_run, story_committed. Dispatch events (dispatch.jsonl): subprocess_*. Operational events (either): preflight_run, github_synced, github_sync_conflict, cartography_refreshed, token_usage."
     },
     "at": {
       "type": "string",
@@ -227,6 +230,27 @@
         "required": ["event"]
       },
       "then": { "required": ["decision"] }
+    },
+    {
+      "if": {
+        "properties": { "event": { "const": "executor_result_recorded" } },
+        "required": ["event"]
+      },
+      "then": { "required": ["story_id", "exit_code"] }
+    },
+    {
+      "if": {
+        "properties": { "event": { "const": "check_run" } },
+        "required": ["event"]
+      },
+      "then": { "required": ["story_id", "triggered_by"] }
+    },
+    {
+      "if": {
+        "properties": { "event": { "const": "story_committed" } },
+        "required": ["event"]
+      },
+      "then": { "required": ["story_id", "commit_sha"] }
     }
   ]
 }

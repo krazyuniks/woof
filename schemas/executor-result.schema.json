@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://woof.dev/schemas/executor-result.schema.json",
+  "title": "woof story-executor result",
+  "description": "Written by the story-executor before clean exit (exit 0). The wf-run driver reads this and branches on outcome. outcome=staged_for_verification means the diff is staged and ready for woof check stage-5; outcome=aborted_with_position means the executor decided to halt and has authored position prose; outcome=empty_diff means no code changes were made.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["epic_id", "story_id", "outcome"],
+  "properties": {
+    "epic_id": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "story_id": {
+      "type": "string",
+      "pattern": "^S[1-9]\\d*$"
+    },
+    "outcome": {
+      "type": "string",
+      "enum": ["staged_for_verification", "aborted_with_position", "empty_diff"],
+      "description": "staged_for_verification: diff is staged; proceed to woof check stage-5. aborted_with_position: executor halted; driver writes gate from position prose. empty_diff: no changes; driver writes gate for operator confirmation."
+    },
+    "commit_body": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "string" }
+      ],
+      "description": "Optional multi-line commit body. Used by the driver when constructing the git commit message. Required for staged_for_verification outcome."
+    },
+    "position": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "string" }
+      ],
+      "description": "Prose position authored by the executor explaining why it halted. Required for aborted_with_position and empty_diff outcomes. The driver passes this verbatim to woof gate write."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "outcome": { "const": "staged_for_verification" } },
+        "required": ["outcome"]
+      },
+      "then": {
+        "required": ["commit_body"]
+      }
+    },
+    {
+      "if": {
+        "properties": { "outcome": { "const": "aborted_with_position" } },
+        "required": ["outcome"]
+      },
+      "then": {
+        "required": ["position"]
+      }
+    },
+    {
+      "if": {
+        "properties": { "outcome": { "const": "empty_diff" } },
+        "required": ["outcome"]
+      },
+      "then": {
+        "required": ["position"]
+      }
+    }
+  ]
+}

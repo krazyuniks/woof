@@ -17,7 +17,7 @@ The Woof repository currently implements the ADR-001 Stage-5 execution path:
 - `woof wf --epic <N>` is the operator entry point for the deterministic Python graph.
 - Graph nodes dispatch the story executor, dispatch Codex critique, run Stage-5 verification, open gates, and commit through a transaction manifest.
 - `.claude/commands/wf*.md` are thin wrappers or producer-node prompts. They do not own successor selection, critique dispatch, gate writing, or commits.
-- Discovery, Definition, Breakdown, GitHub issue sync, and the full preflight/cartography lifecycle are implemented only where command code exists under `src/woof/cli/`; remaining work is tracked in `docs/backlog.md`.
+- Discovery, Definition, Breakdown, GitHub issue sync, and the full preflight/cartography lifecycle are implemented only where command code exists under `src/woof/cli/`; remaining work is tracked in `docs/implementation-plan.md`.
 
 When this document conflicts with `docs/adr/001-orchestration-topology.md` or the current source under `src/woof/`, source and ADR-001 win.
 
@@ -763,4 +763,4 @@ The CLI is the operator surface. Prompt wrappers may call these commands, but th
 
 ## 3. Roadmap
 
-The implementation roadmap lives in `docs/backlog.md`. Architecture changes that alter graph topology or stage contracts require an ADR.
+The implementation roadmap and progress ledger live in `docs/implementation-plan.md`. Architecture changes that alter graph topology or stage contracts require an ADR.

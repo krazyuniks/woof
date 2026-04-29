@@ -19,7 +19,7 @@ Discovery, definition, and breakdown remain documented in [`docs/architecture.md
 - [`docs/architecture.md`](docs/architecture.md) — principles, architecture, stages, gates, schemas.
 - [`docs/research.md`](docs/research.md) — framework evaluation, E146 contract-fidelity case study, lessons.
 - [`docs/adr/001-orchestration-topology.md`](docs/adr/001-orchestration-topology.md) — accepted graph topology for execution.
-- [`docs/backlog.md`](docs/backlog.md) — current implementation backlog and roadmap.
+- [`docs/implementation-plan.md`](docs/implementation-plan.md) — current implementation plan, roadmap, and progress ledger.
 - [`examples/dogfood/`](examples/dogfood/) — selected artefacts from the first Woof dogfood epics.
 
 ## Development

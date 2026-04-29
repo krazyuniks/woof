@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://woof.dev/schemas/node-input.schema.json",
+  "title": "woof graph node input",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["node_type", "epic_id", "repo_root"],
+  "properties": {
+    "node_type": {
+      "type": "string",
+      "enum": [
+        "executor_dispatch",
+        "critique_dispatch",
+        "verification",
+        "commit",
+        "gate_open",
+        "gate_resolve",
+        "human_review"
+      ]
+    },
+    "epic_id": { "type": "integer", "minimum": 1 },
+    "story_id": {
+      "oneOf": [
+        { "type": "string", "pattern": "^S[1-9]\\d*$" },
+        { "type": "null" }
+      ]
+    },
+    "repo_root": { "type": "string", "minLength": 1 },
+    "reason": {
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        { "type": "null" }
+      ]
+    },
+    "decision": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "approve",
+            "revise_epic_contract",
+            "revise_plan",
+            "revise_story_scope",
+            "split_story",
+            "abandon_story",
+            "abandon_epic"
+          ]
+        },
+        { "type": "null" }
+      ]
+    }
+  }
+}

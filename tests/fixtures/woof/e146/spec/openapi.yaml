@@ -1,0 +1,51 @@
+openapi: 3.1.0
+info:
+  title: E146 fixture API
+  version: "1.0.0"
+paths:
+  /api/v1/comments/{id}:
+    patch:
+      operationId: editComment
+      summary: Edit a comment by id
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body:
+                  type: string
+                  minLength: 1
+                  maxLength: 10000
+      responses:
+        "200":
+          description: Updated comment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Comment"
+        "404":
+          description: Not found
+components:
+  schemas:
+    Comment:
+      type: object
+      required: [id, body, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        body:
+          type: string
+        created_at:
+          type: string
+          format: date-time

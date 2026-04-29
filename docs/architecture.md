@@ -6,6 +6,8 @@
 > **Status:** Active. `guitar-tone-shootout` is Woof's first external consumer.
 > **Rule:** All design work lives here. No parallel design docs. `.woof/` is runtime-state only.
 
+> **ADR-001 update:** Stage-5 orchestration is now graph-owned Python (`woof wf --epic <N>`). Historical text below that describes `/wf` or `just wf-run` as the orchestrator is retained as design lineage; ADR-001 supersedes that topology for implementation.
+
 ---
 
 ## 1. Principles

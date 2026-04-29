@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://woof.dev/schemas/node-output.schema.json",
+  "title": "woof graph node output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["node_type", "status", "epic_id", "triggered_by", "message", "paths"],
+  "properties": {
+    "node_type": {
+      "type": "string",
+      "enum": [
+        "executor_dispatch",
+        "critique_dispatch",
+        "verification",
+        "commit",
+        "gate_open",
+        "gate_resolve",
+        "human_review"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["completed", "gate_opened", "halted", "epic_complete"]
+    },
+    "epic_id": { "type": "integer", "minimum": 1 },
+    "story_id": {
+      "oneOf": [
+        { "type": "string", "pattern": "^S[1-9]\\d*$" },
+        { "type": "null" }
+      ]
+    },
+    "next_node": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "executor_dispatch",
+            "critique_dispatch",
+            "verification",
+            "commit",
+            "gate_open",
+            "gate_resolve",
+            "human_review"
+          ]
+        },
+        { "type": "null" }
+      ]
+    },
+    "triggered_by": {
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true
+    },
+    "message": { "type": "string" },
+    "paths": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

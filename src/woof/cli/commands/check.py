@@ -37,7 +37,7 @@ def _load_critique_fm(epic_dir: Path, story_id: str) -> dict | None:
         return None
     try:
         return yaml.safe_load(text[4:end]) or {}
-    except Exception:  # noqa: BLE001
+    except Exception:
         return None
 
 
@@ -59,7 +59,7 @@ def _self_test(registry: dict, stage_ids: list[str]) -> int:
             check.runner(None)  # type: ignore[arg-type]
         except NotImplementedError:
             failures.append(f"{check_id}: runner raises NotImplementedError (not implemented)")
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass  # raised for a real reason — runner IS implemented
 
     if failures:
@@ -118,16 +118,18 @@ def cmd_check_stage_5(args: argparse.Namespace) -> int:
             # Bootstrap-tolerant: placeholder runners report ok=true severity=info
             # so the per-story driver does not deadlock during the registry-population
             # window. --self-test remains the strict CI gate for unimplemented runners.
-            outcomes.append({
-                "id": check_id,
-                "ok": True,
-                "severity": "info",
-                "summary": f"{check_id}: runner not yet implemented (bootstrap placeholder)",
-                "evidence": None,
-                "paths": [],
-                "command": None,
-                "exit_code": None,
-            })
+            outcomes.append(
+                {
+                    "id": check_id,
+                    "ok": True,
+                    "severity": "info",
+                    "summary": f"{check_id}: runner not yet implemented (bootstrap placeholder)",
+                    "evidence": None,
+                    "paths": [],
+                    "command": None,
+                    "exit_code": None,
+                }
+            )
             continue
         d = _outcome_to_dict(outcome)
         outcomes.append(d)
@@ -174,11 +176,14 @@ def setup_check_parser(sub: argparse._SubParsersAction) -> None:  # type: ignore
     stage5.add_argument("--epic", type=int, help="epic id (gh issue number)")
     stage5.add_argument("--story", help="story id (e.g. S1)")
     stage5.add_argument(
-        "--format", choices=["text", "json"], default="text",
+        "--format",
+        choices=["text", "json"],
+        default="text",
         help="output format (default: text)",
     )
     stage5.add_argument(
-        "--self-test", action="store_true",
+        "--self-test",
+        action="store_true",
         help="enumerate registry and exit non-zero if any runner is unimplemented",
     )
     stage5.set_defaults(func=cmd_check_stage_5)

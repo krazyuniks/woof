@@ -1,0 +1,67 @@
+{
+  "epic_id": 181,
+  "goal": "Teach woof dispatch to write raw subprocess stdout to a gitignored audit/raw/ path, run a deterministic post-processor that redacts secrets and strips command_execution aggregated_output bloat from the committed audit, and apply a per-file cap as a safety net (tail-truncate strategy) with operator-configurable knobs in .woof/agents.toml.",
+  "stories": [
+    {
+      "id": "S1",
+      "title": "Audit policy contract + config loader",
+      "intent": "Land the [audit] block on agents.schema.json and a small loader that surfaces enabled/max_bytes/redact_patterns from .woof/agents.toml as a typed config. This is the contract surface S2 consumes; no behavioural change yet.",
+      "paths": [
+        "woof/schemas/agents.schema.json",
+        "woof/lib/audit_config.py",
+        "tests/unit/woof/test_audit_config.py",
+        ".woof/agents.toml"
+      ],
+      "satisfies": [
+        "O3"
+      ],
+      "implements_contract_decisions": [
+        "CD1"
+      ],
+      "uses_contract_decisions": [],
+      "depends_on": [],
+      "tests": {
+        "count": 4,
+        "types": [
+          "unit"
+        ]
+      },
+      "status": "done"
+    },
+    {
+      "id": "S2",
+      "title": "Redactor + deterministic post-processor wired into woof dispatch",
+      "intent": "Wire raw-then-summarise audit handling into woof dispatch. Raw subprocess stdout writes to gitignored .woof/epics/E*/audit/raw/<role>-<ts>.output. A deterministic post-processor (1) applies conservative secret redaction; (2) for harnesses that emit JSONL with command_execution events (codex), rewrites those events to keep the command + exit_code + output length but drops the inlined aggregated_output content; (3) extracts the harness's terminal result text into the .meta file's result_text field; (4) writes the post-processed result to the committed .woof/epics/E*/audit/<role>-<ts>.output. The configured cap (default 256 KB) acts as a safety net only — when it engages, the strategy is tail-truncate (keep last max_bytes; footer points at audit/raw/). Realises O1 (redaction), O3 (configurable), O4 (deterministic summary + safety-net cap). O2 is deprecated and not implemented.",
+      "paths": [
+        "woof/lib/audit_filter.py",
+        "woof/lib/audit_postprocessor.py",
+        "woof/bin/woof",
+        "tests/unit/woof/test_audit_filter.py",
+        "tests/unit/woof/test_audit_postprocessor.py",
+        "tests/unit/woof/test_dispatch.py",
+        "tests/fixtures/woof/audit/codex-sample.jsonl",
+        ".gitignore"
+      ],
+      "satisfies": [
+        "O1",
+        "O3",
+        "O4"
+      ],
+      "implements_contract_decisions": [],
+      "uses_contract_decisions": [
+        "CD1"
+      ],
+      "depends_on": [
+        "S1"
+      ],
+      "tests": {
+        "count": 8,
+        "types": [
+          "unit",
+          "integration"
+        ]
+      },
+      "status": "pending"
+    }
+  ]
+}

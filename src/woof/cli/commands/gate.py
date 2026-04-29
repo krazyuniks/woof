@@ -10,6 +10,8 @@ import argparse
 import sys
 from pathlib import Path
 
+from woof.paths import schema_dir
+
 
 def _find_repo_root() -> Path:
     for candidate in [Path.cwd(), *Path.cwd().parents]:
@@ -19,11 +21,11 @@ def _find_repo_root() -> Path:
 
 
 def _schema_path(repo_root: Path) -> Path:
-    return repo_root / "woof" / "schemas" / "gate.schema.json"
+    return schema_dir() / "gate.schema.json"
 
 
 def cmd_gate_write(args: argparse.Namespace) -> int:
-    from woof.gate.write import write_gate_from_check_result, write_gate_for_trigger
+    from woof.gate.write import write_gate_for_trigger, write_gate_from_check_result
 
     repo_root = _find_repo_root()
     epic_dir = repo_root / ".woof" / "epics" / f"E{args.epic}"
@@ -36,6 +38,7 @@ def cmd_gate_write(args: argparse.Namespace) -> int:
         plan_path = epic_dir / "plan.json"
         if plan_path.exists():
             import json
+
             plan = json.loads(plan_path.read_text())
             for s in plan.get("stories", []):
                 if s.get("status") == "in_progress":
@@ -74,9 +77,7 @@ def cmd_gate_write(args: argparse.Namespace) -> int:
             sys.stderr.write(f"woof gate write: {exc}\n")
             return 1
     else:
-        sys.stderr.write(
-            "woof gate write: provide --from-check-result or --triggered-by\n"
-        )
+        sys.stderr.write("woof gate write: provide --from-check-result or --triggered-by\n")
         return 2
 
     sys.stdout.write(f"woof gate write: {gate_path}\n")
@@ -92,24 +93,30 @@ def setup_gate_parser(sub: argparse._SubParsersAction) -> None:  # type: ignore[
     write_p.add_argument("--story", help="story id (e.g. S1); auto-detected if omitted")
     # Mode 1: from check-result JSON
     write_p.add_argument(
-        "--from-check-result", dest="from_check_result",
+        "--from-check-result",
+        dest="from_check_result",
         help="path to check-result.json",
     )
     write_p.add_argument(
-        "--position-file", dest="position_file",
+        "--position-file",
+        dest="position_file",
         help="path to prose position file (used with --from-check-result)",
     )
     # Mode 2: direct trigger
     write_p.add_argument(
-        "--triggered-by", dest="triggered_by",
+        "--triggered-by",
+        dest="triggered_by",
         help="trigger ID (subprocess_crash | executor_aborted | empty_diff_review | ...)",
     )
     write_p.add_argument(
-        "--exit-code", dest="exit_code", type=int,
+        "--exit-code",
+        dest="exit_code",
+        type=int,
         help="subprocess exit code (required with --triggered-by subprocess_crash)",
     )
     write_p.add_argument(
-        "--from-position", dest="from_position",
+        "--from-position",
+        dest="from_position",
         help="path to prose position file (used with --triggered-by)",
     )
     write_p.set_defaults(func=cmd_gate_write)

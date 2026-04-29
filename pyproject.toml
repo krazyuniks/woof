@@ -1,0 +1,50 @@
+[project]
+name = "woof"
+version = "0.1.0"
+description = "Deterministic inner-loop SDLC orchestration for AI-assisted development"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = [
+    "pydantic>=2.7",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+woof = "woof.cli.main:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.15.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/woof"]
+force-include = { "schemas" = "schemas", "playbooks" = "playbooks", "languages" = "languages", "bin/woof" = "bin/woof" }
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = [
+    "-ra",
+    "-q",
+    "--strict-markers",
+]
+markers = [
+    "host_only: marks tests requiring host tools such as ajv, git, or uv",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+ignore = [
+    "E501",
+]

@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed. Drives the next implementation cycle (the first epic in this repo).
+Accepted and implemented for the Stage-5 execution path. `woof wf --epic <N>` is now the graph entry point; the remaining stages adopt the same topology as they are implemented.
 
 ## Context
 
@@ -58,6 +58,13 @@ Concretely:
 - **Audit-only enforcement (let the LLM orchestrate, retroactively gate on missing artefacts).** Rejected: detects failure after work is wasted. Architecture must be incomplete-by-construction, not validate-after-the-fact.
 
 ## Notes on transition
+
+Implementation landed in:
+
+- `src/woof/graph/` — typed graph state, transition table, node registry, transaction manifest verification.
+- `src/woof/cli/commands/wf.py` — single operator entry point for graph execution and structured gate resolution.
+- `schemas/{node-input,node-output,transaction-manifest}.schema.json` — graph contracts.
+- `.claude/commands/wf*.md` — reduced to wrappers / pure producer-node prompts.
 
 The current woof source code embeds the LLM-orchestrator topology in:
 

@@ -1,0 +1,15 @@
+{"event":"github_synced","at":"2026-04-26T13:01:59Z","epic_id":181}
+{"event":"plan_generated","at":"2026-04-26T14:27:26Z","epic_id":181,"story_count":2}
+{"event":"plan_gate_resolved","at":"2026-04-26T14:54:21Z","epic_id":181,"decision":"approve","gate_type":"plan_gate","reason":"approved with three pre-execution patches (D1+D5+D4) committed; see commits cb9a8194, 9053041d, 44d75e48"}
+{"event":"story_started","at":"2026-04-26T14:54:59Z","epic_id":181,"story_id":"S1"}
+{"event":"story_completed","at":"2026-04-26T15:04:34Z","epic_id":181,"story_id":"S1"}
+{"event":"story_started","at":"2026-04-26T15:07:32Z","epic_id":181,"story_id":"S2"}
+{"event":"story_completed","at":"2026-04-26T15:20:51Z","epic_id":181,"story_id":"S2"}
+{"event":"epic_completed","at":"2026-04-26T15:22:52Z","epic_id":181}
+{"event":"story_gate_opened","at":"2026-04-26T21:54:55Z","epic_id":181,"story_id":"S2","gate_type":"story_gate","triggered_by":["check_6_critique_blocker","manual"]}
+{"event":"story_gate_resolved","at":"2026-04-26T21:54:55Z","epic_id":181,"story_id":"S2","gate_type":"story_gate","decision":"revise_story_scope","reason":"S2 commit c64066f6 reverted: codex critique returned severity:blocker (UTF-8 byte-cap violation + lax tests) but executor did not gate because /wf:execute-story Check 6 prose listed Dependencies satisfied instead of canonical critique-severity check. Full repair deferred until follow-up architectural epic codifies all stage-boundary checks as deterministic woof subcommands; only then can S2 re-dispatch safely."}
+{"event":"definition_started","at":"2026-04-26T22:45:58Z","epic_id":181,"reason":"E182 Discovery surfaced misframing in O2: head-truncate strategy strips harness terminal events; raw-then-summarise design replaces it as O4"}
+{"event":"definition_closed","at":"2026-04-26T22:45:58Z","epic_id":181,"reason":"O2 deprecated and replaced by O4; CD1.related_outcomes updated to [O1,O3,O4]; S2.satisfies updated to [O1,O3,O4]; S2.intent + paths revised to implement post-processor"}
+{"event":"github_synced","at":"2026-04-26T22:46:05Z","epic_id":181}
+{"event":"github_synced","at":"2026-04-26T22:46:10Z","epic_id":181}
+{"event":"github_synced","at":"2026-04-26T22:46:19Z","epic_id":181}

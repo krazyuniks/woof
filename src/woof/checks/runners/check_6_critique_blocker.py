@@ -89,8 +89,7 @@ def check_6_critique_blocker_runner(ctx: CheckContext) -> CheckOutcome:
                 ok=False,
                 severity="blocker",
                 summary=(
-                    f"critique top-level severity {top_sev!r} != "
-                    f"max finding severity {max_sev!r}"
+                    f"critique top-level severity {top_sev!r} != max finding severity {max_sev!r}"
                 ),
                 evidence=f"findings severities: {[f.get('severity') for f in findings if isinstance(f, dict)]}",
             )

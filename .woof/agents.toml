@@ -1,0 +1,28 @@
+# Woof self-hosting agent role configuration.
+
+[roles.orchestrator]
+harness = "in-session"
+
+[roles.planner]
+harness = "cld"
+
+[roles.story-executor]
+harness = "cld"
+
+[roles.critiquer]
+harness = "cod"
+
+[roles.gate-resolver]
+harness = "in-session"
+
+[timeouts]
+default_minutes = 30
+
+[review_valve]
+every_n_stories = 5
+end_of_epic = true
+
+[audit]
+enabled = true
+max_bytes = 262144
+redact_patterns = []

@@ -10,25 +10,39 @@ Woof addresses the **inner loop**: the structured, auditable cycle of an individ
 
 Active. `guitar-tone-shootout` is Woof's first external consumer.
 
-The implementation is mid-flight. Discovery, definition, breakdown, and the start of Stage-5 execution are working; the deterministic checker registry, structured executor protocol, and per-story driver landed during dogfood epic E182 (commits `7bf2a12` and `b729860` in this repo's history). The first dogfood surfaced an architectural finding — see [`docs/adr/001-orchestration-topology.md`](docs/adr/001-orchestration-topology.md) — that drives the next implementation cycle: shifting orchestration from the LLM to a deterministic Python graph with LLM and human review as typed nodes within it.
+ADR-001 is implemented for the Stage-5 execution path: `woof wf --epic <N>` runs a deterministic Python graph whose nodes dispatch the executor, dispatch the critique, run verification, open gates, and commit through a transaction manifest. LLM prompts are producer nodes only; they no longer own successor selection, critique dispatch, gate writing, or commits.
+
+Discovery, definition, and breakdown remain documented in [`docs/architecture.md`](docs/architecture.md). The old skill-driven Stage-5 topology is superseded by [`docs/adr/001-orchestration-topology.md`](docs/adr/001-orchestration-topology.md).
 
 ## Read first
 
-- [`docs/architecture.md`](docs/architecture.md) — principles, architecture, stages, gates, schemas (current design — supersession in flight per ADR-001).
+- [`docs/architecture.md`](docs/architecture.md) — principles, architecture, stages, gates, schemas.
 - [`docs/research.md`](docs/research.md) — framework evaluation, E146 contract-fidelity case study, lessons.
-- [`docs/adr/001-orchestration-topology.md`](docs/adr/001-orchestration-topology.md) — the next architectural direction.
+- [`docs/adr/001-orchestration-topology.md`](docs/adr/001-orchestration-topology.md) — accepted graph topology for execution.
+- [`examples/dogfood/`](examples/dogfood/) — selected artefacts from the first Woof dogfood epics.
+
+## Development
+
+```bash
+just setup
+just check
+just install-hooks
+```
+
+`uv.lock` is committed. Git hooks are installed with `prek` and run Ruff checks before commit.
 
 ## Components
 
-- `bin/woof` — PEP-723 Python CLI (single entry point for `validate`, `dispatch`, `render-epic`, `check-cd`, `check stage-5`, `gate write`).
-- `schemas/` — 11 JSON schemas (epic, plan, gate, critique, jsonl-events, prerequisites, agents, test-markers, language-registry, quality-gates, docs-paths) plus the Stage-5 additions (check-result, executor-result).
-- `cli/` — argparse-driven subcommand dispatcher and command implementations.
-- `checks/` — Stage-5 checker registry; runners; `Check` Pydantic model.
-- `gate/` — gate-authoring helpers (`woof gate write`).
-- `lib/` — shared Python helpers.
+- `bin/woof` — source-checkout executable wrapper.
+- `src/woof/cli/` — argparse-driven command implementations (`wf`, `validate`, `dispatch`, `render-epic`, `check-cd`, `check stage-5`, `gate write`).
+- `src/woof/graph/` — ADR-001 deterministic graph, typed node contracts, transition table, and transaction manifest verification.
+- `src/woof/checks/` — Stage-5 checker registry; runners; `Check` Pydantic model.
+- `src/woof/gate/` — gate-authoring helpers (`woof gate write`).
+- `src/woof/lib/` — shared Python helpers.
+- `schemas/` — JSON schemas for runtime artefacts, graph node I/O, and transaction manifests.
 - `playbooks/{discovery,critique}/` — prompt templates loaded into dispatched LLM contexts.
 - `languages/{python,typescript,rust,go}.toml` — per-language install / lint / test registry.
-- `.claude/commands/wf*.md` — orchestrator skills (current shape; superseded by ADR-001 once implemented).
+- `.claude/commands/wf*.md` — thin wrappers / producer-node prompts; orchestration lives in Python.
 
 ## License
 

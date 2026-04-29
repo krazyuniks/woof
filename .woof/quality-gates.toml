@@ -1,0 +1,3 @@
+[gates.test]
+command = "just test"
+timeout_seconds = 120

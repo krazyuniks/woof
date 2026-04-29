@@ -1,0 +1,21 @@
+# Woof self-hosting project prerequisites.
+
+[infra]
+just = "any"
+git = "any"
+gh = "any"
+
+[wrappers]
+cld = "any"
+cod = "any"
+agent-sync = "any"
+
+[validators]
+ajv = "any"
+ajv-formats = "any"
+
+[lsp]
+languages = ["python"]
+
+[github]
+repo = "krazyuniks/woof"

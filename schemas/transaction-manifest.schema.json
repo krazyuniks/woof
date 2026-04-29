@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://woof.dev/schemas/transaction-manifest.schema.json",
+  "title": "woof transaction manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "epic_id",
+    "story_id",
+    "expected_paths",
+    "story_paths",
+    "required_paths",
+    "audit_paths"
+  ],
+  "properties": {
+    "epic_id": { "type": "integer", "minimum": 1 },
+    "story_id": { "type": "string", "pattern": "^S[1-9]\\d*$" },
+    "expected_paths": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "story_paths": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "required_paths": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "audit_paths": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    }
+  }
+}

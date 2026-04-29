@@ -1,0 +1,162 @@
+{
+  "epic_id": 182,
+  "goal": "Codify Stage-5 boundary checks as a deterministic checker registry, separate the story executor (producer) from the wf-run driver (verifier + committer), and add schema-validated artefacts so check definitions cannot drift between skill prose and canon.",
+  "stories": [
+    {
+      "id": "S1",
+      "title": "Bootstrap: registry + check_6 + driver-owned commit + executor protocol + gate write",
+      "intent": "Land the producer/verifier/committer separation in one transaction. Establish the checker registry skeleton, the check-result and executor-result schemas, the woof check stage-5 and woof gate write subcommands, and the revised wf-run driver loop so check_6_critique_blocker enforces the E181 failure case before any subsequent E182 story executes.",
+      "paths": [
+        "woof/checks/__init__.py",
+        "woof/checks/registry.py",
+        "woof/checks/runners/__init__.py",
+        "woof/checks/runners/check_6_critique_blocker.py",
+        "woof/cli/__init__.py",
+        "woof/cli/dispatcher.py",
+        "woof/cli/commands/__init__.py",
+        "woof/cli/commands/check.py",
+        "woof/cli/commands/gate.py",
+        "woof/gate/__init__.py",
+        "woof/gate/write.py",
+        "woof/schemas/check-result.schema.json",
+        "woof/schemas/executor-result.schema.json",
+        "woof/schemas/gate.schema.json",
+        "woof/schemas/jsonl-events.schema.json",
+        "woof/bin/woof",
+        "scripts/wf-run",
+        ".claude/commands/wf/execute-story.md",
+        "tests/unit/woof/test_check_6_critique_blocker.py",
+        "tests/unit/woof/test_driver_protocol.py",
+        "tests/unit/woof/test_executor_result_schema.py",
+        "tests/unit/woof/test_gate_write.py",
+        "tests/unit/woof/test_check_stage_5_subcommand.py",
+        "tests/fixtures/woof/e181_s2/**"
+      ],
+      "satisfies": [
+        "O1",
+        "O2",
+        "O4",
+        "O5",
+        "O7",
+        "O8"
+      ],
+      "implements_contract_decisions": [
+        "CD1",
+        "CD2",
+        "CD3",
+        "CD4",
+        "CD5"
+      ],
+      "uses_contract_decisions": [],
+      "depends_on": [],
+      "tests": {
+        "count": 9,
+        "types": [
+          "unit",
+          "regression"
+        ]
+      },
+      "status": "done"
+    },
+    {
+      "id": "S2",
+      "title": "Stage-5 cheap runners: outcome-markers, scope, plan-crossrefs, commit-transaction",
+      "intent": "Implement the four filesystem-only Stage-5 check runners (checks 2, 3, 5, 7) registered against the S1 skeleton. Lands the fail-loud branch of check_7_commit_transaction (no auto-staging of missing .woof durable files).",
+      "paths": [
+        "woof/checks/runners/check_2_outcome_markers.py",
+        "woof/checks/runners/check_3_scope.py",
+        "woof/checks/runners/check_5_plan_crossrefs.py",
+        "woof/checks/runners/check_7_commit_transaction.py",
+        "tests/unit/woof/test_check_2_outcome_markers.py",
+        "tests/unit/woof/test_check_3_scope.py",
+        "tests/unit/woof/test_check_5_plan_crossrefs.py",
+        "tests/unit/woof/test_check_7_commit_transaction.py"
+      ],
+      "satisfies": [
+        "O2",
+        "O8"
+      ],
+      "implements_contract_decisions": [],
+      "uses_contract_decisions": [
+        "CD1",
+        "CD3"
+      ],
+      "depends_on": [
+        "S1"
+      ],
+      "tests": {
+        "count": 8,
+        "types": [
+          "unit"
+        ]
+      },
+      "status": "pending"
+    },
+    {
+      "id": "S3",
+      "title": "Stage-5 expensive runners: quality-gates, contract-refs, docs-drift, review-valve",
+      "intent": "Implement the four shell-out / external-validator Stage-5 check runners (checks 1, 4, 8, 9). check_4_contract_refs subprocess-invokes the existing woof check-cd CLI; refactoring its body is deferred per OQ4. With these four landed, woof check stage-5 --self-test exits 0.",
+      "paths": [
+        "woof/checks/runners/check_1_quality_gates.py",
+        "woof/checks/runners/check_4_contract_refs.py",
+        "woof/checks/runners/check_8_docs_drift.py",
+        "woof/checks/runners/check_9_review_valve.py",
+        "tests/unit/woof/test_check_1_quality_gates.py",
+        "tests/unit/woof/test_check_4_contract_refs.py",
+        "tests/unit/woof/test_check_8_docs_drift.py",
+        "tests/unit/woof/test_check_9_review_valve.py"
+      ],
+      "satisfies": [
+        "O2"
+      ],
+      "implements_contract_decisions": [],
+      "uses_contract_decisions": [
+        "CD1",
+        "CD3"
+      ],
+      "depends_on": [
+        "S1"
+      ],
+      "tests": {
+        "count": 8,
+        "types": [
+          "unit",
+          "regression"
+        ]
+      },
+      "status": "pending"
+    },
+    {
+      "id": "S4",
+      "title": "woof state classify (filesystem-only) + drift-detection tests for skill prose",
+      "intent": "Add the side-effect-free state classifier subcommand consumed by /wf reconstitution and wf-run, plus the two CI-time drift detectors (registry-vs-skill-prose snapshot, executor-skill purity static-string assertion) that prevent prose-encoded checks from re-emerging at any stage.",
+      "paths": [
+        "woof/state/__init__.py",
+        "woof/state/classify.py",
+        "woof/cli/commands/state.py",
+        "tests/unit/woof/test_state_classify.py",
+        "tests/unit/woof/test_skill_prose_drift.py",
+        "tests/unit/woof/test_execute_story_purity.py"
+      ],
+      "satisfies": [
+        "O3",
+        "O6",
+        "O9"
+      ],
+      "implements_contract_decisions": [],
+      "uses_contract_decisions": [
+        "CD3"
+      ],
+      "depends_on": [
+        "S1"
+      ],
+      "tests": {
+        "count": 3,
+        "types": [
+          "unit"
+        ]
+      },
+      "status": "pending"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://woof.dev/fixtures/e146/audit-event.schema.json",
+  "title": "E146 audit event",
+  "description": "Fixture schema referenced by an E146 contract_decision (json_schema_ref).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["event", "at", "actor"],
+  "properties": {
+    "event": { "type": "string", "minLength": 1 },
+    "at": { "type": "string", "format": "date-time" },
+    "actor": { "type": "string", "minLength": 1 },
+    "subject_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

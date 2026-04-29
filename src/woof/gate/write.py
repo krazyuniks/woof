@@ -9,14 +9,14 @@ from __future__ import annotations
 import json
 import subprocess
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import yaml
 
 
 def iso_utc() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _append_jsonl(path: Path, event: dict) -> None:
@@ -45,10 +45,15 @@ def _validate_gate(gate_md: Path, schema_path: Path) -> tuple[bool, str]:
     try:
         proc = subprocess.run(
             [
-                "ajv", "validate",
-                "--spec=draft2020", "-c", "ajv-formats",
-                "-s", str(schema_path),
-                "-d", data_path,
+                "ajv",
+                "validate",
+                "--spec=draft2020",
+                "-c",
+                "ajv-formats",
+                "-s",
+                str(schema_path),
+                "-d",
+                data_path,
             ],
             capture_output=True,
             text=True,

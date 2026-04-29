@@ -10,6 +10,17 @@
 
 ---
 
+## 0. Current implementation boundary
+
+The extracted Woof repository currently implements the ADR-001 Stage-5 execution path:
+
+- `woof wf --epic <N>` is the operator entry point for the deterministic Python graph.
+- Graph nodes dispatch the story executor, dispatch Codex critique, run Stage-5 verification, open gates, and commit through a transaction manifest.
+- `.claude/commands/wf*.md` are thin wrappers or producer-node prompts. They do not own successor selection, critique dispatch, gate writing, or commits.
+- Discovery, Definition, Breakdown, GitHub issue sync, and the full preflight/cartography lifecycle remain design targets unless their command implementation exists under `src/woof/cli/`.
+
+When this document conflicts with `docs/adr/001-orchestration-topology.md` or the current source under `src/woof/`, source and ADR-001 win.
+
 ## 1. Principles
 
 1. **Epic contract is law.** User-facing observable outcomes are canonical. Implementation may bridge repo conventions; it must never replace the epic contract. (E146 lesson — `Workflow-Research.md` §2.)
@@ -405,20 +416,15 @@ Nine checks, derived from a failure-class taxonomy. Checks 1–8 run after the s
 | 8 | H | If `.woof/docs-paths.toml` defines `code_pattern → doc_pattern` mappings, touched code triggers required doc paths in same diff. No-op when file absent. | helper |
 | 9 | I | After every N completed stories (configurable in `.woof/agents.toml.review_valve.every_n_stories`, default 5) AND once before epic close (`review_valve.end_of_epic = true`), open a `review_gate` summarising the cumulative `severity: minor` findings since the last review. Resolution decision via standard taxonomy (approve / revise_plan / split_story / etc.). | helper |
 
-**Stage 5 order of operations (per story):**
+**Implemented Stage 5 order of operations (per story):**
 
-1. Skill reads `plan.json`, picks next story (`status != done`).
-2. Inner sequence (Claude works in-session):
-   a. Code (files within `story.paths[]`).
-   b. Tests (asserting `satisfies[]` outcomes).
-   c. Refactor.
-   d. Continuous validate — quality-gate command must be green before proceeding.
-3. Dispatch Codex critique → `critique/story-S<k>.md`.
-4. Update `plan.json.stories[k].status = done`, append story_completed event to `epic.jsonl`.
-5. Stage the story commit transaction: `git add` the code paths under `story.paths[]` PLUS `.woof/epics/E<N>/plan.json` PLUS `.woof/epics/E<N>/critique/story-S<k>.md` PLUS `.woof/epics/E<N>/epic.jsonl`. The story commit is one transaction containing both the code change and its workflow-state update.
-6. Run Checks 1–8 against staged state; if the story closed an every-N boundary or is the last pending story, also run Check 9.
-7. **All pass:** commit (single commit per story) → exit success (driver loops to next).
-8. **Any fail:** write `gate.md` with full `triggered_by[]` + Context block + findings + Claude's position → no commit → exit (driver halts).
+1. The Python graph reads `plan.json` and selects the next dependency-ready `pending` story.
+2. `executor_dispatch` marks the story `in_progress` and dispatches the story-executor producer prompt. The producer writes `executor_result.json` only.
+3. `critique_dispatch` dispatches Codex critique and expects `critique/story-S<k>.md`.
+4. `verification` runs `woof check stage-5 --epic <N> --story <S<k>> --format json` and writes `check-result.json`.
+5. `gate_open` writes `gate.md` if the executor outcome, subprocess result, or verifier result requires human review.
+6. `commit` computes the transaction manifest, stages the exact expected file set, verifies the index, appends graph events, commits, and removes transient `executor_result.json` / `check-result.json`.
+7. Existing `gate.md` halts at `human_review` until `woof wf --epic <N> --resolve <decision>` records the structured gate decision and removes the gate.
 
 **No auto-revision after `gate.md`.** First check is final within the block; revision authority lies with the human at Stage 6 (principle #2).
 
@@ -430,7 +436,7 @@ Nine checks, derived from a failure-class taxonomy. Checks 1–8 run after the s
 
 ### Autonomous driver lifecycle
 
-The driver (`just wf-run`) is a Bash loop that spawns one `cld -p` subprocess per pending story until a `gate.md` appears or all stories are `done`. The skeleton is simple; the failure-mode plumbing below is non-negotiable.
+ADR-001 supersedes the historical Bash-loop driver. The implemented driver is the Python graph behind `woof wf --epic <N>`. Historical lifecycle notes below are retained as design lineage where they describe failure modes still relevant to the graph implementation.
 
 **Story selection.** Read `plan.json`; pick first `status: pending` story whose `depends_on[]` are all `status: done`. Tie-break on `id` ascending (deterministic, replayable). Mark `status: in_progress` before dispatch; on subprocess success the inner skill sets `done`; on failure see crash recovery below.
 
@@ -826,19 +832,22 @@ All major architectural questions resolved (see Resolved). No residual design qu
 - [x] **Path rename** — `workflow/`→`woof/`, `.workflow/`+`.planning/`→`.woof/`, `<woof>/`→`woof/`. Wiki commit `503585a` (2026-04-25).
 - [x] **JSON Schemas** — 11 schema files at `woof/schemas/`: `plan`, `gate`, `critique`, `jsonl-events`, `epic`, `prerequisites`, `agents`, `test-markers`, `language-registry`, `quality-gates`, `docs-paths`. Single-version (no `schema_version` field). Cross-artefact invariants deferred to Stage-5 helpers.
 - [x] **Spec rewrite per cod_report (2026-04-25)** — contract refs (openapi/pydantic/json_schema), story scope as glob list, contract-decision split (implements vs uses), GitHub conflict detection, story commit transaction, periodic review valve, gate decision taxonomy, audit redaction, token logging, dispatch adapter layer.
+- [x] **Stage-5 graph entry point** — `woof wf --epic <N>` runs the ADR-001 deterministic graph for story execution, critique, verification, gates, and commit transactions.
+- [x] **Dispatch adapter** — `woof dispatch <claude|codex> --role <role-name>` reads `.woof/agents.toml`, invokes the declared wrapper, and records dispatch events.
+- [x] **Schema validation command** — `woof validate` validates JSON, TOML, JSONL, and front-matter artefacts against the shipped schemas.
+- [x] **GitHub issue renderer** — `woof render-epic` renders `EPIC.md` structured front-matter to a managed GitHub issue body and supports conflict-detected sync.
+- [x] **Producer prompts** — `.claude/commands/wf*.md` are reduced to thin wrappers / pure producer-node prompts.
+- [x] **Acknowledgements file** — root `ACKNOWLEDGEMENTS.md` records lineage and future third-party prompt attribution requirements.
 
 **Pending:**
 
 - [ ] **E146 contract-fidelity fixture** — first dogfood test: epic spec says `POST /api/v1/comments` with `body`; repo convention is different. Plan that substitutes the repo convention must fail Stage 5 Check 4. Single most important regression test.
-- [ ] Implement `woof validate` command (validates EPIC.md, plan.json, critique/*.md, gate.md against schemas via ajv-cli).
-- [ ] Write `woof dispatch <claude|codex> --role <role-name>` adapter (reads `.woof/agents.toml`; constructs `cld`/`cod` invocations; tees Codex output to `.woof/epics/E<N>/audit/`; captures token usage into JSONL).
-- [ ] Write `scripts/render-epic-for-gh` helper (`EPIC.md` front-matter → gh issue body markdown per deterministic schema; SHA256 + `updatedAt` capture for conflict detection).
+- [ ] Replace bootstrap-tolerant placeholder runners for Stage-5 Checks 1-5 and 7-9 with full implementations.
+- [ ] Promote Stage-3 planning into the Python graph.
+- [ ] Promote Discovery and Definition into the Python graph.
 - [ ] Author `woof/languages/{python,typescript,rust,go}.toml` registry entries.
-- [ ] Draft the `/wf` skill prompt — state-machine + conversational sequencing (gates inline; no separate gate skill).
-- [ ] Draft the `/wf:execute-story` subprocess skill — Stage-5 inner sequence with the 9 deterministic checks.
 - [ ] Port taches-derived Discovery playbooks into `skills/wf/playbooks/{think,research}/*.md` (copy-with-attribution; wrap with preconditions + persist sections).
-- [ ] Author root `ACKNOWLEDGEMENTS.md` with blanket MIT attribution for adapted taches content.
-- [ ] Write the autonomous driver shell loop (`just wf-run`) and the post-commit cartography hook.
+- [ ] Write the post-commit cartography hook.
 - [ ] Dogfood: bootstrap woof's own first epic using these designs (the dogfood epic IS the workflow tool itself, post-extraction-prep).
 
 ### Backlog (post-MVP)

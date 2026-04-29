@@ -20,3 +20,5 @@ build/
 .woof/codebase/tree.txt
 .woof/codebase/freshness.json
 .woof/.preflight-*
+.gemini/
+.agents/

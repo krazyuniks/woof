@@ -31,6 +31,16 @@ just install-hooks
 
 `uv.lock` is committed. Git hooks are installed with `prek` and run Ruff checks before commit.
 
+## Operator usage
+
+Run the deterministic Stage-5 graph from a consumer checkout that has `.woof/` state:
+
+```bash
+woof wf --epic <N>
+```
+
+Use `--once` to run a single graph node, `--format json` for machine-readable node output, and `--resolve <decision>` to close an open `gate.md` with a structured gate decision.
+
 ## Components
 
 - `bin/woof` — source-checkout executable wrapper.
@@ -46,4 +56,4 @@ just install-hooks
 
 ## License
 
-MIT.
+MIT. See [`LICENSE`](LICENSE).

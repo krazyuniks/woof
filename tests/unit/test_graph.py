@@ -9,6 +9,9 @@ from woof.graph.runner import run_graph
 from woof.graph.state import NodeInput, NodeOutput, NodeStatus, NodeType, StorySpec
 from woof.graph.transitions import epic_dir, mark_story_status
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+WOOF_BIN = REPO_ROOT / "bin" / "woof"
+
 
 def _write_plan(root: Path, epic_id: int = 1) -> Path:
     directory = root / ".woof" / "epics" / f"E{epic_id}"
@@ -34,6 +37,15 @@ def _write_plan(root: Path, epic_id: int = 1) -> Path:
     (directory / "plan.json").write_text(json.dumps(plan))
     (directory / "epic.jsonl").write_text("")
     return directory
+
+
+def _run_woof(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [str(WOOF_BIN), *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+    )
 
 
 def test_graph_runs_executor_then_critique_then_verification_then_commit(tmp_path: Path) -> None:
@@ -113,6 +125,56 @@ def test_graph_runs_executor_then_critique_then_verification_then_commit(tmp_pat
         NodeType.COMMIT,
     ]
     assert outputs[-1].status == NodeStatus.EPIC_COMPLETE
+
+
+def test_wf_epic_reports_complete_epic_as_json(tmp_path: Path) -> None:
+    directory = _write_plan(tmp_path, 7)
+    plan = json.loads((directory / "plan.json").read_text())
+    plan["stories"][0]["status"] = "done"
+    (directory / "plan.json").write_text(json.dumps(plan))
+
+    proc = _run_woof(tmp_path, "wf", "--epic", "7", "--format", "json")
+
+    assert proc.returncode == 0, proc.stderr
+    lines = [json.loads(line) for line in proc.stdout.splitlines()]
+    assert lines == [
+        {
+            "node_type": "human_review",
+            "status": "epic_complete",
+            "epic_id": 7,
+            "story_id": None,
+            "next_node": None,
+            "triggered_by": [],
+            "message": "E7 complete",
+            "paths": [],
+        }
+    ]
+
+
+def test_wf_epic_halts_when_gate_is_open(tmp_path: Path) -> None:
+    directory = _write_plan(tmp_path, 8)
+    (directory / "gate.md").write_text("---\ntype: story_gate\n---\n")
+
+    proc = _run_woof(tmp_path, "wf", "--epic", "8")
+
+    assert proc.returncode == 0, proc.stderr
+    assert "woof wf: human_review -> halted: gate open at .woof/epics/E8/gate.md" in proc.stdout
+
+
+def test_wf_resolve_records_gate_decision_and_removes_gate(tmp_path: Path) -> None:
+    directory = _write_plan(tmp_path, 9)
+    gate = directory / "gate.md"
+    gate.write_text("---\ntype: story_gate\n---\n")
+
+    proc = _run_woof(tmp_path, "wf", "--epic", "9", "--resolve", "approve")
+
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == "woof wf: gate resolved decision=approve\n"
+    assert not gate.exists()
+    events = [json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines()]
+    assert events[-1]["event"] == "gate_resolved"
+    assert events[-1]["epic_id"] == 9
+    assert events[-1]["decision"] == "approve"
 
 
 def test_transaction_manifest_requires_audit_and_rejects_extra_staged_file(tmp_path: Path) -> None:

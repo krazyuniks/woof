@@ -29,6 +29,7 @@ from pathlib import Path
 
 import yaml
 
+from woof.checks.contract_refs import ContractRefUsageError, validate_contract_refs
 from woof.paths import schema_dir
 
 SCHEMA_DIR = schema_dir()
@@ -790,193 +791,53 @@ def cmd_render_epic(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _resolve_json_pointer(doc: object, pointer: str) -> object | None:
-    """Resolve an RFC 6901 JSON Pointer against ``doc``. Returns None on miss."""
-    if pointer in ("", "/"):
-        return doc
-    if not pointer.startswith("/"):
-        return None
-    cur: object = doc
-    for raw in pointer.lstrip("/").split("/"):
-        token = raw.replace("~1", "/").replace("~0", "~")
-        if isinstance(cur, list):
-            try:
-                cur = cur[int(token)]
-            except (ValueError, IndexError):
-                return None
-        elif isinstance(cur, dict):
-            if token not in cur:
-                return None
-            cur = cur[token]
-        else:
-            return None
-    return cur
-
-
-def _check_openapi_ref(repo_root: Path, ref: str) -> tuple[bool, str]:
-    if "#" not in ref:
-        return False, f"openapi_ref missing '#<json-pointer>' fragment: {ref!r}"
-    file_part, pointer = ref.split("#", 1)
-    spec_path = (repo_root / file_part).resolve()
-    if not spec_path.is_file():
-        return False, f"openapi document not found: {file_part}"
-    try:
-        with spec_path.open("rb") as fh:
-            doc = yaml.safe_load(fh)
-    except yaml.YAMLError as exc:
-        return False, f"openapi document failed to parse: {exc}"
-    target = _resolve_json_pointer(doc, pointer)
-    if target is None:
-        return False, f"json pointer '{pointer}' did not resolve in {file_part}"
-    if not isinstance(target, dict):
-        return False, f"json pointer '{pointer}' resolved to non-object {type(target).__name__}"
-    return True, f"resolved to {type(target).__name__} with {len(target)} key(s)"
-
-
-def _check_pydantic_ref(repo_root: Path, ref: str) -> tuple[bool, str]:
-    if ":" not in ref:
-        return False, f"pydantic_ref must be '<file-or-module>:<ClassName>': {ref!r}"
-    locator, class_name = ref.rsplit(":", 1)
-    try:
-        try:
-            import pydantic  # noqa: F401  (import for the issubclass check)
-        except ImportError:
-            return False, "pydantic not installed in this environment"
-        from pydantic import BaseModel
-    except Exception as exc:
-        return False, f"failed to import pydantic: {exc}"
-
-    import importlib
-    import importlib.util
-    from importlib.machinery import SourceFileLoader
-
-    module: object | None = None
-    if locator.endswith(".py") or "/" in locator:
-        path = (repo_root / locator).resolve()
-        if not path.is_file():
-            return False, f"pydantic source file not found: {locator}"
-        loader = SourceFileLoader(f"_woof_check_cd_{path.stem}", str(path))
-        spec = importlib.util.spec_from_loader(loader.name, loader)
-        if spec is None:
-            return False, f"failed to build module spec for {locator}"
-        module = importlib.util.module_from_spec(spec)
-        try:
-            loader.exec_module(module)
-        except Exception as exc:
-            return False, f"failed to import {locator}: {exc}"
-    else:
-        try:
-            module = importlib.import_module(locator)
-        except Exception as exc:
-            return False, f"failed to import {locator}: {exc}"
-
-    cls = getattr(module, class_name, None)
-    if cls is None:
-        return False, f"class '{class_name}' not found in {locator}"
-    try:
-        if not issubclass(cls, BaseModel):
-            return False, f"'{class_name}' is not a pydantic.BaseModel subclass"
-    except TypeError:
-        return False, f"'{class_name}' is not a class"
-    return True, f"BaseModel subclass with {len(cls.model_fields)} field(s)"
-
-
-def _check_json_schema_ref(repo_root: Path, ref: str) -> tuple[bool, str]:
-    schema_path = (repo_root / ref).resolve()
-    if not schema_path.is_file():
-        return False, f"json_schema file not found: {ref}"
-    proc = subprocess.run(
-        [
-            "ajv",
-            "compile",
-            "--spec=draft2020",
-            "-c",
-            "ajv-formats",
-            "-s",
-            str(schema_path),
-        ],
-        capture_output=True,
-        text=True,
-    )
-    if proc.returncode != 0:
-        msg = (proc.stdout + proc.stderr).strip().splitlines()
-        first = msg[0] if msg else "(no output)"
-        return False, f"ajv compile rejected schema: {first}"
-    return True, "ajv compile passed"
-
-
 def cmd_check_cd(args: argparse.Namespace) -> int:
     ensure_ajv()
     epic_md = Path(args.epic_md).resolve()
-    if not epic_md.is_file():
-        sys.stderr.write(f"woof: {epic_md} not found\n")
-        return 2
-
     try:
-        front, _ = split_front_matter(epic_md)
-    except (ValueError, yaml.YAMLError) as exc:
-        sys.stderr.write(f"woof: {epic_md}: {exc}\n")
+        result = validate_contract_refs(epic_md)
+    except ContractRefUsageError as exc:
+        sys.stderr.write(f"woof: {exc}\n")
         return 2
-
-    schema_path = SCHEMA_DIR / SCHEMAS["epic"]
-    ok, output = run_ajv(schema_path, json.dumps(front).encode())
-    if not ok:
-        sys.stderr.write(f"woof: {epic_md}: front-matter invalid\n{output}\n")
-        return 2
-
-    repo_root = epic_md.parent
-    while repo_root != repo_root.parent and not (repo_root / ".git").exists():
-        repo_root = repo_root.parent
-    if not (repo_root / ".git").exists():
-        repo_root = epic_md.parent  # fallback
-
-    cds = front.get("contract_decisions") or []
-    findings: list[dict] = []
-    all_ok = True
-    for cd in cds:
-        cd_id = cd["id"]
-        if cd.get("openapi_ref"):
-            ref = cd["openapi_ref"]
-            kind = "openapi_ref"
-            ok, msg = _check_openapi_ref(repo_root, ref)
-        elif cd.get("pydantic_ref"):
-            ref = cd["pydantic_ref"]
-            kind = "pydantic_ref"
-            ok, msg = _check_pydantic_ref(repo_root, ref)
-        elif cd.get("json_schema_ref"):
-            ref = cd["json_schema_ref"]
-            kind = "json_schema_ref"
-            ok, msg = _check_json_schema_ref(repo_root, ref)
-        else:
-            ok, kind, ref, msg = False, "missing", "", "no contract reference declared"
-        findings.append({"id": cd_id, "kind": kind, "ref": ref, "ok": ok, "detail": msg})
-        if not ok:
-            all_ok = False
 
     if args.format == "json":
         print(
             json.dumps(
                 {
-                    "epic_md": str(epic_md),
-                    "total": len(cds),
-                    "verified": sum(1 for f in findings if f["ok"]),
-                    "findings": findings,
+                    "epic_md": str(result.epic_md),
+                    "total": result.total,
+                    "verified": result.verified,
+                    "findings": [
+                        {
+                            "id": finding.id,
+                            "kind": finding.kind,
+                            "ref": finding.ref,
+                            "ok": finding.ok,
+                            "detail": finding.detail,
+                        }
+                        for finding in result.findings
+                    ],
                 }
             )
         )
     else:
-        print(
-            f"{epic_md.relative_to(repo_root) if epic_md.is_relative_to(repo_root) else epic_md}: {len(cds)} contract decision(s)"
+        repo_root = result.epic_md.parent
+        while repo_root != repo_root.parent and not (repo_root / ".git").exists():
+            repo_root = repo_root.parent
+        display_path = (
+            result.epic_md.relative_to(repo_root)
+            if (repo_root / ".git").exists() and result.epic_md.is_relative_to(repo_root)
+            else result.epic_md
         )
-        for f in findings:
-            status = "OK  " if f["ok"] else "FAIL"
-            print(f"  {status} {f['id']:<6} ({f['kind']}) {f['ref']}")
-            if not f["ok"] or args.verbose:
-                print(f"         → {f['detail']}")
-        verified = sum(1 for f in findings if f["ok"])
-        print(f"{verified}/{len(cds)} verified")
+        print(f"{display_path}: {result.total} contract decision(s)")
+        for finding in result.findings:
+            status = "OK  " if finding.ok else "FAIL"
+            print(f"  {status} {finding.id:<6} ({finding.kind}) {finding.ref}")
+            if not finding.ok or args.verbose:
+                print(f"         → {finding.detail}")
+        print(f"{result.verified}/{result.total} verified")
 
-    return 0 if all_ok else 1
+    return 0 if result.verified == result.total else 1
 
 
 # ---------------------------------------------------------------------------

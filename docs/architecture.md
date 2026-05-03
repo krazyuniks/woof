@@ -158,7 +158,7 @@ JSONL event logs (`epic.jsonl`, `dispatch.jsonl`) enable crash-resume and post-h
 
 **Epic IDs.** Always the gh issue number. `E<N>` ≡ gh issue `#<N>`. No local-only epics; every epic has a gh issue. Issue numbers are assigned by gh on creation — the user does not pick them.
 
-**Network requirement.** Woof is always-online. gh CLI must be authenticated and the declared repo accessible; `just wf-preflight` verifies `gh api /repos/<org>/<repo>` returns 200. No offline mode; no silent fallback (per §1 principle #4).
+**Network requirement.** Woof is always-online. gh CLI must be authenticated and the declared repo accessible; `woof preflight` verifies `gh api /repos/<org>/<repo>` returns 200. No offline mode; no silent fallback (per §1 principle #4).
 
 **Repo scope.** Declared once in `.woof/prerequisites.toml`:
 
@@ -213,11 +213,11 @@ All gh invocations pass `--repo <scope>` explicitly (consumer's project rule).
 
 **Preservation rule.** Content above the first structured heading (`## Observable Outcomes`) is preserved on overwrite. Everything from `## Observable Outcomes` onward is woof-owned and rewritten wholesale. The trailing HTML comment is the sentinel marking woof-managed bodies.
 
-**Renderer.** Small helper (`scripts/render-epic-for-gh`) reads `EPIC.md`, emits the markdown body. Language per-helper decision (likely `jq` + heredoc template; upgrade to Python if templating gets gnarly). Sits alongside the preflight script.
+**Renderer.** The `woof render-epic` command reads `EPIC.md` and emits the markdown body.
 
 **Push-sync failure.** Network failure or `gh api` rate limit during a scheduled push: `/wf` fails loud, exits non-zero. User retries `/wf` — skill detects local `EPIC.md` mtime newer than last successful push (stored in `.woof/epics/E<N>/.last-sync`) and re-pushes.
 
-**Preflight runtime check.** Beyond the one-shot `just wf-preflight` check, every `/wf` invocation verifies gh reachability (`gh api /rate_limit`, ~200ms). Missing auth or unreachable API → fail loud; no silent degradation.
+**Preflight runtime check.** Beyond the one-shot `woof preflight` check, every `/wf` invocation verifies gh reachability (`gh api /rate_limit`, ~200ms). Missing auth or unreachable API → fail loud; no silent degradation.
 
 ### Stage contracts
 
@@ -452,7 +452,7 @@ If a process dies during the commit transition after the plan has been marked `d
 
 **Concurrency lockfile.** The graph uses `.woof/epics/E<N>/.wf.lock` to prevent concurrent mutation of one epic. Live locks fail loud. Stale locks are removed with an audit event.
 
-**Post-commit hook installation.** Explicit and idempotent. `just wf-preflight install-hook` appends a fenced block to `.git/hooks/post-commit`:
+**Post-commit hook installation.** Explicit and idempotent. The hook installer appends a fenced block to `.git/hooks/post-commit`:
 
 ```bash
 # >>> woof-cartography
@@ -636,7 +636,7 @@ Re-run `woof preflight` after installing.
 
 **Preflight caching.** Two-tier:
 
-1. **Floor checks** (binaries exist, version meets floor, LSP plugin installed, Tree-sitter grammars parse) cached at `.woof/.preflight-floor` keyed by SHA256 of `.woof/prerequisites.toml` + language-registry TOML contents. Skipped if hash unchanged and `verified-at < 24h`. Force re-run via `just wf-preflight --force`.
+1. **Floor checks** (binaries exist, version meets floor, LSP plugin installed, Tree-sitter grammars parse) cached at `.woof/.preflight-floor` keyed by SHA256 of `.woof/prerequisites.toml` + language-registry TOML contents. Skipped if hash unchanged and `verified-at < 24h`; the cache implementation adds explicit force re-run support.
 2. **Runtime checks** (gh auth + reachability via `gh api /rate_limit`, Codex auth) cached at `.woof/.preflight-runtime` for 5 min, with a rate-remaining safety margin (`> 100` reqs/hr). Stale → re-verify; fail loud on auth expiry with exact re-auth command. Subprocesses inherit parent's runtime cache via stat()-based checks; no fresh network calls per `claude -p`.
 
 Both cache files are gitignored.
@@ -753,6 +753,7 @@ The CLI is the operator surface. Prompt wrappers may call these commands, but th
 |---|---|
 | `woof wf --epic <N>` | Run the deterministic graph for the current epic. |
 | `woof wf --epic <N> --resolve <decision>` | Resolve an open gate with a structured decision. |
+| `woof preflight` | Validate local prerequisites, GitHub access, language tooling, quality-gate command resolution, and `.woof/` config schemas. |
 | `woof validate ...` | Validate JSON, TOML, JSONL, and front-matter artefacts against shipped schemas. |
 | `woof check stage-5 --epic <N> --story <S<k>>` | Run Stage-5 checks and emit structured results. |
 | `woof dispatch <claude|codex> --role <role-name>` | Invoke configured producer subprocesses and record dispatch events. |

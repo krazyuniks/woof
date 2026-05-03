@@ -52,7 +52,7 @@
     "audit": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Audit policy for committed artefacts written by woof dispatch. Controls conservative redaction and per-file size cap (Stage 5 Check 8, realised in S2).",
+      "description": "Audit policy for committed artefacts written by woof dispatch. Controls conservative redaction and the per-file size cap enforced before graph-owned commits.",
       "properties": {
         "enabled": {
           "type": "boolean",

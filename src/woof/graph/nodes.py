@@ -20,6 +20,7 @@ from woof.graph.transitions import (
     mark_story_status,
     story_by_id,
 )
+from woof.lib.audit import prepare_commit_audit
 from woof.paths import schema_dir, tool_root
 
 NodeHandler = Callable[[NodeInput], NodeOutput]
@@ -263,6 +264,31 @@ def commit_node(inp: NodeInput) -> NodeOutput:
     plan = load_plan(inp.repo_root, inp.epic_id)
     story = story_by_id(plan, inp.story_id)
     result = _executor_result(inp.repo_root, inp.epic_id)
+    directory = epic_dir(inp.repo_root, inp.epic_id)
+
+    try:
+        prepare_commit_audit(inp.repo_root, directory)
+    except (OSError, ValueError) as exc:
+        position = f"Audit preparation failed before commit: {exc}\n"
+        pos_path = directory / "audit-position.md"
+        pos_path.write_text(position)
+        write_gate_for_trigger(
+            trigger="audit_redaction",
+            epic_dir=directory,
+            story_id=inp.story_id,
+            position_path=pos_path,
+            schema_path=schema_dir() / "gate.schema.json",
+        )
+        pos_path.unlink(missing_ok=True)
+        return NodeOutput(
+            node_type=inp.node_type,
+            status=NodeStatus.GATE_OPENED,
+            epic_id=inp.epic_id,
+            story_id=inp.story_id,
+            gate_path=_gate_path(inp.epic_id),
+            triggered_by=["audit_redaction"],
+            message=position,
+        )
 
     manifest = build_story_manifest(inp.repo_root, inp.epic_id, story)
     if not manifest.audit_paths:

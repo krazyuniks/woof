@@ -1,8 +1,4 @@
-"""Unit tests for woof/lib/audit_config.py.
-
-Outcome coverage: O3 — operator can configure audit policy via .woof/agents.toml
-without re-deploying the woof CLI.
-"""
+"""Unit tests for woof/lib/audit_config.py."""
 
 from __future__ import annotations
 
@@ -36,7 +32,6 @@ def _load_module():
 
 
 def test_defaults_when_no_audit_block() -> None:
-    """O3: absent [audit] block yields defaults — enabled, 256 KB cap, no patterns."""
     mod = _load_module()
     cfg = mod.load_audit_config({})
     assert cfg.enabled is True
@@ -45,21 +40,18 @@ def test_defaults_when_no_audit_block() -> None:
 
 
 def test_custom_max_bytes() -> None:
-    """O3: operator can raise the per-file cap via [audit].max_bytes."""
     mod = _load_module()
     cfg = mod.load_audit_config({"audit": {"max_bytes": 1_048_576}})
     assert cfg.max_bytes == 1_048_576
 
 
 def test_disable_redaction() -> None:
-    """O3: operator can disable redaction + size cap via [audit].enabled = false."""
     mod = _load_module()
     cfg = mod.load_audit_config({"audit": {"enabled": False}})
     assert cfg.enabled is False
 
 
 def test_custom_redact_patterns() -> None:
-    """O3: operator can add project-specific redact patterns via [audit].redact_patterns."""
     mod = _load_module()
     patterns = ["SECRET_[A-Z]+", r"api_key=\S+"]
     cfg = mod.load_audit_config({"audit": {"redact_patterns": patterns}})

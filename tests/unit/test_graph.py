@@ -228,6 +228,42 @@ def test_graph_resumes_interrupted_commit_transaction(tmp_path: Path) -> None:
     assert status.stdout == ""
 
 
+def test_commit_redacts_audit_before_staging_transaction(tmp_path: Path) -> None:
+    _init_git_repo(tmp_path)
+    directory = _write_ready_commit_state(tmp_path, 1)
+    (tmp_path / ".woof" / "agents.toml").write_text(
+        """\
+[roles.story-executor]
+harness = "cld"
+
+[roles.critiquer]
+harness = "cod"
+
+[audit]
+max_bytes = 4096
+"""
+    )
+    audit_file = directory / "audit" / "cod-critiquer-1.prompt"
+    audit_file.write_text("call API with Bearer live-oauth-token\n")
+
+    outputs = run_graph(tmp_path, 1)
+
+    assert outputs[0].node_type == NodeType.COMMIT
+    assert outputs[-1].status == NodeStatus.EPIC_COMPLETE
+    text = audit_file.read_text()
+    assert "live-oauth-token" not in text
+    assert "[REDACTED:bearer_token]" in text
+    committed = _git(
+        tmp_path,
+        "show",
+        "HEAD:.woof/epics/E1/audit/cod-critiquer-1.prompt",
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert "live-oauth-token" not in committed.stdout
+
+
 def test_complete_epic_cleans_stale_transient_files(tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     directory = _write_ready_commit_state(tmp_path, 1)

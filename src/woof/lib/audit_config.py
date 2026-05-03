@@ -1,9 +1,4 @@
-"""Typed config loader for the [audit] block in .woof/agents.toml.
-
-Consumed by woof dispatch (S2) to drive redaction and per-file size cap
-on committed audit artefacts. S1 lands the contract surface only; no
-behavioural change until S2 wires this into dispatch.
-"""
+"""Typed config loader for the [audit] block in .woof/agents.toml."""
 
 from __future__ import annotations
 

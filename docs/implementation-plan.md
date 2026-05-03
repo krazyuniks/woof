@@ -14,7 +14,7 @@ Implemented surfaces:
 - Python graph runtime: typed node contracts, transition table, transaction manifest generation, and manifest/index verification.
 - Schemas for plans, gates, critiques, JSONL events, node I/O, executor results, check results, transaction manifests, language registry, quality gates, docs paths, agents, prerequisites, and test markers.
 - Language registry files for Python, TypeScript, Rust, and Go.
-- Stage-5 Check 6 real runner: `check_6_critique_blocker`.
+- All nine Stage-5 check runners are implemented and wired into the registry.
 - Dogfood evidence under `examples/dogfood/`.
 
 Remaining implementation work is sequenced below. Each item is intentionally narrow enough to land as a conventional commit or a short series of commits when the item explicitly says so.
@@ -125,7 +125,7 @@ Checks should land one runner at a time. Each runner must replace placeholder or
 | CHK-005 | Completed | Implement Check 5: `check_5_plan_crossrefs`. | Validates plan schema and cross-artefact invariants: outcome refs, contract-decision refs, CD ownership, dependency closure, acyclicity, and status coherence; wired into the Stage-5 registry. | Targeted Check 5 runner tests passed: 9 tests. Workstream B integration validation passed: Ruff lint, Ruff format check, and 139 tests. | `feat(checks): validate plan cross references` |
 | CHK-007 | Completed | Implement Check 7: `check_7_commit_transaction`. | Asserts commit readiness: staged diff exists unless gated as empty, required durable `.woof` files are staged, no unstaged or foreign paths remain, and the runner is wired into the Stage-5 registry. | Focused runner tests passed: 5 tests. Workstream B integration validation passed: Ruff lint, Ruff format check, and 139 tests. | `feat(checks): verify commit transactions` |
 | CHK-008 | Completed | Implement Check 8: `check_8_docs_drift`. | Honours optional `.woof/docs-paths.toml`; mapped code-path changes require mapped docs-path changes in the same transaction. | Targeted Check 8/Stage-5 command tests passed: 11 tests. `just check` passed: Ruff lint, Ruff format check, and 151 tests. | `feat(checks): detect mapped docs drift` |
-| CHK-009 | Ready | Implement Check 9: `check_9_review_valve`. | Opens periodic or end-of-epic review gates summarising accumulated minor critique findings. | Runner tests for threshold, end-of-epic, no-finding, and already-gated cases; `just check`. | `feat(checks): open review valve gates` |
+| CHK-009 | Completed | Implement Check 9: `check_9_review_valve`. | Opens periodic or end-of-epic review gates summarising accumulated minor critique findings. | Targeted Check 9/Stage-5 command tests passed: 10 tests. `just check` passed: Ruff lint, Ruff format check, and 156 tests. | `feat(checks): open review valve gates` |
 
 ### Phase 3: Stage 1-4 Graph Migration
 
@@ -202,5 +202,5 @@ Workflow:
 - In the final response, paste this complete continuation prompt block so it can be copied into a new session.
 
 Start with:
-Workstream C: Policy-heavy checks (`CHK-004`, `CHK-008`, `CHK-009`). Start with any item already `In progress`; otherwise start with `CHK-009`.
+Workstream D: Preflight and local tooling (`ENV-001`, `ENV-002`, `ENV-003`, `ENV-004`). Start with any item already `In progress`; otherwise start with `ENV-001`.
 ```

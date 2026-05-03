@@ -74,6 +74,7 @@ def write_gate(
     *,
     schema_path: Path | None = None,
     validate: bool = True,
+    gate_type: str | None = None,
 ) -> Path:
     """Write gate.md and append gate_opened to epic.jsonl.
 
@@ -84,9 +85,10 @@ def write_gate(
     epic_jsonl = epic_dir / "epic.jsonl"
     now = iso_utc()
 
+    resolved_gate_type = gate_type or _gate_type_for_triggers(triggered_by)
     front: dict = {
-        "type": "story_gate",
-        "stage": 6,
+        "type": resolved_gate_type,
+        "stage": _stage_for_gate_type(resolved_gate_type, story_id),
         "story_id": story_id,
         "triggered_by": triggered_by,
         "timestamp": now,
@@ -108,9 +110,10 @@ def write_gate(
     epic_id_str = epic_dir.name  # e.g. "E182"
     epic_id = int(epic_id_str.lstrip("E")) if epic_id_str.startswith("E") else 0
     event: dict = {
-        "event": "story_gate_opened",
+        "event": _opened_event_for_gate_type(resolved_gate_type),
         "at": now,
         "epic_id": epic_id,
+        "gate_type": resolved_gate_type,
         "triggered_by": triggered_by,
     }
     if story_id:
@@ -148,6 +151,7 @@ def write_gate_from_check_result(
         position_text=position_text,
         schema_path=schema_path,
         validate=schema_path is not None,
+        gate_type=_gate_type_for_triggers(triggered_by),
     )
 
 
@@ -174,7 +178,30 @@ def write_gate_for_trigger(
         exit_code=exit_code if trigger == "subprocess_crash" else None,
         schema_path=schema_path,
         validate=schema_path is not None,
+        gate_type=_gate_type_for_triggers([trigger]),
     )
+
+
+def _gate_type_for_triggers(triggered_by: list[str]) -> str:
+    if triggered_by == ["check_9_review_valve"]:
+        return "review_gate"
+    return "story_gate"
+
+
+def _stage_for_gate_type(gate_type: str, story_id: str | None) -> int:
+    if gate_type == "review_gate":
+        return 5 if story_id else 6
+    if gate_type == "plan_gate":
+        return 4
+    return 6
+
+
+def _opened_event_for_gate_type(gate_type: str) -> str:
+    if gate_type == "review_gate":
+        return "review_gate_opened"
+    if gate_type == "plan_gate":
+        return "plan_gate_opened"
+    return "story_gate_opened"
 
 
 def _auto_position(triggered_by: list[str], check_result: dict) -> str:

@@ -32,6 +32,7 @@ check: lint test
 install-hooks:
     uv run prek install
     uv run prek install --hook-type pre-push
+    uv run woof hooks install --project-root .
 
 # Run the Woof CLI from this checkout.
 woof *ARGS:

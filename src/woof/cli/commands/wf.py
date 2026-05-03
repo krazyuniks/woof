@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
+from woof.cli.github import GithubSyncError, initialise_epic_from_issue
 from woof.graph.runner import run_graph
 from woof.graph.state import GateDecision
 from woof.graph.transitions import StageStateError, append_epic_event, epic_dir
@@ -46,6 +48,31 @@ def cmd_wf(args: argparse.Namespace) -> int:
 
     if args.resolve:
         return _resolve_gate(repo_root, args.epic, args.resolve)
+
+    directory = epic_dir(repo_root, args.epic)
+    if not directory.exists():
+        try:
+            result = initialise_epic_from_issue(repo_root, args.epic)
+        except GithubSyncError as exc:
+            sys.stderr.write(f"woof wf: github sync failed: {exc}\n")
+            return 2
+        if args.format == "json":
+            paths = [str(result.spark_path), str(result.last_sync_path)]
+            if result.epic_path:
+                paths.insert(1, str(result.epic_path))
+            payload = {
+                "epic_id": args.epic,
+                "status": "initialised",
+                "epic_dir": str(result.epic_dir),
+                "paths": paths,
+            }
+            sys.stdout.write(json.dumps(payload, sort_keys=True) + "\n")
+        else:
+            epic_state = " and EPIC.md" if result.epic_path else ""
+            sys.stdout.write(
+                f"woof wf: initialised E{args.epic} from GitHub issue with spark.md{epic_state}\n"
+            )
+        return 0
 
     try:
         outputs = run_graph(repo_root, args.epic, once=args.once)

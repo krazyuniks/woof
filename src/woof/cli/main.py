@@ -2,6 +2,7 @@
 
 Subcommands:
     wf           Run the deterministic orchestration graph.
+    preflight    Validate local prerequisites for a Woof consumer checkout.
     validate     Validate artefacts against woof JSON Schemas via ajv-cli.
     dispatch     Spawn a cld/cod subprocess for a role declared in agents.toml.
     render-epic  Render EPIC.md front-matter into the gh issue body; optionally
@@ -911,6 +912,23 @@ def main() -> int:
     from woof.cli.commands.check import setup_check_parser
     from woof.cli.commands.gate import setup_gate_parser
     from woof.cli.commands.wf import setup_wf_parser
+    from woof.cli.preflight import cmd_preflight
+
+    preflight = sub.add_parser(
+        "preflight",
+        help="validate local prerequisites for a woof project",
+    )
+    preflight.add_argument(
+        "--project-root",
+        help="woof project root to check; defaults to the nearest ancestor containing .woof/",
+    )
+    preflight.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="output format (default: text)",
+    )
+    preflight.set_defaults(func=cmd_preflight)
 
     setup_wf_parser(sub)
     setup_check_parser(sub)

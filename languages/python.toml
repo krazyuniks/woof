@@ -1,9 +1,9 @@
 # woof language registry — Python
 #
 # Schema: woof/schemas/language-registry.schema.json
-# Validate: just woof-validate woof/languages/python.toml
+# Validate: just woof validate --schema language-registry languages/python.toml
 #
-# Consumed by `just wf-preflight` to install/verify Python tooling when a
+# Consumed by `woof preflight` to install/verify Python tooling when a
 # project's prerequisites declare Python as a target language.
 
 [lsp]

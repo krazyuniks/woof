@@ -32,6 +32,7 @@ just bootstrap
 
 ```bash
 just check
+just woof preflight
 just woof --help
 ```
 
@@ -47,10 +48,12 @@ woof wf --epic <N>
 
 Use `--once` to run a single graph node, `--format json` for machine-readable node output conforming to `schemas/node-output.schema.json`, and `--resolve <decision>` to close an open `gate.md` with a structured gate decision.
 
+Run `woof preflight` from a consumer checkout to validate local prerequisites, GitHub access, language tooling, optional Tree-sitter grammars, quality-gate command resolution, and `.woof/` config schemas before invoking the graph.
+
 ## Components
 
 - `bin/woof` — source-checkout executable wrapper.
-- `src/woof/cli/` — argparse-driven command implementations (`wf`, `validate`, `dispatch`, `render-epic`, `check-cd`, `check stage-5`, `gate write`).
+- `src/woof/cli/` — argparse-driven command implementations (`wf`, `preflight`, `validate`, `dispatch`, `render-epic`, `check-cd`, `check stage-5`, `gate write`).
 - `src/woof/graph/` — ADR-001 deterministic graph, typed node contracts, transition table, and transaction manifest verification.
 - `src/woof/checks/` — Stage-5 checker registry; runners; `Check` Pydantic model.
 - `src/woof/gate/` — gate-authoring helpers (`woof gate write`).

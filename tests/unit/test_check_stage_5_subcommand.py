@@ -65,7 +65,7 @@ def test_registry_exports_nine_canonical_ids_O2() -> None:
 
 
 def test_self_test_exits_nonzero_when_runner_unimplemented_O2() -> None:
-    """O2: --self-test exits non-zero while checks 8 and 9 are placeholders."""
+    """O2: --self-test exits non-zero while check 9 is a placeholder."""
     proc = _run("check", "stage-5", "--self-test")
     assert proc.returncode != 0, (
         f"Expected non-zero exit (unimplemented runners) but got 0.\n{proc.stdout}{proc.stderr}"
@@ -91,6 +91,7 @@ def test_self_test_distinguishes_implemented_from_placeholder_O2() -> None:
         "check_5_plan_crossrefs",
         "check_6_critique_blocker",
         "check_7_commit_transaction",
+        "check_8_docs_drift",
     ]
     for check_id in implemented_ids:
         check = REGISTRY[check_id]
@@ -224,7 +225,7 @@ def test_check_stage_5_treats_placeholders_as_info_during_bootstrap(tmp_path: Pa
     result = json.loads(output)
     by_id = {c["id"]: c for c in result["checks"]}
 
-    placeholder_ids = ["check_8_docs_drift", "check_9_review_valve"]
+    placeholder_ids = ["check_9_review_valve"]
     for check_id in placeholder_ids:
         c = by_id[check_id]
         assert c["ok"] is True, f"{check_id}: expected ok=true (bootstrap placeholder), got {c}"

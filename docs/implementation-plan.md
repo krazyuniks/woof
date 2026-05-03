@@ -124,7 +124,7 @@ Checks should land one runner at a time. Each runner must replace placeholder or
 | CHK-004 | Completed | Implement Check 4: `check_4_contract_refs`. | Verifies owned contract refs through native tooling for OpenAPI/Schemathesis, Pydantic import and resolution, and JSON Schema/ajv; preserves the E146 invariant. | Targeted Check 4/E146/Stage-5 command tests passed: 21 tests. `just check` passed: Ruff lint, Ruff format check, and 145 tests. | `feat(checks): validate contract references` |
 | CHK-005 | Completed | Implement Check 5: `check_5_plan_crossrefs`. | Validates plan schema and cross-artefact invariants: outcome refs, contract-decision refs, CD ownership, dependency closure, acyclicity, and status coherence; wired into the Stage-5 registry. | Targeted Check 5 runner tests passed: 9 tests. Workstream B integration validation passed: Ruff lint, Ruff format check, and 139 tests. | `feat(checks): validate plan cross references` |
 | CHK-007 | Completed | Implement Check 7: `check_7_commit_transaction`. | Asserts commit readiness: staged diff exists unless gated as empty, required durable `.woof` files are staged, no unstaged or foreign paths remain, and the runner is wired into the Stage-5 registry. | Focused runner tests passed: 5 tests. Workstream B integration validation passed: Ruff lint, Ruff format check, and 139 tests. | `feat(checks): verify commit transactions` |
-| CHK-008 | Ready | Implement Check 8: `check_8_docs_drift`. | Honours optional `.woof/docs-paths.toml`; mapped code-path changes require mapped docs-path changes in the same transaction. | Runner tests for configured mappings, unmapped paths, docs-only changes, and missing config; `just check`. | `feat(checks): detect mapped docs drift` |
+| CHK-008 | Completed | Implement Check 8: `check_8_docs_drift`. | Honours optional `.woof/docs-paths.toml`; mapped code-path changes require mapped docs-path changes in the same transaction. | Targeted Check 8/Stage-5 command tests passed: 11 tests. `just check` passed: Ruff lint, Ruff format check, and 151 tests. | `feat(checks): detect mapped docs drift` |
 | CHK-009 | Ready | Implement Check 9: `check_9_review_valve`. | Opens periodic or end-of-epic review gates summarising accumulated minor critique findings. | Runner tests for threshold, end-of-epic, no-finding, and already-gated cases; `just check`. | `feat(checks): open review valve gates` |
 
 ### Phase 3: Stage 1-4 Graph Migration
@@ -202,5 +202,5 @@ Workflow:
 - In the final response, paste this complete continuation prompt block so it can be copied into a new session.
 
 Start with:
-Workstream C: Policy-heavy checks (`CHK-004`, `CHK-008`, `CHK-009`). Start with `CHK-004` unless an item is already `In progress`.
+Workstream C: Policy-heavy checks (`CHK-004`, `CHK-008`, `CHK-009`). Start with any item already `In progress`; otherwise start with `CHK-009`.
 ```

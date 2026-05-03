@@ -202,5 +202,5 @@ Workflow:
 - In the final response, paste this complete continuation prompt block so it can be copied into a new session.
 
 Start with:
-Workstream D: Preflight and local tooling (`ENV-001`, `ENV-002`, `ENV-003`, `ENV-004`). Start with any item already `In progress`; otherwise start with `ENV-001`.
+Workstream D: Preflight and local tooling (`ENV-001`, `ENV-002`, `ENV-003`, `ENV-004`). Start with any item already `In progress`; otherwise start with `ENV-002`.
 ```

@@ -11,7 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _write_exe(path: Path, body: str) -> None:
-    path.write_text("#!/usr/bin/env zsh\n" + body)
+    path.write_text("#!/usr/bin/env sh\n" + body)
     path.chmod(0o755)
 
 
@@ -30,15 +30,15 @@ def _write_project(
 
 def _env_with_path(bin_dir: Path, extra: dict[str, str] | None = None) -> dict[str, str]:
     uv = shutil.which("uv")
-    zsh = shutil.which("zsh")
+    sh = shutil.which("sh")
     assert uv is not None
-    assert zsh is not None
+    assert sh is not None
     env = os.environ.copy()
     env["PATH"] = os.pathsep.join(
         [
             str(bin_dir),
             str(Path(uv).parent),
-            str(Path(zsh).parent),
+            str(Path(sh).parent),
         ]
     )
     if extra:
@@ -50,7 +50,7 @@ def _stub_core_tools(bin_dir: Path) -> None:
     _write_exe(
         bin_dir / "ajv",
         """\
-if [[ "$1" == "validate" ]]; then
+if [ "$1" = "validate" ]; then
   exit 0
 fi
 echo "ajv 8.0.0"
@@ -61,7 +61,7 @@ echo "ajv 8.0.0"
     _write_exe(
         bin_dir / "gh",
         """\
-if [[ "$1" == "api" ]]; then
+if [ "$1" = "api" ]; then
   echo '{"ok":true}'
   exit 0
 fi
@@ -82,11 +82,11 @@ def test_preflight_passes_with_mocked_prerequisites(tmp_path: Path, run_woof) ->
     _write_exe(
         bin_dir / "tree-sitter",
         """\
-if [[ "$1" == "--version" ]]; then
+if [ "$1" = "--version" ]; then
   echo "tree-sitter 0.23.0"
   exit 0
 fi
-if [[ "$1" == "parse" ]]; then
+if [ "$1" = "parse" ]; then
   echo "(module)"
   exit 0
 fi

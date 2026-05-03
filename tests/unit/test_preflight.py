@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -268,3 +269,161 @@ languages = ["python"]
         finding for finding in payload["findings"] if finding["id"] == "lsp.python.plugin"
     )
     assert plugin["ok"] is True
+
+
+def test_preflight_reuses_floor_cache_until_forced(tmp_path: Path, run_woof) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _stub_core_tools(bin_dir)
+    _write_exe(bin_dir / "pyright", 'echo "pyright 1.1.1"\n')
+
+    _write_project(
+        tmp_path,
+        prerequisites="""\
+[infra]
+just = "any"
+git = "any"
+gh = "any"
+
+[wrappers]
+cld = "any"
+cod = "any"
+agent-sync = "any"
+
+[validators]
+ajv = "any"
+ajv-formats = "any"
+
+[github]
+repo = "example/project"
+
+[lsp]
+languages = ["python"]
+""",
+    )
+
+    first = run_woof(
+        "preflight",
+        "--project-root",
+        str(tmp_path),
+        "--format",
+        "json",
+        env=_env_with_path(bin_dir),
+    )
+
+    assert first.returncode == 0, first.stderr + first.stdout
+    assert (tmp_path / ".woof" / ".preflight-floor").is_file()
+    assert (tmp_path / ".woof" / ".preflight-runtime").is_file()
+
+    (bin_dir / "pyright").unlink()
+    cached = run_woof(
+        "preflight",
+        "--project-root",
+        str(tmp_path),
+        "--format",
+        "json",
+        env=_env_with_path(bin_dir),
+    )
+
+    assert cached.returncode == 0, cached.stderr + cached.stdout
+    cached_payload = json.loads(cached.stdout)
+    lsp = next(
+        finding for finding in cached_payload["findings"] if finding["id"] == "lsp.python.binary"
+    )
+    assert lsp["ok"] is True
+
+    forced = run_woof(
+        "preflight",
+        "--project-root",
+        str(tmp_path),
+        "--format",
+        "json",
+        "--force",
+        env=_env_with_path(bin_dir),
+    )
+
+    assert forced.returncode == 1
+    forced_payload = json.loads(forced.stdout)
+    forced_lsp = next(
+        finding for finding in forced_payload["findings"] if finding["id"] == "lsp.python.binary"
+    )
+    assert forced_lsp["ok"] is False
+    assert "pyright not found" in forced_lsp["detail"]
+
+    after_failed_force = run_woof(
+        "preflight",
+        "--project-root",
+        str(tmp_path),
+        "--format",
+        "json",
+        env=_env_with_path(bin_dir),
+    )
+
+    assert after_failed_force.returncode == 1
+
+
+def test_preflight_rechecks_stale_runtime_cache(tmp_path: Path, run_woof) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _stub_core_tools(bin_dir)
+
+    _write_project(
+        tmp_path,
+        prerequisites="""\
+[infra]
+just = "any"
+git = "any"
+gh = "any"
+
+[wrappers]
+cld = "any"
+cod = "any"
+agent-sync = "any"
+
+[validators]
+ajv = "any"
+ajv-formats = "any"
+
+[github]
+repo = "example/project"
+""",
+    )
+
+    first = run_woof(
+        "preflight",
+        "--project-root",
+        str(tmp_path),
+        "--format",
+        "json",
+        env=_env_with_path(bin_dir),
+    )
+
+    assert first.returncode == 0, first.stderr + first.stdout
+    runtime_cache = tmp_path / ".woof" / ".preflight-runtime"
+    runtime_payload = json.loads(runtime_cache.read_text())
+    runtime_payload["verified_at"] = (datetime.now(UTC) - timedelta(minutes=10)).isoformat()
+    runtime_cache.write_text(json.dumps(runtime_payload))
+    _write_exe(
+        bin_dir / "gh",
+        """\
+echo "expired gh auth" >&2
+exit 42
+""",
+    )
+
+    stale = run_woof(
+        "preflight",
+        "--project-root",
+        str(tmp_path),
+        "--format",
+        "json",
+        env=_env_with_path(bin_dir),
+    )
+
+    assert stale.returncode == 1
+    stale_payload = json.loads(stale.stdout)
+    rate_limit = next(
+        finding for finding in stale_payload["findings"] if finding["id"] == "github.rate_limit"
+    )
+    assert rate_limit["ok"] is False
+    assert "expired gh auth" in rate_limit["detail"]

@@ -1,8 +1,9 @@
-"""Uncached preflight checks for Woof consumer projects."""
+"""Preflight checks for Woof consumer projects."""
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -12,7 +13,9 @@ import subprocess
 import sys
 import tempfile
 import tomllib
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +48,11 @@ ajv-formats = "any"
 [github]
 repo = "<owner>/<repo>"
 """
+
+CACHE_VERSION = 1
+FLOOR_CACHE_TTL = timedelta(hours=24)
+RUNTIME_CACHE_TTL = timedelta(minutes=5)
+GITHUB_RATE_LIMIT_SAFETY_MARGIN = 100
 
 
 @dataclass(frozen=True)
@@ -98,7 +106,7 @@ class PreflightResult:
 
 def cmd_preflight(args: argparse.Namespace) -> int:
     repo_root = _resolve_repo_root(args.project_root)
-    result = run_preflight(repo_root)
+    result = run_preflight(repo_root, force=args.force)
     if args.format == "json":
         print(json.dumps(result.as_dict(), indent=2))
     else:
@@ -106,7 +114,7 @@ def cmd_preflight(args: argparse.Namespace) -> int:
     return 0 if result.ok else 1
 
 
-def run_preflight(repo_root: Path) -> PreflightResult:
+def run_preflight(repo_root: Path, *, force: bool = False) -> PreflightResult:
     prereq_path = repo_root / ".woof" / "prerequisites.toml"
     if not prereq_path.is_file():
         return PreflightResult(
@@ -125,13 +133,25 @@ def run_preflight(repo_root: Path) -> PreflightResult:
     findings: list[PreflightFinding] = []
     prereq = _load_toml(prereq_path)
     if isinstance(prereq, dict):
-        findings.extend(_check_config_schemas(repo_root))
-        findings.extend(_check_declared_binaries(prereq))
-        findings.extend(_check_ajv_formats(prereq))
-        findings.extend(_check_github(prereq))
-        findings.extend(_check_language_tools(prereq))
-        findings.extend(_check_tree_sitter(prereq))
-        findings.extend(_check_quality_gate_commands(repo_root))
+        cache_key = _preflight_cache_key(repo_root, prereq)
+        findings.extend(
+            _cached_findings(
+                repo_root / ".woof" / ".preflight-floor",
+                cache_key=cache_key,
+                ttl=FLOOR_CACHE_TTL,
+                force=force,
+                producer=lambda: _run_floor_checks(repo_root, prereq),
+            )
+        )
+        findings.extend(
+            _cached_findings(
+                repo_root / ".woof" / ".preflight-runtime",
+                cache_key=cache_key,
+                ttl=RUNTIME_CACHE_TTL,
+                force=force,
+                producer=lambda: _check_github(prereq),
+            )
+        )
     else:
         findings.append(
             PreflightFinding(
@@ -166,6 +186,138 @@ def _load_toml(path: Path) -> dict[str, Any] | str:
             return tomllib.load(fh)
     except tomllib.TOMLDecodeError as exc:
         return f"{path}: TOML parse error: {exc}"
+
+
+def _run_floor_checks(repo_root: Path, prereq: dict[str, Any]) -> list[PreflightFinding]:
+    findings: list[PreflightFinding] = []
+    findings.extend(_check_config_schemas(repo_root))
+    findings.extend(_check_declared_binaries(prereq))
+    findings.extend(_check_ajv_formats(prereq))
+    findings.extend(_check_language_tools(prereq))
+    findings.extend(_check_tree_sitter(prereq))
+    findings.extend(_check_quality_gate_commands(repo_root))
+    return findings
+
+
+def _cached_findings(
+    cache_path: Path,
+    *,
+    cache_key: str,
+    ttl: timedelta,
+    force: bool,
+    producer: Callable[[], list[PreflightFinding]],
+) -> list[PreflightFinding]:
+    if not force:
+        cached = _read_preflight_cache(cache_path, cache_key=cache_key, ttl=ttl)
+        if cached is not None:
+            return cached
+
+    findings = producer()
+    if all(finding.ok for finding in findings):
+        _write_preflight_cache(cache_path, cache_key=cache_key, findings=findings)
+    else:
+        cache_path.unlink(missing_ok=True)
+    return findings
+
+
+def _read_preflight_cache(
+    cache_path: Path,
+    *,
+    cache_key: str,
+    ttl: timedelta,
+) -> list[PreflightFinding] | None:
+    try:
+        payload = json.loads(cache_path.read_text())
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
+
+    if payload.get("version") != CACHE_VERSION or payload.get("key") != cache_key:
+        return None
+    verified_at = _parse_cache_time(payload.get("verified_at"))
+    if verified_at is None or _utc_now() - verified_at >= ttl:
+        return None
+
+    raw_findings = payload.get("findings")
+    if not isinstance(raw_findings, list):
+        return None
+    try:
+        return [_finding_from_dict(finding) for finding in raw_findings]
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _write_preflight_cache(
+    cache_path: Path,
+    *,
+    cache_key: str,
+    findings: list[PreflightFinding],
+) -> None:
+    payload = {
+        "version": CACHE_VERSION,
+        "key": cache_key,
+        "verified_at": _utc_now().isoformat(),
+        "findings": [finding.as_dict() for finding in findings],
+    }
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = cache_path.with_name(f"{cache_path.name}.tmp")
+    tmp_path.write_text(json.dumps(payload, indent=2) + "\n")
+    tmp_path.replace(cache_path)
+
+
+def _parse_cache_time(value: Any) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _finding_from_dict(payload: dict[str, Any]) -> PreflightFinding:
+    return PreflightFinding(
+        id=str(payload["id"]),
+        label=str(payload["label"]),
+        ok=bool(payload["ok"]),
+        detail=str(payload["detail"]),
+        required=str(payload["required"]) if payload.get("required") is not None else None,
+        install=str(payload["install"]) if payload.get("install") is not None else None,
+        notes=[str(note) for note in payload.get("notes") or []],
+    )
+
+
+def _preflight_cache_key(repo_root: Path, prereq: dict[str, Any]) -> str:
+    digest = hashlib.sha256()
+    for path in _cache_input_paths(repo_root, prereq):
+        digest.update(str(path).encode())
+        digest.update(b"\0")
+        try:
+            digest.update(path.read_bytes())
+        except OSError as exc:
+            digest.update(f"ERROR:{exc}".encode())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _cache_input_paths(repo_root: Path, prereq: dict[str, Any]) -> list[Path]:
+    woof_dir = repo_root / ".woof"
+    paths = [
+        woof_dir / filename
+        for filename in CONFIG_SCHEMAS
+        if (woof_dir / filename).is_file() or filename == "prerequisites.toml"
+    ]
+    languages = set((prereq.get("lsp") or {}).get("languages") or [])
+    languages.update(
+        ((prereq.get("indexing") or {}).get("tree-sitter") or {}).get("grammars") or []
+    )
+    paths.extend(_language_registry_path(str(language)) for language in sorted(languages))
+    return paths
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
 
 
 def _check_config_schemas(repo_root: Path) -> list[PreflightFinding]:
@@ -342,13 +494,7 @@ def _check_github(prereq: dict[str, Any]) -> list[PreflightFinding]:
     if not repo:
         return []
     findings = [
-        _run_command_check(
-            id_="github.rate_limit",
-            label="GitHub auth",
-            argv=["gh", "api", "/rate_limit"],
-            ok_detail="gh api /rate_limit succeeded",
-            install="gh auth login",
-        ),
+        _check_github_rate_limit(),
         _run_command_check(
             id_="github.repo",
             label=f"GitHub repo {repo}",
@@ -358,6 +504,65 @@ def _check_github(prereq: dict[str, Any]) -> list[PreflightFinding]:
         ),
     ]
     return findings
+
+
+def _check_github_rate_limit() -> PreflightFinding:
+    id_ = "github.rate_limit"
+    label = "GitHub auth"
+    install = "gh auth login"
+    if shutil.which("gh") is None:
+        return PreflightFinding(
+            id=id_,
+            label=label,
+            ok=False,
+            detail="gh not found on PATH",
+            install=install,
+        )
+
+    returncode, output = _run_capture(["gh", "api", "/rate_limit"], timeout=20)
+    if returncode != 0:
+        return PreflightFinding(
+            id=id_,
+            label=label,
+            ok=False,
+            detail=output,
+            install=install,
+        )
+
+    remaining = _github_core_remaining(output)
+    if remaining is not None and remaining <= GITHUB_RATE_LIMIT_SAFETY_MARGIN:
+        return PreflightFinding(
+            id=id_,
+            label=label,
+            ok=False,
+            detail=(
+                f"GitHub API core rate limit remaining {remaining}; "
+                f"requires > {GITHUB_RATE_LIMIT_SAFETY_MARGIN}"
+            ),
+            install=install,
+        )
+
+    return PreflightFinding(
+        id=id_,
+        label=label,
+        ok=True,
+        detail=(
+            f"gh api /rate_limit succeeded; {remaining} core request(s) remaining"
+            if remaining is not None
+            else "gh api /rate_limit succeeded"
+        ),
+        install=install,
+    )
+
+
+def _github_core_remaining(output: str) -> int | None:
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError:
+        return None
+    core = (payload.get("resources") or {}).get("core") or {}
+    remaining = core.get("remaining")
+    return remaining if isinstance(remaining, int) else None
 
 
 def _check_language_tools(prereq: dict[str, Any]) -> list[PreflightFinding]:
@@ -465,7 +670,7 @@ def _check_tree_sitter(prereq: dict[str, Any]) -> list[PreflightFinding]:
 
 
 def _load_language_registry(language: str) -> dict[str, Any] | PreflightFinding:
-    path = tool_root() / "languages" / f"{language}.toml"
+    path = _language_registry_path(language)
     if not path.is_file():
         return PreflightFinding(
             id=f"language.{language}",
@@ -495,6 +700,10 @@ def _load_language_registry(language: str) -> dict[str, Any] | PreflightFinding:
             detail=output,
         )
     return loaded
+
+
+def _language_registry_path(language: str) -> Path:
+    return tool_root() / "languages" / f"{language}.toml"
 
 
 def _check_quality_gate_commands(repo_root: Path) -> list[PreflightFinding]:

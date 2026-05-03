@@ -10,7 +10,7 @@ Woof has an implemented ADR-001 Stage-5 execution path. `woof wf --epic <N>` run
 
 Implemented surfaces:
 
-- CLI wrapper and commands: `wf`, `validate`, `dispatch`, `render-epic`, `check-cd`, `check stage-5`, and `gate write`.
+- CLI wrapper and commands: `wf`, `preflight`, `hooks install`, `validate`, `dispatch`, `render-epic`, `check-cd`, `check stage-5`, and `gate write`.
 - Python graph runtime: typed node contracts, transition table, transaction manifest generation, and manifest/index verification.
 - Schemas for plans, gates, critiques, JSONL events, node I/O, executor results, check results, transaction manifests, language registry, quality gates, docs paths, agents, prerequisites, and test markers.
 - Language registry files for Python, TypeScript, Rust, and Go.
@@ -159,7 +159,7 @@ GitHub sync must fail loud on auth, network, repo access, and rate-limit failure
 | CI-002 | Completed | Make missing-`ajv` validation test independent of host install layout. | The test constructs a controlled `PATH` containing `uv` and excluding `ajv`, so it fails loud on both developer machines and GitHub runners. | Targeted test passed; `just check` passed: Ruff lint, Ruff format check, and 98 tests. | `test(validate): isolate missing ajv path` |
 | ENV-001 | Completed | Implement preflight as a first-class CLI path. | `woof preflight` validates wrappers, GitHub access, language tools, optional LSP plugins, Tree-sitter parsing, quality-gate command resolution, and consumer config schemas through a single CLI entry point with text and JSON output. | Targeted preflight tests passed: 4 tests. Language registry schema validation passed. Self-preflight passed: 15 checks. `just check` passed: Ruff lint, Ruff format check, and 160 tests. | `feat(cli): add preflight command`; `test(cli): make preflight stubs portable` |
 | ENV-002 | Completed | Cache preflight by prerequisite hash. | Stable prerequisites reuse cached results while network/auth checks remain short-lived runtime checks. | Focused preflight cache tests passed: 6 tests. `just check` passed: Ruff lint, Ruff format check, and 162 tests. | `feat(preflight): cache prerequisite checks` |
-| ENV-003 | Ready | Install hooks idempotently through project tooling. | Hook installation preserves user-managed content and can be rerun without duplicate blocks. | Hook fixture tests plus `just check`. | `feat(hooks): install woof hooks idempotently` |
+| ENV-003 | Completed | Install hooks idempotently through project tooling. | `woof hooks install` appends or refreshes the managed post-commit cartography block while preserving user-managed hook content; `just install-hooks` runs the Woof installer after `prek`; reruns do not duplicate the block. | Focused hook fixture tests passed: 5 tests. `just install-hooks` passed. `just check` passed: Ruff lint, Ruff format check, and 167 tests. | `feat(hooks): install woof hooks idempotently` |
 | ENV-004 | Ready | Enforce audit redaction and size caps before commit. | Commit-bound audit files are redacted; oversized raw output stays gitignored with capped committed summaries. | Redaction and truncation tests plus `just check`. | `feat(audit): redact and cap committed output` |
 
 ### Phase 6: Consumer Integration And Dogfood Evidence
@@ -202,5 +202,5 @@ Workflow:
 - In the final response, paste this complete continuation prompt block so it can be copied into a new session.
 
 Start with:
-Workstream D: Preflight and local tooling (`ENV-001`, `ENV-002`, `ENV-003`, `ENV-004`). Start with any item already `In progress`; otherwise start with `ENV-003`.
+Workstream D: Preflight and local tooling (`ENV-001`, `ENV-002`, `ENV-003`, `ENV-004`). Start with any item already `In progress`; otherwise start with `ENV-004`.
 ```

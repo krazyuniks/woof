@@ -452,7 +452,7 @@ If a process dies during the commit transition after the plan has been marked `d
 
 **Concurrency lockfile.** The graph uses `.woof/epics/E<N>/.wf.lock` to prevent concurrent mutation of one epic. Live locks fail loud. Stale locks are removed with an audit event.
 
-**Post-commit hook installation.** Explicit and idempotent. The hook installer appends a fenced block to `.git/hooks/post-commit`:
+**Post-commit hook installation.** Explicit and idempotent. `woof hooks install` appends a fenced block to the Git `post-commit` hook resolved by `git rev-parse --git-path hooks/post-commit`:
 
 ```bash
 # >>> woof-cartography
@@ -754,6 +754,7 @@ The CLI is the operator surface. Prompt wrappers may call these commands, but th
 | `woof wf --epic <N>` | Run the deterministic graph for the current epic. |
 | `woof wf --epic <N> --resolve <decision>` | Resolve an open gate with a structured decision. |
 | `woof preflight` | Validate local prerequisites, GitHub access, language tooling, quality-gate command resolution, and `.woof/` config schemas. |
+| `woof hooks install` | Install the Woof-managed post-commit hook block without overwriting user-managed hook content. |
 | `woof validate ...` | Validate JSON, TOML, JSONL, and front-matter artefacts against shipped schemas. |
 | `woof check stage-5 --epic <N> --story <S<k>>` | Run Stage-5 checks and emit structured results. |
 | `woof dispatch <claude|codex> --role <role-name>` | Invoke configured producer subprocesses and record dispatch events. |

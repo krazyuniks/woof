@@ -36,7 +36,7 @@ just woof preflight
 just woof --help
 ```
 
-`uv.lock` is committed. Git hooks are installed with `prek`; pre-commit runs Ruff and Woof config schema validation, and pre-push runs the unit suite.
+`uv.lock` is committed. Git hooks are installed with `just install-hooks`; pre-commit runs Ruff and Woof config schema validation, pre-push runs the unit suite, and `woof hooks install` adds the idempotent Woof-managed post-commit cartography block.
 
 ## Operator usage
 
@@ -53,7 +53,7 @@ Run `woof preflight` from a consumer checkout to validate local prerequisites, G
 ## Components
 
 - `bin/woof` — source-checkout executable wrapper.
-- `src/woof/cli/` — argparse-driven command implementations (`wf`, `preflight`, `validate`, `dispatch`, `render-epic`, `check-cd`, `check stage-5`, `gate write`).
+- `src/woof/cli/` — argparse-driven command implementations (`wf`, `preflight`, `hooks install`, `validate`, `dispatch`, `render-epic`, `check-cd`, `check stage-5`, `gate write`).
 - `src/woof/graph/` — ADR-001 deterministic graph, typed node contracts, transition table, and transaction manifest verification.
 - `src/woof/checks/` — Stage-5 checker registry; runners; `Check` Pydantic model.
 - `src/woof/gate/` — gate-authoring helpers (`woof gate write`).

@@ -636,7 +636,7 @@ Re-run `woof preflight` after installing.
 
 **Preflight caching.** Two-tier:
 
-1. **Floor checks** (binaries exist, version meets floor, LSP plugin installed, Tree-sitter grammars parse) cached at `.woof/.preflight-floor` keyed by SHA256 of `.woof/prerequisites.toml` + language-registry TOML contents. Skipped if hash unchanged and `verified-at < 24h`; the cache implementation adds explicit force re-run support.
+1. **Floor checks** (binaries exist, version meets floor, LSP plugin installed, Tree-sitter grammars parse) cached at `.woof/.preflight-floor` keyed by SHA256 of `.woof/prerequisites.toml` + language-registry TOML contents. Skipped if hash unchanged and `verified-at < 24h`; `woof preflight --force` refreshes the cache.
 2. **Runtime checks** (gh auth + reachability via `gh api /rate_limit`, Codex auth) cached at `.woof/.preflight-runtime` for 5 min, with a rate-remaining safety margin (`> 100` reqs/hr). Stale → re-verify; fail loud on auth expiry with exact re-auth command. Subprocesses inherit parent's runtime cache via stat()-based checks; no fresh network calls per `claude -p`.
 
 Both cache files are gitignored.

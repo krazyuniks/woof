@@ -928,6 +928,11 @@ def main() -> int:
         default="text",
         help="output format (default: text)",
     )
+    preflight.add_argument(
+        "--force",
+        action="store_true",
+        help="refresh cached prerequisite and runtime checks",
+    )
     preflight.set_defaults(func=cmd_preflight)
 
     setup_wf_parser(sub)

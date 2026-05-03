@@ -3,9 +3,7 @@
 REGISTRY maps check ID → Check. Skills, schemas, and documentation reference
 checks by ID only; they never enumerate or describe the registry's contents.
 
-Checks 1, 2, 3, 4, 5, 6, 7, and 8 have real runners. The remaining entries have
-placeholder runners that raise NotImplementedError; they will be populated as
-implementation plan work items land.
+All Stage-5 checks have real runners.
 """
 
 from __future__ import annotations
@@ -24,6 +22,7 @@ from woof.checks.runners.check_5_plan_crossrefs import check_5_plan_crossrefs_ru
 from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
 from woof.checks.runners.check_7_commit_transaction import check_7_commit_transaction_runner
 from woof.checks.runners.check_8_docs_drift import check_8_docs_drift_runner
+from woof.checks.runners.check_9_review_valve import check_9_review_valve_runner
 
 
 class Check(BaseModel):
@@ -36,16 +35,6 @@ class Check(BaseModel):
     cost: Literal["cheap", "expensive"]
     summary: str
     runner: Callable[[CheckContext], CheckOutcome]
-
-
-def _placeholder(check_id: str) -> Callable[[CheckContext], CheckOutcome]:
-    """Return a runner that raises NotImplementedError (populated in later stories)."""
-
-    def runner(ctx: CheckContext) -> CheckOutcome:
-        raise NotImplementedError(f"{check_id}: runner not yet implemented")
-
-    runner.__name__ = f"{check_id}_runner"
-    return runner
 
 
 REGISTRY: dict[str, Check] = {
@@ -110,7 +99,7 @@ REGISTRY: dict[str, Check] = {
         stage=5,
         cost="cheap",
         summary="Every-N stories and end-of-epic; surfaces accumulated minor critique findings",
-        runner=_placeholder("check_9_review_valve"),
+        runner=check_9_review_valve_runner,
     ),
 }
 

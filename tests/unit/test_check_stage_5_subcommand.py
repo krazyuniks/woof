@@ -64,36 +64,22 @@ def test_registry_exports_nine_canonical_ids_O2() -> None:
         assert check_id in REGISTRY, f"{check_id} in STAGE_5_CHECK_IDS but missing from REGISTRY"
 
 
-def test_self_test_exits_nonzero_when_runner_unimplemented_O2() -> None:
-    """O2: --self-test exits non-zero while check 9 is a placeholder."""
+def test_self_test_exits_zero_when_all_runners_implemented_O2() -> None:
+    """O2: --self-test exits zero when all 9 runners are implemented."""
     proc = _run("check", "stage-5", "--self-test")
-    assert proc.returncode != 0, (
-        f"Expected non-zero exit (unimplemented runners) but got 0.\n{proc.stdout}{proc.stderr}"
-    )
-    # stderr should name at least one failing check
-    combined = proc.stderr + proc.stdout
-    assert "NotImplementedError" in combined or "not implemented" in combined.lower(), combined
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "all 9 runners implemented" in proc.stdout
 
 
 def test_self_test_distinguishes_implemented_from_placeholder_O2() -> None:
-    """O2: implemented checks are not reported as placeholder failures."""
+    """O2: implemented checks do not raise NotImplementedError."""
     import sys
 
     sys.path.insert(0, str(REPO_ROOT))
     from woof.checks.registry import REGISTRY
 
     failures: list[str] = []
-    implemented_ids = [
-        "check_1_quality_gates",
-        "check_2_outcome_markers",
-        "check_3_scope",
-        "check_4_contract_refs",
-        "check_5_plan_crossrefs",
-        "check_6_critique_blocker",
-        "check_7_commit_transaction",
-        "check_8_docs_drift",
-    ]
-    for check_id in implemented_ids:
+    for check_id in REGISTRY:
         check = REGISTRY[check_id]
         try:
             check.runner(None)  # type: ignore[arg-type]
@@ -115,10 +101,15 @@ def test_check_stage_5_json_output_conforms_to_schema_O4(tmp_path: Path) -> None
     if not shutil.which("ajv"):
         pytest.skip("ajv not on PATH")
 
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True, text=True)
+
     # Create a minimal epic dir with a blocker critique so check_6 fires
     epic_dir = tmp_path / ".woof" / "epics" / "E999"
     critique_dir = epic_dir / "critique"
     critique_dir.mkdir(parents=True)
+    (tmp_path / ".woof" / "agents.toml").write_text(
+        "[roles]\n\n[review_valve]\nevery_n_stories = 5\nend_of_epic = false\n"
+    )
     plan_path = epic_dir / "plan.json"
     plan_path.write_text(json.dumps({"epic_id": 999, "goal": "test", "stories": []}))
     (critique_dir / "story-S1.md").write_text(
@@ -140,8 +131,7 @@ def test_check_stage_5_json_output_conforms_to_schema_O4(tmp_path: Path) -> None
         cwd=str(tmp_path),
     )
 
-    # Exit code non-zero expected (check_6 or unimplemented checks fail)
-    assert proc.returncode != 0 or proc.returncode == 0  # just check it ran
+    assert proc.returncode in {0, 1}, proc.stderr
 
     output = proc.stdout.strip()
     if not output:
@@ -181,24 +171,42 @@ def test_check_stage_5_json_output_conforms_to_schema_O4(tmp_path: Path) -> None
 
 
 # ---------------------------------------------------------------------------
-# Bootstrap-tolerant verifier behaviour — placeholder runners report info
+# Review-valve verifier behaviour
 # ---------------------------------------------------------------------------
 
 
-def test_check_stage_5_treats_placeholders_as_info_during_bootstrap(tmp_path: Path) -> None:
-    """During registry bootstrap, a runner that raises NotImplementedError reports
-    ok=true severity=info instead of as a blocker failure. --self-test remains
-    the strict CI gate (asserted in a separate test).
-
-    Aligns with P6: drift detection at CI (self-test), not at production
-    (per-story driver). Without this the bootstrap-window driver deadlocks on
-    every story until all 9 runners are real.
-    """
+def test_check_stage_5_reports_review_valve_not_due_as_info(tmp_path: Path) -> None:
+    """Check 9 is a real runner and reports ok=true severity=info when no review is due."""
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True, text=True)
     epic_dir = tmp_path / ".woof" / "epics" / "E999"
     critique_dir = epic_dir / "critique"
     critique_dir.mkdir(parents=True)
+    (tmp_path / ".woof" / "agents.toml").write_text(
+        "[roles]\n\n[review_valve]\nevery_n_stories = 5\nend_of_epic = false\n"
+    )
     plan_path = epic_dir / "plan.json"
-    plan_path.write_text(json.dumps({"epic_id": 999, "goal": "test", "stories": []}))
+    plan_path.write_text(
+        json.dumps(
+            {
+                "epic_id": 999,
+                "goal": "test",
+                "stories": [
+                    {
+                        "id": "S1",
+                        "title": "test",
+                        "intent": "test",
+                        "paths": ["src/**"],
+                        "satisfies": ["O1"],
+                        "implements_contract_decisions": [],
+                        "uses_contract_decisions": [],
+                        "depends_on": [],
+                        "tests": {"count": 1, "types": ["unit"]},
+                        "status": "in_progress",
+                    }
+                ],
+            }
+        )
+    )
     # Critique with severity=info so check_6 does not flag this run
     (critique_dir / "story-S1.md").write_text(
         "---\ntarget: story\ntarget_id: S1\nseverity: info\n"
@@ -225,16 +233,8 @@ def test_check_stage_5_treats_placeholders_as_info_during_bootstrap(tmp_path: Pa
     result = json.loads(output)
     by_id = {c["id"]: c for c in result["checks"]}
 
-    placeholder_ids = ["check_9_review_valve"]
-    for check_id in placeholder_ids:
-        c = by_id[check_id]
-        assert c["ok"] is True, f"{check_id}: expected ok=true (bootstrap placeholder), got {c}"
-        assert c["severity"] == "info", (
-            f"{check_id}: expected severity=info, got severity={c['severity']!r}"
-        )
-
-    # Triggered_by should not include any placeholder
-    for check_id in placeholder_ids:
-        assert check_id not in result["triggered_by"], (
-            f"{check_id} appeared in triggered_by[] despite ok=true"
-        )
+    c = by_id["check_9_review_valve"]
+    assert c["ok"] is True, c
+    assert c["severity"] == "info"
+    assert "not due" in c["summary"]
+    assert "check_9_review_valve" not in result["triggered_by"]

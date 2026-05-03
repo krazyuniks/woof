@@ -69,7 +69,7 @@ Implementation landed in:
 The current woof source code embeds the LLM-orchestrator topology in:
 
 - `bin/woof` — provides the right primitives (`dispatch`, `validate`, `check`, `gate write`); these become node-implementation building blocks. Mostly preserved.
-- `cli/commands/check.py` — Stage-5 verifier; becomes a `verification` node implementation. Bootstrap-tolerant placeholder behaviour (commit `b729860`) stays as-is until all runners are real.
+- `cli/commands/check.py` — Stage-5 verifier; becomes a `verification` node implementation. All nine Stage-5 runners are now implemented.
 - `cli/commands/gate.py` + `gate/write.py` — gate writer; becomes the `gate_open` node implementation. Stays.
 - `checks/registry.py` — Stage-5 check registry; becomes the configuration data the `verification` node reads. Stays.
 - `playbooks/` — LLM prompt templates; become the input-data fixture for LLM nodes. Stays.

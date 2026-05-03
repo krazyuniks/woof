@@ -3,7 +3,7 @@
 REGISTRY maps check ID → Check. Skills, schemas, and documentation reference
 checks by ID only; they never enumerate or describe the registry's contents.
 
-Checks 1, 2, 3, 4, 5, 6, and 7 have real runners. The remaining entries have
+Checks 1, 2, 3, 4, 5, 6, 7, and 8 have real runners. The remaining entries have
 placeholder runners that raise NotImplementedError; they will be populated as
 implementation plan work items land.
 """
@@ -23,6 +23,7 @@ from woof.checks.runners.check_4_contract_refs import check_4_contract_refs_runn
 from woof.checks.runners.check_5_plan_crossrefs import check_5_plan_crossrefs_runner
 from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
 from woof.checks.runners.check_7_commit_transaction import check_7_commit_transaction_runner
+from woof.checks.runners.check_8_docs_drift import check_8_docs_drift_runner
 
 
 class Check(BaseModel):
@@ -102,7 +103,7 @@ REGISTRY: dict[str, Check] = {
         stage=5,
         cost="cheap",
         summary="Per .woof/docs-paths.toml mappings; no-op when file absent",
-        runner=_placeholder("check_8_docs_drift"),
+        runner=check_8_docs_drift_runner,
     ),
     "check_9_review_valve": Check(
         id="check_9_review_valve",

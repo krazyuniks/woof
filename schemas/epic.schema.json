@@ -23,6 +23,11 @@
       "minLength": 1,
       "description": "Short epic title; mirrors gh issue title."
     },
+    "intent": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Optional GitHub issue intent paragraph. When present, the Definition renderer uses this as the initial free-form prose on first push instead of deriving intent from the EPIC.md body."
+    },
     "observable_outcomes": {
       "type": "array",
       "minItems": 1,

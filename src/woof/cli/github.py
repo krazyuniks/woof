@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import subprocess
+import tempfile
 import tomllib
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -34,8 +35,23 @@ class NewEpicResult(ColdStartResult):
     current_epic_path: Path
 
 
+@dataclass(frozen=True)
+class DefinitionSyncResult:
+    epic_id: int
+    body: str
+    updated_at: str
+    last_sync_path: Path
+    changed: bool
+
+
 STRUCTURED_HEADING = "## Observable Outcomes"
+WOOF_SENTINEL = (
+    "<!-- woof — structured sections above are rewritten on Definition/plan "
+    "changes. Free-form prose above `## Observable Outcomes` is preserved on "
+    "overwrite. Do not edit structured sections directly in gh. -->"
+)
 _HEADING_RE = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
+_STRUCTURED_HEADING_RE = re.compile(r"^##\s+Observable Outcomes\s*$", re.MULTILINE)
 _OUTCOME_RE = re.compile(r"^- \*\*(O[1-9]\d*)\*\*\s+(?:\u2014|-)\s+(.+?)\s*$")
 _VERIFICATION_RE = re.compile(r"^\s+- Verification:\s+(.+?)\s*$")
 _DEPRECATED_OUTCOME_RE = re.compile(r"\s+_\(deprecated(?:\s+\u2192\s+(O[1-9]\d*))?\)_$")
@@ -88,6 +104,147 @@ def fetch_issue(repo: str, issue_number: int) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise GithubSyncError(f"gh returned a non-object JSON payload for issue {issue_number}")
     return payload
+
+
+def split_epic_front_matter(path: Path) -> tuple[dict[str, Any], str]:
+    """Return ``EPIC.md`` front-matter and prose body."""
+
+    text = path.read_text(encoding="utf-8")
+    if not text.startswith("---\n"):
+        raise ValueError(f"{path}: no YAML front-matter (file must start with '---\\n')")
+    end = text.find("\n---\n", 4)
+    if end < 0:
+        raise ValueError(f"{path}: unterminated YAML front-matter")
+    front = yaml.safe_load(text[4:end]) or {}
+    if not isinstance(front, dict):
+        raise ValueError(f"{path}: YAML front-matter root must be an object")
+    prose = text[end + len("\n---\n") :]
+    return front, prose
+
+
+def render_epic_issue_body(
+    front: dict[str, Any], prose: str, remote_body: str | None = None
+) -> str:
+    """Render ``EPIC.md`` front-matter into the managed GitHub issue body.
+
+    If a remote issue body already has the managed heading, only the free-form
+    prefix above that heading is preserved. Managed sections are rewritten
+    wholesale from schema-valid front-matter.
+    """
+
+    out: list[str] = []
+    remote_prefix = _remote_prefix(remote_body)
+    if remote_prefix is not None:
+        out.append(remote_prefix.rstrip() + "\n\n")
+    else:
+        intent = _front_intent(front) or _first_paragraph(prose)
+        out.append((intent or "_(intent pending)_") + "\n\n")
+
+    out.append("## Observable Outcomes\n\n")
+    for outcome in front["observable_outcomes"]:
+        suffix = _deprecation_suffix(outcome)
+        out.append(f"- **{outcome['id']}** — {_single_line(outcome['statement'])}{suffix}\n")
+        out.append(f"  - Verification: {outcome['verification']}\n")
+    out.append("\n")
+
+    decisions = front.get("contract_decisions") or []
+    if decisions:
+        out.append("## Contract Decisions\n\n")
+        out.append("| ID | Related Outcomes | Title | Contract Reference |\n")
+        out.append("|---|---|---|---|\n")
+        for decision in decisions:
+            related = ", ".join(decision["related_outcomes"])
+            title = _table_cell(decision["title"] + _deprecation_suffix(decision))
+            out.append(f"| {decision['id']} | {related} | {title} | {_contract_ref(decision)} |\n")
+        out.append("\n")
+
+    out.append("## Acceptance Criteria\n\n")
+    for criterion in front["acceptance_criteria"]:
+        out.append(f"- {_single_line(criterion)}\n")
+    out.append("\n")
+
+    open_questions = front.get("open_questions") or []
+    if open_questions:
+        out.append("## Open Questions\n\n")
+        for question in open_questions:
+            out.append(f"- {_single_line(question)}\n")
+        out.append("\n")
+
+    out.append("---\n\n")
+    out.append(WOOF_SENTINEL + "\n")
+    return "".join(out)
+
+
+def sync_epic_definition(
+    repo_root: Path, epic_id: int, front: dict[str, Any], prose: str
+) -> DefinitionSyncResult:
+    """Push the rendered Definition-stage issue body to GitHub."""
+
+    repo = load_github_repo(repo_root)
+    remote = fetch_issue(repo, epic_id)
+    remote_updated_at = _issue_updated_at(remote)
+    remote_body = _issue_body(remote)
+    epic_directory = repo_root / ".woof" / "epics" / f"E{epic_id}"
+    last_sync_path = epic_directory / ".last-sync"
+    last_sync = _read_last_sync(last_sync_path)
+
+    if last_sync and last_sync.get("updated_at") != remote_updated_at:
+        _append_jsonl(
+            epic_directory / "epic.jsonl",
+            {
+                "event": "github_sync_conflict",
+                "at": iso_utc(),
+                "epic_id": epic_id,
+            },
+        )
+        raise GithubSyncError(
+            f"github_sync_conflict for E{epic_id}\n"
+            f"  last-sync updated_at: {last_sync.get('updated_at')}\n"
+            f"  remote   updated_at: {remote_updated_at}\n"
+            "  push aborted - resolve via /wf gate"
+        )
+
+    body = render_epic_issue_body(front, prose, remote_body=remote_body)
+    if (
+        last_sync
+        and last_sync.get("updated_at") == remote_updated_at
+        and last_sync.get("body_sha256") == _sha256(body)
+    ):
+        return DefinitionSyncResult(
+            epic_id=epic_id,
+            body=body,
+            updated_at=remote_updated_at,
+            last_sync_path=last_sync_path,
+            changed=False,
+        )
+
+    _edit_issue_body(repo, epic_id, body)
+    new_remote = fetch_issue(repo, epic_id)
+    updated_at = _issue_updated_at(new_remote)
+    _write_last_sync(
+        last_sync_path,
+        {
+            "issue_number": epic_id,
+            "updated_at": updated_at,
+            "body_sha256": _sha256(body),
+            "body": body,
+        },
+    )
+    _append_jsonl(
+        epic_directory / "epic.jsonl",
+        {
+            "event": "github_synced",
+            "at": iso_utc(),
+            "epic_id": epic_id,
+        },
+    )
+    return DefinitionSyncResult(
+        epic_id=epic_id,
+        body=body,
+        updated_at=updated_at,
+        last_sync_path=last_sync_path,
+        changed=True,
+    )
 
 
 def create_epic_from_spark(repo_root: Path, spark: str) -> NewEpicResult:
@@ -232,6 +389,32 @@ def _create_issue(repo: str, *, title: str, body: str) -> str:
     return issue_url
 
 
+def _edit_issue_body(repo: str, issue_number: int, body: str) -> None:
+    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as handle:
+        handle.write(body)
+        body_path = Path(handle.name)
+    try:
+        proc = subprocess.run(
+            [
+                "gh",
+                "issue",
+                "edit",
+                str(issue_number),
+                "--repo",
+                repo,
+                "--body-file",
+                str(body_path),
+            ],
+            capture_output=True,
+            text=True,
+        )
+    finally:
+        body_path.unlink(missing_ok=True)
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout).strip()
+        raise GithubSyncError(f"gh issue edit {issue_number} --repo {repo} failed:\n{detail}")
+
+
 def _issue_number_from_url(issue_url: str) -> int:
     match = re.search(r"/issues/([1-9]\d*)/?$", issue_url)
     if not match:
@@ -240,7 +423,8 @@ def _issue_number_from_url(issue_url: str) -> int:
 
 
 def epic_markdown_from_issue(*, epic_id: int, title: str, body: str) -> str | None:
-    if STRUCTURED_HEADING not in body:
+    split = _split_managed_body(body)
+    if split is None:
         return None
     sections = _sections(body)
     if "Observable Outcomes" not in sections or "Acceptance Criteria" not in sections:
@@ -260,7 +444,7 @@ def epic_markdown_from_issue(*, epic_id: int, title: str, body: str) -> str | No
     if open_questions:
         front["open_questions"] = open_questions
 
-    prose = body.split(STRUCTURED_HEADING, 1)[0].strip()
+    prose = split[0].strip()
     yaml_text = yaml.safe_dump(front, sort_keys=False)
     return f"---\n{yaml_text}---\n{prose}\n"
 
@@ -272,8 +456,16 @@ def _issue_updated_at(issue: dict[str, Any]) -> str:
     return updated_at
 
 
+def _issue_body(issue: dict[str, Any]) -> str:
+    body = issue.get("body") or ""
+    if not isinstance(body, str):
+        raise GithubSyncError("GitHub issue body is not a string")
+    return body
+
+
 def _spark_markdown(title: str, body: str) -> str:
-    prose = body.split(STRUCTURED_HEADING, 1)[0].strip() if body else ""
+    split = _split_managed_body(body) if body else None
+    prose = (split[0] if split else body).strip()
     if prose:
         return f"# {title.strip()}\n\n{prose}\n"
     return f"# {title.strip()}\n"
@@ -388,6 +580,79 @@ def _strip_deprecation(text: str, pattern: re.Pattern[str]) -> tuple[str, bool, 
     if not match:
         return text.strip(), False, None
     return text[: match.start()].strip(), True, match.group(1)
+
+
+def _split_managed_body(body: str) -> tuple[str, str] | None:
+    match = _STRUCTURED_HEADING_RE.search(body)
+    if not match:
+        return None
+    return body[: match.start()], body[match.start() :]
+
+
+def _remote_prefix(remote_body: str | None) -> str | None:
+    if remote_body is None:
+        return None
+    split = _split_managed_body(remote_body)
+    if split is None:
+        return None
+    return split[0]
+
+
+def _front_intent(front: dict[str, Any]) -> str:
+    intent = front.get("intent")
+    return intent.strip() if isinstance(intent, str) else ""
+
+
+def _first_paragraph(prose: str) -> str:
+    paragraphs = re.split(r"\n\s*\n", prose.strip())
+    for paragraph in paragraphs:
+        stripped = paragraph.strip()
+        if stripped:
+            return _single_line(stripped)
+    return ""
+
+
+def _single_line(value: str) -> str:
+    return " ".join(value.split())
+
+
+def _table_cell(value: str) -> str:
+    return _single_line(value).replace("|", r"\|")
+
+
+def _deprecation_suffix(item: dict[str, Any]) -> str:
+    if not item.get("deprecated"):
+        return ""
+    replaced_by = item.get("replaced_by")
+    return f" _(deprecated → {replaced_by})_" if replaced_by else " _(deprecated)_"
+
+
+def _contract_ref(decision: dict[str, Any]) -> str:
+    if decision.get("openapi_ref"):
+        return f"`openapi: {decision['openapi_ref']}`"
+    if decision.get("pydantic_ref"):
+        return f"`pydantic: {decision['pydantic_ref']}`"
+    if decision.get("json_schema_ref"):
+        return f"`json_schema: {decision['json_schema_ref']}`"
+    return ""
+
+
+def _read_last_sync(path: Path) -> dict[str, Any] | None:
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise GithubSyncError(f"{path} is not valid JSON: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise GithubSyncError(f"{path} must contain a JSON object")
+    return payload
+
+
+def _write_last_sync(path: Path, payload: dict[str, Any]) -> None:
+    tmp = path.with_suffix(".last-sync.tmp")
+    tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
 
 
 def _parse_bullets(markdown: str, *, label: str, require_items: bool = False) -> list[str]:

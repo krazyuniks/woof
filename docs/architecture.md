@@ -754,6 +754,7 @@ The CLI is the operator surface. Prompt wrappers may call these commands, but th
 | Surface | Use |
 |---|---|
 | `woof wf --epic <N>` | Run the deterministic graph for the current epic. |
+| `woof wf new "<spark>"` | Create a GitHub issue-backed epic, initialise local state, and select it as `.woof/.current-epic`. |
 | `woof wf --epic <N> --resolve <decision>` | Resolve an open gate with a structured decision. |
 | `woof preflight` | Validate local prerequisites, GitHub access, language tooling, quality-gate command resolution, and `.woof/` config schemas. |
 | `woof hooks install` | Install the Woof-managed post-commit hook block without overwriting user-managed hook content. |

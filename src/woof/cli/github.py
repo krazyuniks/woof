@@ -28,6 +28,12 @@ class ColdStartResult:
     last_sync_path: Path
 
 
+@dataclass(frozen=True)
+class NewEpicResult(ColdStartResult):
+    issue_url: str
+    current_epic_path: Path
+
+
 STRUCTURED_HEADING = "## Observable Outcomes"
 _HEADING_RE = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
 _OUTCOME_RE = re.compile(r"^- \*\*(O[1-9]\d*)\*\*\s+(?:\u2014|-)\s+(.+?)\s*$")
@@ -84,9 +90,44 @@ def fetch_issue(repo: str, issue_number: int) -> dict[str, Any]:
     return payload
 
 
+def create_epic_from_spark(repo_root: Path, spark: str) -> NewEpicResult:
+    title, body = _issue_seed_from_spark(spark)
+    repo = load_github_repo(repo_root)
+    issue_url = _create_issue(repo, title=title, body=body)
+    epic_id = _issue_number_from_url(issue_url)
+    issue = fetch_issue(repo, epic_id)
+    result = _initialise_epic_from_payload(repo_root, epic_id, issue)
+
+    current_epic_path = repo_root / ".woof" / ".current-epic"
+    _atomic_write_text(current_epic_path, f"E{epic_id}\n")
+    _append_jsonl(
+        result.epic_dir / "epic.jsonl",
+        {
+            "event": "current_epic_selected",
+            "at": iso_utc(),
+            "epic_id": epic_id,
+        },
+    )
+    return NewEpicResult(
+        epic_id=result.epic_id,
+        epic_dir=result.epic_dir,
+        spark_path=result.spark_path,
+        epic_path=result.epic_path,
+        last_sync_path=result.last_sync_path,
+        issue_url=issue_url,
+        current_epic_path=current_epic_path,
+    )
+
+
 def initialise_epic_from_issue(repo_root: Path, epic_id: int) -> ColdStartResult:
     repo = load_github_repo(repo_root)
     issue = fetch_issue(repo, epic_id)
+    return _initialise_epic_from_payload(repo_root, epic_id, issue)
+
+
+def _initialise_epic_from_payload(
+    repo_root: Path, epic_id: int, issue: dict[str, Any]
+) -> ColdStartResult:
     number = issue.get("number", epic_id)
     if number != epic_id:
         raise GithubSyncError(f"gh returned issue #{number}, expected #{epic_id}")
@@ -151,6 +192,51 @@ def initialise_epic_from_issue(repo_root: Path, epic_id: int) -> ColdStartResult
         epic_path=epic_path,
         last_sync_path=last_sync_path,
     )
+
+
+def _issue_seed_from_spark(spark: str) -> tuple[str, str]:
+    text = spark.strip()
+    if not text:
+        raise GithubSyncError("spark must not be empty")
+    lines = text.splitlines()
+    title = lines[0].strip()
+    if not title:
+        raise GithubSyncError("spark must contain a non-empty first line")
+    body = "\n".join(lines[1:]).strip() or title
+    return title, body + "\n"
+
+
+def _create_issue(repo: str, *, title: str, body: str) -> str:
+    proc = subprocess.run(
+        [
+            "gh",
+            "issue",
+            "create",
+            "--repo",
+            repo,
+            "--title",
+            title,
+            "--body-file",
+            "-",
+        ],
+        input=body,
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout).strip()
+        raise GithubSyncError(f"gh issue create --repo {repo} failed:\n{detail}")
+    issue_url = proc.stdout.strip().splitlines()[-1].strip() if proc.stdout.strip() else ""
+    if not issue_url:
+        raise GithubSyncError("gh issue create returned no issue URL")
+    return issue_url
+
+
+def _issue_number_from_url(issue_url: str) -> int:
+    match = re.search(r"/issues/([1-9]\d*)/?$", issue_url)
+    if not match:
+        raise GithubSyncError(f"gh issue create returned an unparseable issue URL: {issue_url}")
+    return int(match.group(1))
 
 
 def epic_markdown_from_issue(*, epic_id: int, title: str, body: str) -> str | None:
@@ -316,6 +402,12 @@ def _parse_bullets(markdown: str, *, label: str, require_items: bool = False) ->
 def _append_jsonl(path: Path, event: dict[str, Any]) -> None:
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(event, separators=(",", ":")) + "\n")
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(path)
 
 
 def _sha256(text: str) -> str:

@@ -8,7 +8,7 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from woof.cli.github import GithubSyncError, initialise_epic_from_issue
+from woof.cli.github import GithubSyncError, create_epic_from_spark, initialise_epic_from_issue
 from woof.graph.runner import run_graph
 from woof.graph.state import GateDecision
 from woof.graph.transitions import StageStateError, append_epic_event, epic_dir
@@ -44,6 +44,43 @@ def cmd_wf(args: argparse.Namespace) -> int:
         repo_root = find_project_root(Path.cwd())
     except FileNotFoundError as exc:
         sys.stderr.write(f"woof wf: {exc}\n")
+        return 2
+
+    if args.action == "new":
+        if args.epic is not None:
+            sys.stderr.write("woof wf new: --epic is assigned by GitHub; omit --epic\n")
+            return 2
+        if not args.spark:
+            sys.stderr.write('woof wf new: spark is required, e.g. `woof wf new "..."`\n')
+            return 2
+        try:
+            result = create_epic_from_spark(repo_root, args.spark)
+        except GithubSyncError as exc:
+            sys.stderr.write(f"woof wf new: github sync failed: {exc}\n")
+            return 2
+        if args.format == "json":
+            payload = {
+                "epic_id": result.epic_id,
+                "status": "created",
+                "issue_url": result.issue_url,
+                "epic_dir": str(result.epic_dir),
+                "current_epic_path": str(result.current_epic_path),
+                "paths": [
+                    str(result.spark_path),
+                    str(result.last_sync_path),
+                    str(result.current_epic_path),
+                ],
+            }
+            sys.stdout.write(json.dumps(payload, sort_keys=True) + "\n")
+        else:
+            sys.stdout.write(
+                f"woof wf new: created E{result.epic_id} at {result.issue_url}; "
+                f"initialised spark.md and .woof/.current-epic\n"
+            )
+        return 0
+
+    if args.epic is None:
+        sys.stderr.write('woof wf: --epic is required unless using `woof wf new "<spark>"`\n')
         return 2
 
     if args.resolve:
@@ -93,7 +130,14 @@ def cmd_wf(args: argparse.Namespace) -> int:
 
 def setup_wf_parser(sub: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
     wf = sub.add_parser("wf", help="run the deterministic Woof graph")
-    wf.add_argument("--epic", type=int, required=True, help="epic id (gh issue number)")
+    wf.add_argument(
+        "action",
+        nargs="?",
+        choices=["new"],
+        help='optional action; use `new "<spark>"` to create a GitHub-backed epic',
+    )
+    wf.add_argument("spark", nargs="?", help="spark text for `woof wf new`")
+    wf.add_argument("--epic", type=int, help="epic id (gh issue number)")
     wf.add_argument("--once", action="store_true", help="run a single graph node and stop")
     wf.add_argument(
         "--resolve",

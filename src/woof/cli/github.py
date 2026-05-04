@@ -8,12 +8,15 @@ import re
 import subprocess
 import tempfile
 import tomllib
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+from woof.graph.state import Plan
 
 
 class GithubSyncError(RuntimeError):
@@ -42,6 +45,11 @@ class DefinitionSyncResult:
     updated_at: str
     last_sync_path: Path
     changed: bool
+
+
+@dataclass(frozen=True)
+class LifecycleSyncResult(DefinitionSyncResult):
+    closed: bool = False
 
 
 STRUCTURED_HEADING = "## Observable Outcomes"
@@ -123,7 +131,12 @@ def split_epic_front_matter(path: Path) -> tuple[dict[str, Any], str]:
 
 
 def render_epic_issue_body(
-    front: dict[str, Any], prose: str, remote_body: str | None = None
+    front: dict[str, Any],
+    prose: str,
+    remote_body: str | None = None,
+    *,
+    plan: Plan | None = None,
+    completed: bool = False,
 ) -> str:
     """Render ``EPIC.md`` front-matter into the managed GitHub issue body.
 
@@ -170,9 +183,32 @@ def render_epic_issue_body(
             out.append(f"- {_single_line(question)}\n")
         out.append("\n")
 
+    if plan is not None:
+        out.append(render_plan_summary(plan))
+
+    if completed:
+        if plan is None:
+            raise GithubSyncError("completion rendering requires plan.json")
+        out.append(render_completion_summary(plan))
+
     out.append("---\n\n")
     out.append(WOOF_SENTINEL + "\n")
     return "".join(out)
+
+
+def render_plan_summary(plan: Plan) -> str:
+    out = ["## Plan Summary\n\n"]
+    for story in plan.stories:
+        out.append(f"- **{story.id}** — {_single_line(story.title)}\n")
+    out.append("\n")
+    return "".join(out)
+
+
+def render_completion_summary(plan: Plan) -> str:
+    total = len(plan.stories)
+    done = sum(1 for story in plan.stories if story.status == "done")
+    noun = "story" if total == 1 else "stories"
+    return f"## Closing Summary\n\nEpic completed with {done}/{total} planned {noun} done.\n\n"
 
 
 def sync_epic_definition(
@@ -245,6 +281,45 @@ def sync_epic_definition(
         last_sync_path=last_sync_path,
         changed=True,
     )
+
+
+def sync_plan_summary(repo_root: Path, epic_id: int) -> LifecycleSyncResult:
+    front, prose = _load_epic_markdown(repo_root, epic_id)
+    plan = _load_plan(repo_root, epic_id)
+    return _sync_lifecycle_body(
+        repo_root,
+        epic_id,
+        lambda remote_body: render_epic_issue_body(
+            front,
+            prose,
+            remote_body=remote_body,
+            plan=plan,
+        ),
+        close=False,
+    )
+
+
+def sync_epic_completion(repo_root: Path, epic_id: int) -> LifecycleSyncResult:
+    front, prose = _load_epic_markdown(repo_root, epic_id)
+    plan = _load_plan(repo_root, epic_id)
+    if any(story.status != "done" for story in plan.stories):
+        raise GithubSyncError(f"E{epic_id} cannot be closed until all plan stories are done")
+    return _sync_lifecycle_body(
+        repo_root,
+        epic_id,
+        lambda remote_body: render_epic_issue_body(
+            front,
+            prose,
+            remote_body=remote_body,
+            plan=plan,
+            completed=True,
+        ),
+        close=True,
+    )
+
+
+def has_github_sync_state(repo_root: Path, epic_id: int) -> bool:
+    return (repo_root / ".woof" / "epics" / f"E{epic_id}" / ".last-sync").is_file()
 
 
 def create_epic_from_spark(repo_root: Path, spark: str) -> NewEpicResult:
@@ -413,6 +488,110 @@ def _edit_issue_body(repo: str, issue_number: int, body: str) -> None:
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout).strip()
         raise GithubSyncError(f"gh issue edit {issue_number} --repo {repo} failed:\n{detail}")
+
+
+def _close_issue(repo: str, issue_number: int) -> None:
+    proc = subprocess.run(
+        ["gh", "issue", "close", str(issue_number), "--repo", repo],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout).strip()
+        raise GithubSyncError(f"gh issue close {issue_number} --repo {repo} failed:\n{detail}")
+
+
+def _load_epic_markdown(repo_root: Path, epic_id: int) -> tuple[dict[str, Any], str]:
+    epic_path = repo_root / ".woof" / "epics" / f"E{epic_id}" / "EPIC.md"
+    try:
+        return split_epic_front_matter(epic_path)
+    except (OSError, ValueError, yaml.YAMLError) as exc:
+        raise GithubSyncError(f"{epic_path} could not be loaded: {exc}") from exc
+
+
+def _load_plan(repo_root: Path, epic_id: int) -> Plan:
+    plan_path = repo_root / ".woof" / "epics" / f"E{epic_id}" / "plan.json"
+    try:
+        return Plan.model_validate_json(plan_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise GithubSyncError(f"{plan_path} could not be loaded: {exc}") from exc
+
+
+def _sync_lifecycle_body(
+    repo_root: Path,
+    epic_id: int,
+    render: Callable[[str], str],
+    *,
+    close: bool,
+) -> LifecycleSyncResult:
+    repo = load_github_repo(repo_root)
+    remote = fetch_issue(repo, epic_id)
+    remote_updated_at = _issue_updated_at(remote)
+    remote_body = _issue_body(remote)
+    epic_directory = repo_root / ".woof" / "epics" / f"E{epic_id}"
+    last_sync_path = epic_directory / ".last-sync"
+    last_sync = _read_last_sync(last_sync_path)
+
+    if last_sync and last_sync.get("updated_at") != remote_updated_at:
+        _append_jsonl(
+            epic_directory / "epic.jsonl",
+            {
+                "event": "github_sync_conflict",
+                "at": iso_utc(),
+                "epic_id": epic_id,
+            },
+        )
+        raise GithubSyncError(
+            f"github_sync_conflict for E{epic_id}\n"
+            f"  last-sync updated_at: {last_sync.get('updated_at')}\n"
+            f"  remote   updated_at: {remote_updated_at}\n"
+            "  push aborted - resolve via /wf gate"
+        )
+
+    body = render(remote_body)
+    body_changed = not (
+        last_sync
+        and last_sync.get("updated_at") == remote_updated_at
+        and last_sync.get("body_sha256") == _sha256(body)
+    )
+    if body_changed:
+        _edit_issue_body(repo, epic_id, body)
+        remote = fetch_issue(repo, epic_id)
+
+    closed = False
+    if close and remote.get("state") != "closed":
+        _close_issue(repo, epic_id)
+        closed = True
+        remote = fetch_issue(repo, epic_id)
+
+    updated_at = _issue_updated_at(remote)
+    if body_changed or closed:
+        _write_last_sync(
+            last_sync_path,
+            {
+                "issue_number": epic_id,
+                "updated_at": updated_at,
+                "body_sha256": _sha256(body),
+                "body": body,
+            },
+        )
+        _append_jsonl(
+            epic_directory / "epic.jsonl",
+            {
+                "event": "github_synced",
+                "at": iso_utc(),
+                "epic_id": epic_id,
+            },
+        )
+
+    return LifecycleSyncResult(
+        epic_id=epic_id,
+        body=body,
+        updated_at=updated_at,
+        last_sync_path=last_sync_path,
+        changed=body_changed,
+        closed=closed,
+    )
 
 
 def _issue_number_from_url(issue_url: str) -> int:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -43,10 +44,13 @@ def _write_plan(root: Path, epic_id: int = 1) -> Path:
     return directory
 
 
-def _run_woof(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
+def _run_woof(
+    cwd: Path, *args: str, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [str(WOOF_BIN), *args],
         cwd=cwd,
+        env=env,
         capture_output=True,
         text=True,
     )
@@ -77,6 +81,99 @@ def _assert_node_output_schema(tmp_path: Path, payload: dict) -> None:
         text=True,
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def _write_minimal_epic(directory: Path, epic_id: int) -> None:
+    directory.joinpath("EPIC.md").write_text(
+        f"""---
+epic_id: {epic_id}
+title: Test epic
+observable_outcomes:
+  - id: O1
+    statement: First outcome.
+    verification: automated
+contract_decisions: []
+acceptance_criteria:
+  - Outcome verified.
+---
+Test epic intent.
+"""
+    )
+
+
+def _write_last_sync(directory: Path, epic_id: int) -> None:
+    directory.joinpath(".last-sync").write_text(
+        json.dumps(
+            {
+                "issue_number": epic_id,
+                "updated_at": "2026-01-01T00:00:00Z",
+                "body_sha256": "0" * 64,
+                "body": "<previous>",
+            }
+        )
+        + "\n"
+    )
+
+
+def _make_gh_completion_stub(bin_dir: Path) -> dict[str, str]:
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    last_body = bin_dir / "_last_body"
+    closed = bin_dir / "_closed"
+    before = json.dumps(
+        {
+            "updated_at": "2026-01-01T00:00:00Z",
+            "body": "Remote intent.\n\n## Observable Outcomes\n\n- stale\n",
+            "state": "open",
+        }
+    )
+    after_edit = json.dumps(
+        {"updated_at": "2026-01-02T00:00:00Z", "body": "<post-edit>", "state": "open"}
+    )
+    after_close = json.dumps(
+        {"updated_at": "2026-01-03T00:00:00Z", "body": "<post-close>", "state": "closed"}
+    )
+    script = bin_dir / "gh"
+    script.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        'mode="$1"; shift\n'
+        'case "$mode" in\n'
+        "  api)\n"
+        f'    if [[ -f "{closed}" ]]; then\n'
+        f"      printf '%s' '{after_close}'\n"
+        f'    elif [[ -f "{last_body}" ]]; then\n'
+        f"      printf '%s' '{after_edit}'\n"
+        "    else\n"
+        f"      printf '%s' '{before}'\n"
+        "    fi\n"
+        "    ;;\n"
+        "  issue)\n"
+        '    sub="$1"; shift\n'
+        '    case "$sub" in\n'
+        "      edit)\n"
+        '        body_file=""\n'
+        "        while [[ $# -gt 0 ]]; do\n"
+        '          case "$1" in\n'
+        '            --body-file) body_file="$2"; shift 2;;\n'
+        "            *) shift;;\n"
+        "          esac\n"
+        "        done\n"
+        f'        cp "$body_file" "{last_body}"\n'
+        "        ;;\n"
+        "      close)\n"
+        f'        printf "closed\\n" > "{closed}"\n'
+        "        ;;\n"
+        "      *) exit 2;;\n"
+        "    esac\n"
+        "    ;;\n"
+        "  *) exit 2;;\n"
+        "esac\n"
+    )
+    script.chmod(0o755)
+    return {
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "HOME": os.environ.get("HOME", "/tmp"),
+    }
 
 
 def _write_ready_commit_state(root: Path, epic_id: int = 1) -> Path:
@@ -497,12 +594,17 @@ def test_empty_diff_executor_result_opens_review_gate(tmp_path: Path) -> None:
 
 
 def test_wf_epic_reports_complete_epic_as_json(tmp_path: Path) -> None:
+    (tmp_path / ".woof").mkdir(exist_ok=True)
+    (tmp_path / ".woof" / "prerequisites.toml").write_text('[github]\nrepo = "acme/widgets"\n')
     directory = _write_plan(tmp_path, 7)
     plan = json.loads((directory / "plan.json").read_text())
     plan["stories"][0]["status"] = "done"
     (directory / "plan.json").write_text(json.dumps(plan))
+    _write_minimal_epic(directory, 7)
+    _write_last_sync(directory, 7)
+    env = _make_gh_completion_stub(tmp_path / "bin")
 
-    proc = _run_woof(tmp_path, "wf", "--epic", "7", "--format", "json")
+    proc = _run_woof(tmp_path, "wf", "--epic", "7", "--format", "json", env=env)
 
     assert proc.returncode == 0, proc.stderr
     lines = [json.loads(line) for line in proc.stdout.splitlines()]

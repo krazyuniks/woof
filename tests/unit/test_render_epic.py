@@ -30,6 +30,56 @@ def _epic_md(front: str, prose: str = "") -> str:
     return f"---\n{front}---\n{prose}"
 
 
+def _plan_json(*, done: bool = False) -> str:
+    status = "done" if done else "pending"
+    return json.dumps(
+        {
+            "epic_id": 42,
+            "goal": "Ship comment publishing.",
+            "stories": [
+                {
+                    "id": "S1",
+                    "title": "Create comment API",
+                    "intent": "Add the write API.",
+                    "paths": ["src/comments.py"],
+                    "satisfies": ["O1"],
+                    "implements_contract_decisions": ["CD1"],
+                    "uses_contract_decisions": [],
+                    "depends_on": [],
+                    "tests": {"count": 2, "types": ["unit"]},
+                    "status": status,
+                },
+                {
+                    "id": "S2",
+                    "title": "Render live comments",
+                    "intent": "Show new comments in real time.",
+                    "paths": ["src/live.py"],
+                    "satisfies": ["O2"],
+                    "implements_contract_decisions": [],
+                    "uses_contract_decisions": ["CD1", "CD2"],
+                    "depends_on": ["S1"],
+                    "tests": {"count": 1, "types": ["integration"]},
+                    "status": status,
+                },
+            ],
+        }
+    )
+
+
+def _write_last_sync(epic_project: Path, *, updated_at: str = "2026-01-01T00:00:00Z") -> None:
+    (epic_project / ".woof" / "epics" / "E42" / ".last-sync").write_text(
+        json.dumps(
+            {
+                "issue_number": 42,
+                "updated_at": updated_at,
+                "body_sha256": "0" * 64,
+                "body": "<previous>",
+            }
+        )
+        + "\n"
+    )
+
+
 @pytest.fixture
 def epic_project(tmp_path: Path) -> Path:
     """Skeleton project with `.woof/prerequisites.toml` + a sample EPIC.md."""
@@ -225,6 +275,7 @@ def _make_gh_stub(
     bin_dir: Path,
     fetch_payload: dict,
     fetch_payload_after_edit: dict | None = None,
+    fetch_payload_after_close: dict | None = None,
 ) -> None:
     """Write an executable stub ``gh`` that returns canned JSON for ``api``
     calls and accepts ``issue edit``. ``fetch_payload`` is returned until an
@@ -232,10 +283,14 @@ def _make_gh_stub(
     """
     bin_dir.mkdir(parents=True, exist_ok=True)
     last_body = bin_dir / "_last_body"
+    closed = bin_dir / "_closed"
     if fetch_payload_after_edit is None:
         fetch_payload_after_edit = fetch_payload
+    if fetch_payload_after_close is None:
+        fetch_payload_after_close = fetch_payload_after_edit
     before = json.dumps(fetch_payload)
     after = json.dumps(fetch_payload_after_edit)
+    after_close = json.dumps(fetch_payload_after_close)
     script = bin_dir / "gh"
     # Direct write — no dedent, no heredoc, to keep the shebang at column 0.
     script.write_text(
@@ -244,13 +299,18 @@ def _make_gh_stub(
         'mode="$1"; shift\n'
         'case "$mode" in\n'
         "  api)\n"
-        f'    if [[ -f "{last_body}" ]]; then\n'
+        f'    if [[ -f "{closed}" ]]; then\n'
+        f"      printf '%s' '{after_close}'\n"
+        f'    elif [[ -f "{last_body}" ]]; then\n'
         f"      printf '%s' '{after}'\n"
         "    else\n"
         f"      printf '%s' '{before}'\n"
         "    fi\n"
         "    ;;\n"
         "  issue)\n"
+        '    sub="$1"; shift\n'
+        '    case "$sub" in\n'
+        "      edit)\n"
         '    body_file=""\n'
         "    while [[ $# -gt 0 ]]; do\n"
         '      case "$1" in\n'
@@ -263,6 +323,15 @@ def _make_gh_stub(
         '    elif [[ -n "$body_file" ]]; then\n'
         f'      cp "$body_file" "{last_body}"\n'
         "    fi\n"
+        "        ;;\n"
+        "      close)\n"
+        f'        printf "closed\\n" > "{closed}"\n'
+        "        ;;\n"
+        "      *)\n"
+        '        echo "stub gh: unsupported issue subcommand" >&2\n'
+        "        exit 2\n"
+        "        ;;\n"
+        "    esac\n"
         "    ;;\n"
         "  *)\n"
         '    echo "stub gh: unsupported mode" >&2\n'
@@ -304,6 +373,86 @@ def test_sync_first_push_writes_last_sync(epic_project: Path, tmp_path: Path) ->
     jsonl = (epic_project / ".woof" / "epics" / "E42" / "epic.jsonl").read_text()
     events = [json.loads(ln) for ln in jsonl.splitlines() if ln.strip()]
     assert any(e["event"] == "github_synced" for e in events)
+
+
+def test_wf_plan_gate_approval_syncs_plan_summary(epic_project: Path, tmp_path: Path) -> None:
+    epic_dir = epic_project / ".woof" / "epics" / "E42"
+    (epic_dir / "plan.json").write_text(_plan_json())
+    (epic_dir / "gate.md").write_text(
+        "---\ntype: plan_gate\nstage: 4\nstory_id: null\ntriggered_by: [plan_review]\n---\n"
+    )
+    _write_last_sync(epic_project)
+
+    bin_dir = tmp_path / "bin"
+    _make_gh_stub(
+        bin_dir,
+        fetch_payload={
+            "updated_at": "2026-01-01T00:00:00Z",
+            "body": "Remote intent.\n\n## Observable Outcomes\n\n- stale\n",
+        },
+        fetch_payload_after_edit={
+            "updated_at": "2026-01-02T00:00:00Z",
+            "body": "<post-plan-sync>",
+        },
+    )
+
+    proc = _run(epic_project, "wf", "--epic", "42", "--resolve", "approve", env=_stub_env(bin_dir))
+
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == "woof wf: gate resolved decision=approve\n"
+    assert not (epic_dir / "gate.md").exists()
+    pushed_body = (bin_dir / "_last_body").read_text()
+    assert "## Plan Summary\n\n" in pushed_body
+    assert "- **S1** — Create comment API\n" in pushed_body
+    assert "- **S2** — Render live comments\n" in pushed_body
+    assert "## Closing Summary" not in pushed_body
+    assert not (bin_dir / "_closed").exists()
+    last_sync = json.loads((epic_dir / ".last-sync").read_text())
+    assert last_sync["updated_at"] == "2026-01-02T00:00:00Z"
+
+
+def test_wf_epic_completion_syncs_closing_summary_and_closes_issue(
+    epic_project: Path, tmp_path: Path
+) -> None:
+    epic_dir = epic_project / ".woof" / "epics" / "E42"
+    (epic_dir / "plan.json").write_text(_plan_json(done=True))
+    _write_last_sync(epic_project)
+
+    bin_dir = tmp_path / "bin"
+    _make_gh_stub(
+        bin_dir,
+        fetch_payload={
+            "updated_at": "2026-01-01T00:00:00Z",
+            "body": "Remote intent.\n\n## Observable Outcomes\n\n- stale\n",
+            "state": "open",
+        },
+        fetch_payload_after_edit={
+            "updated_at": "2026-01-02T00:00:00Z",
+            "body": "<post-completion-sync>",
+            "state": "open",
+        },
+        fetch_payload_after_close={
+            "updated_at": "2026-01-03T00:00:00Z",
+            "body": "<post-close>",
+            "state": "closed",
+        },
+    )
+
+    proc = _run(epic_project, "wf", "--epic", "42", env=_stub_env(bin_dir))
+
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == "woof wf: human_review -> epic_complete: E42 complete\n"
+    pushed_body = (bin_dir / "_last_body").read_text()
+    assert "## Plan Summary\n\n" in pushed_body
+    assert "## Closing Summary\n\nEpic completed with 2/2 planned stories done.\n\n" in pushed_body
+    assert (bin_dir / "_closed").exists()
+    last_sync = json.loads((epic_dir / ".last-sync").read_text())
+    assert last_sync["updated_at"] == "2026-01-03T00:00:00Z"
+    events = [
+        json.loads(line) for line in (epic_dir / "epic.jsonl").read_text().splitlines() if line
+    ]
+    assert any(event["event"] == "github_synced" for event in events)
+    assert any(event["event"] == "epic_completed" for event in events)
 
 
 # ---------------------------------------------------------------------------

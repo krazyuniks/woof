@@ -8,10 +8,24 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from woof.cli.github import GithubSyncError, create_epic_from_spark, initialise_epic_from_issue
+import yaml
+
+from woof.cli.github import (
+    GithubSyncError,
+    create_epic_from_spark,
+    has_github_sync_state,
+    initialise_epic_from_issue,
+    sync_epic_completion,
+    sync_plan_summary,
+)
 from woof.graph.runner import run_graph
-from woof.graph.state import GateDecision
-from woof.graph.transitions import StageStateError, append_epic_event, epic_dir
+from woof.graph.state import GateDecision, NodeStatus
+from woof.graph.transitions import (
+    StageStateError,
+    append_epic_event,
+    append_epic_event_once,
+    epic_dir,
+)
 from woof.paths import find_project_root
 
 
@@ -19,11 +33,32 @@ def _now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _gate_type(gate_path: Path) -> str | None:
+    text = gate_path.read_text(encoding="utf-8")
+    if not text.startswith("---\n"):
+        return None
+    end = text.find("\n---\n", 4)
+    if end < 0:
+        return None
+    front = yaml.safe_load(text[4:end]) or {}
+    if not isinstance(front, dict):
+        return None
+    gate_type = front.get("type")
+    return gate_type if isinstance(gate_type, str) else None
+
+
 def _resolve_gate(repo_root: Path, epic_id: int, decision: GateDecision) -> int:
     gate = epic_dir(repo_root, epic_id) / "gate.md"
     if not gate.exists():
         sys.stderr.write(f"woof wf: no open gate at {gate}\n")
         return 2
+    gate_type = _gate_type(gate)
+    if gate_type == "plan_gate" and decision == "approve":
+        try:
+            sync_plan_summary(repo_root, epic_id)
+        except GithubSyncError as exc:
+            sys.stderr.write(f"woof wf: github sync failed: {exc}\n")
+            return 2
     append_epic_event(
         repo_root,
         epic_id,
@@ -116,6 +151,24 @@ def cmd_wf(args: argparse.Namespace) -> int:
     except StageStateError as exc:
         sys.stderr.write(f"woof wf: incomplete_stage_state: {exc}\n")
         return 2
+    if any(
+        output.status == NodeStatus.EPIC_COMPLETE for output in outputs
+    ) and has_github_sync_state(repo_root, args.epic):
+        try:
+            sync_epic_completion(repo_root, args.epic)
+        except GithubSyncError as exc:
+            sys.stderr.write(f"woof wf: github sync failed: {exc}\n")
+            return 2
+        append_epic_event_once(
+            repo_root,
+            args.epic,
+            {
+                "event": "epic_completed",
+                "at": _now(),
+                "epic_id": args.epic,
+            },
+            event="epic_completed",
+        )
     for output in outputs:
         if args.format == "json":
             sys.stdout.write(output.model_dump_json() + "\n")

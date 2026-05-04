@@ -58,6 +58,8 @@ woof wf new "<spark>"
 
 Use `--once` to run a single graph node, `--format json` for machine-readable node output conforming to `schemas/node-output.schema.json`, and `--resolve <decision>` to close an open `gate.md` with a structured gate decision.
 
+For GitHub-backed epics, approving a `plan_gate` with `woof wf --epic <N> --resolve approve` pushes a deterministic plan summary to the issue body. When all stories reach `done`, `woof wf --epic <N>` appends the closing summary and closes the issue.
+
 Run `woof preflight` from a consumer checkout to validate local prerequisites, GitHub access, language tooling, optional Tree-sitter grammars, quality-gate command resolution, and `.woof/` config schemas before invoking the graph. Stable prerequisite checks are cached under `.woof/.preflight-floor`; short-lived GitHub runtime checks are cached under `.woof/.preflight-runtime`. Use `woof preflight --force` to refresh both caches.
 
 ## Components

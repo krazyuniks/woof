@@ -147,7 +147,7 @@ GitHub sync must fail loud on auth, network, repo access, and rate-limit failure
 |---|---|---|---|---|---|
 | GH-001 | Completed | Implement cold-start pull from GitHub issue to local epic state. | `woof wf --epic <N>` with no local directory fetches the issue, initialises `.woof/epics/E<N>/`, seeds `spark.md`, and seeds `EPIC.md` when structured sections exist. | Targeted GitHub sync/render/graph tests passed: 29 tests. `just check` passed: Ruff lint, Ruff format check, and 174 tests. | `feat(github): initialise epic from issue` |
 | GH-002 | Completed | Implement new-epic creation through GitHub. | `woof wf new "<spark>"` creates the issue, captures issue number, creates local state, and sets `.woof/.current-epic`. | Targeted GitHub sync/render tests passed: 13 tests. `.woof/prerequisites.toml` schema validation passed. `just check` passed: Ruff lint, Ruff format check, and 177 tests. | `feat(github): create epic issues` |
-| GH-003 | Ready | Implement Definition close push and deterministic issue rendering. | Schema-valid `EPIC.md` renders managed issue sections deterministically while preserving free-form prose above the first managed heading. | Renderer golden tests plus `just check`. | `feat(github): render epic issue body` |
+| GH-003 | Completed | Implement Definition close push and deterministic issue rendering. | Schema-valid `EPIC.md` renders managed issue sections deterministically while preserving free-form prose above the first managed heading. | Targeted GitHub sync/render tests passed: 15 tests. `just check` passed: Ruff lint, Ruff format check, and 179 tests. | `feat(github): render epic issue body` |
 | GH-004 | Ready | Implement plan summary and epic completion sync. | Plan approval updates issue body with story summary; epic completion appends closing summary and closes the issue. | CLI tests with mocked `gh` plus `just check`. | `feat(github): sync plan and completion` |
 | GH-005 | Ready | Implement `.last-sync` conflict detection and gate opening. | Divergent remote `updatedAt` or body hash opens a gate with a three-way diff; no silent overwrite occurs. | Conflict fixture tests plus `just check`. | `feat(github): gate sync conflicts` |
 
@@ -202,5 +202,5 @@ Workflow:
 - In the final response, paste this complete continuation prompt block so it can be copied into a new session.
 
 Start with:
-Workstream E: GitHub sync (`GH-001`, `GH-002`, `GH-003`, `GH-004`, `GH-005`). Start with any item already `In progress`; otherwise start with `GH-001`.
+Workstream E: GitHub sync (`GH-001`, `GH-002`, `GH-003`, `GH-004`, `GH-005`). Start with any item already `In progress`; otherwise start with `GH-004`.
 ```

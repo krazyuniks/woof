@@ -96,27 +96,50 @@ def _run(
 def test_render_full_body(epic_project: Path) -> None:
     proc = _run(epic_project, "render-epic", "--epic", "42")
     assert proc.returncode == 0, proc.stderr
-    body = proc.stdout
-    assert body.startswith("Enable users to publish comments on shootouts.\n\n")
-    assert "## Observable Outcomes" in body
-    assert "- **O1** — Users can post a comment." in body
-    assert "  - Verification: automated" in body
-    assert "_(deprecated → O3)_" in body  # O2 deprecation marker
-    assert "## Contract Decisions" in body
-    assert (
-        "| CD1 | O1, O2 | Comment publishing route | `openapi: spec/openapi.yaml#/paths/~1api~1v1~1comments/post` |"
-        in body
+    assert proc.stdout == (
+        "Enable users to publish comments on shootouts.\n\n"
+        "## Observable Outcomes\n\n"
+        "- **O1** — Users can post a comment.\n"
+        "  - Verification: automated\n"
+        "- **O2** — Comments appear in real time. _(deprecated → O3)_\n"
+        "  - Verification: hybrid\n"
+        "\n"
+        "## Contract Decisions\n\n"
+        "| ID | Related Outcomes | Title | Contract Reference |\n"
+        "|---|---|---|---|\n"
+        "| CD1 | O1, O2 | Comment publishing route | "
+        "`openapi: spec/openapi.yaml#/paths/~1api~1v1~1comments/post` |\n"
+        "| CD2 | O1 | Comment payload | "
+        "`pydantic: webapp/schemas/comment.py:CommentCreate` |\n"
+        "\n"
+        "## Acceptance Criteria\n\n"
+        "- All outcomes verified by tests in diff.\n"
+        "- Contract decisions validate via native tooling.\n"
+        "\n"
+        "## Open Questions\n\n"
+        "- Should drafts be persisted server-side?\n"
+        "\n"
+        "---\n\n"
+        "<!-- woof — structured sections above are rewritten on Definition/plan changes. "
+        "Free-form prose above `## Observable Outcomes` is preserved on overwrite. "
+        "Do not edit structured sections directly in gh. -->\n"
     )
-    assert (
-        "| CD2 | O1 | Comment payload | `pydantic: webapp/schemas/comment.py:CommentCreate` |"
-        in body
+
+
+def test_render_uses_front_matter_intent_before_body_prose(epic_project: Path) -> None:
+    epic_md = epic_project / ".woof" / "epics" / "E42" / "EPIC.md"
+    text = epic_md.read_text()
+    epic_md.write_text(
+        text.replace(
+            "title: Comment publishing\n",
+            "title: Comment publishing\nintent: Canonical GitHub intent.\n",
+        )
     )
-    assert "## Acceptance Criteria" in body
-    assert "- All outcomes verified by tests in diff." in body
-    assert "## Open Questions" in body
-    assert "- Should drafts be persisted server-side?" in body
-    assert body.rstrip().endswith("-->")
-    assert "woof — structured sections above are rewritten" in body
+
+    proc = _run(epic_project, "render-epic", "--epic", "42")
+
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.startswith("Canonical GitHub intent.\n\n## Observable Outcomes")
 
 
 def test_render_to_output_file(epic_project: Path, tmp_path: Path) -> None:
@@ -179,6 +202,20 @@ def test_preservation_uses_remote_prefix_when_marker_present(
     assert not out.startswith("Enable users")
 
 
+def test_preservation_requires_managed_heading_line(epic_project: Path, tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    remote = {
+        "updated_at": "2026-01-01T00:00:00Z",
+        "body": "Teammate wrote about ## Observable Outcomes inline, not as a heading.\n",
+    }
+    _make_gh_stub(bin_dir, fetch_payload=remote)
+
+    proc = _run(epic_project, "render-epic", "--epic", "42", "--sync", env=_stub_env(bin_dir))
+
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.startswith("Enable users to publish comments on shootouts.\n\n")
+
+
 # ---------------------------------------------------------------------------
 # --sync stub helpers
 # ---------------------------------------------------------------------------
@@ -221,7 +258,9 @@ def _make_gh_stub(
         "        *) shift;;\n"
         "      esac\n"
         "    done\n"
-        '    if [[ -n "$body_file" ]]; then\n'
+        '    if [[ "$body_file" == "-" ]]; then\n'
+        f'      cat > "{last_body}"\n'
+        '    elif [[ -n "$body_file" ]]; then\n'
         f'      cp "$body_file" "{last_body}"\n'
         "    fi\n"
         "    ;;\n"

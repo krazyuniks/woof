@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 import hashlib
 import json
 import re
@@ -16,7 +17,9 @@ from typing import Any
 
 import yaml
 
+from woof.gate.write import write_gate
 from woof.graph.state import Plan
+from woof.paths import schema_dir
 
 
 class GithubSyncError(RuntimeError):
@@ -224,23 +227,19 @@ def sync_epic_definition(
     last_sync_path = epic_directory / ".last-sync"
     last_sync = _read_last_sync(last_sync_path)
 
-    if last_sync and last_sync.get("updated_at") != remote_updated_at:
-        _append_jsonl(
-            epic_directory / "epic.jsonl",
-            {
-                "event": "github_sync_conflict",
-                "at": iso_utc(),
-                "epic_id": epic_id,
-            },
-        )
-        raise GithubSyncError(
-            f"github_sync_conflict for E{epic_id}\n"
-            f"  last-sync updated_at: {last_sync.get('updated_at')}\n"
-            f"  remote   updated_at: {remote_updated_at}\n"
-            "  push aborted - resolve via /wf gate"
-        )
-
-    body = render_epic_issue_body(front, prose, remote_body=remote_body)
+    body = render_epic_issue_body(
+        front,
+        prose,
+        remote_body=_last_sync_body(last_sync) if last_sync else remote_body,
+    )
+    _raise_if_sync_conflict(
+        epic_directory=epic_directory,
+        epic_id=epic_id,
+        last_sync=last_sync,
+        remote_updated_at=remote_updated_at,
+        remote_body=remote_body,
+        local_body=body,
+    )
     if (
         last_sync
         and last_sync.get("updated_at") == remote_updated_at
@@ -532,23 +531,15 @@ def _sync_lifecycle_body(
     last_sync_path = epic_directory / ".last-sync"
     last_sync = _read_last_sync(last_sync_path)
 
-    if last_sync and last_sync.get("updated_at") != remote_updated_at:
-        _append_jsonl(
-            epic_directory / "epic.jsonl",
-            {
-                "event": "github_sync_conflict",
-                "at": iso_utc(),
-                "epic_id": epic_id,
-            },
-        )
-        raise GithubSyncError(
-            f"github_sync_conflict for E{epic_id}\n"
-            f"  last-sync updated_at: {last_sync.get('updated_at')}\n"
-            f"  remote   updated_at: {remote_updated_at}\n"
-            "  push aborted - resolve via /wf gate"
-        )
-
-    body = render(remote_body)
+    body = render(_last_sync_body(last_sync) if last_sync else remote_body)
+    _raise_if_sync_conflict(
+        epic_directory=epic_directory,
+        epic_id=epic_id,
+        last_sync=last_sync,
+        remote_updated_at=remote_updated_at,
+        remote_body=remote_body,
+        local_body=body,
+    )
     body_changed = not (
         last_sync
         and last_sync.get("updated_at") == remote_updated_at
@@ -592,6 +583,168 @@ def _sync_lifecycle_body(
         changed=body_changed,
         closed=closed,
     )
+
+
+def _raise_if_sync_conflict(
+    *,
+    epic_directory: Path,
+    epic_id: int,
+    last_sync: dict[str, Any] | None,
+    remote_updated_at: str,
+    remote_body: str,
+    local_body: str,
+) -> None:
+    if last_sync is None:
+        return
+
+    last_updated_at = _last_sync_text(last_sync, "updated_at")
+    last_body_sha256 = _last_sync_text(last_sync, "body_sha256")
+    remote_body_sha256 = _sha256(remote_body)
+    reasons: list[str] = []
+
+    if last_updated_at != remote_updated_at:
+        reasons.append("updated_at")
+    if last_body_sha256 and last_body_sha256 != remote_body_sha256:
+        reasons.append("body_sha256")
+    if not reasons:
+        return
+
+    gate_path = _write_sync_conflict_gate(
+        epic_directory=epic_directory,
+        epic_id=epic_id,
+        last_sync=last_sync,
+        remote_updated_at=remote_updated_at,
+        remote_body=remote_body,
+        local_body=local_body,
+        reasons=reasons,
+    )
+    raise GithubSyncError(
+        f"github_sync_conflict for E{epic_id}\n"
+        f"  last-sync updated_at: {last_updated_at}\n"
+        f"  remote   updated_at: {remote_updated_at}\n"
+        f"  last-sync body_sha256: {last_body_sha256 or '<missing>'}\n"
+        f"  remote   body_sha256: {remote_body_sha256}\n"
+        f"  gate: {gate_path}\n"
+        "  push aborted - resolve via /wf gate"
+    )
+
+
+def _write_sync_conflict_gate(
+    *,
+    epic_directory: Path,
+    epic_id: int,
+    last_sync: dict[str, Any],
+    remote_updated_at: str,
+    remote_body: str,
+    local_body: str,
+    reasons: list[str],
+) -> Path:
+    last_body = _last_sync_body(last_sync)
+    last_updated_at = _last_sync_text(last_sync, "updated_at")
+    last_body_sha256 = _last_sync_text(last_sync, "body_sha256")
+    remote_body_sha256 = _sha256(remote_body)
+    local_body_sha256 = _sha256(local_body)
+    position_text = _sync_conflict_gate_body(
+        epic_id=epic_id,
+        reasons=reasons,
+        last_updated_at=last_updated_at,
+        remote_updated_at=remote_updated_at,
+        last_body_sha256=last_body_sha256,
+        remote_body_sha256=remote_body_sha256,
+        local_body_sha256=local_body_sha256,
+        last_body=last_body,
+        remote_body=remote_body,
+        local_body=local_body,
+    )
+    gate_path = write_gate(
+        epic_dir=epic_directory,
+        story_id=None,
+        triggered_by=["github_sync_conflict"],
+        position_text=position_text,
+        schema_path=schema_dir() / "gate.schema.json",
+        gate_type="plan_gate",
+    )
+    _append_jsonl(
+        epic_directory / "epic.jsonl",
+        {
+            "event": "github_sync_conflict",
+            "at": iso_utc(),
+            "epic_id": epic_id,
+            "triggered_by": ["github_sync_conflict"],
+            "reasons": reasons,
+            "last_sync_updated_at": last_updated_at,
+            "remote_updated_at": remote_updated_at,
+            "last_sync_body_sha256": last_body_sha256,
+            "remote_body_sha256": remote_body_sha256,
+            "local_body_sha256": local_body_sha256,
+            "gate_path": str(gate_path),
+        },
+    )
+    return gate_path
+
+
+def _sync_conflict_gate_body(
+    *,
+    epic_id: int,
+    reasons: list[str],
+    last_updated_at: str,
+    remote_updated_at: str,
+    last_body_sha256: str,
+    remote_body_sha256: str,
+    local_body_sha256: str,
+    last_body: str,
+    remote_body: str,
+    local_body: str,
+) -> str:
+    reason_text = ", ".join(reasons)
+    remote_diff = _unified_body_diff(
+        from_label="last-pushed",
+        to_label="current remote",
+        before=last_body,
+        after=remote_body,
+    )
+    local_diff = _unified_body_diff(
+        from_label="last-pushed",
+        to_label="current local render",
+        before=last_body,
+        after=local_body,
+    )
+    return (
+        f"## Context\n\n"
+        f"GitHub sync conflict detected for E{epic_id}. Woof was about to push the "
+        "issue body, but the remote issue no longer matches `.last-sync`.\n\n"
+        "## Findings\n\n"
+        f"- Conflict reasons: {reason_text}\n"
+        f"- `.last-sync` updated_at: {last_updated_at or '<missing>'}\n"
+        f"- Remote updated_at: {remote_updated_at or '<missing>'}\n"
+        f"- `.last-sync` body_sha256: {last_body_sha256 or '<missing>'}\n"
+        f"- Remote body_sha256: {remote_body_sha256}\n"
+        f"- Current local render body_sha256: {local_body_sha256}\n\n"
+        "### Diff: last-pushed -> current remote\n\n"
+        "```diff\n"
+        f"{remote_diff}\n"
+        "```\n\n"
+        "### Diff: last-pushed -> current local render\n\n"
+        "```diff\n"
+        f"{local_diff}\n"
+        "```\n\n"
+        "## Position\n\n"
+        "No issue update was sent to GitHub. Resolve the conflict by choosing keep "
+        "local, accept remote, or hand-merge, then retry `/wf`.\n"
+    )
+
+
+def _unified_body_diff(*, from_label: str, to_label: str, before: str, after: str) -> str:
+    diff = list(
+        difflib.unified_diff(
+            before.splitlines(),
+            after.splitlines(),
+            fromfile=from_label,
+            tofile=to_label,
+            lineterm="",
+        )
+    )
+    return "\n".join(diff) if diff else "(no textual diff)"
 
 
 def _issue_number_from_url(issue_url: str) -> int:
@@ -826,6 +979,15 @@ def _read_last_sync(path: Path) -> dict[str, Any] | None:
     if not isinstance(payload, dict):
         raise GithubSyncError(f"{path} must contain a JSON object")
     return payload
+
+
+def _last_sync_text(last_sync: dict[str, Any], field: str) -> str:
+    value = last_sync.get(field)
+    return value if isinstance(value, str) else ""
+
+
+def _last_sync_body(last_sync: dict[str, Any]) -> str:
+    return _last_sync_text(last_sync, "body")
 
 
 def _write_last_sync(path: Path, payload: dict[str, Any]) -> None:

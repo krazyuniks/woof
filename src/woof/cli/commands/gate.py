@@ -1,6 +1,6 @@
 """woof gate write — mechanical gate.md authoring from check-result or trigger.
 
-Writes .woof/epics/E<N>/gate.md and appends story_gate_opened to epic.jsonl.
+Writes .woof/epics/E<N>/gate.md and appends the matching *_gate_opened event to epic.jsonl.
 Front-matter is derived deterministically; no LLM authors any YAML field.
 """
 

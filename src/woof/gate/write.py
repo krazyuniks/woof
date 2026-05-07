@@ -185,6 +185,8 @@ def write_gate_for_trigger(
 def _gate_type_for_triggers(triggered_by: list[str]) -> str:
     if triggered_by == ["check_9_review_valve"]:
         return "review_gate"
+    if triggered_by == ["github_sync_conflict"]:
+        return "plan_gate"
     return "story_gate"
 
 
@@ -233,5 +235,10 @@ def _auto_position_for_trigger(trigger: str, exit_code: int | None) -> str:
             "Story executor reported empty_diff. "
             "Confirm whether earlier stories already realised this outcome.\n\n"
             "Approve if confirmed; revise story scope otherwise."
+        )
+    if trigger == "github_sync_conflict":
+        return (
+            "GitHub issue sync conflict detected. "
+            "Review the remote issue body, local render, and .last-sync before retrying."
         )
     return f"Gate opened with trigger: {trigger}."

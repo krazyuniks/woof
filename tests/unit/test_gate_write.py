@@ -164,6 +164,29 @@ def test_gate_write_for_subprocess_crash_O5(tmp_path: Path) -> None:
     assert fm["exit_code"] == 1
 
 
+def test_gate_write_for_github_sync_conflict_is_epic_level_gate(tmp_path: Path) -> None:
+    epic_dir = _setup_epic_dir(tmp_path, 184)
+
+    proc = _run(
+        "gate",
+        "write",
+        "--epic",
+        "184",
+        "--triggered-by",
+        "github_sync_conflict",
+        cwd=tmp_path,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    gate_path = epic_dir / "gate.md"
+    ok, msg = _validate_gate_fm(gate_path)
+    assert ok, f"gate.md front-matter invalid: {msg}"
+    fm = yaml.safe_load(gate_path.read_text()[4 : gate_path.read_text().find("\n---\n", 4)])
+    assert fm["type"] == "plan_gate"
+    assert fm["story_id"] is None
+    assert fm["triggered_by"] == ["github_sync_conflict"]
+
+
 def test_gate_write_appends_epic_jsonl_O5(tmp_path: Path) -> None:
     """O5: gate write appends story_gate_opened event to epic.jsonl."""
     epic_dir = _setup_epic_dir(tmp_path, 183)

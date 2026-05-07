@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -101,14 +102,14 @@ Test epic intent.
     )
 
 
-def _write_last_sync(directory: Path, epic_id: int) -> None:
+def _write_last_sync(directory: Path, epic_id: int, *, body: str = "<previous>") -> None:
     directory.joinpath(".last-sync").write_text(
         json.dumps(
             {
                 "issue_number": epic_id,
                 "updated_at": "2026-01-01T00:00:00Z",
-                "body_sha256": "0" * 64,
-                "body": "<previous>",
+                "body_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+                "body": body,
             }
         )
         + "\n"
@@ -601,7 +602,8 @@ def test_wf_epic_reports_complete_epic_as_json(tmp_path: Path) -> None:
     plan["stories"][0]["status"] = "done"
     (directory / "plan.json").write_text(json.dumps(plan))
     _write_minimal_epic(directory, 7)
-    _write_last_sync(directory, 7)
+    remote_body = "Remote intent.\n\n## Observable Outcomes\n\n- stale\n"
+    _write_last_sync(directory, 7, body=remote_body)
     env = _make_gh_completion_stub(tmp_path / "bin")
 
     proc = _run_woof(tmp_path, "wf", "--epic", "7", "--format", "json", env=env)

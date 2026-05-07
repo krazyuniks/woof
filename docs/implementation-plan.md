@@ -202,5 +202,5 @@ Workflow:
 - In the final response, paste this complete continuation prompt block so it can be copied into a new session.
 
 Start with:
-Workstream E: GitHub sync (`GH-001`, `GH-002`, `GH-003`, `GH-004`, `GH-005`). Start with any item already `In progress`; otherwise start with `GH-005`.
+Workstream F: Stage 1-4 graph migration (`STG-001`, `STG-002`, `STG-003`, `STG-004`, `STG-005`). Start with any item already `In progress`; otherwise start with `STG-001`.
 ```

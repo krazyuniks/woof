@@ -57,6 +57,8 @@ def test_shipped_schema_count() -> None:
         "executor-result.schema.json",
         "node-input.schema.json",
         "node-output.schema.json",
+        "planning-node-input.schema.json",
+        "planning-node-output.schema.json",
         "transaction-manifest.schema.json",
     }
     assert {p.name for p in SCHEMA_FILES} == expected
@@ -111,6 +113,225 @@ def test_validate_plan_missing_goal_fails(tmp_path: Path, run_woof) -> None:
     payload = _minimal_plan()
     del payload["goal"]
     path = tmp_path / "plan.json"
+    path.write_text(json.dumps(payload))
+    proc = run_woof("validate", str(path))
+    assert proc.returncode == 1
+    assert "INVALID" in proc.stdout
+
+
+# ---------------------------------------------------------------------------
+# Planning graph node contracts (JSON)
+# ---------------------------------------------------------------------------
+
+
+def _base_planning_input(node_type: str, inputs: dict) -> dict:
+    return {
+        "node_type": node_type,
+        "epic_id": 7,
+        "repo_root": "/tmp/consumer",
+        "epic_dir": ".woof/epics/E7",
+        "inputs": inputs,
+    }
+
+
+def _base_planning_output(
+    node_type: str,
+    produced: dict,
+    *,
+    next_node: str | None,
+    stage: int,
+    status: str = "completed",
+    gate_path: str | None = None,
+) -> dict:
+    return {
+        "node_type": node_type,
+        "status": status,
+        "epic_id": 7,
+        "next_node": next_node,
+        "gate_path": gate_path,
+        "validation_summary": {
+            "ok": True,
+            "stage": stage,
+            "triggered_by": [],
+            "validated_schemas": [],
+            "failed_schema_count": 0,
+        },
+        "message": "",
+        "paths": list(produced.values())
+        if all(isinstance(v, str) for v in produced.values())
+        else [],
+        "produced": produced,
+    }
+
+
+@pytest.mark.parametrize(
+    ("payload", "schema"),
+    [
+        (
+            _base_planning_input(
+                "discovery_synthesis",
+                {
+                    "spark_path": ".woof/epics/E7/spark.md",
+                    "discovery_dir": ".woof/epics/E7/discovery",
+                    "synthesis_dir": ".woof/epics/E7/discovery/synthesis",
+                    "source_paths": [".woof/epics/E7/discovery/research/options.md"],
+                },
+            ),
+            "planning-node-input",
+        ),
+        (
+            _base_planning_input(
+                "epic_definition",
+                {
+                    "synthesis_dir": ".woof/epics/E7/discovery/synthesis",
+                    "epic_path": ".woof/epics/E7/EPIC.md",
+                    "carried_open_questions": ["OQ1"],
+                },
+            ),
+            "planning-node-input",
+        ),
+        (
+            _base_planning_input(
+                "breakdown_planning",
+                {
+                    "epic_path": ".woof/epics/E7/EPIC.md",
+                    "plan_path": ".woof/epics/E7/plan.json",
+                    "plan_markdown_path": ".woof/epics/E7/PLAN.md",
+                },
+            ),
+            "planning-node-input",
+        ),
+        (
+            _base_planning_input(
+                "plan_critique",
+                {
+                    "epic_path": ".woof/epics/E7/EPIC.md",
+                    "plan_path": ".woof/epics/E7/plan.json",
+                    "plan_markdown_path": ".woof/epics/E7/PLAN.md",
+                    "critique_path": ".woof/epics/E7/critique/plan.md",
+                },
+            ),
+            "planning-node-input",
+        ),
+        (
+            _base_planning_input(
+                "plan_gate_open",
+                {
+                    "plan_path": ".woof/epics/E7/plan.json",
+                    "plan_markdown_path": ".woof/epics/E7/PLAN.md",
+                    "critique_path": ".woof/epics/E7/critique/plan.md",
+                    "gate_path": ".woof/epics/E7/gate.md",
+                    "triggered_by": ["plan_review"],
+                },
+            ),
+            "planning-node-input",
+        ),
+        (
+            _base_planning_input(
+                "plan_gate_resolve",
+                {
+                    "gate_path": ".woof/epics/E7/gate.md",
+                    "decision": "approve",
+                },
+            ),
+            "planning-node-input",
+        ),
+        (
+            _base_planning_output(
+                "discovery_synthesis",
+                {
+                    "concept_path": ".woof/epics/E7/discovery/synthesis/CONCEPT.md",
+                    "principles_path": ".woof/epics/E7/discovery/synthesis/PRINCIPLES.md",
+                    "architecture_path": ".woof/epics/E7/discovery/synthesis/ARCHITECTURE.md",
+                    "open_questions_path": ".woof/epics/E7/discovery/synthesis/OPEN_QUESTIONS.md",
+                },
+                next_node="epic_definition",
+                stage=1,
+            ),
+            "planning-node-output",
+        ),
+        (
+            _base_planning_output(
+                "epic_definition",
+                {"epic_path": ".woof/epics/E7/EPIC.md"},
+                next_node="breakdown_planning",
+                stage=2,
+            ),
+            "planning-node-output",
+        ),
+        (
+            _base_planning_output(
+                "breakdown_planning",
+                {
+                    "plan_path": ".woof/epics/E7/plan.json",
+                    "plan_markdown_path": ".woof/epics/E7/PLAN.md",
+                },
+                next_node="plan_critique",
+                stage=3,
+            ),
+            "planning-node-output",
+        ),
+        (
+            _base_planning_output(
+                "plan_critique",
+                {
+                    "critique_path": ".woof/epics/E7/critique/plan.md",
+                    "severity": "minor",
+                    "finding_count": 1,
+                },
+                next_node="plan_gate_open",
+                stage=3,
+            ),
+            "planning-node-output",
+        ),
+        (
+            _base_planning_output(
+                "plan_gate_open",
+                {
+                    "gate_path": ".woof/epics/E7/gate.md",
+                    "triggered_by": ["plan_review"],
+                },
+                next_node=None,
+                stage=4,
+                status="gate_opened",
+                gate_path=".woof/epics/E7/gate.md",
+            ),
+            "planning-node-output",
+        ),
+        (
+            _base_planning_output(
+                "plan_gate_resolve",
+                {
+                    "decision": "approve",
+                    "event_path": ".woof/epics/E7/epic.jsonl",
+                    "gate_deleted": True,
+                },
+                next_node=None,
+                stage=4,
+            ),
+            "planning-node-output",
+        ),
+    ],
+)
+def test_validate_planning_node_contract_fixtures(
+    tmp_path: Path, run_woof, payload: dict, schema: str
+) -> None:
+    path = tmp_path / f"{schema}.json"
+    path.write_text(json.dumps(payload))
+    proc = run_woof("validate", str(path))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert f"valid ({schema})" in proc.stdout
+
+
+def test_validate_planning_node_rejects_wrong_input_for_node_type(tmp_path: Path, run_woof) -> None:
+    payload = _base_planning_input(
+        "plan_gate_resolve",
+        {
+            "gate_path": ".woof/epics/E7/gate.md",
+            "triggered_by": ["plan_review"],
+        },
+    )
+    path = tmp_path / "planning-node-input.json"
     path.write_text(json.dumps(payload))
     proc = run_woof("validate", str(path))
     assert proc.returncode == 1

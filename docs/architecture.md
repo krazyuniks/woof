@@ -234,6 +234,8 @@ Each stage has a typed interface — defined inputs, defined outputs, invariants
 
 Invariants are **mechanically checkable, fail loud, no agent judgement**. Validation failure produces a `gate.md` rather than a silent proceed. Contract format is JSON Schema; Pydantic / zod / equivalents are implementations of a contract, not alternatives to one.
 
+Planning graph node boundaries for Stages 1-4 are schema-governed by `schemas/planning-node-input.schema.json` and `schemas/planning-node-output.schema.json`. Those contracts cover discovery synthesis, epic definition, breakdown planning, plan critique, plan gate opening, and plan gate resolution; artefact payloads remain validated by their dedicated schemas such as `epic.schema.json`, `plan.schema.json`, `critique.schema.json`, and `gate.schema.json`.
+
 ### Observable Outcomes contract
 
 The spine of traceability from Definition through tests. Referenced by Stage 2 invariants, Stage 3 `satisfies[]` references, and Stage 5 Checks 2 (spec coverage) and 4 (contract fidelity).

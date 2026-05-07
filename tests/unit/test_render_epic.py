@@ -6,6 +6,7 @@ binary on PATH.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -13,6 +14,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WOOF_BIN = REPO_ROOT / "bin" / "woof"
@@ -66,14 +68,19 @@ def _plan_json(*, done: bool = False) -> str:
     )
 
 
-def _write_last_sync(epic_project: Path, *, updated_at: str = "2026-01-01T00:00:00Z") -> None:
+def _write_last_sync(
+    epic_project: Path,
+    *,
+    updated_at: str = "2026-01-01T00:00:00Z",
+    body: str = "<previous>",
+) -> None:
     (epic_project / ".woof" / "epics" / "E42" / ".last-sync").write_text(
         json.dumps(
             {
                 "issue_number": 42,
                 "updated_at": updated_at,
-                "body_sha256": "0" * 64,
-                "body": "<previous>",
+                "body_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+                "body": body,
             }
         )
         + "\n"
@@ -381,14 +388,15 @@ def test_wf_plan_gate_approval_syncs_plan_summary(epic_project: Path, tmp_path: 
     (epic_dir / "gate.md").write_text(
         "---\ntype: plan_gate\nstage: 4\nstory_id: null\ntriggered_by: [plan_review]\n---\n"
     )
-    _write_last_sync(epic_project)
+    remote_body = "Remote intent.\n\n## Observable Outcomes\n\n- stale\n"
+    _write_last_sync(epic_project, body=remote_body)
 
     bin_dir = tmp_path / "bin"
     _make_gh_stub(
         bin_dir,
         fetch_payload={
             "updated_at": "2026-01-01T00:00:00Z",
-            "body": "Remote intent.\n\n## Observable Outcomes\n\n- stale\n",
+            "body": remote_body,
         },
         fetch_payload_after_edit={
             "updated_at": "2026-01-02T00:00:00Z",
@@ -416,14 +424,15 @@ def test_wf_epic_completion_syncs_closing_summary_and_closes_issue(
 ) -> None:
     epic_dir = epic_project / ".woof" / "epics" / "E42"
     (epic_dir / "plan.json").write_text(_plan_json(done=True))
-    _write_last_sync(epic_project)
+    remote_body = "Remote intent.\n\n## Observable Outcomes\n\n- stale\n"
+    _write_last_sync(epic_project, body=remote_body)
 
     bin_dir = tmp_path / "bin"
     _make_gh_stub(
         bin_dir,
         fetch_payload={
             "updated_at": "2026-01-01T00:00:00Z",
-            "body": "Remote intent.\n\n## Observable Outcomes\n\n- stale\n",
+            "body": remote_body,
             "state": "open",
         },
         fetch_payload_after_edit={
@@ -463,16 +472,7 @@ def test_wf_epic_completion_syncs_closing_summary_and_closes_issue(
 def test_sync_conflict_detected(epic_project: Path, tmp_path: Path) -> None:
     """If remote updated_at differs from .last-sync, push is aborted."""
     epic_dir = epic_project / ".woof" / "epics" / "E42"
-    (epic_dir / ".last-sync").write_text(
-        json.dumps(
-            {
-                "issue_number": 42,
-                "updated_at": "2025-12-01T00:00:00Z",  # stale
-                "body_sha256": "0" * 64,
-                "body": "<old>",
-            }
-        )
-    )
+    _write_last_sync(epic_project, updated_at="2025-12-01T00:00:00Z", body="<old>")
 
     bin_dir = tmp_path / "bin"
     _make_gh_stub(
@@ -484,6 +484,18 @@ def test_sync_conflict_detected(epic_project: Path, tmp_path: Path) -> None:
     assert "github_sync_conflict" in proc.stderr
     # No push happened — last_body marker absent
     assert not (bin_dir / "_last_body").exists()
+    gate = epic_dir / "gate.md"
+    assert gate.exists()
+    gate_text = gate.read_text()
+    gate_front = yaml.safe_load(gate_text[4 : gate_text.find("\n---\n", 4)])
+    assert gate_front["type"] == "plan_gate"
+    assert gate_front["story_id"] is None
+    assert gate_front["triggered_by"] == ["github_sync_conflict"]
+    assert "### Diff: last-pushed -> current remote" in gate_text
+    assert "-<old>" in gate_text
+    assert "+remote diverged" in gate_text
+    assert "### Diff: last-pushed -> current local render" in gate_text
+    assert "+## Observable Outcomes" in gate_text
     # last-sync untouched
     last_sync = json.loads((epic_dir / ".last-sync").read_text())
     assert last_sync["updated_at"] == "2025-12-01T00:00:00Z"
@@ -491,4 +503,57 @@ def test_sync_conflict_detected(epic_project: Path, tmp_path: Path) -> None:
     events = [
         json.loads(ln) for ln in (epic_dir / "epic.jsonl").read_text().splitlines() if ln.strip()
     ]
+    assert any(
+        e["event"] == "plan_gate_opened" and e["triggered_by"] == ["github_sync_conflict"]
+        for e in events
+    )
     assert any(e["event"] == "github_sync_conflict" for e in events)
+
+
+def test_sync_conflict_detected_when_remote_body_hash_diverges(
+    epic_project: Path, tmp_path: Path
+) -> None:
+    """If remote body hash differs from .last-sync, push is aborted."""
+    epic_dir = epic_project / ".woof" / "epics" / "E42"
+    _write_last_sync(epic_project, updated_at="2026-04-01T00:00:00Z", body="<old>")
+
+    bin_dir = tmp_path / "bin"
+    _make_gh_stub(
+        bin_dir,
+        fetch_payload={"updated_at": "2026-04-01T00:00:00Z", "body": "remote diverged"},
+    )
+    proc = _run(epic_project, "render-epic", "--epic", "42", "--sync", env=_stub_env(bin_dir))
+
+    assert proc.returncode == 3
+    assert "body_sha256" in proc.stderr
+    assert not (bin_dir / "_last_body").exists()
+    assert (epic_dir / "gate.md").exists()
+
+
+def test_wf_plan_gate_approval_opens_sync_conflict_gate(epic_project: Path, tmp_path: Path) -> None:
+    epic_dir = epic_project / ".woof" / "epics" / "E42"
+    (epic_dir / "plan.json").write_text(_plan_json())
+    (epic_dir / "gate.md").write_text(
+        "---\ntype: plan_gate\nstage: 4\nstory_id: null\ntriggered_by: [plan_review]\n---\n"
+    )
+    _write_last_sync(epic_project, updated_at="2025-12-01T00:00:00Z", body="<old>")
+
+    bin_dir = tmp_path / "bin"
+    _make_gh_stub(
+        bin_dir,
+        fetch_payload={
+            "updated_at": "2026-04-01T00:00:00Z",
+            "body": "Remote intent.\n\n## Observable Outcomes\n\n- teammate edit\n",
+        },
+    )
+
+    proc = _run(epic_project, "wf", "--epic", "42", "--resolve", "approve", env=_stub_env(bin_dir))
+
+    assert proc.returncode == 2
+    assert "github sync failed: github_sync_conflict" in proc.stderr
+    assert not (bin_dir / "_last_body").exists()
+    gate_text = (epic_dir / "gate.md").read_text()
+    gate_front = yaml.safe_load(gate_text[4 : gate_text.find("\n---\n", 4)])
+    assert gate_front["triggered_by"] == ["github_sync_conflict"]
+    assert "### Diff: last-pushed -> current remote" in gate_text
+    assert "### Diff: last-pushed -> current local render" in gate_text

@@ -57,6 +57,8 @@ SCHEMAS: dict[str, str] = {
     "executor-result": "executor-result.schema.json",
     "node-input": "node-input.schema.json",
     "node-output": "node-output.schema.json",
+    "planning-node-input": "planning-node-input.schema.json",
+    "planning-node-output": "planning-node-output.schema.json",
     "transaction-manifest": "transaction-manifest.schema.json",
 }
 
@@ -75,6 +77,8 @@ FILENAME_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^executor-result\.json$"), "executor-result"),
     (re.compile(r"^node-input\.json$"), "node-input"),
     (re.compile(r"^node-output\.json$"), "node-output"),
+    (re.compile(r"^planning-node-input\.json$"), "planning-node-input"),
+    (re.compile(r"^planning-node-output\.json$"), "planning-node-output"),
     (re.compile(r"^transaction-manifest\.json$"), "transaction-manifest"),
 ]
 
@@ -123,6 +127,8 @@ def load_payload(path: Path, schema: str) -> object:
         "executor-result",
         "node-input",
         "node-output",
+        "planning-node-input",
+        "planning-node-output",
         "transaction-manifest",
     }:
         return json.loads(path.read_text())

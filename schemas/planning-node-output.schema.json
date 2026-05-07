@@ -1,0 +1,275 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://woof.dev/schemas/planning-node-output.schema.json",
+  "title": "woof planning graph node output",
+  "description": "Output contract for deterministic Stage 1-4 planning graph nodes. The graph owns successor selection; node outputs declare produced artefacts, validation state, and the next graph node without embedding orchestration prose.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "node_type",
+    "status",
+    "epic_id",
+    "next_node",
+    "gate_path",
+    "validation_summary",
+    "message",
+    "paths",
+    "produced"
+  ],
+  "properties": {
+    "node_type": {
+      "$ref": "#/$defs/planning_node_type"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["completed", "gate_opened", "halted"]
+    },
+    "epic_id": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "next_node": {
+      "oneOf": [{ "$ref": "#/$defs/planning_node_type" }, { "type": "null" }]
+    },
+    "gate_path": {
+      "oneOf": [
+        { "type": "string", "pattern": "^\\.woof/epics/E[1-9]\\d*/gate\\.md$" },
+        { "type": "null" }
+      ]
+    },
+    "validation_summary": {
+      "oneOf": [{ "$ref": "#/$defs/validation_summary" }, { "type": "null" }]
+    },
+    "message": {
+      "type": "string"
+    },
+    "paths": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/path" },
+      "uniqueItems": true
+    },
+    "produced": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "node_type": { "const": "discovery_synthesis" } },
+        "required": ["node_type"]
+      },
+      "then": {
+        "properties": { "produced": { "$ref": "#/$defs/discovery_synthesis_output" } }
+      }
+    },
+    {
+      "if": {
+        "properties": { "node_type": { "const": "epic_definition" } },
+        "required": ["node_type"]
+      },
+      "then": {
+        "properties": { "produced": { "$ref": "#/$defs/epic_definition_output" } }
+      }
+    },
+    {
+      "if": {
+        "properties": { "node_type": { "const": "breakdown_planning" } },
+        "required": ["node_type"]
+      },
+      "then": {
+        "properties": { "produced": { "$ref": "#/$defs/breakdown_planning_output" } }
+      }
+    },
+    {
+      "if": {
+        "properties": { "node_type": { "const": "plan_critique" } },
+        "required": ["node_type"]
+      },
+      "then": {
+        "properties": { "produced": { "$ref": "#/$defs/plan_critique_output" } }
+      }
+    },
+    {
+      "if": {
+        "properties": { "node_type": { "const": "plan_gate_open" } },
+        "required": ["node_type"]
+      },
+      "then": {
+        "properties": { "produced": { "$ref": "#/$defs/plan_gate_open_output" } },
+        "required": ["gate_path"]
+      }
+    },
+    {
+      "if": {
+        "properties": { "node_type": { "const": "plan_gate_resolve" } },
+        "required": ["node_type"]
+      },
+      "then": {
+        "properties": { "produced": { "$ref": "#/$defs/plan_gate_resolve_output" } }
+      }
+    },
+    {
+      "if": {
+        "properties": { "status": { "const": "gate_opened" } },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "gate_path": {
+            "type": "string",
+            "pattern": "^\\.woof/epics/E[1-9]\\d*/gate\\.md$"
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "planning_node_type": {
+      "type": "string",
+      "enum": [
+        "discovery_synthesis",
+        "epic_definition",
+        "breakdown_planning",
+        "plan_critique",
+        "plan_gate_open",
+        "plan_gate_resolve"
+      ]
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "planning_node_type_or_null": {
+      "oneOf": [{ "$ref": "#/$defs/planning_node_type" }, { "type": "null" }]
+    },
+    "validation_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ok",
+        "stage",
+        "triggered_by",
+        "validated_schemas",
+        "failed_schema_count"
+      ],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "stage": {
+          "type": "integer",
+          "enum": [1, 2, 3, 4]
+        },
+        "triggered_by": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true
+        },
+        "validated_schemas": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "discovery-synthesis",
+              "epic",
+              "plan",
+              "critique",
+              "gate",
+              "jsonl-events"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "failed_schema_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "discovery_synthesis_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "concept_path",
+        "principles_path",
+        "architecture_path",
+        "open_questions_path"
+      ],
+      "properties": {
+        "concept_path": { "$ref": "#/$defs/path" },
+        "principles_path": { "$ref": "#/$defs/path" },
+        "architecture_path": { "$ref": "#/$defs/path" },
+        "open_questions_path": { "$ref": "#/$defs/path" }
+      }
+    },
+    "epic_definition_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["epic_path"],
+      "properties": {
+        "epic_path": { "$ref": "#/$defs/path" }
+      }
+    },
+    "breakdown_planning_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["plan_path", "plan_markdown_path"],
+      "properties": {
+        "plan_path": { "$ref": "#/$defs/path" },
+        "plan_markdown_path": { "$ref": "#/$defs/path" }
+      }
+    },
+    "plan_critique_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["critique_path", "severity", "finding_count"],
+      "properties": {
+        "critique_path": { "$ref": "#/$defs/path" },
+        "severity": {
+          "type": "string",
+          "enum": ["info", "minor", "blocker"]
+        },
+        "finding_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "plan_gate_open_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gate_path", "triggered_by"],
+      "properties": {
+        "gate_path": {
+          "type": "string",
+          "pattern": "^\\.woof/epics/E[1-9]\\d*/gate\\.md$"
+        },
+        "triggered_by": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["plan_review", "schema_validation_failed", "manual"]
+          }
+        }
+      }
+    },
+    "plan_gate_resolve_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decision", "event_path", "gate_deleted"],
+      "properties": {
+        "decision": {
+          "type": "string",
+          "enum": ["approve", "revise_epic_contract", "revise_plan", "abandon_epic"]
+        },
+        "event_path": { "$ref": "#/$defs/path" },
+        "gate_deleted": { "type": "boolean", "const": true },
+        "revised_paths": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/path" },
+          "uniqueItems": true
+        }
+      }
+    }
+  }
+}

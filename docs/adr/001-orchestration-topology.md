@@ -4,6 +4,10 @@
 
 Accepted and implemented for the Stage-5 execution path. `woof wf --epic <N>` is now the graph entry point; the remaining stages adopt the same topology as they are implemented.
 
+Related: ADR-002 keeps this topology and defines semantic primary/reviewer role
+routing. Provider choice changes, but orchestration authority remains in the
+Python graph.
+
 ## Context
 
 The existing implementation made the LLM the orchestrator: a skill body listing steps, dispatched as a `cld -p` or `codex exec` subprocess, with the LLM deciding which steps happen, dispatching its own subprocesses (e.g. codex for critique), and committing its own output. This produced two real failures during the E182 dogfood (visible in this repo's git history at commits `7bf2a12` and `b729860`):

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://woof.dev/schemas/agents.schema.json",
   "title": "woof agent role configuration",
-  "description": "Project-side declaration at .woof/agents.toml. Defines which dispatch wrapper (cld/cod), which model, and which extra flags are used per role. Woof builds the full subprocess invocation dynamically from these entries via 'woof dispatch claude --role X' / 'woof dispatch codex --role X' adapter commands; no hard-coded model IDs or shell aliases anywhere in the tool. If absent, defaults apply (in-session planner, cld -p story-executor with default model, cod critiquer with default model, all with empty MCP set).",
+  "description": "Project-side declaration at .woof/agents.toml. Dispatchable roles resolve to public CLI adapters (claude or codex); Woof builds the subprocess invocation itself and does not require private shell wrappers. Legacy role names and legacy harness values are accepted only as migration input and are resolved to public adapters at runtime.",
   "type": "object",
   "additionalProperties": false,
   "required": ["roles"],
@@ -12,12 +12,14 @@
       "additionalProperties": false,
       "properties": {
         "orchestrator": { "$ref": "#/$defs/in_session_role" },
+        "primary": { "$ref": "#/$defs/dispatchable_role" },
+        "reviewer": { "$ref": "#/$defs/dispatchable_role" },
         "planner": { "$ref": "#/$defs/dispatchable_role" },
         "story-executor": { "$ref": "#/$defs/dispatchable_role" },
         "critiquer": { "$ref": "#/$defs/dispatchable_role" },
         "gate-resolver": { "$ref": "#/$defs/in_session_role" }
       },
-      "description": "Roles invoked by woof. Any subset may be defined; missing roles fall back to defaults. orchestrator and gate-resolver are constrained to in-session execution (they share the user's interactive Claude Code session) and so use the in_session_role schema; the other three use dispatchable_role."
+      "description": "Semantic roles invoked by Woof. primary and reviewer are the graph-owned dispatch roles. planner/story-executor/critiquer are legacy aliases retained for migration; planner and story-executor map to primary, critiquer maps to reviewer."
     },
     "timeouts": {
       "type": "object",
@@ -27,7 +29,7 @@
           "type": "integer",
           "minimum": 1,
           "default": 30,
-          "description": "Per-subprocess timeout. Driver wraps cld/cod invocations with `timeout`. Hitting the timeout writes gate.md with triggered_by=['timeout']."
+          "description": "Per-subprocess timeout. The dispatch adapter wraps public CLI invocations with timeout. Hitting the timeout writes gate.md with triggered_by=['timeout']."
         }
       }
     },
@@ -79,25 +81,37 @@
     "in_session_role": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["harness"],
       "properties": {
+        "adapter": {
+          "type": "string",
+          "const": "in-session",
+          "description": "orchestrator and gate-resolver must share the operator's interactive session; they cannot dispatch to a subprocess."
+        },
         "harness": {
           "type": "string",
           "const": "in-session",
-          "description": "orchestrator and gate-resolver must share the user's interactive Claude Code session; they cannot dispatch to a subprocess."
+          "description": "Legacy spelling for adapter='in-session'."
         },
         "notes": { "type": "string" }
-      }
+      },
+      "oneOf": [
+        { "required": ["adapter"] },
+        { "required": ["harness"] }
+      ]
     },
     "dispatchable_role": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["harness"],
       "properties": {
+        "adapter": {
+          "type": "string",
+          "enum": ["claude", "codex", "in-session"],
+          "description": "Public CLI adapter used for this role. Use claude or codex for subprocess roles; in-session is rejected by woof dispatch."
+        },
         "harness": {
           "type": "string",
-          "enum": ["cld", "cod", "in-session"],
-          "description": "Dispatch wrapper. cld for Claude subprocesses, cod for Codex subprocesses, in-session for roles that should share the user's interactive session even though they could be dispatched."
+          "enum": ["claude", "codex", "cld", "cod", "in-session"],
+          "description": "Legacy route spelling. cld maps to the public claude adapter; cod maps to the public codex adapter."
         },
         "model": {
           "type": "string",
@@ -105,25 +119,37 @@
         },
         "think": {
           "type": "boolean",
-          "description": "cld only. Toggles extended thinking via the wrapper's -t flag. Schema does not enforce the cld-only constraint; runtime ignores think when harness=cod."
+          "description": "Legacy cld wrapper hint retained for schema compatibility. Public adapter effort is modelled explicitly in ROLE-003."
         },
         "mcp": {
           "type": "array",
           "items": { "type": "string", "minLength": 1 },
           "uniqueItems": true,
-          "description": "MCP server names. Empty array (default) = no MCPs."
+          "description": "MCP server names. Empty array or omission means no MCP servers. Named MCP route resolution lands in ROLE-003."
         },
         "flags": {
           "type": "array",
           "items": { "type": "string" },
-          "description": "Additional pass-through args appended after the wrapper's '--' separator."
+          "description": "Additional adapter-specific args appended after Woof's owned options."
         }
       },
+      "oneOf": [
+        { "required": ["adapter"] },
+        { "required": ["harness"] }
+      ],
       "allOf": [
         {
           "if": {
-            "properties": { "harness": { "const": "in-session" } },
-            "required": ["harness"]
+            "anyOf": [
+              {
+                "properties": { "adapter": { "const": "in-session" } },
+                "required": ["adapter"]
+              },
+              {
+                "properties": { "harness": { "const": "in-session" } },
+                "required": ["harness"]
+              }
+            ]
           },
           "then": {
             "not": {

@@ -1,6 +1,6 @@
 """Black-box tests for ``woof dispatch``.
 
-Most tests use ``--dry-run`` so they do not actually spawn cld/cod subprocesses.
+Most tests use ``--dry-run`` so they do not actually spawn claude/codex subprocesses.
 Token-parser helpers are exercised via fixtures of recorded harness output.
 """
 
@@ -31,19 +31,17 @@ def woof_project(tmp_path: Path) -> Path:
     woof_dir = project / ".woof"
     woof_dir.mkdir(parents=True)
     (woof_dir / "agents.toml").write_text("""\
-[roles.story-executor]
-harness = "cld"
-model = "claude-sonnet-4-6"
-think = true
-mcp = ["chrome-devtools"]
+[roles.primary]
+adapter = "codex"
+model = "gpt-5.5"
 flags = ["--max-turns", "20"]
 
-[roles.critiquer]
-harness = "cod"
-model = "gpt-5.3-codex"
+[roles.reviewer]
+adapter = "claude"
+model = "claude-opus-4-7"
 
 [roles.gate-resolver]
-harness = "in-session"
+adapter = "in-session"
 
 [timeouts]
 default_minutes = 15
@@ -70,12 +68,11 @@ def run_dispatch(
 # ---------------------------------------------------------------------------
 
 
-def test_dry_run_claude_argv(woof_project: Path) -> None:
+def test_dry_run_reviewer_uses_raw_claude_argv(woof_project: Path) -> None:
     proc = run_dispatch(
         woof_project,
-        "claude",
         "--role",
-        "story-executor",
+        "reviewer",
         "--epic",
         "42",
         "--story",
@@ -87,32 +84,31 @@ def test_dry_run_claude_argv(woof_project: Path) -> None:
     assert payload["argv"] == [
         "timeout",
         "15m",
-        "cld",
-        "-t",
-        "-m",
-        "chrome-devtools",
-        "--",
+        "claude",
+        "--dangerously-skip-permissions",
+        "--strict-mcp-config",
+        "--mcp-config",
+        '{"mcpServers":{}}',
         "-p",
         "--output-format",
         "json",
         "--model",
-        "claude-sonnet-4-6",
-        "--max-turns",
-        "20",
+        "claude-opus-4-7",
         "do the thing\n",
     ]
     assert payload["epic"] == 42
     assert payload["story"] == "S3"
-    assert payload["harness"] == "cld"
+    assert payload["role"] == "reviewer"
+    assert payload["adapter"] == "claude"
+    assert payload["harness"] == "claude"
     assert payload["timeout_min"] == 15
 
 
-def test_dry_run_codex_argv(woof_project: Path) -> None:
+def test_dry_run_primary_uses_raw_codex_argv(woof_project: Path) -> None:
     proc = run_dispatch(
         woof_project,
-        "codex",
         "--role",
-        "critiquer",
+        "primary",
         "--epic",
         "42",
         "--dry-run",
@@ -123,17 +119,24 @@ def test_dry_run_codex_argv(woof_project: Path) -> None:
     assert payload["argv"] == [
         "timeout",
         "15m",
-        "cod",
-        "--",
+        "codex",
         "exec",
         "--json",
         "--skip-git-repo-check",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "-s",
+        "danger-full-access",
+        "-a",
+        "never",
         "--model",
-        "gpt-5.3-codex",
+        "gpt-5.5",
+        "--max-turns",
+        "20",
         "critique this\n",
     ]
     assert payload["story"] is None
-    assert payload["harness"] == "cod"
+    assert payload["adapter"] == "codex"
+    assert payload["harness"] == "codex"
 
 
 def test_prompt_file_overrides_stdin(woof_project: Path, tmp_path: Path) -> None:
@@ -141,9 +144,8 @@ def test_prompt_file_overrides_stdin(woof_project: Path, tmp_path: Path) -> None
     prompt_file.write_text("from file")
     proc = run_dispatch(
         woof_project,
-        "claude",
         "--role",
-        "story-executor",
+        "reviewer",
         "--epic",
         "1",
         "--prompt-file",
@@ -164,9 +166,8 @@ def test_prompt_file_overrides_stdin(woof_project: Path, tmp_path: Path) -> None
 def test_missing_woof_root(tmp_path: Path) -> None:
     proc = run_dispatch(
         tmp_path,
-        "claude",
         "--role",
-        "story-executor",
+        "primary",
         "--epic",
         "1",
         "--dry-run",
@@ -180,9 +181,8 @@ def test_missing_agents_toml(tmp_path: Path) -> None:
     (project / ".woof").mkdir(parents=True)
     proc = run_dispatch(
         project,
-        "claude",
         "--role",
-        "story-executor",
+        "primary",
         "--epic",
         "1",
         "--dry-run",
@@ -194,7 +194,6 @@ def test_missing_agents_toml(tmp_path: Path) -> None:
 def test_unknown_role(woof_project: Path) -> None:
     proc = run_dispatch(
         woof_project,
-        "claude",
         "--role",
         "ghost",
         "--epic",
@@ -208,7 +207,6 @@ def test_unknown_role(woof_project: Path) -> None:
 def test_in_session_role_rejected(woof_project: Path) -> None:
     proc = run_dispatch(
         woof_project,
-        "claude",
         "--role",
         "gate-resolver",
         "--epic",
@@ -219,27 +217,26 @@ def test_in_session_role_rejected(woof_project: Path) -> None:
     assert "in-session" in proc.stderr
 
 
-def test_harness_mismatch(woof_project: Path) -> None:
-    """Calling 'dispatch claude' on a cod-harness role is a hard error."""
+def test_legacy_target_mismatch(woof_project: Path) -> None:
+    """The deprecated positional target must agree with the resolved role adapter."""
     proc = run_dispatch(
         woof_project,
         "claude",
         "--role",
-        "critiquer",
+        "primary",
         "--epic",
         "1",
         "--dry-run",
     )
     assert proc.returncode == 2
-    assert "expected 'cld'" in proc.stderr
+    assert "resolves adapter='codex'" in proc.stderr
 
 
 def test_invalid_story_id(woof_project: Path) -> None:
     proc = run_dispatch(
         woof_project,
-        "claude",
         "--role",
-        "story-executor",
+        "primary",
         "--epic",
         "1",
         "--story",
@@ -253,9 +250,8 @@ def test_invalid_story_id(woof_project: Path) -> None:
 def test_empty_prompt(woof_project: Path) -> None:
     proc = run_dispatch(
         woof_project,
-        "claude",
         "--role",
-        "story-executor",
+        "primary",
         "--epic",
         "1",
         "--dry-run",
@@ -269,14 +265,13 @@ def test_schema_invalid_agents_toml(tmp_path: Path) -> None:
     project = tmp_path / "proj"
     (project / ".woof").mkdir(parents=True)
     (project / ".woof" / "agents.toml").write_text("""\
-[roles.story-executor]
-harness = "wrong-harness"
+[roles.primary]
+adapter = "wrong-adapter"
 """)
     proc = run_dispatch(
         project,
-        "claude",
         "--role",
-        "story-executor",
+        "primary",
         "--epic",
         "1",
         "--dry-run",
@@ -378,11 +373,83 @@ def test_parse_codex_output_no_turns() -> None:
 def test_build_argv_minimal_role() -> None:
     """A role with no model, mcp, think, or flags produces a minimal argv."""
     mod = _import_woof_module()
-    argv = mod.build_argv("cld", {"harness": "cld"}, "hi")
-    assert argv == ["cld", "--", "-p", "--output-format", "json", "hi"]
+    argv = mod.build_argv("claude", {"adapter": "claude"}, "hi")
+    assert argv == [
+        "claude",
+        "--dangerously-skip-permissions",
+        "--strict-mcp-config",
+        "--mcp-config",
+        '{"mcpServers":{}}',
+        "-p",
+        "--output-format",
+        "json",
+        "hi",
+    ]
 
-    argv = mod.build_argv("cod", {"harness": "cod"}, "hi")
-    assert argv == ["cod", "--", "exec", "--json", "--skip-git-repo-check", "hi"]
+    argv = mod.build_argv("codex", {"adapter": "codex"}, "hi")
+    assert argv == [
+        "codex",
+        "exec",
+        "--json",
+        "--skip-git-repo-check",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "-s",
+        "danger-full-access",
+        "-a",
+        "never",
+        "hi",
+    ]
+
+
+def test_legacy_role_config_routes_to_public_adapter(tmp_path: Path) -> None:
+    project = tmp_path / "proj"
+    woof_dir = project / ".woof"
+    woof_dir.mkdir(parents=True)
+    (woof_dir / "agents.toml").write_text("""\
+[roles.story-executor]
+harness = "cld"
+model = "claude-sonnet-4-6"
+
+[timeouts]
+default_minutes = 15
+""")
+
+    proc = run_dispatch(
+        project,
+        "--role",
+        "primary",
+        "--epic",
+        "1",
+        "--dry-run",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    assert payload["config_role"] == "story-executor"
+    assert payload["adapter"] == "claude"
+    assert payload["argv"][2] == "claude"
+
+
+def test_named_mcp_requires_public_route_config(woof_project: Path) -> None:
+    agents = woof_project / ".woof" / "agents.toml"
+    agents.write_text(
+        agents.read_text().replace(
+            'model = "claude-opus-4-7"\n',
+            'model = "claude-opus-4-7"\nmcp = ["chrome-devtools"]\n',
+        )
+    )
+
+    proc = run_dispatch(
+        woof_project,
+        "--role",
+        "reviewer",
+        "--epic",
+        "1",
+        "--dry-run",
+    )
+
+    assert proc.returncode == 2
+    assert "MCP" in proc.stderr
 
 
 # ---------------------------------------------------------------------------
@@ -403,6 +470,7 @@ def _make_stub(bin_dir: Path, name: str, payload: str) -> None:
 
 
 def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: Path) -> None:
+    mod = _import_woof_module()
     bin_dir = tmp_path / "bin"
     claude_response = json.dumps(
         {
@@ -416,7 +484,7 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
             },
         }
     )
-    _make_stub(bin_dir, "cld", claude_response)
+    _make_stub(bin_dir, "claude", claude_response)
     # ``timeout`` is needed in PATH too — let it resolve from the original PATH.
     env = {
         "PATH": f"{bin_dir}:{__import__('os').environ['PATH']}",
@@ -427,9 +495,8 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
         [
             str(WOOF_BIN),
             "dispatch",
-            "claude",
             "--role",
-            "story-executor",
+            "reviewer",
             "--epic",
             "7",
             "--story",
@@ -451,8 +518,9 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
 
     meta_file = next(audit_dir.glob("*.meta"))
     meta = json.loads(meta_file.read_text())
-    assert meta["harness"] == "cld"
-    assert meta["role"] == "story-executor"
+    assert meta["harness"] == "claude"
+    assert meta["adapter"] == "claude"
+    assert meta["role"] == "reviewer"
     assert meta["epic_id"] == 7
     assert meta["story_id"] == "S2"
     assert meta["exit_code"] == 0
@@ -463,6 +531,11 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
         "cache_write_tokens": 13,
     }
     assert meta["cc_session_id"] == "00000000-0000-0000-0000-000000000001"
+    assert (
+        meta["claude_transcript_path"]
+        == f"~/.claude/projects/{mod.claude_project_slug(woof_project)}/"
+        "00000000-0000-0000-0000-000000000001.jsonl"
+    )
 
     # dispatch.jsonl events validate against the shipped schema
     jsonl = woof_project / ".woof" / "epics" / "E7" / "dispatch.jsonl"
@@ -474,6 +547,7 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
     assert events[1]["tokens_in"] == 7
     assert events[1]["tokens_out"] == 11
     assert events[1]["cc_session_id"] == "00000000-0000-0000-0000-000000000001"
+    assert events[1]["claude_transcript_path"].startswith("~/.claude/projects/")
 
     validate = subprocess.run([*WOOF_VALIDATE, str(jsonl)], capture_output=True, text=True)
     assert validate.returncode == 0, validate.stdout + validate.stderr
@@ -497,7 +571,7 @@ def test_end_to_end_codex_records_thread_and_audit_path(woof_project: Path, tmp_
             ),
         ]
     )
-    _make_stub(bin_dir, "cod", codex_stream)
+    _make_stub(bin_dir, "codex", codex_stream)
     env = {
         "PATH": f"{bin_dir}:{__import__('os').environ['PATH']}",
         "HOME": __import__("os").environ.get("HOME", str(tmp_path)),
@@ -507,9 +581,8 @@ def test_end_to_end_codex_records_thread_and_audit_path(woof_project: Path, tmp_
         [
             str(WOOF_BIN),
             "dispatch",
-            "codex",
             "--role",
-            "critiquer",
+            "primary",
             "--epic",
             "9",
         ],
@@ -527,7 +600,7 @@ def test_end_to_end_codex_records_thread_and_audit_path(woof_project: Path, tmp_
     assert returned["tokens_in"] == 50
     assert returned["tokens_out"] == 7  # 5 + 2 reasoning
     assert returned["cache_read_tokens"] == 10
-    assert returned["codex_audit_path"].startswith(".woof/epics/E9/audit/cod-critiquer-")
+    assert returned["codex_audit_path"].startswith(".woof/epics/E9/audit/codex-primary-")
 
     validate = subprocess.run([*WOOF_VALIDATE, str(jsonl)], capture_output=True, text=True)
     assert validate.returncode == 0, validate.stdout + validate.stderr

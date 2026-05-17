@@ -15,11 +15,12 @@
 The Woof repository currently implements the ADR-001 Stage-5 execution path:
 
 - `woof wf --epic <N>` is the operator entry point for the deterministic Python graph.
-- Graph nodes dispatch the story executor, dispatch Codex critique, run Stage-5 verification, open gates, and commit through a transaction manifest.
+- Graph nodes dispatch the primary producer, dispatch the reviewer, run Stage-5 verification, open gates, and commit through a transaction manifest.
 - `.claude/commands/wf*.md` are thin wrappers or producer-node prompts. They do not own successor selection, critique dispatch, gate writing, or commits.
+- ADR-002 defines the current role-routing policy: the graph orchestrates; GPT-5.5 is the preferred primary producer route; Claude Opus 4.7 at `max` effort is the preferred reviewer route.
 - Discovery, Definition, Breakdown, GitHub issue sync, and the full preflight/cartography lifecycle are implemented only where command code exists under `src/woof/cli/`; remaining work is tracked in `docs/implementation-plan.md`.
 
-When this document conflicts with `docs/adr/001-orchestration-topology.md` or the current source under `src/woof/`, source and ADR-001 win.
+When this document conflicts with `docs/adr/001-orchestration-topology.md`, `docs/adr/002-graph-led-role-routing.md`, or the current source under `src/woof/`, source and accepted ADRs win.
 
 ## 1. Principles
 
@@ -84,12 +85,12 @@ E146 was a surface failure enabled by a direction vacuum — no principle had lo
 
 | Stage | Gate behaviour | Why |
 |---|---|---|
-| 4 Plan gate | **Always opens** — even if Codex returns `severity: info` | Plans are architectural commitments; Class-2 errors at plan time cascade into N stories of rework. Mandatory review is cheap insurance. |
+| 4 Plan gate | **Always opens** — even if the reviewer returns `severity: info` | Plans are architectural commitments; Class-2 errors at plan time cascade into N stories of rework. Mandatory review is cheap insurance. |
 | 6 Story gate | **Conditional** — opens only when the 8 deterministic checks fail OR critique returns `severity: blocker` | Stories are mechanical execution. Background autonomy depends on this asymmetry. |
 
 This makes the autonomy gradient (§2 Stages overview) concrete: humans review architectural commitments; automation handles mechanical execution.
 
-**Gate mechanism (Stages 4 and 6).** Both gates use the same skill surface (`/wf`). Triggered by presence of `.woof/epics/E<N>/gate.md`. Skill reads gate.md, renders the pre-written Context block, surfaces findings + agent position, drives human dialogue. Human decision → skill updates referenced artefacts + deletes gate.md. Autonomous driver resumes only after gate.md is gone.
+**Gate mechanism (Stages 4 and 6).** Both gates use the same operator surface: `woof wf --epic <N>` to surface the gate and `woof wf --epic <N> --resolve <decision>` to record the decision. Triggered by presence of `.woof/epics/E<N>/gate.md`. The graph reads `gate.md`, renders the pre-written Context block, surfaces findings and positions, drives human dialogue through the active operator session, then records the structured human decision. The graph resumes only after `gate.md` is gone.
 
 `gate.md` schema (YAML front-matter + structured prose):
 
@@ -104,38 +105,40 @@ timestamp: <ISO 8601>
 
 ## Context
 ## Findings
-## Claude's position
+## Primary position
+## Reviewer position
 ```
 
 **Autonomous driver.** External shell loop shipped with the tool: `while ! test -f gate.md; do /epic-next; done`. Parses nothing from gate.md — existence check only. Decouples driver from gate semantics.
 
 ### Core loop (within a stage)
 
-1. **Claude builds** the artefact against a typed schema
-2. **Codex dispatched** with the artefact + source inputs → writes a **critique document**
-3. **Claude reads** the critique, synthesises per principle #2, surfaces to user
-4. Moves on — the human drives further iterations, never an agent loop
+1. **Primary model builds** the artefact against a typed schema.
+2. **Reviewer model is dispatched** with the artefact and source inputs, then writes a critique document.
+3. **Primary model records a disposition** for `info` / `minor` findings and updates the artefact when it accepts the feedback.
+4. **Human gate opens** for plan gates and reviewer `blocker` findings, with both positions surfaced.
+5. **Graph continues** after gate resolution or after non-blocking reviewer disposition. The models never negotiate successor state.
 
 ### Validation & critique
 
 Two complementary advisory layers, both surfaced via conversational gates (principle #2):
 
 - **Structural validation** — deterministic checks against typed artefact schemas (JSON Schema). Fast, mechanical. Produces structured findings.
-- **Cross-AI critique** — multi-provider critique. Codex writes the critique document at `.woof/epics/E<N>/critique/<artefact>.md`. Claude reads and synthesises.
+- **Cross-AI critique** — multi-provider critique. The reviewer writes the critique document at `.woof/epics/E<N>/critique/<artefact>.md`. The primary model records the disposition for non-blocking findings; blocker findings open a human gate.
 
-Neither auto-rejects. Neither runs in a loop. Both produce findings the agent surfaces with its own position for the human to engage with.
+Neither auto-rejects. Neither runs in a loop. Both produce findings and positions for the human to engage with when a gate opens.
 
 ### Storage
 
 All runtime state under `.woof/epics/E<N>/`. Typed artefacts carry JSON Schemas (`plan.schema.json`, `gate.schema.json`, `critique.schema.json`, `jsonl-events.schema.json`). Narrative artefacts (`CONCEPT.md`, `EPIC.md`, `PLAN.md`) have front-matter schemas where structured data lives.
 
-JSONL event logs (`epic.jsonl`, `dispatch.jsonl`) enable crash-resume and post-hoc debugging. Complement Claude Code's session transcript; do not duplicate it.
+JSONL event logs (`epic.jsonl`, `dispatch.jsonl`) enable crash-resume and post-hoc debugging. They reference model session transcripts or audit files; they do not duplicate raw transcripts.
 
 **Canonical authority.** Filesystem state is canonical; `epic.jsonl` is audit. On crash-resume, if the two disagree (e.g., last jsonl event says `stage_3_plan_generated` but no `plan.json` exists), the filesystem wins and the jsonl is treated as incomplete.
 
 **Mandatory gate write.** After Stage 3 plan generation completes, `gate.md` MUST be written before `/wf` returns control to the user. There is no valid filesystem state where `plan.json` + `critique/plan.md` exist without either an open `gate.md` or a `gate_resolved` event in `epic.jsonl`. Reconstitution detects the illegal state and synthesises the plan_gate that should have been opened.
 
-**Audit-trail reconstruction.** Every dispatched subprocess records its harness session ID in `dispatch.jsonl` (`{event: "subprocess_spawned", role, story_id, harness, cc_session_id|codex_audit_path, at}`). CC subprocess transcripts live in `~/.claude/projects/<slug>/<uuid>.jsonl` natively; woof references rather than copies them. Codex output is tee'd to `.woof/epics/E<N>/audit/codex-<stage>-<scope>-<ts>.{prompt,output,meta}` because Codex CLI does not persist sessions in a standard location. `just wf-audit-bundle <E<N>>` (recipe) bundles referenced CC transcripts into `.woof/epics/E<N>/audit/claude-code/` for archival or hand-off; default mode is reference-only.
+**Audit-trail reconstruction.** Every dispatched subprocess records its role route and adapter session ID in `dispatch.jsonl` (`{event: "subprocess_spawned", role, story_id, adapter, model, effort, cc_session_id|codex_audit_path, at}`). Claude subprocess transcripts live in Claude Code's standard per-project location under `~/.claude/projects/<project-slug>/`; woof references portable home-relative paths rather than host-specific absolute paths. Codex output is tee'd to `.woof/epics/E<N>/audit/codex-<stage>-<scope>-<ts>.{prompt,output,meta}` because Codex CLI does not persist sessions in a standard location. `just wf-audit-bundle <E<N>>` (recipe) bundles referenced Claude transcripts into `.woof/epics/E<N>/audit/claude-code/` for archival or hand-off; default mode is reference-only.
 
 **Audit redaction and retention.** Commit-bound files under `.woof/epics/E<N>/audit/` can leak secrets, internal API output, or private issue text. Before the graph-owned commit transaction computes its manifest:
 
@@ -145,7 +148,7 @@ JSONL event logs (`epic.jsonl`, `dispatch.jsonl`) enable crash-resume and post-h
 
 **Token usage logging.** Every subprocess return event (`subprocess_returned`) includes `tokens_in`, `tokens_out`, `cache_read_tokens`, `cache_write_tokens`, `duration_ms`, and `artefacts_loaded[]` (paths read into the prompt). In-session work logs `token_usage` events at stage transitions.
 
-**Dispatch adapter layer.** Subprocesses are spawned via `woof dispatch <claude|codex> --role <role-name>`, not via direct calls to `cld`/`cod`. The adapter reads `.woof/agents.toml`, constructs the wrapper invocation, and emits dispatch events. This boundary stops wrapper interface drift from breaking Woof call sites.
+**Dispatch adapter layer.** Subprocesses are spawned via graph-owned role dispatch, not via Ryan-local wrappers or shell aliases. ADR-002 migrates the internal primitive to `woof dispatch --role <role-name>` so the role route, not a provider target, selects the public CLI adapter. The adapter reads `.woof/agents.toml`, constructs the raw `claude` or `codex` invocation, generates any required MCP JSON, and emits dispatch events. This boundary stops CLI interface drift from breaking graph call sites.
 
 ### GitHub integration
 
@@ -334,7 +337,7 @@ comment_prefix = "//"
 context_lines = 3
 ```
 
-Default config ships with woof for python + typescript; consumers extend for rust, go, etc. Codex critique provides the semantic safety net — verifies each marker's test actually asserts the named outcome (catches "marker present but test asserts something else"); flags as `severity: minor` in critique.
+Default config ships with woof for python + typescript; consumers extend for rust, go, etc. Reviewer critique provides the semantic safety net — verifies each marker's test actually asserts the named outcome (catches "marker present but test asserts something else"); flags as `severity: minor` in critique.
 
 **Cross-epic traceability.** IDs are scoped per-epic (`O1` in E17 ≠ `O1` in E22). No cross-epic ID linkage. If E22 builds on E17's surface unchanged, E22 doesn't declare a CD for it (stable contract; consumed without modification). If E22 modifies the surface, that's a new CD in E22 (`E22.CD1`) — same surface string, distinct epic-scoped ID. Cross-epic queries like "all epics touching `POST /api/v1/comments/{id}`" run against the surface string, not via ID graph.
 
@@ -369,21 +372,21 @@ stories:
 **Prompt rules:**
 
 1. **Outcome-driven granularity.** Each story realises 1–3 related outcomes. Group by shared concern or dependency. Reject zero-outcome stories or all-outcome stories.
-2. **Path discipline.** Each story declares the glob patterns it is allowed to touch via `paths[]`. Stage 5 Check 3 fails if the diff includes files outside the declared globs. Stories that must share a file declare overlapping globs explicitly; the planner should flag overlap so the operator decides whether to split, merge, or accept the shared edit.
+2. **Path discipline.** Each story declares the glob patterns it is allowed to touch via `paths[]`. Stage 5 Check 3 fails if the diff includes files outside the declared globs. Stories that must share a file declare overlapping globs explicitly; the primary model should flag overlap so the operator decides whether to split, merge, or accept the shared edit.
 3. **Explicit dependencies.** Inferred deps (S2 modifies a file S1 creates) are declared in `depends_on[]`. Implicit deps are a planning bug.
 4. **Contract ownership.** Every `contract_decision` in `EPIC.md` appears in exactly one story's `implements_contract_decisions[]` (one-to-one ownership of the surface creator). Other stories that consume the CD list it under `uses_contract_decisions[]`. Stage 5 helper validates this invariant.
 5. **No implementation pseudocode.** Stories declare *what* they produce (outcomes covered, surfaces created), not *how*. Implementation is Stage 5's job; planning predicts intent.
 6. **Test surface estimation, not enumeration.** Each story declares `tests.count` (estimate) and `tests.types` (families). Specific test names emerge during execution.
 7. **Right-sized stories.** Heuristic: each story fits ~30–40k tokens of agent work. Roughly 5–10 files touched, 3–10 tests, 200–800 LOC. Above the upper bound → split. Well below → consider merging.
-8. **Self-validation before Codex dispatch.** Skill validates `plan.json` against `plan.schema.json` + cross-refs before dispatching Codex. Cap internal iteration at 2 attempts; if still invalid, write `gate.md`. (Intra-skill structured work, not agent-to-agent — distinguish from the deadlock pattern.)
-9. **Codex critique focus.** Dispatch prompt asks Codex specifically to evaluate: outcome coverage, decomposition quality (over/under), scope hygiene, dependency correctness, contract-decision implementation completeness, missed Class-2 (architectural) concerns. Severity scale: `info` / `minor` / `blocker`.
+8. **Self-validation before reviewer dispatch.** The primary model validates `plan.json` against `plan.schema.json` + cross-refs before dispatching the reviewer. Cap internal iteration at 2 attempts; if still invalid, write `gate.md`. This is intra-node structured repair, not agent-to-agent negotiation.
+9. **Reviewer critique focus.** Dispatch prompt asks the reviewer specifically to evaluate: outcome coverage, decomposition quality (over/under), scope hygiene, dependency correctness, contract-decision implementation completeness, missed Class-2 (architectural) concerns. Severity scale: `info` / `minor` / `blocker`.
 10. **Plan gate is mandatory.** Stage 4 always opens — no auto-approve at plan stage (see Gate asymmetry above).
 
 **The prompt forbids:**
 - Pre-writing implementation code or pseudocode
 - Pre-naming specific variables / classes / signatures
 - Predicting every test in advance
-- Auto-revising after Codex blocker (one-shot critique)
+- Auto-revising after reviewer blocker (one-shot critique; blocker means human gate)
 - "Catch-all" stories that bundle unrelated outcomes
 
 ### Stage 5 deterministic gate checks
@@ -399,7 +402,7 @@ Nine checks, derived from a failure-class taxonomy. Checks 1–8 run after the s
 | C | Path discipline broken (creep, wrong files) | Diff touches files outside `story.paths[]` globs |
 | D | Epic contract violated (E146-class) | Some `contract_decisions[].(openapi|pydantic|json_schema)_ref` artefact validates as broken or implementation drifts from the referenced contract |
 | E | Plan integrity broken | `plan.json` invalid against schema or cross-refs |
-| F | Cross-AI critique flags blocker | `critique/story-S<k>.md` front-matter `severity == blocker` |
+| F | Reviewer critique flags blocker | `critique/story-S<k>.md` front-matter `severity == blocker` |
 | G | Story incomplete / not commit-ready | Working tree dirty, no staged changes, or status not `done` |
 | H | Docs drift (per project convention) | Touched code path has no corresponding doc-path touch |
 | I | Accumulated minor critique findings | Sum of `severity: minor` findings across recent stories warrants holistic review |
@@ -421,8 +424,8 @@ Nine checks, derived from a failure-class taxonomy. Checks 1–8 run after the s
 **Implemented Stage 5 order of operations (per story):**
 
 1. The Python graph reads `plan.json` and selects the next dependency-ready `pending` story.
-2. `executor_dispatch` marks the story `in_progress` and dispatches the story-executor producer prompt. The producer writes `executor_result.json` only.
-3. `critique_dispatch` dispatches Codex critique and expects `critique/story-S<k>.md`.
+2. `executor_dispatch` marks the story `in_progress` and dispatches the `primary` producer prompt. The producer writes `executor_result.json` only.
+3. `critique_dispatch` dispatches the `reviewer` and expects `critique/story-S<k>.md`.
 4. `verification` runs `woof check stage-5 --epic <N> --story <S<k>> --format json` and writes `check-result.json`.
 5. `gate_open` writes `gate.md` if the executor outcome, subprocess result, verifier result, or an incomplete Stage-5 handoff state requires human review.
 6. `commit` computes the transaction manifest, stages the exact expected file set, verifies the index, appends graph events, commits, and removes transient `executor_result.json` / `check-result.json`.
@@ -444,7 +447,7 @@ If a process dies during the commit transition after the plan has been marked `d
 
 **Story selection.** The graph reads `plan.json`, selects the first dependency-ready `pending` story, and marks it `in_progress` before executor dispatch. Selection is deterministic: dependency readiness first, then story ID order.
 
-**Dispatch.** The graph invokes producer nodes through `woof dispatch <claude|codex> --role <role-name>`. Producers receive structured input, write declared output artefacts, and do not choose successor nodes.
+**Dispatch.** The graph invokes producer and reviewer nodes through `woof dispatch --role <role-name>`. Producers receive structured input, write declared output artefacts, and do not choose successor nodes. The deprecated `woof dispatch <claude|codex> --role <role-name>` shape is retained only as a compatibility check and must match the adapter resolved from `.woof/agents.toml`.
 
 **Timeouts, crashes, and incomplete state.** Role timeouts are configured in `.woof/agents.toml`. Timeout, non-zero subprocess exit, missing declared output, or malformed output opens a gate with a structured trigger and evidence. Missing or malformed graph-owned handoff artefacts use `triggered_by: ["incomplete_stage_state"]`. There is no automatic retry.
 
@@ -468,7 +471,7 @@ Re-running detects the fenced block and skips. User-owned hook content above and
 
 ### Codebase mapping
 
-Cartography that serves outside-Claude consumers: deterministic gate checks, Codex critique, and fresh-session context. Inside-Claude semantic queries are handled by Claude Code's native LSP — no on-disk caching of LSP results.
+Cartography that serves graph-owned consumers: deterministic gate checks, reviewer critique, and fresh-session context. In-session semantic queries can use Claude Code's native LSP when the active operator session is Claude-based; no on-disk caching of LSP results.
 
 **Stack:**
 
@@ -491,13 +494,13 @@ Cartography that serves outside-Claude consumers: deterministic gate checks, Cod
 
 - **Tree-sitter** — on-demand structural queries via `tree-sitter parse` for cross-file syntactic walks (route wiring, scope precision, decorator chains). Multi-language uniform query interface.
 - **Claude Code native LSP** (v2.0.74+) — in-session semantic depth (types, refs, hover) via CC's plugin model; transparent to skills, automatic during code reading/editing.
-- **Codex critique** — covers the ~5% of verifications that require semantic judgement Tree-sitter can't deterministically express (cross-AI second opinion; not a deterministic gate check).
+- **Reviewer critique** — covers the verifications that require semantic judgement Tree-sitter can't deterministically express (cross-AI second opinion; not a deterministic gate check).
 
 **Refresh:** post-commit git hook regenerates `tags` + `tree.txt` + `freshness.json`. ~1s for typical repo. `summary.md` is human-only; tool never modifies. LSP results stay in-process; never cached to disk.
 
 **Why Tree-sitter and not AST:** Tree-sitter gives multi-language uniform queries with one CLI; AST per-language tooling adds 4× operational footprint without coverage gain for our verifications (syntactic checks). AST would earn its place if RAG-style code embedding chunking is added — defer until then.
 
-**Why on-disk static + runtime semantic:** outside-Claude consumers (gate checks, Codex) need file-readable artefacts; Claude's in-session reasoning has LSP transparently. Caching semantic info to disk would silently degrade as code changes — LSP servers cache internally; we don't reproduce that.
+**Why on-disk static + runtime semantic:** graph-owned consumers such as gate checks and reviewer prompts need file-readable artefacts; active model sessions may also have native LSP access. Caching semantic info to disk would silently degrade as code changes — LSP servers cache internally; we don't reproduce that.
 
 ### Implementation
 
@@ -521,7 +524,7 @@ JSON Schema is the canonical contract format. Runtime implementations may use Py
 
 ### Infrastructure prerequisites (hard-gated)
 
-§1 #4 made operational. Preflight runs at every Woof invocation; missing prerequisite → exit non-zero with concrete install commands inline. No partial-mode fallback.
+§1 #4 made operational. `woof preflight` is the startup infrastructure check. It verifies the Woof installation, consumer `.woof/` files, role routes, public CLI availability, generated MCP config, GitHub access, quality-gate commands, language tooling, and project-specific host/server prerequisites. Missing prerequisite → exit non-zero with concrete install commands inline. No partial-mode fallback.
 
 **Two-tier configuration.**
 
@@ -534,10 +537,9 @@ just = "1.0+"
 git = "2.30+"
 gh = "2.0+"
 
-[wrappers]                                # required dispatch wrappers
-cld = "any"                               # Claude wrapper with MCP control
-cod = "any"                               # Codex wrapper with rules+memory injection
-agent-sync = "any"                        # CC → Codex/Gemini config sync (used by cod)
+[commands]                                # public dispatch CLIs
+claude = "any"                            # Claude Code CLI
+codex = "any"                             # Codex CLI
 
 [github]
 repo = "<org>/<repo>"                     # required; verified via gh api at every /wf invocation
@@ -604,6 +606,7 @@ For each declared prereq, in order:
 2. Version meets floor (parse `<binary> --version`, semver compare)
 3. Per Tree-sitter grammar: parse `verify_snippet` with `verify_scope`; success = grammar working
 4. Per LSP plugin: `claude plugin list | grep <plugin>`
+5. Per role route: configured harness exists, configured model is explicit or inherited from a verified settings file, configured effort is explicit, and the harness supports the required per-invocation effort flag or a verified settings fallback.
 
 ANY failure → exit non-zero with structured output (install commands + gotchas inline). The preflight output IS the per-language documentation — no separate setup docs maintained.
 
@@ -639,7 +642,7 @@ Re-run `woof preflight` after installing.
 **Preflight caching.** Two-tier:
 
 1. **Floor checks** (binaries exist, version meets floor, LSP plugin installed, Tree-sitter grammars parse) cached at `.woof/.preflight-floor` keyed by SHA256 of `.woof/prerequisites.toml` + language-registry TOML contents. Skipped if hash unchanged and `verified-at < 24h`; `woof preflight --force` refreshes the cache.
-2. **Runtime checks** (gh auth + reachability via `gh api /rate_limit`, Codex auth) cached at `.woof/.preflight-runtime` for 5 min, with a rate-remaining safety margin (`> 100` reqs/hr). Stale → re-verify; fail loud on auth expiry with exact re-auth command. Subprocesses inherit parent's runtime cache via stat()-based checks; no fresh network calls per `claude -p`.
+2. **Runtime checks** (gh auth + reachability via `gh api /rate_limit`, Codex auth, Claude auth, configured model/effort route resolution) cached at `.woof/.preflight-runtime` for 5 min, with a rate-remaining safety margin (`> 100` reqs/hr). Stale → re-verify; fail loud on auth expiry with exact re-auth command. Subprocesses inherit parent's runtime cache via stat()-based checks; no fresh network calls per subprocess.
 
 Both cache files are gitignored.
 
@@ -677,77 +680,60 @@ Required `.gitignore` entries (consumer adds at first setup):
 
 ### Agent role configuration
 
-Roles in the woof pipeline are configurable per-project via `.woof/agents.toml`. Each role declares the dispatch wrapper, model, MCP set, and pass-through flags. Woof constructs the full invocation dynamically — no hard-coded model IDs, no shell aliases.
+Roles in the Woof pipeline are configurable per-project via `.woof/agents.toml`. ADR-002 makes these roles semantic rather than provider-owned. Each dispatchable role declares the public CLI adapter, model, effort, MCP set, and pass-through flags. Woof constructs the full invocation dynamically — no hard-coded model IDs and no private shell aliases in graph code.
 
-| Role | Invoked for | Default mechanism | Configurable |
+| Role | Invoked for | Preferred route | Configurable |
 |---|---|---|---|
-| Orchestrator | `/wf` driving conversation | User's interactive CC session (no subprocess) | No — runs where user is |
-| Planner | Generating `plan.json` at Stage 3 | In-session orchestrator (no subprocess) | Yes — can dispatch via `cld` to subprocess |
-| Story executor | Stage 5 per-story subprocess | `cld -p "<prompt>"` (default model, no MCPs) | Yes |
-| Critiquer | Codex critique at Stage 3 (plan) and Stage 5 (story) | `cod "<prompt>"` (default model, no MCPs, with rules+memory preamble) | Yes |
-| Gate-resolver | Synthesising critique + surfacing position in gate conversation | In-session orchestrator | No — must share human's session |
+| Orchestrator | Graph-owned workflow execution | Python graph behind `woof wf` | No |
+| Primary | Plans, story execution, non-blocking reviewer dispositions | `codex`, `gpt-5.5`, `xhigh` reasoning | Yes |
+| Reviewer | Plan and story critique, blocker detection, second opinion | `claude`, `claude-opus-4-7`, `max` effort | Yes |
+| Gate-resolver | Surfacing open gates and recording human decisions | In-session operator | No |
 
-**Config schema (`.woof/agents.toml`):**
+**Current config schema (`.woof/agents.toml`):**
 
 ```toml
-# harness: cld | cod
-# model: harness-specific ID, passed through to underlying CLI
-# think: bool, cld only — toggles extended thinking via -t
-# mcp: array of MCP server names — empty = no MCPs (token-saving default)
-# flags: arbitrary additional pass-through args (after the wrapper's own options)
+# adapter: claude | codex
+# model: adapter-specific ID, passed through to underlying CLI or inherited
+# mcp: array of MCP server names; empty = no MCPs. Named MCP resolution lands
+#      in ROLE-003; ROLE-002 generates strict empty MCP JSON for Claude routes.
+# flags: arbitrary additional pass-through args after adapter-owned options
 
-[roles.planner]
-harness = "cld"
+[roles.primary]
+adapter = "codex"
+model = "gpt-5.5"
+mcp = []
+
+[roles.reviewer]
+adapter = "claude"
 model = "claude-opus-4-7"
-think = true
 mcp = []
 
-[roles.story-executor]
-harness = "cld"
-model = "claude-sonnet-4-6"
-think = false
-mcp = []
-
-[roles.critiquer]
-harness = "cod"
-model = "gpt-5.4-codex"
-mcp = []
+[roles.gate-resolver]
+adapter = "in-session"
 ```
 
-**MVP defaults if `agents.toml` absent:**
+**Legacy compatibility after ROLE-002:**
 
-- planner: in-session (no subprocess); inherits user's session model
-- story-executor: `cld -p "<prompt>"` — default model, no MCPs, no thinking
-- critiquer: `cod "<prompt>"` — default model, no MCPs (rules+memory preamble injected by `cod`)
+- `planner` and `story-executor` are legacy aliases for `primary`.
+- `critiquer` is a legacy alias for `reviewer`.
+- Legacy `harness = "cld"` maps to the public `claude` adapter and `harness = "cod"` maps to the public `codex` adapter. The deprecated positional dispatch target is accepted only when it matches the resolved adapter.
 
-**Dispatch construction.** Woof's role resolver reads `agents.toml` and emits invocations:
+**Effort settings.** Effort is part of the route, not hidden prompt prose. ROLE-003 adds explicit `effort` to the schema and maps role effort to the public CLI's per-invocation mechanism. For Claude Code, that is `claude --effort <level>`; the reviewer route uses `--effort max`. For Codex, the route records and applies the configured reasoning effort through the supported CLI/config path.
 
-```
-# planner with above config
-cld -t -- --model claude-opus-4-7 -p "<prompt>"
+**Adapter guarantees relied on:**
 
-# story-executor
-cld -p "<prompt>" -- --model claude-sonnet-4-6
+- Woof passes `--strict-mcp-config --mcp-config '<json>'` to Claude and generates the JSON itself. Empty MCP means `{"mcpServers":{}}`.
+- Woof resolves selected MCP servers from project-owned `.woof/` config or standard Claude settings paths, using portable home-relative paths only.
+- Woof injects required project context into Codex prompts itself; it does not rely on Ryan's `cod` wrapper or `agent-sync`.
+- Woof runs public CLIs in trusted local automation mode; preflight verifies CLI availability and route settings before graph execution.
 
-# critiquer
-cod -- --model gpt-5.4-codex "<prompt>"
-```
-
-The `--` separator hands subsequent flags to the underlying CLI; the wrapper consumes only its own options.
-
-**Wrapper guarantees relied on:**
-
-- `cld` defaults to **zero MCP servers** when no `-m` flag is passed (token discipline by default)
-- `cod` injects `<project-root>/.claude/rules/*.md` + the project's auto-memory (first 200 lines of `MEMORY.md`) into every Codex prompt — Codex critiques receive project context for free
-- `cod` runs `agent-sync --quiet` first, mirroring CC skills/rules/commands into `~/.codex/` so woof's playbooks are visible to Codex on every invocation
-- Both wrappers pass `--dangerously-skip-permissions` (CC) / `-s danger-full-access -a never` (Codex) automatically — fits trusted-automation context for Stage 5
-
-**Hard prereq.** `cld`, `cod`, `agent-sync` must be in `PATH`. Preflight verifies them. Absent → fail loud; there is no fallback to raw `claude`/`codex` invocations.
+**Hard prereq.** `claude` and `codex` must be in `PATH`. Preflight verifies them. Absent → fail loud; there is no fallback to Ryan-local wrappers.
 
 **Implementation constraints:**
 
 - Dispatch must record a stable harness session reference or an audit-file path for every subprocess.
-- Role-specific model and effort settings must be declared through `.woof/agents.toml`; command-specific flag details stay inside the dispatch adapter.
+- Role-specific model and effort settings must be declared through `.woof/agents.toml`. Command-specific flag details stay inside the dispatch adapter.
+- Reviewer `info` and `minor` findings require a primary disposition. Reviewer `blocker` findings open a human gate; no automatic debate loop is allowed.
 
 ### User surface
 
@@ -762,7 +748,7 @@ The CLI is the operator surface. Prompt wrappers may call these commands, but th
 | `woof hooks install` | Install the Woof-managed post-commit hook block without overwriting user-managed hook content. |
 | `woof validate ...` | Validate JSON, TOML, JSONL, and front-matter artefacts against shipped schemas. |
 | `woof check stage-5 --epic <N> --story <S<k>>` | Run Stage-5 checks and emit structured results. |
-| `woof dispatch <claude|codex> --role <role-name>` | Invoke configured producer subprocesses and record dispatch events. |
+| `woof dispatch --role <role-name>` | Internal graph primitive for invoking configured producer/reviewer subprocesses and recording dispatch events. |
 | `woof render-epic` | Render `EPIC.md` structured front-matter to a managed GitHub issue body. |
 | `woof gate write` | Write a structured gate artefact. |
 

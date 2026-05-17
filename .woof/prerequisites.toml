@@ -5,10 +5,9 @@ just = "any"
 git = "any"
 gh = "any"
 
-[wrappers]
-cld = "any"
-cod = "any"
-agent-sync = "any"
+[commands]
+claude = "any"
+codex = "any"
 
 [validators]
 ajv = "any"

@@ -1,19 +1,18 @@
 # Woof self-hosting agent role configuration.
 
 [roles.orchestrator]
-harness = "in-session"
+adapter = "in-session"
 
-[roles.planner]
-harness = "cld"
+[roles.primary]
+adapter = "codex"
+model = "gpt-5.5"
 
-[roles.story-executor]
-harness = "cld"
-
-[roles.critiquer]
-harness = "cod"
+[roles.reviewer]
+adapter = "claude"
+model = "claude-opus-4-7"
 
 [roles.gate-resolver]
-harness = "in-session"
+adapter = "in-session"
 
 [timeouts]
 default_minutes = 30

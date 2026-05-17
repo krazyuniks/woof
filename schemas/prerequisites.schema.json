@@ -2,10 +2,10 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://woof.dev/schemas/prerequisites.schema.json",
   "title": "woof project prerequisites",
-  "description": "Project-side declaration at .woof/prerequisites.toml. Tells woof what infrastructure, languages, and indexing tools the project depends on. The tool-side language registry (woof/languages/<lang>.toml) provides the install instructions per language. just wf-preflight verifies everything declared here. Two-tier caching: floor checks (binaries/versions/grammars/LSP plugins) cached 24h, hashed on this file plus referenced language registry tomls.",
+  "description": "Project-side declaration at .woof/prerequisites.toml. Tells woof what infrastructure, public model CLIs, languages, and indexing tools the project depends on. The tool-side language registry (woof/languages/<lang>.toml) provides the install instructions per language. woof preflight verifies everything declared here. Two-tier caching: floor checks (binaries/versions/grammars/LSP plugins) cached 24h, hashed on this file plus referenced language registry tomls.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["infra", "wrappers", "validators", "github"],
+  "required": ["infra", "commands", "validators", "github"],
   "properties": {
     "infra": {
       "type": "object",
@@ -14,16 +14,15 @@
       },
       "description": "Required infrastructure binaries. Keys are binary names (docker, just, git, gh, ...); values are version specifications. Floor checks verify presence and minimum version."
     },
-    "wrappers": {
+    "commands": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["cld", "cod", "agent-sync"],
+      "required": ["claude", "codex"],
       "properties": {
-        "cld": { "$ref": "#/$defs/version_spec" },
-        "cod": { "$ref": "#/$defs/version_spec" },
-        "agent-sync": { "$ref": "#/$defs/version_spec" }
+        "claude": { "$ref": "#/$defs/version_spec" },
+        "codex": { "$ref": "#/$defs/version_spec" }
       },
-      "description": "Required dispatch wrappers. All three are mandatory: cld for Claude subprocesses, cod for Codex subprocesses (which depends on agent-sync's mirroring of CC config into ~/.codex/)."
+      "description": "Required public model CLIs used by woof dispatch. Woof must construct raw claude and codex invocations itself and must not require Ryan-local cld/cod wrappers or agent-sync."
     },
     "validators": {
       "type": "object",

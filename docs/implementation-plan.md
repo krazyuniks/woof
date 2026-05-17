@@ -1,12 +1,14 @@
 # Woof Implementation Plan
 
 > **Purpose:** Single authoritative implementation plan, sequencing guide, and progress ledger for Woof.
-> **Authority:** This file supersedes `docs/backlog.md` for implementation work. Architecture remains governed by `docs/architecture.md`; graph topology remains governed by `docs/adr/001-orchestration-topology.md`; code is the source of truth for implemented behaviour.
+> **Authority:** This file supersedes `docs/backlog.md` for implementation work. Architecture remains governed by `docs/architecture.md`; graph topology remains governed by `docs/adr/001-orchestration-topology.md`; role routing remains governed by `docs/adr/002-graph-led-role-routing.md`; code is the source of truth for implemented behaviour.
 > **Operating rule:** Do not keep a second live backlog. New work must be added here as a scoped work item before implementation starts.
 
 ## Current Baseline
 
 Woof has an implemented ADR-001 Stage-5 execution path. `woof wf --epic <N>` runs the deterministic Python graph for story selection, executor dispatch, critique dispatch, verification, gate opening, structured gate resolution, and commit transaction verification.
+
+ADR-002 is now accepted and must be implemented before Stage 1-4 graph migration continues. Woof is graph-led, GPT-5.5 is the preferred primary producer route, Claude Opus 4.7 at `max` effort is the preferred reviewer route, and reviewer blockers open human gates rather than model-to-model debate loops. ROLE-002 has migrated Stage-5 dispatch to semantic `primary` / `reviewer` roles and public raw `claude` / `codex` adapters owned by Woof. The remaining Workstream R items add effort-aware route configuration, expanded startup preflight, reviewer dispositions, and prompt/docs cleanup.
 
 Implemented surfaces:
 
@@ -109,6 +111,7 @@ Workstream rules:
 | C: Policy-heavy checks | `CHK-004`, `CHK-008`, `CHK-009` | Parallel only if file ownership is explicit; these have more design surface. | Contract-ref helper boundaries, docs-drift config semantics, review-valve state semantics. | Start after Workstream B exposes enough runner patterns. |
 | D: Preflight and local tooling | `ENV-001`, `ENV-002`, `ENV-003`, `ENV-004` | `ENV-001` then `ENV-002`; `ENV-003` and `ENV-004` can run independently. | CLI command wiring, cache file policy, hook installation semantics. | Reconcile `ENV-003` with the existing bootstrap/hook foundation before coding. |
 | E: GitHub sync | `GH-001`, `GH-002`, `GH-003`, `GH-004`, `GH-005` | Split into state initialisation (`GH-001`, `GH-002`) and rendering/sync/conflict (`GH-003`..`GH-005`). | GitHub adapter boundary, `.last-sync` format, gate opening on conflict. | No offline fallback; all auth/network failures fail loud. |
+| R: Role routing and startup preflight | `ROLE-001`, `ROLE-002`, `ROLE-003`, `ROLE-004`, `ROLE-005`, `ROLE-006` | Sequential through `ROLE-004`; prompt/docs cleanup can follow after code stabilises. | Dispatch adapter, agents schema, preflight, Stage-5 graph call sites, prompt contracts, and this implementation plan. | Must complete before `STG-002` so Stage 1-4 nodes do not encode obsolete Claude/Codex assumptions. |
 | F: Stage 1-4 graph migration | `STG-001`, `STG-002`, `STG-003`, `STG-004`, `STG-005` | `STG-001` must lead; after schemas land, producer-node groups can split. | Stage graph transition ownership and producer prompt/orchestration boundary. | Keep prompts pure producers; orchestration stays in Python. |
 | G: Consumer and evidence polish | `DOG-001`, `GTS-001`, `GTS-002`, `DOC-001`, `DOC-002`, `DOC-003` | Parallel docs/examples work after relevant behaviour exists. | README/architecture cross-links and curated example policy. | Avoid documenting speculative behaviour ahead of code. |
 
@@ -126,6 +129,19 @@ Checks should land one runner at a time. Each runner must replace placeholder or
 | CHK-007 | Completed | Implement Check 7: `check_7_commit_transaction`. | Asserts commit readiness: staged diff exists unless gated as empty, required durable `.woof` files are staged, no unstaged or foreign paths remain, and the runner is wired into the Stage-5 registry. | Focused runner tests passed: 5 tests. Workstream B integration validation passed: Ruff lint, Ruff format check, and 139 tests. | `feat(checks): verify commit transactions` |
 | CHK-008 | Completed | Implement Check 8: `check_8_docs_drift`. | Honours optional `.woof/docs-paths.toml`; mapped code-path changes require mapped docs-path changes in the same transaction. | Targeted Check 8/Stage-5 command tests passed: 11 tests. `just check` passed: Ruff lint, Ruff format check, and 151 tests. | `feat(checks): detect mapped docs drift` |
 | CHK-009 | Completed | Implement Check 9: `check_9_review_valve`. | Opens periodic or end-of-epic review gates summarising accumulated minor critique findings. | Targeted Check 9/Stage-5 command tests passed: 10 tests. `just check` passed: Ruff lint, Ruff format check, and 156 tests. | `feat(checks): open review valve gates` |
+
+### Phase 2.5: Role Routing, Model Policy, And Startup Preflight
+
+This phase implements ADR-002 before Stage 1-4 graph migration continues.
+
+| ID | Status | Work item | Observable outcomes | Validation | Commit |
+|---|---|---|---|---|---|
+| ROLE-001 | Completed | Record the graph-led primary/reviewer role-routing decision. | ADR-002 exists; README and architecture point to GPT-5.5 as the preferred primary producer route, Claude Opus 4.7 at `max` effort as the preferred reviewer route, and `woof preflight` as the startup infrastructure check. | `git diff --check` passed. `just check` passed: Ruff lint, Ruff format check, and 199 tests. | `docs(architecture): define graph-led role routing` |
+| ROLE-002 | Completed | Replace personal wrappers with public dispatch adapters and semantic role routes. | Graph call sites invoke `woof dispatch --role <role>`; dispatch resolves adapter from `.woof/agents.toml`; Woof constructs raw `claude` and `codex` commands itself; no runtime path calls `cld`, `cod`, `agent-sync`, or Ryan-local dotfiles; legacy `planner`, `story-executor`, and `critiquer` names remain supported through adapter migration. | Focused dispatch, preflight, graph, validate, and Stage-5 related tests passed. `just check` passed: Ruff lint, Ruff format check, and 203 tests. | `refactor(dispatch): route through public cli adapters` |
+| ROLE-003 | Ready | Add effort-aware role configuration and MCP JSON construction. | `agents.schema.json` supports public adapters and role `effort`; Claude routes map effort to `claude --effort <level>`; reviewer dry-run shows `--effort max`; Codex routes set or verify reasoning effort through the supported CLI/config path; Woof generates `--strict-mcp-config --mcp-config` JSON for Claude roles; dispatch events record resolved command, model, effort, and MCP set. | Schema validation tests, dispatch dry-run tests, MCP JSON tests, and `just check`. | `feat(config): add public role routes` |
+| ROLE-004 | Ready | Expand preflight into the startup infrastructure check. | `woof preflight` verifies Woof checkout/install, consumer `.woof/` schemas, public CLI availability (`claude`, `codex`), route model/effort settings, generated MCP config, GitHub access, quality-gate command resolution, language tooling, and project-specific host/server prerequisites. | Focused preflight tests, self-preflight, and `just check`. | `feat(preflight): verify startup infrastructure` |
+| ROLE-005 | Ready | Add non-blocking reviewer disposition handling. | Reviewer `info` and `minor` findings require a primary disposition record; accepted feedback may update artefacts; reviewer `blocker` opens a human gate with primary and reviewer positions; no model debate loop exists. | Critique/check/gate fixture tests and `just check`. | `feat(graph): record reviewer dispositions` |
+| ROLE-006 | Ready | Update producer/reviewer prompts and docs after routing lands. | Prompt files, examples, architecture, and README use primary/reviewer terminology; provider names appear only in route examples and compatibility notes. | Prompt static assertions or docs review plus `just check`. | `docs(workflow): align prompts with role routing` |
 
 ### Phase 3: Stage 1-4 Graph Migration
 
@@ -157,7 +173,7 @@ GitHub sync must fail loud on auth, network, repo access, and rate-limit failure
 |---|---|---|---|---|---|
 | CI-001 | Completed | Pin CI action versions to resolvable tags and require CI monitoring in the session finish loop. | GitHub CI can resolve all configured actions; this operating loop requires monitoring the pushed commit until CI passes or a blocker is recorded. | `just check` passed: Ruff lint, Ruff format check, and 98 tests. First GitHub run reached tests and exposed CI-only test isolation failure handled by CI-002. | `ci(workflow): pin uv action for ci` |
 | CI-002 | Completed | Make missing-`ajv` validation test independent of host install layout. | The test constructs a controlled `PATH` containing `uv` and excluding `ajv`, so it fails loud on both developer machines and GitHub runners. | Targeted test passed; `just check` passed: Ruff lint, Ruff format check, and 98 tests. | `test(validate): isolate missing ajv path` |
-| ENV-001 | Completed | Implement preflight as a first-class CLI path. | `woof preflight` validates wrappers, GitHub access, language tools, optional LSP plugins, Tree-sitter parsing, quality-gate command resolution, and consumer config schemas through a single CLI entry point with text and JSON output. | Targeted preflight tests passed: 4 tests. Language registry schema validation passed. Self-preflight passed: 15 checks. `just check` passed: Ruff lint, Ruff format check, and 160 tests. | `feat(cli): add preflight command`; `test(cli): make preflight stubs portable` |
+| ENV-001 | Completed | Implement preflight as a first-class CLI path. | `woof preflight` validates declared public commands, GitHub access, language tools, optional LSP plugins, Tree-sitter parsing, quality-gate command resolution, and consumer config schemas through a single CLI entry point with text and JSON output. | Targeted preflight tests passed: 4 tests. Language registry schema validation passed. Self-preflight passed: 15 checks. `just check` passed: Ruff lint, Ruff format check, and 160 tests. | `feat(cli): add preflight command`; `test(cli): make preflight stubs portable` |
 | ENV-002 | Completed | Cache preflight by prerequisite hash. | Stable prerequisites reuse cached results while network/auth checks remain short-lived runtime checks. | Focused preflight cache tests passed: 6 tests. `just check` passed: Ruff lint, Ruff format check, and 162 tests. | `feat(preflight): cache prerequisite checks` |
 | ENV-003 | Completed | Install hooks idempotently through project tooling. | `woof hooks install` appends or refreshes the managed post-commit cartography block while preserving user-managed hook content; `just install-hooks` runs the Woof installer after `prek`; reruns do not duplicate the block. | Focused hook fixture tests passed: 5 tests. `just install-hooks` passed. `just check` passed: Ruff lint, Ruff format check, and 167 tests. | `feat(hooks): install woof hooks idempotently` |
 | ENV-004 | Completed | Enforce audit redaction and size caps before commit. | Commit-bound audit files are redacted; oversized raw output stays gitignored with capped committed summaries. | Targeted audit/config/graph tests passed: 26 tests. `just check` passed: Ruff lint, Ruff format check, and 171 tests. | `feat(audit): redact and cap committed output` |
@@ -187,10 +203,11 @@ Read first:
 1. AGENTS.md
 2. README.md
 3. docs/implementation-plan.md
-4. Any architecture, schema, or source file directly touched by the selected work item
+4. docs/adr/002-graph-led-role-routing.md
+5. Any architecture, schema, or source file directly touched by the selected work item
 
 Goal:
-Continue the Woof implementation plan from the Post-WF-002 Execution Workstreams section. If an item is already In progress, finish it; otherwise pick the first incomplete workstream by order and select an appropriately sized slice from that workstream. Before editing, run git status --short --branch and use just --list to confirm project commands. Update the ledger when starting and completing work. Keep code, schemas, tests, and docs aligned.
+Continue the Woof implementation plan from the Post-WF-002 Execution Workstreams section. The current architectural decision is graph-led role routing: GPT-5.5 is the preferred primary producer route, Claude Opus 4.7 at `max` effort is the preferred reviewer route, and reviewer blockers open human gates rather than model-to-model debate loops. Woof must not depend on Ryan-local wrappers (`cld`, `cod`), `agent-sync`, `~/.dotfiles`, or host-specific absolute paths; it must construct public raw `claude` / `codex` invocations itself, including Claude MCP JSON and portable `~/.claude/projects/<project-slug>/...` transcript references. If an item is already In progress, finish it; otherwise pick the first incomplete workstream by order and select an appropriately sized slice from that workstream. Before editing, run git status --short --branch and use just --list to confirm project commands. Update the ledger when starting and completing work. Keep code, schemas, tests, and docs aligned.
 
 Workflow:
 - Use just for project commands.
@@ -202,5 +219,5 @@ Workflow:
 - In the final response, paste this complete continuation prompt block so it can be copied into a new session.
 
 Start with:
-Workstream F: Stage 1-4 graph migration (`STG-001`, `STG-002`, `STG-003`, `STG-004`, `STG-005`). Start with any item already `In progress`; otherwise start with `STG-002`.
+Workstream R: Role routing and startup preflight (`ROLE-001`, `ROLE-002`, `ROLE-003`, `ROLE-004`, `ROLE-005`, `ROLE-006`). Finish any item already `In progress`; otherwise start with `ROLE-003`. Do not start `STG-002` until Workstream R is complete.
 ```

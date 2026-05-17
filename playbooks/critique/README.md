@@ -1,9 +1,9 @@
 # Critique playbooks
 
-Codex critique prompt templates dispatched by `woof dispatch codex --role critiquer`. The orchestrator (or `/wf:execute-story`) reads the appropriate template, substitutes the epic / story context (or just passes the file path; Codex can read the working tree), and invokes:
+Reviewer critique prompt templates are dispatched by semantic role route. The graph reads the appropriate template, substitutes the epic / story context where needed, and invokes:
 
 ```
-./woof/bin/woof dispatch codex --role critiquer \
+./woof/bin/woof dispatch --role reviewer \
   --epic <N> [--story <Sk>] \
   --prompt-file <path-to-template>
 ```

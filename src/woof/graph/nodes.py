@@ -87,7 +87,6 @@ Do not dispatch critique, verify, open gates, or commit.
 
 def _run_dispatch(
     repo_root: Path,
-    target: str,
     role: str,
     epic_id: int,
     story_id: str | None,
@@ -98,7 +97,6 @@ def _run_dispatch(
         args = [
             str(_woof_bin()),
             "dispatch",
-            target,
             "--role",
             role,
             "--epic",
@@ -119,8 +117,7 @@ def executor_dispatch_node(inp: NodeInput) -> NodeOutput:
     mark_story_status(inp.repo_root, inp.epic_id, inp.story_id, "in_progress")
     proc = _run_dispatch(
         inp.repo_root,
-        target="claude",
-        role="story-executor",
+        role="primary",
         epic_id=inp.epic_id,
         story_id=inp.story_id,
         prompt=_story_prompt(inp.epic_id, inp.story_id),
@@ -157,15 +154,14 @@ def critique_dispatch_node(inp: NodeInput) -> NodeOutput:
     prompt = (tool_root() / "playbooks" / "critique" / "story.md").read_text()
     proc = _run_dispatch(
         inp.repo_root,
-        target="codex",
-        role="critiquer",
+        role="reviewer",
         epic_id=inp.epic_id,
         story_id=inp.story_id,
         prompt=prompt,
     )
     if proc.returncode != 0:
         write_gate_for_trigger(
-            trigger="codex_unreachable",
+            trigger="reviewer_unreachable",
             epic_dir=epic_dir(inp.repo_root, inp.epic_id),
             story_id=inp.story_id,
             exit_code=None,
@@ -177,7 +173,7 @@ def critique_dispatch_node(inp: NodeInput) -> NodeOutput:
             epic_id=inp.epic_id,
             story_id=inp.story_id,
             gate_path=_gate_path(inp.epic_id),
-            triggered_by=["codex_unreachable"],
+            triggered_by=["reviewer_unreachable"],
             message=proc.stderr.strip(),
         )
     return NodeOutput(

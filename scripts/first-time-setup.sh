@@ -220,9 +220,8 @@ ensure_ajv || missing=1
 
 log_step "Checking Woof workflow prerequisites..."
 require_manual_tool gh "Install GitHub CLI and authenticate with: gh auth login" || missing=1
-require_manual_tool cld "Install the Claude wrapper expected by .woof/agents.toml." || missing=1
-require_manual_tool cod "Install the Codex wrapper expected by .woof/agents.toml." || missing=1
-require_manual_tool agent-sync "Install agent-sync so project agent instructions can be rendered." || missing=1
+require_manual_tool claude "Install the Claude Code CLI expected by .woof/agents.toml." || missing=1
+require_manual_tool codex "Install the Codex CLI expected by .woof/agents.toml." || missing=1
 
 if (( missing != 0 )); then
     log_error "One or more prerequisites are missing"

@@ -70,9 +70,8 @@ echo "unexpected gh $*" >&2
 exit 2
 """,
     )
-    _write_exe(bin_dir / "cld", 'echo "cld stub"\n')
-    _write_exe(bin_dir / "cod", 'echo "cod stub"\n')
-    _write_exe(bin_dir / "agent-sync", 'echo "agent-sync stub"\n')
+    _write_exe(bin_dir / "claude", 'echo "claude stub"\n')
+    _write_exe(bin_dir / "codex", 'echo "codex stub"\n')
 
 
 def test_preflight_passes_with_mocked_prerequisites(tmp_path: Path, run_woof) -> None:
@@ -104,10 +103,9 @@ just = "1.0+"
 git = "2.30+"
 gh = "any"
 
-[wrappers]
-cld = "any"
-cod = "any"
-agent-sync = "any"
+[commands]
+claude = "any"
+codex = "any"
 
 [validators]
 ajv = "any"
@@ -161,11 +159,11 @@ def test_preflight_reports_missing_prerequisites_template(tmp_path: Path, run_wo
     assert 'repo = "<owner>/<repo>"' in proc.stdout
 
 
-def test_preflight_fails_for_missing_declared_wrapper(tmp_path: Path, run_woof) -> None:
+def test_preflight_fails_for_missing_declared_command(tmp_path: Path, run_woof) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     _stub_core_tools(bin_dir)
-    (bin_dir / "cod").unlink()
+    (bin_dir / "codex").unlink()
 
     _write_project(
         tmp_path,
@@ -175,10 +173,9 @@ just = "any"
 git = "any"
 gh = "any"
 
-[wrappers]
-cld = "any"
-cod = "any"
-agent-sync = "any"
+[commands]
+claude = "any"
+codex = "any"
 
 [validators]
 ajv = "any"
@@ -200,9 +197,9 @@ repo = "example/project"
 
     assert proc.returncode == 1
     payload = json.loads(proc.stdout)
-    cod = next(finding for finding in payload["findings"] if finding["id"] == "wrappers.cod")
-    assert cod["ok"] is False
-    assert "cod not found" in cod["detail"]
+    codex = next(finding for finding in payload["findings"] if finding["id"] == "commands.codex")
+    assert codex["ok"] is False
+    assert "codex not found" in codex["detail"]
 
 
 def test_preflight_checks_declared_lsp_plugin(tmp_path: Path, run_woof) -> None:
@@ -237,10 +234,9 @@ just = "any"
 git = "any"
 gh = "any"
 
-[wrappers]
-cld = "any"
-cod = "any"
-agent-sync = "any"
+[commands]
+claude = "any"
+codex = "any"
 
 [validators]
 ajv = "any"
@@ -285,10 +281,9 @@ just = "any"
 git = "any"
 gh = "any"
 
-[wrappers]
-cld = "any"
-cod = "any"
-agent-sync = "any"
+[commands]
+claude = "any"
+codex = "any"
 
 [validators]
 ajv = "any"
@@ -375,10 +370,9 @@ just = "any"
 git = "any"
 gh = "any"
 
-[wrappers]
-cld = "any"
-cod = "any"
-agent-sync = "any"
+[commands]
+claude = "any"
+codex = "any"
 
 [validators]
 ajv = "any"

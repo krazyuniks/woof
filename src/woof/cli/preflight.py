@@ -36,10 +36,9 @@ just = "1.0+"
 git = "2.30+"
 gh = "2.0+"
 
-[wrappers]
-cld = "any"
-cod = "any"
-agent-sync = "any"
+[commands]
+claude = "any"
+codex = "any"
 
 [validators]
 ajv = "any"
@@ -373,7 +372,7 @@ def _check_config_schemas(repo_root: Path) -> list[PreflightFinding]:
 
 def _check_declared_binaries(prereq: dict[str, Any]) -> list[PreflightFinding]:
     findings: list[PreflightFinding] = []
-    for section in ("infra", "wrappers", "validators"):
+    for section in ("infra", "commands", "validators"):
         for binary, version_spec in (prereq.get(section) or {}).items():
             if binary == "ajv-formats":
                 continue

@@ -12,6 +12,8 @@ Active. `guitar-tone-shootout` is Woof's first external consumer.
 
 ADR-001 is implemented for the Stage-5 execution path: `woof wf --epic <N>` runs a deterministic Python graph whose nodes dispatch the executor, dispatch the critique, run verification, open gates, and commit through a transaction manifest. LLM prompts are producer nodes only; they no longer own successor selection, critique dispatch, gate writing, or commits.
 
+ADR-002 is the accepted role-routing direction for the next implementation pass: Woof is graph-led, GPT-5.5 is the preferred primary producer route, Claude Opus 4.7 at `max` effort is the preferred reviewer route, and reviewer blockers open human gates rather than model-to-model debate loops. Public Woof owns raw `claude` / `codex` command construction and cannot depend on Ryan-local shell wrappers.
+
 Discovery, definition, and breakdown remain documented in [`docs/architecture.md`](docs/architecture.md). The old skill-driven Stage-5 topology is superseded by [`docs/adr/001-orchestration-topology.md`](docs/adr/001-orchestration-topology.md).
 
 ## Read first
@@ -19,6 +21,7 @@ Discovery, definition, and breakdown remain documented in [`docs/architecture.md
 - [`docs/architecture.md`](docs/architecture.md) — principles, architecture, stages, gates, schemas.
 - [`docs/research.md`](docs/research.md) — framework evaluation, E146 contract-fidelity case study, lessons.
 - [`docs/adr/001-orchestration-topology.md`](docs/adr/001-orchestration-topology.md) — accepted graph topology for execution.
+- [`docs/adr/002-graph-led-role-routing.md`](docs/adr/002-graph-led-role-routing.md) — accepted primary/reviewer role policy and model-routing pivot.
 - [`docs/implementation-plan.md`](docs/implementation-plan.md) — current implementation plan, roadmap, and progress ledger.
 - [`examples/dogfood/`](examples/dogfood/) — selected artefacts from the first Woof dogfood epics.
 

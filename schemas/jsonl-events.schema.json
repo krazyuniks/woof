@@ -56,13 +56,31 @@
     },
     "role": {
       "type": "string",
-      "enum": ["orchestrator", "planner", "story-executor", "critiquer", "gate-resolver"],
-      "description": "Role from .woof/agents.toml under which a subprocess was dispatched."
+      "enum": [
+        "orchestrator",
+        "primary",
+        "reviewer",
+        "planner",
+        "story-executor",
+        "critiquer",
+        "gate-resolver"
+      ],
+      "description": "Semantic role under which a subprocess was dispatched. Legacy planner/story-executor/critiquer values are retained for old audit logs."
     },
     "harness": {
       "type": "string",
-      "enum": ["cld", "cod", "in-session"],
-      "description": "Wrapper that spawned the subprocess (or in-session for orchestrator/gate-resolver)."
+      "enum": ["claude", "codex", "cld", "cod", "in-session"],
+      "description": "Public adapter that spawned the subprocess. cld/cod are retained only for legacy audit logs."
+    },
+    "adapter": {
+      "type": "string",
+      "enum": ["claude", "codex", "in-session"],
+      "description": "Resolved public dispatch adapter."
+    },
+    "config_role": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Role entry read from .woof/agents.toml when it differs from the semantic requested role."
     },
     "model": {
       "type": "string",
@@ -105,6 +123,11 @@
       "type": "string",
       "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
       "description": "CC session UUID. Cross-link into ~/.claude/projects/<slug>/<uuid>.jsonl."
+    },
+    "claude_transcript_path": {
+      "type": "string",
+      "pattern": "^~/\\.claude/projects/[^/]+/[^/]+\\.jsonl$",
+      "description": "Portable home-relative reference to Claude Code's native project transcript."
     },
     "codex_audit_path": {
       "type": "string",

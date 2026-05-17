@@ -5,7 +5,7 @@ Subcommands:
     preflight    Validate local prerequisites for a Woof consumer checkout.
     hooks        Manage Woof-owned git hook blocks.
     validate     Validate artefacts against woof JSON Schemas via ajv-cli.
-    dispatch     Spawn a cld/cod subprocess for a role declared in agents.toml.
+    dispatch     Spawn a public CLI subprocess for a role declared in agents.toml.
     render-epic  Render EPIC.md front-matter into the gh issue body; optionally
                  sync to GitHub with conflict detection (.last-sync).
     check-cd     Verify each contract_decision's referenced artefact actually
@@ -25,8 +25,10 @@ import subprocess
 import sys
 import tempfile
 import tomllib
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -251,8 +253,30 @@ def cmd_validate(args: argparse.Namespace) -> int:
 # dispatch
 # ---------------------------------------------------------------------------
 
-HARNESS_BY_TARGET = {"claude": "cld", "codex": "cod"}
+ADAPTERS = {"claude", "codex"}
+LEGACY_HARNESS_TO_ADAPTER = {"cld": "claude", "cod": "codex", "in-session": "in-session"}
+LEGACY_ROLE_ALIASES = {
+    "planner": "primary",
+    "story-executor": "primary",
+    "critiquer": "reviewer",
+}
+ROLE_CONFIG_FALLBACKS = {
+    "primary": ("primary", "story-executor", "planner"),
+    "reviewer": ("reviewer", "critiquer"),
+}
 STORY_ID_RE = re.compile(r"^S[1-9]\d*$")
+
+
+@dataclass(frozen=True)
+class RoleRoute:
+    requested_role: str
+    config_role: str
+    adapter: str
+    config: dict[str, Any]
+
+
+class DispatchConfigError(ValueError):
+    """Raised when a dispatch role exists but cannot be mapped to a public adapter."""
 
 
 def find_woof_root(start: Path) -> Path:
@@ -325,37 +349,119 @@ def parse_codex_output(stdout: str) -> tuple[dict, str | None]:
     }, thread_id
 
 
-def build_argv(harness: str, role: dict, prompt: str) -> list[str]:
-    """Construct the cld/cod invocation argv from a role definition."""
-    argv: list[str] = [harness]
+def _adapter_from_role_config(role_name: str, role: dict[str, Any]) -> str:
+    raw = role.get("adapter", role.get("harness"))
+    if raw is None:
+        raise DispatchConfigError(
+            f"role '{role_name}' must declare adapter='claude|codex' or a legacy harness to migrate"
+        )
+    adapter = LEGACY_HARNESS_TO_ADAPTER.get(str(raw), str(raw))
+    if adapter not in {*ADAPTERS, "in-session"}:
+        raise DispatchConfigError(
+            f"role '{role_name}' resolves unsupported adapter {raw!r}; "
+            "expected 'claude', 'codex', or 'in-session'"
+        )
+    return adapter
+
+
+def resolve_role_route(roles: dict[str, Any], requested_role: str) -> RoleRoute:
+    """Resolve a semantic role to a configured public adapter route."""
+    candidates = ROLE_CONFIG_FALLBACKS.get(requested_role, (requested_role,))
+    if requested_role in LEGACY_ROLE_ALIASES:
+        candidates = (requested_role, LEGACY_ROLE_ALIASES[requested_role])
+
+    for config_role in candidates:
+        role = roles.get(config_role)
+        if isinstance(role, dict):
+            return RoleRoute(
+                requested_role=requested_role,
+                config_role=config_role,
+                adapter=_adapter_from_role_config(config_role, role),
+                config=role,
+            )
+
+    if requested_role in LEGACY_ROLE_ALIASES:
+        semantic_role = LEGACY_ROLE_ALIASES[requested_role]
+        raise DispatchConfigError(
+            f"legacy role '{requested_role}' is not declared; configure "
+            f"[roles.{semantic_role}] or keep a legacy [roles.{requested_role}] entry"
+        )
+
+    if requested_role in ROLE_CONFIG_FALLBACKS:
+        fallbacks = ", ".join(f"[roles.{name}]" for name in candidates)
+        raise DispatchConfigError(
+            f"role '{requested_role}' not declared; expected one of {fallbacks}"
+        )
+
+    raise DispatchConfigError(f"role '{requested_role}' not declared")
+
+
+def _claude_mcp_config(role: dict[str, Any]) -> str:
     mcp = role.get("mcp") or []
-    flags = role.get("flags") or []
+    if mcp:
+        raise DispatchConfigError(
+            "named Claude MCP server resolution is not available in ROLE-002; "
+            "set mcp = [] or omit mcp until ROLE-003 lands MCP route config"
+        )
+    return json.dumps({"mcpServers": {}}, separators=(",", ":"))
+
+
+def build_argv(adapter: str, role: dict[str, Any], prompt: str) -> list[str]:
+    """Construct a public claude/codex invocation argv from a role definition."""
+    flags = [str(flag) for flag in role.get("flags") or []]
     model = role.get("model")
 
-    if harness == "cld":
-        if role.get("think"):
-            argv.append("-t")
-        if mcp:
-            argv += ["-m", ",".join(mcp)]
-        argv += ["--", "-p", "--output-format", "json"]
+    if adapter == "claude":
+        argv = [
+            "claude",
+            "--dangerously-skip-permissions",
+            "--strict-mcp-config",
+            "--mcp-config",
+            _claude_mcp_config(role),
+            "-p",
+            "--output-format",
+            "json",
+        ]
         if model:
-            argv += ["--model", model]
+            argv += ["--model", str(model)]
         argv += flags
-    else:  # cod
-        if mcp:
-            argv += ["-m", ",".join(mcp)]
-        argv += ["--", "exec", "--json", "--skip-git-repo-check"]
+    elif adapter == "codex":
+        if role.get("mcp"):
+            raise DispatchConfigError(
+                "Codex MCP route config is not available in ROLE-002; set mcp = [] or omit mcp"
+            )
+        argv = [
+            "codex",
+            "exec",
+            "--json",
+            "--skip-git-repo-check",
+            "--dangerously-bypass-approvals-and-sandbox",
+            "-s",
+            "danger-full-access",
+            "-a",
+            "never",
+        ]
         if model:
-            argv += ["--model", model]
+            argv += ["--model", str(model)]
         argv += flags
+    else:
+        raise DispatchConfigError(f"cannot dispatch adapter {adapter!r}")
     argv.append(prompt)
     return argv
+
+
+def claude_project_slug(repo_root: Path) -> str:
+    """Return Claude Code's standard project directory slug for a repository path."""
+    return str(repo_root.resolve()).replace("/", "-")
+
+
+def claude_transcript_path(repo_root: Path, session_id: str) -> str:
+    return f"~/.claude/projects/{claude_project_slug(repo_root)}/{session_id}.jsonl"
 
 
 def cmd_dispatch(args: argparse.Namespace) -> int:
     ensure_ajv()
 
-    expected_harness = HARNESS_BY_TARGET[args.target]
     repo_root = find_woof_root(Path.cwd().resolve())
     agents_path = repo_root / ".woof" / "agents.toml"
     if not agents_path.is_file():
@@ -371,18 +477,20 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         sys.stderr.write(f"woof: {agents_path}: schema invalid\n{output}\n")
         return 2
 
-    role = (agents.get("roles") or {}).get(args.role)
-    if role is None:
-        sys.stderr.write(f"woof: role '{args.role}' not declared in {agents_path}\n")
+    roles = agents.get("roles") or {}
+    try:
+        route = resolve_role_route(roles, args.role)
+    except DispatchConfigError as exc:
+        sys.stderr.write(f"woof: {exc} in {agents_path}\n")
         return 2
 
-    if role["harness"] == "in-session":
+    if route.adapter == "in-session":
         sys.stderr.write(f"woof: role '{args.role}' is in-session; cannot be dispatched\n")
         return 2
-    if role["harness"] != expected_harness:
+    if args.target and args.target != route.adapter:
         sys.stderr.write(
-            f"woof: role '{args.role}' has harness={role['harness']!r}; "
-            f"expected {expected_harness!r} for 'woof dispatch {args.target}'\n"
+            f"woof: role '{args.role}' resolves adapter={route.adapter!r}; "
+            f"legacy target {args.target!r} does not match\n"
         )
         return 2
 
@@ -396,7 +504,11 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         return 2
 
     timeout_min = int((agents.get("timeouts") or {}).get("default_minutes", 30))
-    argv = build_argv(expected_harness, role, prompt)
+    try:
+        argv = build_argv(route.adapter, route.config, prompt)
+    except DispatchConfigError as exc:
+        sys.stderr.write(f"woof: {exc}\n")
+        return 2
 
     if args.dry_run:
         wrapped = ["timeout", f"{timeout_min}m", *argv]
@@ -407,10 +519,12 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
                     "epic": args.epic,
                     "story": args.story,
                     "role": args.role,
-                    "harness": expected_harness,
-                    "model": role.get("model"),
-                    "mcp": role.get("mcp") or [],
-                    "flags": role.get("flags") or [],
+                    "config_role": route.config_role,
+                    "adapter": route.adapter,
+                    "harness": route.adapter,
+                    "model": route.config.get("model"),
+                    "mcp": route.config.get("mcp") or [],
+                    "flags": route.config.get("flags") or [],
                     "timeout_min": timeout_min,
                 }
             )
@@ -422,7 +536,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     audit_dir.mkdir(parents=True, exist_ok=True)
     started_at = datetime.now(UTC)
     ts = started_at.strftime("%Y%m%dT%H%M%SZ")
-    base = audit_dir / f"{expected_harness}-{args.role}-{ts}"
+    base = audit_dir / f"{route.adapter}-{args.role}-{ts}"
     prompt_file = base.with_suffix(".prompt")
     output_file = base.with_suffix(".output")
     stderr_file = base.with_suffix(".stderr")
@@ -439,13 +553,16 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         "at": iso_utc(started_at),
         "epic_id": args.epic,
         "role": args.role,
-        "harness": expected_harness,
+        "harness": route.adapter,
+        "adapter": route.adapter,
         "pid": proc.pid,
     }
+    if route.config_role != args.role:
+        spawned_event["config_role"] = route.config_role
     if args.story:
         spawned_event["story_id"] = args.story
-    if role.get("model"):
-        spawned_event["model"] = role["model"]
+    if route.config.get("model"):
+        spawned_event["model"] = route.config["model"]
     append_jsonl(dispatch_jsonl, spawned_event)
 
     try:
@@ -474,7 +591,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     output_file.write_text(stdout)
     stderr_file.write_text(stderr)
 
-    if expected_harness == "cld":
+    if route.adapter == "claude":
         tokens, session_id = parse_claude_output(stdout)
         thread_id = None
     else:
@@ -500,31 +617,37 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         "at": iso_utc(ended_at),
         "epic_id": args.epic,
         "role": args.role,
-        "harness": expected_harness,
+        "harness": route.adapter,
+        "adapter": route.adapter,
         "pid": proc.pid,
         "exit_code": proc.returncode,
         "duration_ms": duration_ms,
     }
+    if route.config_role != args.role:
+        returned["config_role"] = route.config_role
     if args.story:
         returned["story_id"] = args.story
-    if role.get("model"):
-        returned["model"] = role["model"]
+    if route.config.get("model"):
+        returned["model"] = route.config["model"]
     if tokens:
         returned.update(tokens)
     if session_id:
         returned["cc_session_id"] = session_id
-    if expected_harness == "cod":
+        returned["claude_transcript_path"] = claude_transcript_path(repo_root, session_id)
+    if route.adapter == "codex":
         returned["codex_audit_path"] = str(base.relative_to(repo_root))
     append_jsonl(dispatch_jsonl, returned)
 
     meta = {
-        "harness": expected_harness,
+        "harness": route.adapter,
+        "adapter": route.adapter,
         "role": args.role,
+        "config_role": route.config_role,
         "epic_id": args.epic,
         "story_id": args.story,
-        "model": role.get("model"),
-        "mcp": role.get("mcp") or [],
-        "flags": role.get("flags") or [],
+        "model": route.config.get("model"),
+        "mcp": route.config.get("mcp") or [],
+        "flags": route.config.get("flags") or [],
         "argv": wrapped_argv,
         "pid": proc.pid,
         "started_at": iso_utc(started_at),
@@ -536,6 +659,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     }
     if session_id:
         meta["cc_session_id"] = session_id
+        meta["claude_transcript_path"] = claude_transcript_path(repo_root, session_id)
     if thread_id:
         meta["codex_thread_id"] = thread_id
     meta_file.write_text(json.dumps(meta, indent=2) + "\n")
@@ -666,9 +790,14 @@ def main() -> int:
 
     dispatch = sub.add_parser(
         "dispatch",
-        help="spawn a cld/cod subprocess for a role declared in agents.toml",
+        help="spawn a public CLI subprocess for a role declared in agents.toml",
     )
-    dispatch.add_argument("target", choices=sorted(HARNESS_BY_TARGET))
+    dispatch.add_argument(
+        "target",
+        nargs="?",
+        choices=sorted(ADAPTERS),
+        help="deprecated adapter target; role routes now resolve this from .woof/agents.toml",
+    )
     dispatch.add_argument("--role", required=True, help="role name from .woof/agents.toml")
     dispatch.add_argument("--epic", type=int, required=True, help="epic id (gh issue number)")
     dispatch.add_argument("--story", help="story id (e.g. S1); optional")

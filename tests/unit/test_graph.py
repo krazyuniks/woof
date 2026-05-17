@@ -9,6 +9,7 @@ from typing import Any
 
 import yaml
 
+from woof.graph import nodes
 from woof.graph.git import git_env
 from woof.graph.manifest import build_story_manifest, verify_staged_manifest
 from woof.graph.runner import run_graph
@@ -295,6 +296,75 @@ def test_graph_runs_executor_then_critique_then_verification_then_commit(tmp_pat
         NodeType.COMMIT,
     ]
     assert outputs[-1].status == NodeStatus.EPIC_COMPLETE
+
+
+def test_dispatch_helper_uses_role_route_without_provider_target(
+    tmp_path: Path, monkeypatch
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_run(
+        args: list[str],
+        *,
+        cwd: Path,
+        capture_output: bool,
+        text: bool,
+    ) -> subprocess.CompletedProcess[str]:
+        captured["args"] = args
+        captured["cwd"] = cwd
+        captured["capture_output"] = capture_output
+        captured["text"] = text
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(nodes.subprocess, "run", fake_run)
+
+    nodes._run_dispatch(
+        tmp_path,
+        role="primary",
+        epic_id=1,
+        story_id="S1",
+        prompt="do work",
+    )
+
+    args = captured["args"]
+    assert args[1:4] == ["dispatch", "--role", "primary"]
+    assert "claude" not in args[1:4]
+    assert "codex" not in args[1:4]
+    assert captured["cwd"] == tmp_path
+
+
+def test_critique_dispatch_failure_opens_reviewer_gate(tmp_path: Path, monkeypatch) -> None:
+    _write_plan(tmp_path, 1)
+
+    def fake_dispatch(
+        repo_root: Path,
+        role: str,
+        epic_id: int,
+        story_id: str | None,
+        prompt: str,
+    ) -> subprocess.CompletedProcess[str]:
+        assert repo_root == tmp_path
+        assert role == "reviewer"
+        assert epic_id == 1
+        assert story_id == "S1"
+        assert prompt
+        return subprocess.CompletedProcess([], 2, "", "reviewer failed")
+
+    monkeypatch.setattr(nodes, "_run_dispatch", fake_dispatch)
+
+    output = nodes.critique_dispatch_node(
+        NodeInput(
+            node_type=NodeType.CRITIQUE_DISPATCH,
+            epic_id=1,
+            story_id="S1",
+            repo_root=tmp_path,
+        )
+    )
+
+    assert output.status == NodeStatus.GATE_OPENED
+    assert output.triggered_by == ["reviewer_unreachable"]
+    gate_fm = _read_gate_fm(tmp_path / ".woof" / "epics" / "E1" / "gate.md")
+    assert gate_fm["triggered_by"] == ["reviewer_unreachable"]
 
 
 def test_graph_resumes_interrupted_commit_transaction(tmp_path: Path) -> None:

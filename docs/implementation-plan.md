@@ -219,5 +219,5 @@ Workflow:
 - In the final response, paste this complete continuation prompt block so it can be copied into a new session.
 
 Start with:
-Workstream F: Stage 1-4 graph migration (`STG-001`, `STG-002`, `STG-003`, `STG-004`, `STG-005`). Workstream R is complete. Finish any item already `In progress`; otherwise start with `STG-005`.
+Workstream G: Consumer and evidence polish (`DOG-001`, `GTS-001`, `GTS-002`, `DOC-001`, `DOC-002`, `DOC-003`). Workstreams R and F are complete. Finish any item already `In progress`; otherwise start with `DOG-001`.
 ```

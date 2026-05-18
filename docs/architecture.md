@@ -344,9 +344,9 @@ Default config ships with woof for python + typescript; consumers extend for rus
 
 **Cross-epic traceability.** IDs are scoped per-epic (`O1` in E17 ≠ `O1` in E22). No cross-epic ID linkage. If E22 builds on E17's surface unchanged, E22 doesn't declare a CD for it (stable contract; consumed without modification). If E22 modifies the surface, that's a new CD in E22 (`E22.CD1`) — same surface string, distinct epic-scoped ID. Cross-epic queries like "all epics touching `POST /api/v1/comments/{id}`" run against the surface string, not via ID graph.
 
-### Stage 3 Breakdown prompt philosophy
+### Stage 3 Breakdown producer prompt
 
-What `EPIC.md → plan.json` embeds. The skill produces a plan that satisfies Stage-3 contract invariants (every outcome covered, every CD implemented, no scope overlap, deps topologically sorted) and that Stage 5 can iterate over story-by-story.
+Stage 3 plan-generation instructions live in the producer-node prompt at `playbooks/planning/breakdown.md`. Architecture owns the contract and invariants; prompt files own the model-facing generation guidance.
 
 **`plan.json` shape:**
 
@@ -372,25 +372,7 @@ stories:
 
 `PLAN.md` is a deterministic render of `plan.json` — no authoring at this layer.
 
-**Prompt rules:**
-
-1. **Outcome-driven granularity.** Each story realises 1–3 related outcomes. Group by shared concern or dependency. Reject zero-outcome stories or all-outcome stories.
-2. **Path discipline.** Each story declares the glob patterns it is allowed to touch via `paths[]`. Stage 5 Check 3 fails if the diff includes files outside the declared globs. Stories that must share a file declare overlapping globs explicitly; the primary model should flag overlap so the operator decides whether to split, merge, or accept the shared edit.
-3. **Explicit dependencies.** Inferred deps (S2 modifies a file S1 creates) are declared in `depends_on[]`. Implicit deps are a planning bug.
-4. **Contract ownership.** Every `contract_decision` in `EPIC.md` appears in exactly one story's `implements_contract_decisions[]` (one-to-one ownership of the surface creator). Other stories that consume the CD list it under `uses_contract_decisions[]`. Stage 5 helper validates this invariant.
-5. **No implementation pseudocode.** Stories declare *what* they produce (outcomes covered, surfaces created), not *how*. Implementation is Stage 5's job; planning predicts intent.
-6. **Test surface estimation, not enumeration.** Each story declares `tests.count` (estimate) and `tests.types` (families). Specific test names emerge during execution.
-7. **Right-sized stories.** Heuristic: each story fits ~30–40k tokens of agent work. Roughly 5–10 files touched, 3–10 tests, 200–800 LOC. Above the upper bound → split. Well below → consider merging.
-8. **Self-validation before reviewer dispatch.** The primary model validates `plan.json` against `plan.schema.json` + cross-refs before dispatching the reviewer. Cap internal iteration at 2 attempts; if still invalid, write `gate.md`. This is intra-node structured repair, not agent-to-agent negotiation.
-9. **Reviewer critique focus.** Dispatch prompt asks the reviewer specifically to evaluate: outcome coverage, decomposition quality (over/under), scope hygiene, dependency correctness, contract-decision implementation completeness, missed Class-2 (architectural) concerns. Severity scale: `info` / `minor` / `blocker`.
-10. **Plan gate is mandatory.** Stage 4 always opens — no auto-approve at plan stage (see Gate asymmetry above).
-
-**The prompt forbids:**
-- Pre-writing implementation code or pseudocode
-- Pre-naming specific variables / classes / signatures
-- Predicting every test in advance
-- Auto-revising after reviewer blocker (one-shot critique; blocker means human gate)
-- "Catch-all" stories that bundle unrelated outcomes
+The graph dispatches the primary route to produce `plan.json`, validates it against `schemas/plan.schema.json`, renders `PLAN.md`, dispatches the reviewer route with `playbooks/critique/plan.md`, and opens the mandatory plan gate. Producer prompts do not author `PLAN.md`, dispatch reviewers, write gates, select successors, or revise the epic contract.
 
 ### Stage 5 deterministic gate checks
 

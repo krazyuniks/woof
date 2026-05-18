@@ -76,7 +76,7 @@ Run `woof preflight` from a consumer checkout to validate the Woof install/asset
 - `src/woof/gate/` — gate-authoring helpers (`woof gate write`).
 - `src/woof/lib/` — shared Python helpers.
 - `schemas/` — JSON schemas for runtime artefacts, graph node I/O, and transaction manifests.
-- `playbooks/{discovery,critique,disposition}/` — prompt templates loaded into dispatched LLM contexts.
+- `playbooks/{discovery,planning,critique,disposition}/` — prompt templates loaded into dispatched LLM contexts.
 - `languages/{python,typescript,rust,go}.toml` — per-language install / lint / test registry.
 - `.claude/commands/wf*.md` — thin wrappers / producer-node prompts; orchestration lives in Python.
 

@@ -627,6 +627,8 @@ def test_breakdown_planning_node_dispatches_primary_validates_plan_and_renders_m
     assert captured["epic_id"] == 26
     assert captured["story_id"] is None
     assert '"node_type": "breakdown_planning"' in captured["prompt"]
+    assert "Right-sized stories" in captured["prompt"]
+    assert "Do not author `PLAN.md`" in captured["prompt"]
     _assert_planning_node_input_schema(
         tmp_path,
         nodes._breakdown_planning_payload(tmp_path, 26),

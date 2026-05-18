@@ -12,13 +12,15 @@
 
 ## 0. Current implementation boundary
 
-The Woof repository currently implements the ADR-001 Stage-5 execution path:
+The Woof repository currently implements ADR-001 for the Stage-5 execution path and the first Stage 1-2 planning nodes:
 
 - `woof wf --epic <N>` is the operator entry point for the deterministic Python graph.
-- Graph nodes dispatch the primary producer, dispatch the reviewer, run Stage-5 verification, open gates, and commit through a transaction manifest.
-- `.claude/commands/wf*.md` are thin wrappers or producer-node prompts. They do not own successor selection, critique dispatch, gate writing, or commits.
+- Stage 1 Discovery synthesis dispatches the primary producer to create or validate `discovery/synthesis/{CONCEPT,PRINCIPLES,ARCHITECTURE,OPEN_QUESTIONS}.md`.
+- Stage 2 Definition dispatches the primary producer to create or validate schema-valid `EPIC.md`, then halts at the Stage 3 breakdown boundary until the breakdown planning nodes are implemented.
+- Stage-5 graph nodes dispatch the primary producer, dispatch the reviewer, run Stage-5 verification, open gates, and commit through a transaction manifest.
+- `.claude/commands/wf*.md` and `playbooks/` prompts are wrappers or producer-node prompts. They do not own successor selection, critique dispatch, gate writing, or commits.
 - ADR-002 defines the current role-routing policy: the graph orchestrates; GPT-5.5 is the preferred primary producer route; Claude Opus 4.7 at `max` effort is the preferred reviewer route.
-- Discovery, Definition, Breakdown, GitHub issue sync, and the full preflight/cartography lifecycle are implemented only where command code exists under `src/woof/cli/`; remaining work is tracked in `docs/implementation-plan.md`.
+- Breakdown, Plan Gate, GitHub issue sync, and the full preflight/cartography lifecycle are implemented only where command code exists under `src/woof/cli/`; remaining work is tracked in `docs/implementation-plan.md`.
 
 When this document conflicts with `docs/adr/001-orchestration-topology.md`, `docs/adr/002-graph-led-role-routing.md`, or the current source under `src/woof/`, source and accepted ADRs win.
 

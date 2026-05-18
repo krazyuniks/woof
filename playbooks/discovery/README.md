@@ -8,6 +8,8 @@ Stage-1 (Discovery) reference material for `/wf`. Each playbook is a self-contai
 
 These are *building blocks*, not a fixed sequence. The graph selects the producer node and the primary route uses the playbooks that match the spark and the open questions surfacing during synthesis.
 
+`synthesis.md` and `definition.md` are the graph-owned producer-node prompts for Stage 1 synthesis and Stage 2 Definition. They describe node-local output contracts only; the Python graph owns successor selection.
+
 Output of Stage 1 is `discovery/synthesis/{CONCEPT,PRINCIPLES,ARCHITECTURE,OPEN_QUESTIONS}.md` per the EPIC schema's required pre-Definition state.
 
 ## Origin

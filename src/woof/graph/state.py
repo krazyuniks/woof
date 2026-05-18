@@ -10,6 +10,12 @@ from pydantic import BaseModel, Field
 
 
 class NodeType(StrEnum):
+    DISCOVERY_SYNTHESIS = "discovery_synthesis"
+    EPIC_DEFINITION = "epic_definition"
+    BREAKDOWN_PLANNING = "breakdown_planning"
+    PLAN_CRITIQUE = "plan_critique"
+    PLAN_GATE_OPEN = "plan_gate_open"
+    PLAN_GATE_RESOLVE = "plan_gate_resolve"
     EXECUTOR_DISPATCH = "executor_dispatch"
     CRITIQUE_DISPATCH = "critique_dispatch"
     REVIEW_DISPOSITION = "review_disposition"

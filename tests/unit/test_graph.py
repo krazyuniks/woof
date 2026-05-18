@@ -46,6 +46,21 @@ def _write_plan(root: Path, epic_id: int = 1) -> Path:
     return directory
 
 
+def _write_spark(root: Path, epic_id: int = 1) -> Path:
+    directory = root / ".woof" / "epics" / f"E{epic_id}"
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "spark.md").write_text("Build a useful thing.\n")
+    (directory / "epic.jsonl").write_text("")
+    return directory
+
+
+def _write_discovery_synthesis(directory: Path) -> None:
+    synthesis = directory / "discovery" / "synthesis"
+    synthesis.mkdir(parents=True, exist_ok=True)
+    for name in ("CONCEPT.md", "PRINCIPLES.md", "ARCHITECTURE.md", "OPEN_QUESTIONS.md"):
+        (synthesis / name).write_text(f"# {name}\n\nFilled.\n")
+
+
 def _run_woof(
     cwd: Path, *args: str, env: dict[str, str] | None = None
 ) -> subprocess.CompletedProcess[str]:
@@ -78,6 +93,18 @@ def _assert_node_output_schema(tmp_path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload))
     proc = subprocess.run(
         [str(WOOF_BIN), "validate", "--schema", "node-output", str(path)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def _assert_planning_node_input_schema(tmp_path: Path, payload: dict) -> None:
+    path = tmp_path / "planning-node-input.json"
+    path.write_text(json.dumps(payload))
+    proc = subprocess.run(
+        [str(WOOF_BIN), "validate", "--schema", "planning-node-input", str(path)],
         cwd=tmp_path,
         capture_output=True,
         text=True,
@@ -365,6 +392,196 @@ def test_dispatch_helper_uses_role_route_without_provider_target(
     assert "claude" not in args[1:4]
     assert "codex" not in args[1:4]
     assert captured["cwd"] == tmp_path
+
+
+def test_pre_plan_transition_enters_discovery_when_spark_exists(tmp_path: Path) -> None:
+    _write_spark(tmp_path, 21)
+
+    assert next_node(tmp_path, 21) == (NodeType.DISCOVERY_SYNTHESIS, None)
+
+
+def test_discovery_synthesis_node_dispatches_primary_and_validates_outputs(
+    tmp_path: Path, monkeypatch
+) -> None:
+    directory = _write_spark(tmp_path, 22)
+    captured: dict[str, Any] = {}
+
+    def fake_dispatch(
+        repo_root: Path,
+        role: str,
+        epic_id: int,
+        story_id: str | None,
+        prompt: str,
+    ) -> subprocess.CompletedProcess[str]:
+        captured["repo_root"] = repo_root
+        captured["role"] = role
+        captured["epic_id"] = epic_id
+        captured["story_id"] = story_id
+        captured["prompt"] = prompt
+        _write_discovery_synthesis(directory)
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setattr(nodes, "_run_dispatch", fake_dispatch)
+
+    output = nodes.discovery_synthesis_node(
+        NodeInput(
+            node_type=NodeType.DISCOVERY_SYNTHESIS,
+            epic_id=22,
+            repo_root=tmp_path,
+        )
+    )
+
+    assert captured["repo_root"] == tmp_path
+    assert captured["role"] == "primary"
+    assert captured["epic_id"] == 22
+    assert captured["story_id"] is None
+    assert '"node_type": "discovery_synthesis"' in captured["prompt"]
+    assert "The graph validates the files and selects the next node." in captured["prompt"]
+    _assert_planning_node_input_schema(
+        tmp_path,
+        nodes._discovery_synthesis_payload(tmp_path, 22),
+    )
+    assert output.status == NodeStatus.COMPLETED
+    assert output.next_node == NodeType.EPIC_DEFINITION
+    assert output.validation_summary and output.validation_summary.stage == 1
+    assert output.paths == [
+        ".woof/epics/E22/discovery/synthesis/CONCEPT.md",
+        ".woof/epics/E22/discovery/synthesis/PRINCIPLES.md",
+        ".woof/epics/E22/discovery/synthesis/ARCHITECTURE.md",
+        ".woof/epics/E22/discovery/synthesis/OPEN_QUESTIONS.md",
+    ]
+    events = [json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines()]
+    assert events[-1]["event"] == "discovery_synthesised"
+    _assert_node_output_schema(tmp_path, json.loads(output.model_dump_json()))
+
+
+def test_discovery_synthesis_node_validates_existing_outputs_without_dispatch(
+    tmp_path: Path, monkeypatch
+) -> None:
+    directory = _write_spark(tmp_path, 23)
+    _write_discovery_synthesis(directory)
+
+    def fail_dispatch(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise AssertionError("existing discovery synthesis should not dispatch")
+
+    monkeypatch.setattr(nodes, "_run_dispatch", fail_dispatch)
+
+    output = nodes.discovery_synthesis_node(
+        NodeInput(
+            node_type=NodeType.DISCOVERY_SYNTHESIS,
+            epic_id=23,
+            repo_root=tmp_path,
+        )
+    )
+
+    assert output.status == NodeStatus.COMPLETED
+    assert output.next_node == NodeType.EPIC_DEFINITION
+
+
+def test_epic_definition_node_dispatches_primary_validates_epic_and_halts(
+    tmp_path: Path, monkeypatch
+) -> None:
+    directory = _write_spark(tmp_path, 24)
+    _write_discovery_synthesis(directory)
+    captured: dict[str, Any] = {}
+
+    def fake_dispatch(
+        repo_root: Path,
+        role: str,
+        epic_id: int,
+        story_id: str | None,
+        prompt: str,
+    ) -> subprocess.CompletedProcess[str]:
+        captured["repo_root"] = repo_root
+        captured["role"] = role
+        captured["epic_id"] = epic_id
+        captured["story_id"] = story_id
+        captured["prompt"] = prompt
+        _write_minimal_epic(directory, epic_id)
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setattr(nodes, "_run_dispatch", fake_dispatch)
+
+    output = nodes.epic_definition_node(
+        NodeInput(
+            node_type=NodeType.EPIC_DEFINITION,
+            epic_id=24,
+            repo_root=tmp_path,
+        )
+    )
+
+    assert captured["repo_root"] == tmp_path
+    assert captured["role"] == "primary"
+    assert captured["epic_id"] == 24
+    assert captured["story_id"] is None
+    assert '"node_type": "epic_definition"' in captured["prompt"]
+    _assert_planning_node_input_schema(
+        tmp_path,
+        nodes._epic_definition_payload(tmp_path, 24),
+    )
+    assert output.status == NodeStatus.HALTED
+    assert output.next_node == NodeType.BREAKDOWN_PLANNING
+    assert output.validation_summary and output.validation_summary.stage == 2
+    assert output.validation_summary.ok is True
+    assert output.paths == [".woof/epics/E24/EPIC.md"]
+    assert "breakdown planning node is not implemented yet" in output.message
+    events = [json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines()]
+    assert events[-1]["event"] == "definition_closed"
+    _assert_node_output_schema(tmp_path, json.loads(output.model_dump_json()))
+
+
+def test_epic_definition_node_halts_on_invalid_existing_epic(tmp_path: Path) -> None:
+    directory = _write_spark(tmp_path, 25)
+    directory.joinpath("EPIC.md").write_text("---\nepic_id: 25\n---\n")
+
+    output = nodes.epic_definition_node(
+        NodeInput(
+            node_type=NodeType.EPIC_DEFINITION,
+            epic_id=25,
+            repo_root=tmp_path,
+        )
+    )
+
+    assert output.status == NodeStatus.HALTED
+    assert output.triggered_by == ["schema_validation_failed"]
+    assert output.validation_summary and output.validation_summary.ok is False
+    assert "INVALID" in output.message
+
+
+def test_graph_runs_discovery_then_definition_until_breakdown_boundary(
+    tmp_path: Path, monkeypatch
+) -> None:
+    directory = _write_spark(tmp_path, 26)
+
+    def fake_dispatch(
+        repo_root: Path,
+        role: str,
+        epic_id: int,
+        story_id: str | None,
+        prompt: str,
+    ) -> subprocess.CompletedProcess[str]:
+        assert repo_root == tmp_path
+        assert role == "primary"
+        assert epic_id == 26
+        assert story_id is None
+        if '"node_type": "discovery_synthesis"' in prompt:
+            _write_discovery_synthesis(directory)
+        elif '"node_type": "epic_definition"' in prompt:
+            _write_minimal_epic(directory, epic_id)
+        else:
+            raise AssertionError(prompt)
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setattr(nodes, "_run_dispatch", fake_dispatch)
+
+    outputs = run_graph(tmp_path, 26)
+
+    assert [output.node_type for output in outputs] == [
+        NodeType.DISCOVERY_SYNTHESIS,
+        NodeType.EPIC_DEFINITION,
+    ]
+    assert outputs[-1].status == NodeStatus.HALTED
+    assert outputs[-1].next_node == NodeType.BREAKDOWN_PLANNING
 
 
 def test_critique_dispatch_failure_opens_reviewer_gate(tmp_path: Path, monkeypatch) -> None:
@@ -865,7 +1082,8 @@ def test_wf_reports_missing_plan_as_structured_failure(tmp_path: Path) -> None:
 
     assert proc.returncode == 2
     assert "woof wf: incomplete_stage_state:" in proc.stderr
-    assert "plan.json" in proc.stderr
+    assert "required planning artefact missing" in proc.stderr
+    assert "spark.md" in proc.stderr
 
 
 def test_wf_epic_halts_when_gate_is_open(tmp_path: Path) -> None:

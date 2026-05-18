@@ -25,6 +25,9 @@ from woof.graph.manifest import build_story_manifest, verify_staged_manifest
 from woof.graph.state import NodeInput, NodeOutput, NodeStatus, NodeType, ValidationSummary
 from woof.graph.transitions import (
     append_epic_event_once,
+    discovery_synthesis_complete,
+    discovery_synthesis_dir,
+    discovery_synthesis_paths,
     epic_dir,
     load_plan,
     mark_story_status,
@@ -46,6 +49,10 @@ def _woof_bin() -> Path:
 
 def _gate_path(epic_id: int) -> str:
     return f".woof/epics/E{epic_id}/gate.md"
+
+
+def _relpath(repo_root: Path, path: Path) -> str:
+    return path.relative_to(repo_root).as_posix()
 
 
 def _validation_summary(check_result: dict) -> ValidationSummary:
@@ -78,6 +85,137 @@ def _write_prompt_file(text: str) -> Path:
     with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as handle:
         handle.write(text)
         return Path(handle.name)
+
+
+def _prompt_template(path: Path, replacements: dict[str, str]) -> str:
+    text = path.read_text(encoding="utf-8")
+    for key, value in replacements.items():
+        text = text.replace("{" + key + "}", value)
+    return text
+
+
+def _planning_validation(
+    *,
+    ok: bool,
+    stage: int,
+    triggered_by: list[str] | None = None,
+    check_count: int,
+    failed_check_count: int,
+) -> ValidationSummary:
+    return ValidationSummary(
+        ok=ok,
+        stage=stage,
+        triggered_by=triggered_by or [],
+        check_count=check_count,
+        failed_check_count=failed_check_count,
+    )
+
+
+def _planning_halt(
+    inp: NodeInput,
+    *,
+    stage: int,
+    message: str,
+    triggered_by: list[str],
+    check_count: int,
+    failed_check_count: int,
+    paths: list[str] | None = None,
+) -> NodeOutput:
+    return NodeOutput(
+        node_type=inp.node_type,
+        status=NodeStatus.HALTED,
+        epic_id=inp.epic_id,
+        validation_summary=_planning_validation(
+            ok=False,
+            stage=stage,
+            triggered_by=triggered_by,
+            check_count=check_count,
+            failed_check_count=failed_check_count,
+        ),
+        triggered_by=triggered_by,
+        message=message,
+        paths=paths or [],
+    )
+
+
+def _discovery_source_paths(repo_root: Path, epic_id: int) -> list[str]:
+    discovery_dir = epic_dir(repo_root, epic_id) / "discovery"
+    synthesis_dir = discovery_synthesis_dir(repo_root, epic_id)
+    if not discovery_dir.exists():
+        return []
+    return [
+        _relpath(repo_root, path)
+        for path in sorted(discovery_dir.rglob("*.md"))
+        if not path.is_relative_to(synthesis_dir)
+    ]
+
+
+def _discovery_synthesis_payload(repo_root: Path, epic_id: int) -> dict:
+    directory = epic_dir(repo_root, epic_id)
+    synthesis_dir = discovery_synthesis_dir(repo_root, epic_id)
+    payload = {
+        "node_type": NodeType.DISCOVERY_SYNTHESIS.value,
+        "epic_id": epic_id,
+        "repo_root": str(repo_root),
+        "epic_dir": _relpath(repo_root, directory),
+        "inputs": {
+            "spark_path": _relpath(repo_root, directory / "spark.md"),
+            "discovery_dir": _relpath(repo_root, directory / "discovery"),
+            "synthesis_dir": _relpath(repo_root, synthesis_dir),
+        },
+    }
+    source_paths = _discovery_source_paths(repo_root, epic_id)
+    if source_paths:
+        payload["inputs"]["source_paths"] = source_paths
+    return payload
+
+
+def _epic_definition_payload(repo_root: Path, epic_id: int) -> dict:
+    directory = epic_dir(repo_root, epic_id)
+    return {
+        "node_type": NodeType.EPIC_DEFINITION.value,
+        "epic_id": epic_id,
+        "repo_root": str(repo_root),
+        "epic_dir": _relpath(repo_root, directory),
+        "inputs": {
+            "synthesis_dir": _relpath(repo_root, discovery_synthesis_dir(repo_root, epic_id)),
+            "epic_path": _relpath(repo_root, directory / "EPIC.md"),
+        },
+    }
+
+
+def _missing_discovery_outputs(repo_root: Path, epic_id: int) -> list[str]:
+    missing: list[str] = []
+    for path in discovery_synthesis_paths(repo_root, epic_id).values():
+        if not path.is_file() or not path.read_text(encoding="utf-8").strip():
+            missing.append(_relpath(repo_root, path))
+    return missing
+
+
+def _discovery_synthesis_prompt(repo_root: Path, epic_id: int) -> str:
+    payload = _discovery_synthesis_payload(repo_root, epic_id)
+    return _prompt_template(
+        tool_root() / "playbooks" / "discovery" / "synthesis.md",
+        {"planning_input_json": json.dumps(payload, indent=2, sort_keys=True)},
+    )
+
+
+def _epic_definition_prompt(repo_root: Path, epic_id: int) -> str:
+    payload = _epic_definition_payload(repo_root, epic_id)
+    return _prompt_template(
+        tool_root() / "playbooks" / "discovery" / "definition.md",
+        {"planning_input_json": json.dumps(payload, indent=2, sort_keys=True)},
+    )
+
+
+def _validate_epic(repo_root: Path, epic_path: Path) -> tuple[bool, str]:
+    proc = subprocess.run(
+        [str(_woof_bin()), "validate", "--schema", "epic", str(epic_path)],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+    return proc.returncode == 0, (proc.stdout + proc.stderr).strip()
 
 
 def _story_prompt(epic_id: int, story_id: str) -> str:
@@ -124,6 +262,170 @@ def _run_dispatch(
         return subprocess.run(args, cwd=repo_root, capture_output=True, text=True)
     finally:
         prompt_file.unlink(missing_ok=True)
+
+
+def discovery_synthesis_node(inp: NodeInput) -> NodeOutput:
+    if inp.story_id:
+        raise ValueError("discovery_synthesis does not accept story_id")
+    directory = epic_dir(inp.repo_root, inp.epic_id)
+    spark_path = directory / "spark.md"
+    if not spark_path.is_file() or not spark_path.read_text(encoding="utf-8").strip():
+        return _planning_halt(
+            inp,
+            stage=1,
+            message=f"Required Stage-1 input missing or empty: {_relpath(inp.repo_root, spark_path)}",
+            triggered_by=["incomplete_stage_state"],
+            check_count=1,
+            failed_check_count=1,
+        )
+
+    paths = [
+        _relpath(inp.repo_root, path)
+        for path in discovery_synthesis_paths(inp.repo_root, inp.epic_id).values()
+    ]
+    missing = _missing_discovery_outputs(inp.repo_root, inp.epic_id)
+    if missing:
+        discovery_synthesis_dir(inp.repo_root, inp.epic_id).mkdir(parents=True, exist_ok=True)
+        proc = _run_dispatch(
+            inp.repo_root,
+            role="primary",
+            epic_id=inp.epic_id,
+            story_id=None,
+            prompt=_discovery_synthesis_prompt(inp.repo_root, inp.epic_id),
+        )
+        if proc.returncode != 0:
+            return _planning_halt(
+                inp,
+                stage=1,
+                message=proc.stderr.strip(),
+                triggered_by=["subprocess_crash"],
+                check_count=len(paths),
+                failed_check_count=len(paths),
+                paths=paths,
+            )
+        missing = _missing_discovery_outputs(inp.repo_root, inp.epic_id)
+        if missing:
+            return _planning_halt(
+                inp,
+                stage=1,
+                message="Discovery synthesis did not produce required non-empty files: "
+                + ", ".join(missing),
+                triggered_by=["schema_validation_failed"],
+                check_count=len(paths),
+                failed_check_count=len(missing),
+                paths=paths,
+            )
+
+    append_epic_event_once(
+        inp.repo_root,
+        inp.epic_id,
+        {
+            "event": "discovery_synthesised",
+            "at": _now(),
+            "epic_id": inp.epic_id,
+            "paths": paths,
+        },
+        event="discovery_synthesised",
+    )
+    return NodeOutput(
+        node_type=inp.node_type,
+        status=NodeStatus.COMPLETED,
+        epic_id=inp.epic_id,
+        next_node=NodeType.EPIC_DEFINITION,
+        validation_summary=_planning_validation(
+            ok=True,
+            stage=1,
+            check_count=len(paths),
+            failed_check_count=0,
+        ),
+        paths=paths,
+    )
+
+
+def epic_definition_node(inp: NodeInput) -> NodeOutput:
+    if inp.story_id:
+        raise ValueError("epic_definition does not accept story_id")
+    directory = epic_dir(inp.repo_root, inp.epic_id)
+    epic_path = directory / "EPIC.md"
+    epic_relpath = _relpath(inp.repo_root, epic_path)
+
+    if not epic_path.exists():
+        if not discovery_synthesis_complete(inp.repo_root, inp.epic_id):
+            missing = _missing_discovery_outputs(inp.repo_root, inp.epic_id)
+            return _planning_halt(
+                inp,
+                stage=2,
+                message="Required Stage-2 synthesis inputs are missing: " + ", ".join(missing),
+                triggered_by=["incomplete_stage_state"],
+                check_count=4,
+                failed_check_count=len(missing) or 4,
+            )
+        proc = _run_dispatch(
+            inp.repo_root,
+            role="primary",
+            epic_id=inp.epic_id,
+            story_id=None,
+            prompt=_epic_definition_prompt(inp.repo_root, inp.epic_id),
+        )
+        if proc.returncode != 0:
+            return _planning_halt(
+                inp,
+                stage=2,
+                message=proc.stderr.strip(),
+                triggered_by=["subprocess_crash"],
+                check_count=1,
+                failed_check_count=1,
+                paths=[epic_relpath],
+            )
+
+    if not epic_path.exists():
+        return _planning_halt(
+            inp,
+            stage=2,
+            message=f"Epic definition did not produce required file: {epic_relpath}",
+            triggered_by=["schema_validation_failed"],
+            check_count=1,
+            failed_check_count=1,
+            paths=[epic_relpath],
+        )
+
+    ok, message = _validate_epic(inp.repo_root, epic_path)
+    if not ok:
+        return _planning_halt(
+            inp,
+            stage=2,
+            message=message,
+            triggered_by=["schema_validation_failed"],
+            check_count=1,
+            failed_check_count=1,
+            paths=[epic_relpath],
+        )
+
+    append_epic_event_once(
+        inp.repo_root,
+        inp.epic_id,
+        {
+            "event": "definition_closed",
+            "at": _now(),
+            "epic_id": inp.epic_id,
+            "paths": [epic_relpath],
+        },
+        event="definition_closed",
+    )
+    return NodeOutput(
+        node_type=inp.node_type,
+        status=NodeStatus.HALTED,
+        epic_id=inp.epic_id,
+        next_node=NodeType.BREAKDOWN_PLANNING,
+        validation_summary=_planning_validation(
+            ok=True,
+            stage=2,
+            check_count=1,
+            failed_check_count=0,
+        ),
+        message="definition closed; breakdown planning node is not implemented yet",
+        paths=[epic_relpath],
+    )
 
 
 def executor_dispatch_node(inp: NodeInput) -> NodeOutput:
@@ -666,6 +968,8 @@ def human_review_node(inp: NodeInput) -> NodeOutput:
 
 def default_registry() -> dict[NodeType, NodeHandler]:
     return {
+        NodeType.DISCOVERY_SYNTHESIS: discovery_synthesis_node,
+        NodeType.EPIC_DEFINITION: epic_definition_node,
         NodeType.EXECUTOR_DISPATCH: executor_dispatch_node,
         NodeType.CRITIQUE_DISPATCH: critique_dispatch_node,
         NodeType.REVIEW_DISPOSITION: review_disposition_node,

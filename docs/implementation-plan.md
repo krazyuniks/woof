@@ -183,7 +183,7 @@ GitHub sync must fail loud on auth, network, repo access, and rate-limit failure
 | ID | Status | Work item | Observable outcomes | Validation | Commit |
 |---|---|---|---|---|---|
 | DOG-001 | Completed | Keep dogfood artefacts curated as evidence. | `examples/dogfood/` records only reusable evidence: contracts, plans, critiques, audit summaries, gates, and lessons that demonstrate Woof behaviour or failure modes. | Example schema validation passed for retained epic, plan, critique, and JSONL event artefacts. `git diff --check` passed. `just check` passed: Ruff lint, Ruff format check, and 227 tests. | `docs(dogfood): curate evidence examples` |
-| GTS-001 | Ready | Document GTS as an external consumer checkout. | Woof docs describe GTS responsibilities for `.woof/` config without vendor-copying Woof into GTS. | Docs review plus `just check`. | `docs(consumers): define gts integration boundary` |
+| GTS-001 | Completed | Document GTS as an external consumer checkout. | Woof docs describe GTS responsibilities for `.woof/` config without vendor-copying Woof into GTS. | Docs review passed. `git diff --check` passed. `just check` passed: Ruff lint, Ruff format check, and 227 tests. | `docs(consumers): define gts integration boundary` |
 | GTS-002 | Ready | Generalise consumer policies into configurable checks only when reusable. | Consumer-specific policy remains outside Woof unless represented by documented configuration and checker behaviour. | Relevant checker tests plus `just check`. | `docs(consumers): constrain policy generalisation` |
 
 ### Phase 7: Documentation And Evidence Polish

@@ -1,8 +1,9 @@
 ---
-epic_id: 182
 target: plan
-target_path: .woof/epics/E182/plan.json
-critic: codex
+target_id: null
+severity: info
+timestamp: 2026-04-27T05:47:41Z
+harness: codex-gpt-5
 findings: []
 ---
 No actionable findings were identified.

@@ -1,6 +1,6 @@
 {"event": "spark_created", "at": "2026-04-26T21:56:57Z", "epic_id": 182}
 {"event": "discovery_started", "at": "2026-04-26T22:23:12Z", "epic_id": 182}
-{"event": "discovery_completed", "at": "2026-04-26T22:26:20Z", "epic_id": 182, "synthesis_files": ["CONCEPT.md", "PRINCIPLES.md", "ARCHITECTURE.md", "OPEN_QUESTIONS.md"], "open_questions_carried": 4, "open_questions_resolved": 6}
+{"event": "discovery_synthesised", "at": "2026-04-26T22:26:20Z", "epic_id": 182, "synthesis_files": ["CONCEPT.md", "PRINCIPLES.md", "ARCHITECTURE.md", "OPEN_QUESTIONS.md"], "open_questions_carried": 4, "open_questions_resolved": 6}
 {"event": "definition_started", "at": "2026-04-26T22:53:00Z", "epic_id": 182}
 {"event": "definition_closed", "at": "2026-04-26T22:53:24Z", "epic_id": 182, "reason": "E182 EPIC.md authored with 9 outcomes (O1-O9), 5 contract decisions (CD1-CD5), 12 acceptance criteria; OQ1 + OQ2 resolved during Discovery; OQ3 + OQ4 deferred"}
 {"event": "github_synced", "at": "2026-04-26T22:53:23Z", "epic_id": 182}

@@ -267,7 +267,7 @@ def _epic_definition_prompt(repo_root: Path, epic_id: int) -> str:
 def _breakdown_planning_prompt(repo_root: Path, epic_id: int) -> str:
     payload = _breakdown_planning_payload(repo_root, epic_id)
     return _prompt_template(
-        tool_root() / "playbooks" / "discovery" / "breakdown.md",
+        tool_root() / "playbooks" / "planning" / "breakdown.md",
         {"planning_input_json": json.dumps(payload, indent=2, sort_keys=True)},
     )
 

@@ -36,6 +36,33 @@ def _write_critique(critique_dir: Path, story_id: str, content: str) -> Path:
     return p
 
 
+def _write_disposition(epic_dir: Path, story_id: str, *, severity: str = "info") -> Path:
+    disposition_dir = epic_dir / "dispositions"
+    disposition_dir.mkdir(parents=True, exist_ok=True)
+    path = disposition_dir / f"story-{story_id}.md"
+    dispositions = "[]"
+    if severity == "minor":
+        dispositions = (
+            "\n  - finding_id: F1\n"
+            "    decision: accepted\n"
+            "    rationale: Addressed in staged artefacts."
+        )
+    path.write_text(
+        f"""---
+target: story
+target_id: {story_id}
+critique_path: .woof/epics/E181/critique/story-{story_id}.md
+severity: {severity}
+timestamp: "2026-04-27T05:47:00Z"
+harness: test-primary
+dispositions: {dispositions}
+---
+Primary disposition.
+"""
+    )
+    return path
+
+
 _BLOCKER_CRITIQUE = """\
 ---
 target: story
@@ -132,6 +159,7 @@ def test_minor_critique_passes(tmp_path: Path) -> None:
 
     epic_dir = tmp_path / ".woof" / "epics" / "E181"
     _write_critique(epic_dir / "critique", "S2", _MINOR_CRITIQUE)
+    _write_disposition(epic_dir, "S2", severity="minor")
     ctx = _make_ctx(epic_dir, "S2")
 
     outcome = check_6_critique_blocker_runner(ctx)
@@ -150,12 +178,31 @@ def test_info_critique_passes(tmp_path: Path) -> None:
 
     epic_dir = tmp_path / ".woof" / "epics" / "E181"
     _write_critique(epic_dir / "critique", "S1", _INFO_CRITIQUE)
+    _write_disposition(epic_dir, "S1", severity="info")
     ctx = _make_ctx(epic_dir, "S1")
 
     outcome = check_6_critique_blocker_runner(ctx)
 
     assert outcome.ok
     assert outcome.severity == "info"
+
+
+def test_non_blocking_critique_requires_primary_disposition(tmp_path: Path) -> None:
+    import sys
+
+    sys.path.insert(0, str(REPO_ROOT))
+
+    from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
+
+    epic_dir = tmp_path / ".woof" / "epics" / "E181"
+    _write_critique(epic_dir / "critique", "S2", _MINOR_CRITIQUE)
+    ctx = _make_ctx(epic_dir, "S2")
+
+    outcome = check_6_critique_blocker_runner(ctx)
+
+    assert not outcome.ok
+    assert outcome.severity == "blocker"
+    assert "primary disposition" in outcome.summary
 
 
 def test_missing_critique_file_fails(tmp_path: Path) -> None:

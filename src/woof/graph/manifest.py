@@ -5,6 +5,7 @@ from __future__ import annotations
 import fnmatch
 from pathlib import Path
 
+from woof.graph.dispositions import story_disposition_relpath
 from woof.graph.git import changed_paths, staged_paths
 from woof.graph.state import ManifestVerification, StorySpec, TransactionManifest
 
@@ -37,6 +38,7 @@ def build_story_manifest(repo_root: Path, epic_id: int, story: StorySpec) -> Tra
         f".woof/epics/E{epic_id}/epic.jsonl",
         f".woof/epics/E{epic_id}/dispatch.jsonl",
         f".woof/epics/E{epic_id}/critique/story-{story.id}.md",
+        story_disposition_relpath(epic_id, story.id),
     ]
     audit_paths = _audit_paths(epic_dir, repo_root)
     story_paths = [

@@ -22,6 +22,7 @@
       "enum": [
         "executor_dispatch",
         "critique_dispatch",
+        "review_disposition",
         "verification",
         "commit",
         "gate_open",
@@ -47,6 +48,7 @@
           "enum": [
             "executor_dispatch",
             "critique_dispatch",
+            "review_disposition",
             "verification",
             "commit",
             "gate_open",

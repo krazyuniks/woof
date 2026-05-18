@@ -1,10 +1,11 @@
 """check_6_critique_blocker — Stage-5 Check 6.
 
-Verifies that the Codex critique artefact:
+Verifies that the reviewer critique artefact:
   1. Exists at critique/story-S<k>.md
   2. Has valid YAML front-matter with required fields
   3. Top-level severity equals max(findings[].severity)
   4. severity != "blocker"
+  5. Non-blocking critiques have a valid primary disposition record
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from __future__ import annotations
 import yaml
 
 from woof.checks import CheckContext, CheckOutcome
+from woof.graph.dispositions import validate_story_disposition
 
 _SEVERITY_ORDER = {"info": 0, "minor": 1, "blocker": 2}
 _VALID_SEVERITIES = set(_SEVERITY_ORDER)
@@ -108,9 +110,19 @@ def check_6_critique_blocker_runner(ctx: CheckContext) -> CheckOutcome:
             evidence="; ".join(blocker_summaries) if blocker_summaries else None,
         )
 
+    disposition = validate_story_disposition(ctx.epic_dir, ctx.epic_id, ctx.story_id)
+    if not disposition.ok:
+        return CheckOutcome(
+            id=CHECK_ID,
+            ok=False,
+            severity="blocker",
+            summary="non-blocking reviewer critique is missing a valid primary disposition",
+            evidence="; ".join(disposition.errors),
+        )
+
     return CheckOutcome(
         id=CHECK_ID,
         ok=True,
         severity=top_sev,
-        summary=f"critique severity={top_sev!r}; no blocker findings",
+        summary=f"critique severity={top_sev!r}; primary disposition recorded",
     )

@@ -232,7 +232,7 @@ Each stage has a typed interface — defined inputs, defined outputs, invariants
 | 2 Definition | `discovery/synthesis/*` | `EPIC.md` with front-matter `observable_outcomes[]`, `contract_decisions[]`, `acceptance_criteria[]` | Every `OPEN_QUESTION` resolved or explicitly carried forward; every `contract_decision` has `epic_contract` + `resolution ∈ {epic, bridge}` (no `repo`) — E146 invariant |
 | 3 Breakdown | `EPIC.md` | `plan.json`, `PLAN.md`, `critique/plan.md` | Every `observable_outcome.id` referenced by ≥1 story; every `contract_decision.id` referenced; no story-scope overlap; dependency order topologically sorted |
 | 4 Plan gate | `gate.md` + Stage-3 artefacts | Revised artefacts + `gate.md` deleted, OR session terminated | Resolution action recorded in `epic.jsonl` |
-| 5 Story execution | `plan.json` + `story_id` | git commit (code + `.woof` state in one transaction) + updated `plan.json` + `critique/story-S<k>.md`, OR `gate.md` | 9 deterministic checks (see "Stage 5 deterministic gate checks" below); diff ⊆ `story.paths[]` |
+| 5 Story execution | `plan.json` + `story_id` | git commit (code + `.woof` state in one transaction) + updated `plan.json` + `critique/story-S<k>.md` + `dispositions/story-S<k>.md`, OR `gate.md` | 9 deterministic checks (see "Stage 5 deterministic gate checks" below); diff ⊆ `story.paths[]` |
 | 6 Story gate | `gate.md` + story artefacts | Revision + `gate.md` deleted, OR session terminated | Same as Stage 4 |
 
 Invariants are **mechanically checkable, fail loud, no agent judgement**. Validation failure produces a `gate.md` rather than a silent proceed. Contract format is JSON Schema; Pydantic / zod / equivalents are implementations of a contract, not alternatives to one.
@@ -416,8 +416,8 @@ Nine checks, derived from a failure-class taxonomy. Checks 1–8 run after the s
 | 3 | C | `git diff --name-only --staged` ⊆ `story.paths[]` globs (matched via git-pathspec) | shell + git pathspec |
 | 4 | D | For every CD with `implements_contract_decisions` ownership in this story: the referenced artefact is present, parses, and the implementation conforms to it. Tooling: `schemathesis run` for OpenAPI; Pydantic import + model resolution for `pydantic_ref`; `ajv-cli` validate-self for `json_schema_ref` and validate-fixtures where provided. Runs against repo HEAD + staged. | external native validators |
 | 5 | E | `plan.json` validates against `plan.schema.json`; cross-refs (`satisfies[]` ⊆ `observable_outcomes[].id`, both `*_contract_decisions[]` arrays ⊆ `contract_decisions[].id`, every CD owned by exactly one story, `depends_on[]` ⊆ `stories[].id`); status coherence | `ajv-cli` + jq + helper |
-| 6 | F | `critique/story-S<k>.md` exists; front-matter validates against `critique.schema.json`; top-level `severity` equals max severity over `findings[]`; `severity != blocker` | `ajv-cli` + helper |
-| 7 | G | `git diff --staged` non-empty AND staged paths match `story.paths[]` AND `.woof/epics/E<N>/{plan.json,critique/story-S<k>.md,epic.jsonl}` are also staged AND `git status --porcelain` shows nothing unstaged outside scope. Honours `empty_diff` (see below). | shell |
+| 6 | F | `critique/story-S<k>.md` exists; front-matter validates against `critique.schema.json`; top-level `severity` equals max severity over `findings[]`; `severity != blocker`; non-blocking critiques have `dispositions/story-S<k>.md` conforming to `disposition.schema.json` and covering each finding | `ajv-cli` + helper |
+| 7 | G | `git diff --staged` non-empty AND staged paths match `story.paths[]` AND `.woof/epics/E<N>/{plan.json,critique/story-S<k>.md,dispositions/story-S<k>.md,epic.jsonl}` are also staged AND `git status --porcelain` shows nothing unstaged outside scope. Honours `empty_diff` (see below). | shell |
 | 8 | H | If `.woof/docs-paths.toml` defines `code_pattern → doc_pattern` mappings, touched code triggers required doc paths in same diff. No-op when file absent. | helper |
 | 9 | I | After every N completed stories (configurable in `.woof/agents.toml.review_valve.every_n_stories`, default 5) AND once before epic close (`review_valve.end_of_epic = true`), open a `review_gate` summarising the cumulative `severity: minor` findings since the last review. Resolution decision via standard taxonomy (approve / revise_plan / split_story / etc.). | helper |
 
@@ -426,10 +426,11 @@ Nine checks, derived from a failure-class taxonomy. Checks 1–8 run after the s
 1. The Python graph reads `plan.json` and selects the next dependency-ready `pending` story.
 2. `executor_dispatch` marks the story `in_progress` and dispatches the `primary` producer prompt. The producer writes `executor_result.json` only.
 3. `critique_dispatch` dispatches the `reviewer` and expects `critique/story-S<k>.md`.
-4. `verification` runs `woof check stage-5 --epic <N> --story <S<k>> --format json` and writes `check-result.json`.
-5. `gate_open` writes `gate.md` if the executor outcome, subprocess result, verifier result, or an incomplete Stage-5 handoff state requires human review.
-6. `commit` computes the transaction manifest, stages the exact expected file set, verifies the index, appends graph events, commits, and removes transient `executor_result.json` / `check-result.json`.
-7. Existing `gate.md` halts at `human_review` until `woof wf --epic <N> --resolve <decision>` records the structured gate decision and removes the gate.
+4. `review_disposition` opens a story gate immediately for reviewer `blocker` severity; for `info` or `minor`, it dispatches the `primary` to write `dispositions/story-S<k>.md`.
+5. `verification` runs `woof check stage-5 --epic <N> --story <S<k>> --format json` and writes `check-result.json`.
+6. `gate_open` writes `gate.md` if the executor outcome, subprocess result, verifier result, or an incomplete Stage-5 handoff state requires human review.
+7. `commit` computes the transaction manifest, stages the exact expected file set, verifies the index, appends graph events, commits, and removes transient `executor_result.json` / `check-result.json`.
+8. Existing `gate.md` halts at `human_review` until `woof wf --epic <N> --resolve <decision>` records the structured gate decision and removes the gate.
 
 If a process dies during the commit transition after the plan has been marked `done` but before the git commit exists, the next `woof wf --epic <N>` run reconstitutes the interrupted transaction from `executor_result.json`, `check-result.json`, the critique, and uncommitted manifest paths. It resumes the `commit` node without duplicating durable JSONL events, then removes transient result files after the transaction is committed or after a previously committed transaction is detected.
 
@@ -666,7 +667,7 @@ Both cache files are gitignored.
 
 | Layer | Tracked in git | Rationale |
 |---|---|---|
-| `spark.md`, `discovery/`, `EPIC.md`, `plan.json`, `PLAN.md`, `critique/`, `audit/codex-*` | Yes | Durable narrative + audit; reproducible epic history |
+| `spark.md`, `discovery/`, `EPIC.md`, `plan.json`, `PLAN.md`, `critique/`, `dispositions/`, `audit/codex-*` | Yes | Durable narrative + audit; reproducible epic history |
 | `epic.jsonl`, `dispatch.jsonl` | Yes | Post-hoc debugging requires the event stream |
 | `summary.md` (codebase) | Yes | Human-authored architectural overview |
 | `gate.md`, `.wf.lock`, `.last-sync`, `.current-epic` | No | In-flight runtime / per-worktree |

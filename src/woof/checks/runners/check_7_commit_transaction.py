@@ -14,6 +14,7 @@ import subprocess
 from pathlib import Path
 
 from woof.checks import CheckContext, CheckOutcome
+from woof.graph.dispositions import story_disposition_relpath
 
 CHECK_ID = "check_7_commit_transaction"
 
@@ -68,6 +69,7 @@ def _required_paths(ctx: CheckContext) -> list[str]:
         f".woof/epics/{epic}/epic.jsonl",
         f".woof/epics/{epic}/dispatch.jsonl",
         f".woof/epics/{epic}/critique/story-{ctx.story_id}.md",
+        story_disposition_relpath(ctx.epic_id, ctx.story_id),
     ]
 
 

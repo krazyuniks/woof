@@ -48,6 +48,7 @@ SCHEMAS: dict[str, str] = {
     "plan": "plan.schema.json",
     "gate": "gate.schema.json",
     "critique": "critique.schema.json",
+    "disposition": "disposition.schema.json",
     "jsonl-events": "jsonl-events.schema.json",
     "prerequisites": "prerequisites.schema.json",
     "agents": "agents.schema.json",
@@ -87,6 +88,7 @@ FILENAME_RULES: list[tuple[re.Pattern[str], str]] = [
 # Path-suffix → schema (for files distinguished by parent dir)
 PATH_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"(^|/)critique/[^/]+\.md$"), "critique"),
+    (re.compile(r"(^|/)dispositions/[^/]+\.md$"), "disposition"),
     (re.compile(r"(^|/)languages/[^/]+\.toml$"), "language-registry"),
 ]
 
@@ -121,7 +123,7 @@ def extract_front_matter(path: Path) -> object:
 
 def load_payload(path: Path, schema: str) -> object:
     """Extract the structured payload appropriate for ``schema``."""
-    if schema in {"epic", "gate", "critique"}:
+    if schema in {"epic", "gate", "critique", "disposition"}:
         return extract_front_matter(path)
     if schema in {
         "plan",

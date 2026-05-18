@@ -10,7 +10,7 @@ Woof addresses the **inner loop**: the structured, auditable cycle of an individ
 
 Active. `guitar-tone-shootout` is Woof's first external consumer.
 
-ADR-001 is implemented for the Stage-5 execution path: `woof wf --epic <N>` runs a deterministic Python graph whose nodes dispatch the executor, dispatch the critique, run verification, open gates, and commit through a transaction manifest. LLM prompts are producer nodes only; they no longer own successor selection, critique dispatch, gate writing, or commits.
+ADR-001 is implemented for the Stage-5 execution path: `woof wf --epic <N>` runs a deterministic Python graph whose nodes dispatch the primary producer, dispatch the reviewer, record non-blocking reviewer dispositions, run verification, open gates, and commit through a transaction manifest. LLM prompts are producer nodes only; they no longer own successor selection, critique dispatch, gate writing, or commits.
 
 ADR-002 is the accepted role-routing direction for the next implementation pass: Woof is graph-led, GPT-5.5 is the preferred primary producer route, Claude Opus 4.7 at `max` effort is the preferred reviewer route, and reviewer blockers open human gates rather than model-to-model debate loops. Public Woof owns raw `claude` / `codex` command construction and cannot depend on Ryan-local shell wrappers.
 
@@ -74,7 +74,7 @@ Run `woof preflight` from a consumer checkout to validate the Woof install/asset
 - `src/woof/gate/` — gate-authoring helpers (`woof gate write`).
 - `src/woof/lib/` — shared Python helpers.
 - `schemas/` — JSON schemas for runtime artefacts, graph node I/O, and transaction manifests.
-- `playbooks/{discovery,critique}/` — prompt templates loaded into dispatched LLM contexts.
+- `playbooks/{discovery,critique,disposition}/` — prompt templates loaded into dispatched LLM contexts.
 - `languages/{python,typescript,rust,go}.toml` — per-language install / lint / test registry.
 - `.claude/commands/wf*.md` — thin wrappers / producer-node prompts; orchestration lives in Python.
 

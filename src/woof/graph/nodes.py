@@ -12,6 +12,7 @@ from pathlib import Path
 from woof.gate.write import write_gate_for_trigger, write_gate_from_check_result
 from woof.graph.dispositions import (
     FrontMatterError,
+    critique_findings,
     critique_severity,
     read_markdown_front_matter,
     reviewer_blocker_gate_body,
@@ -22,8 +23,9 @@ from woof.graph.dispositions import (
 )
 from woof.graph.git import git, staged_paths
 from woof.graph.manifest import build_story_manifest, verify_staged_manifest
-from woof.graph.state import NodeInput, NodeOutput, NodeStatus, NodeType, ValidationSummary
+from woof.graph.state import NodeInput, NodeOutput, NodeStatus, NodeType, Plan, ValidationSummary
 from woof.graph.transitions import (
+    StageStateError,
     append_epic_event_once,
     discovery_synthesis_complete,
     discovery_synthesis_dir,
@@ -31,6 +33,8 @@ from woof.graph.transitions import (
     epic_dir,
     load_plan,
     mark_story_status,
+    plan_critique_path,
+    plan_markdown_path,
     story_by_id,
 )
 from woof.lib.audit import prepare_commit_audit
@@ -184,6 +188,37 @@ def _epic_definition_payload(repo_root: Path, epic_id: int) -> dict:
     }
 
 
+def _breakdown_planning_payload(repo_root: Path, epic_id: int) -> dict:
+    directory = epic_dir(repo_root, epic_id)
+    return {
+        "node_type": NodeType.BREAKDOWN_PLANNING.value,
+        "epic_id": epic_id,
+        "repo_root": str(repo_root),
+        "epic_dir": _relpath(repo_root, directory),
+        "inputs": {
+            "epic_path": _relpath(repo_root, directory / "EPIC.md"),
+            "plan_path": _relpath(repo_root, directory / "plan.json"),
+            "plan_markdown_path": _relpath(repo_root, plan_markdown_path(repo_root, epic_id)),
+        },
+    }
+
+
+def _plan_critique_payload(repo_root: Path, epic_id: int) -> dict:
+    directory = epic_dir(repo_root, epic_id)
+    return {
+        "node_type": NodeType.PLAN_CRITIQUE.value,
+        "epic_id": epic_id,
+        "repo_root": str(repo_root),
+        "epic_dir": _relpath(repo_root, directory),
+        "inputs": {
+            "epic_path": _relpath(repo_root, directory / "EPIC.md"),
+            "plan_path": _relpath(repo_root, directory / "plan.json"),
+            "plan_markdown_path": _relpath(repo_root, plan_markdown_path(repo_root, epic_id)),
+            "critique_path": _relpath(repo_root, plan_critique_path(repo_root, epic_id)),
+        },
+    }
+
+
 def _missing_discovery_outputs(repo_root: Path, epic_id: int) -> list[str]:
     missing: list[str] = []
     for path in discovery_synthesis_paths(repo_root, epic_id).values():
@@ -208,6 +243,26 @@ def _epic_definition_prompt(repo_root: Path, epic_id: int) -> str:
     )
 
 
+def _breakdown_planning_prompt(repo_root: Path, epic_id: int) -> str:
+    payload = _breakdown_planning_payload(repo_root, epic_id)
+    return _prompt_template(
+        tool_root() / "playbooks" / "discovery" / "breakdown.md",
+        {"planning_input_json": json.dumps(payload, indent=2, sort_keys=True)},
+    )
+
+
+def _plan_critique_prompt(repo_root: Path, epic_id: int) -> str:
+    payload = _plan_critique_payload(repo_root, epic_id)
+    template = (tool_root() / "playbooks" / "critique" / "plan.md").read_text(encoding="utf-8")
+    return (
+        "Graph-owned input:\n\n"
+        "```json\n"
+        f"{json.dumps(payload, indent=2, sort_keys=True)}\n"
+        "```\n\n"
+        f"{template}"
+    )
+
+
 def _validate_epic(repo_root: Path, epic_path: Path) -> tuple[bool, str]:
     proc = subprocess.run(
         [str(_woof_bin()), "validate", "--schema", "epic", str(epic_path)],
@@ -216,6 +271,83 @@ def _validate_epic(repo_root: Path, epic_path: Path) -> tuple[bool, str]:
         text=True,
     )
     return proc.returncode == 0, (proc.stdout + proc.stderr).strip()
+
+
+def _validate_plan(repo_root: Path, epic_id: int, plan_path: Path) -> tuple[bool, str]:
+    proc = subprocess.run(
+        [str(_woof_bin()), "validate", "--schema", "plan", str(plan_path)],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        return False, (proc.stdout + proc.stderr).strip()
+    try:
+        plan = load_plan(repo_root, epic_id)
+    except (StageStateError, ValueError) as exc:
+        return False, str(exc)
+    if plan.epic_id != epic_id:
+        return False, f"plan epic_id {plan.epic_id} does not match E{epic_id}"
+    return True, (proc.stdout + proc.stderr).strip()
+
+
+def _validate_plan_critique(repo_root: Path, critique_path: Path) -> tuple[bool, str]:
+    proc = subprocess.run(
+        [str(_woof_bin()), "validate", "--schema", "critique", str(critique_path)],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        return False, (proc.stdout + proc.stderr).strip()
+    try:
+        critique = read_markdown_front_matter(critique_path)
+    except (FileNotFoundError, FrontMatterError) as exc:
+        return False, str(exc)
+    if critique.front.get("target") != "plan" or critique.front.get("target_id") is not None:
+        return False, "plan critique front-matter must set target=plan and target_id=null"
+    if critique_severity(critique.front) is None:
+        return False, "plan critique severity must be info, minor, or blocker"
+    return True, (proc.stdout + proc.stderr).strip()
+
+
+def _table_cell(value: object) -> str:
+    text = str(value)
+    return text.replace("\n", " ").replace("|", "\\|").strip()
+
+
+def _csv(items: list[str]) -> str:
+    return ", ".join(items) if items else "-"
+
+
+def _render_plan_markdown(plan: Plan) -> str:
+    out = [
+        f"# Plan E{plan.epic_id}\n\n",
+        f"{plan.goal}\n\n",
+        "## Stories\n\n",
+        "| ID | Title | Status | Satisfies | Implements CDs | Uses CDs | Depends On | Paths | Tests |\n",
+        "|---|---|---|---|---|---|---|---|---|\n",
+    ]
+    for story in plan.stories:
+        tests = story.tests if isinstance(story.tests, dict) else {}
+        test_types = tests.get("types", [])
+        if not isinstance(test_types, list):
+            test_types = []
+        test_count = tests.get("count", 0)
+        out.append(
+            "| "
+            f"{_table_cell(story.id)} | "
+            f"{_table_cell(story.title)} | "
+            f"{_table_cell(story.status)} | "
+            f"{_table_cell(_csv(story.satisfies))} | "
+            f"{_table_cell(_csv(story.implements_contract_decisions))} | "
+            f"{_table_cell(_csv(story.uses_contract_decisions))} | "
+            f"{_table_cell(_csv(story.depends_on))} | "
+            f"{_table_cell(_csv(story.paths))} | "
+            f"{_table_cell(str(test_count) + ' ' + _csv([str(item) for item in test_types]))} |\n"
+        )
+    out.append("\n")
+    return "".join(out)
 
 
 def _story_prompt(epic_id: int, story_id: str) -> str:
@@ -414,7 +546,7 @@ def epic_definition_node(inp: NodeInput) -> NodeOutput:
     )
     return NodeOutput(
         node_type=inp.node_type,
-        status=NodeStatus.HALTED,
+        status=NodeStatus.COMPLETED,
         epic_id=inp.epic_id,
         next_node=NodeType.BREAKDOWN_PLANNING,
         validation_summary=_planning_validation(
@@ -423,8 +555,218 @@ def epic_definition_node(inp: NodeInput) -> NodeOutput:
             check_count=1,
             failed_check_count=0,
         ),
-        message="definition closed; breakdown planning node is not implemented yet",
         paths=[epic_relpath],
+    )
+
+
+def breakdown_planning_node(inp: NodeInput) -> NodeOutput:
+    if inp.story_id:
+        raise ValueError("breakdown_planning does not accept story_id")
+    directory = epic_dir(inp.repo_root, inp.epic_id)
+    epic_path = directory / "EPIC.md"
+    plan_path = directory / "plan.json"
+    plan_md_path = plan_markdown_path(inp.repo_root, inp.epic_id)
+    paths = [_relpath(inp.repo_root, plan_path), _relpath(inp.repo_root, plan_md_path)]
+
+    if not epic_path.exists():
+        return _planning_halt(
+            inp,
+            stage=3,
+            message=f"Required Stage-3 input missing: {_relpath(inp.repo_root, epic_path)}",
+            triggered_by=["incomplete_stage_state"],
+            check_count=1,
+            failed_check_count=1,
+            paths=[_relpath(inp.repo_root, epic_path)],
+        )
+
+    epic_ok, epic_message = _validate_epic(inp.repo_root, epic_path)
+    if not epic_ok:
+        return _planning_halt(
+            inp,
+            stage=3,
+            message=epic_message,
+            triggered_by=["schema_validation_failed"],
+            check_count=1,
+            failed_check_count=1,
+            paths=[_relpath(inp.repo_root, epic_path)],
+        )
+
+    if not plan_path.exists():
+        proc = _run_dispatch(
+            inp.repo_root,
+            role="primary",
+            epic_id=inp.epic_id,
+            story_id=None,
+            prompt=_breakdown_planning_prompt(inp.repo_root, inp.epic_id),
+        )
+        if proc.returncode != 0:
+            return _planning_halt(
+                inp,
+                stage=3,
+                message=proc.stderr.strip(),
+                triggered_by=["subprocess_crash"],
+                check_count=len(paths),
+                failed_check_count=len(paths),
+                paths=paths,
+            )
+
+    if not plan_path.exists():
+        return _planning_halt(
+            inp,
+            stage=3,
+            message=f"Breakdown planning did not produce required file: {paths[0]}",
+            triggered_by=["schema_validation_failed"],
+            check_count=1,
+            failed_check_count=1,
+            paths=paths,
+        )
+
+    plan_ok, plan_message = _validate_plan(inp.repo_root, inp.epic_id, plan_path)
+    if not plan_ok:
+        return _planning_halt(
+            inp,
+            stage=3,
+            message=plan_message,
+            triggered_by=["schema_validation_failed"],
+            check_count=1,
+            failed_check_count=1,
+            paths=paths,
+        )
+
+    plan = load_plan(inp.repo_root, inp.epic_id)
+    plan_md_path.write_text(_render_plan_markdown(plan), encoding="utf-8")
+    append_epic_event_once(
+        inp.repo_root,
+        inp.epic_id,
+        {
+            "event": "breakdown_planned",
+            "at": _now(),
+            "epic_id": inp.epic_id,
+            "paths": paths,
+        },
+        event="breakdown_planned",
+    )
+    return NodeOutput(
+        node_type=inp.node_type,
+        status=NodeStatus.COMPLETED,
+        epic_id=inp.epic_id,
+        next_node=NodeType.PLAN_CRITIQUE,
+        validation_summary=_planning_validation(
+            ok=True,
+            stage=3,
+            check_count=2,
+            failed_check_count=0,
+        ),
+        paths=paths,
+    )
+
+
+def plan_critique_node(inp: NodeInput) -> NodeOutput:
+    if inp.story_id:
+        raise ValueError("plan_critique does not accept story_id")
+    directory = epic_dir(inp.repo_root, inp.epic_id)
+    plan_path = directory / "plan.json"
+    plan_md_path = plan_markdown_path(inp.repo_root, inp.epic_id)
+    critique_path = plan_critique_path(inp.repo_root, inp.epic_id)
+    critique_relpath = _relpath(inp.repo_root, critique_path)
+
+    required = [plan_path, plan_md_path]
+    missing = [_relpath(inp.repo_root, path) for path in required if not path.exists()]
+    if missing:
+        return _planning_halt(
+            inp,
+            stage=3,
+            message="Required Stage-3 critique inputs are missing: " + ", ".join(missing),
+            triggered_by=["incomplete_stage_state"],
+            check_count=len(required),
+            failed_check_count=len(missing),
+            paths=[_relpath(inp.repo_root, path) for path in required],
+        )
+
+    plan_ok, plan_message = _validate_plan(inp.repo_root, inp.epic_id, plan_path)
+    if not plan_ok:
+        return _planning_halt(
+            inp,
+            stage=3,
+            message=plan_message,
+            triggered_by=["schema_validation_failed"],
+            check_count=1,
+            failed_check_count=1,
+            paths=[_relpath(inp.repo_root, plan_path)],
+        )
+
+    if not critique_path.exists():
+        critique_path.parent.mkdir(parents=True, exist_ok=True)
+        proc = _run_dispatch(
+            inp.repo_root,
+            role="reviewer",
+            epic_id=inp.epic_id,
+            story_id=None,
+            prompt=_plan_critique_prompt(inp.repo_root, inp.epic_id),
+        )
+        if proc.returncode != 0:
+            return _planning_halt(
+                inp,
+                stage=3,
+                message=proc.stderr.strip(),
+                triggered_by=["reviewer_unreachable"],
+                check_count=1,
+                failed_check_count=1,
+                paths=[critique_relpath],
+            )
+
+    if not critique_path.exists():
+        return _planning_halt(
+            inp,
+            stage=3,
+            message=f"Plan critique did not produce required file: {critique_relpath}",
+            triggered_by=["schema_validation_failed"],
+            check_count=1,
+            failed_check_count=1,
+            paths=[critique_relpath],
+        )
+
+    critique_ok, critique_message = _validate_plan_critique(inp.repo_root, critique_path)
+    if not critique_ok:
+        return _planning_halt(
+            inp,
+            stage=3,
+            message=critique_message,
+            triggered_by=["schema_validation_failed"],
+            check_count=1,
+            failed_check_count=1,
+            paths=[critique_relpath],
+        )
+
+    critique = read_markdown_front_matter(critique_path)
+    severity = critique_severity(critique.front) or "info"
+    finding_count = len(critique_findings(critique.front))
+    append_epic_event_once(
+        inp.repo_root,
+        inp.epic_id,
+        {
+            "event": "plan_critiqued",
+            "at": _now(),
+            "epic_id": inp.epic_id,
+            "severity": severity,
+            "finding_count": finding_count,
+            "paths": [critique_relpath],
+        },
+        event="plan_critiqued",
+    )
+    return NodeOutput(
+        node_type=inp.node_type,
+        status=NodeStatus.HALTED,
+        epic_id=inp.epic_id,
+        next_node=NodeType.PLAN_GATE_OPEN,
+        validation_summary=_planning_validation(
+            ok=True,
+            stage=3,
+            check_count=1,
+            failed_check_count=0,
+        ),
+        message="plan critique complete; plan gate node is not implemented yet",
+        paths=[critique_relpath],
     )
 
 
@@ -970,6 +1312,8 @@ def default_registry() -> dict[NodeType, NodeHandler]:
     return {
         NodeType.DISCOVERY_SYNTHESIS: discovery_synthesis_node,
         NodeType.EPIC_DEFINITION: epic_definition_node,
+        NodeType.BREAKDOWN_PLANNING: breakdown_planning_node,
+        NodeType.PLAN_CRITIQUE: plan_critique_node,
         NodeType.EXECUTOR_DISPATCH: executor_dispatch_node,
         NodeType.CRITIQUE_DISPATCH: critique_dispatch_node,
         NodeType.REVIEW_DISPOSITION: review_disposition_node,

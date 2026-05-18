@@ -130,6 +130,49 @@ Test epic intent.
     )
 
 
+def _write_stage3_plan(directory: Path, epic_id: int) -> None:
+    plan = {
+        "epic_id": epic_id,
+        "goal": "Implement the test epic.",
+        "stories": [
+            {
+                "id": "S1",
+                "title": "Build the first surface",
+                "intent": "Create the first observable surface.",
+                "paths": ["src/*.py", "tests/*.py"],
+                "satisfies": ["O1"],
+                "implements_contract_decisions": [],
+                "uses_contract_decisions": [],
+                "depends_on": [],
+                "tests": {"count": 1, "types": ["unit"]},
+                "status": "pending",
+            }
+        ],
+    }
+    (directory / "plan.json").write_text(json.dumps(plan))
+
+
+def _write_plan_critique(directory: Path, severity: str = "minor") -> None:
+    critique_dir = directory / "critique"
+    critique_dir.mkdir(exist_ok=True)
+    findings = (
+        f"findings:\n  - id: F1\n    severity: {severity}\n    summary: tighten story scope\n"
+        if severity != "info"
+        else "findings: []\n"
+    )
+    (critique_dir / "plan.md").write_text(
+        "---\n"
+        "target: plan\n"
+        "target_id: null\n"
+        f"severity: {severity}\n"
+        "timestamp: '2026-01-01T00:00:00Z'\n"
+        "harness: test-reviewer\n"
+        f"{findings}"
+        "---\n"
+        "Plan critique body.\n"
+    )
+
+
 def _write_last_sync(directory: Path, epic_id: int, *, body: str = "<previous>") -> None:
     directory.joinpath(".last-sync").write_text(
         json.dumps(
@@ -478,7 +521,7 @@ def test_discovery_synthesis_node_validates_existing_outputs_without_dispatch(
     assert output.next_node == NodeType.EPIC_DEFINITION
 
 
-def test_epic_definition_node_dispatches_primary_validates_epic_and_halts(
+def test_epic_definition_node_dispatches_primary_validates_epic_and_continues(
     tmp_path: Path, monkeypatch
 ) -> None:
     directory = _write_spark(tmp_path, 24)
@@ -519,12 +562,11 @@ def test_epic_definition_node_dispatches_primary_validates_epic_and_halts(
         tmp_path,
         nodes._epic_definition_payload(tmp_path, 24),
     )
-    assert output.status == NodeStatus.HALTED
+    assert output.status == NodeStatus.COMPLETED
     assert output.next_node == NodeType.BREAKDOWN_PLANNING
     assert output.validation_summary and output.validation_summary.stage == 2
     assert output.validation_summary.ok is True
     assert output.paths == [".woof/epics/E24/EPIC.md"]
-    assert "breakdown planning node is not implemented yet" in output.message
     events = [json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines()]
     assert events[-1]["event"] == "definition_closed"
     _assert_node_output_schema(tmp_path, json.loads(output.model_dump_json()))
@@ -548,10 +590,117 @@ def test_epic_definition_node_halts_on_invalid_existing_epic(tmp_path: Path) -> 
     assert "INVALID" in output.message
 
 
-def test_graph_runs_discovery_then_definition_until_breakdown_boundary(
+def test_breakdown_planning_node_dispatches_primary_validates_plan_and_renders_markdown(
     tmp_path: Path, monkeypatch
 ) -> None:
     directory = _write_spark(tmp_path, 26)
+    _write_minimal_epic(directory, 26)
+    captured: dict[str, Any] = {}
+
+    def fake_dispatch(
+        repo_root: Path,
+        role: str,
+        epic_id: int,
+        story_id: str | None,
+        prompt: str,
+    ) -> subprocess.CompletedProcess[str]:
+        captured["repo_root"] = repo_root
+        captured["role"] = role
+        captured["epic_id"] = epic_id
+        captured["story_id"] = story_id
+        captured["prompt"] = prompt
+        _write_stage3_plan(directory, epic_id)
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setattr(nodes, "_run_dispatch", fake_dispatch)
+
+    output = nodes.breakdown_planning_node(
+        NodeInput(
+            node_type=NodeType.BREAKDOWN_PLANNING,
+            epic_id=26,
+            repo_root=tmp_path,
+        )
+    )
+
+    assert captured["repo_root"] == tmp_path
+    assert captured["role"] == "primary"
+    assert captured["epic_id"] == 26
+    assert captured["story_id"] is None
+    assert '"node_type": "breakdown_planning"' in captured["prompt"]
+    _assert_planning_node_input_schema(
+        tmp_path,
+        nodes._breakdown_planning_payload(tmp_path, 26),
+    )
+    assert output.status == NodeStatus.COMPLETED
+    assert output.next_node == NodeType.PLAN_CRITIQUE
+    assert output.validation_summary and output.validation_summary.stage == 3
+    assert output.paths == [".woof/epics/E26/plan.json", ".woof/epics/E26/PLAN.md"]
+    plan_md = (directory / "PLAN.md").read_text()
+    assert "| S1 | Build the first surface | pending | O1 | - | - | - |" in plan_md
+    events = [json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines()]
+    assert events[-1]["event"] == "breakdown_planned"
+    _assert_node_output_schema(tmp_path, json.loads(output.model_dump_json()))
+
+
+def test_plan_critique_node_dispatches_reviewer_validates_critique_and_halts(
+    tmp_path: Path, monkeypatch
+) -> None:
+    directory = _write_spark(tmp_path, 27)
+    _write_minimal_epic(directory, 27)
+    _write_stage3_plan(directory, 27)
+    (directory / "PLAN.md").write_text(nodes._render_plan_markdown(nodes.load_plan(tmp_path, 27)))
+    captured: dict[str, Any] = {}
+
+    def fake_dispatch(
+        repo_root: Path,
+        role: str,
+        epic_id: int,
+        story_id: str | None,
+        prompt: str,
+    ) -> subprocess.CompletedProcess[str]:
+        captured["repo_root"] = repo_root
+        captured["role"] = role
+        captured["epic_id"] = epic_id
+        captured["story_id"] = story_id
+        captured["prompt"] = prompt
+        _write_plan_critique(directory)
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setattr(nodes, "_run_dispatch", fake_dispatch)
+
+    output = nodes.plan_critique_node(
+        NodeInput(
+            node_type=NodeType.PLAN_CRITIQUE,
+            epic_id=27,
+            repo_root=tmp_path,
+        )
+    )
+
+    assert captured["repo_root"] == tmp_path
+    assert captured["role"] == "reviewer"
+    assert captured["epic_id"] == 27
+    assert captured["story_id"] is None
+    assert '"node_type": "plan_critique"' in captured["prompt"]
+    _assert_planning_node_input_schema(
+        tmp_path,
+        nodes._plan_critique_payload(tmp_path, 27),
+    )
+    assert output.status == NodeStatus.HALTED
+    assert output.next_node == NodeType.PLAN_GATE_OPEN
+    assert output.validation_summary and output.validation_summary.stage == 3
+    assert output.paths == [".woof/epics/E27/critique/plan.md"]
+    assert "plan gate node is not implemented yet" in output.message
+    events = [json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines()]
+    assert events[-1]["event"] == "plan_critiqued"
+    assert events[-1]["severity"] == "minor"
+    assert events[-1]["finding_count"] == 1
+    _assert_node_output_schema(tmp_path, json.loads(output.model_dump_json()))
+
+
+def test_graph_runs_discovery_definition_breakdown_until_plan_gate_boundary(
+    tmp_path: Path, monkeypatch
+) -> None:
+    directory = _write_spark(tmp_path, 28)
 
     def fake_dispatch(
         repo_root: Path,
@@ -561,27 +710,36 @@ def test_graph_runs_discovery_then_definition_until_breakdown_boundary(
         prompt: str,
     ) -> subprocess.CompletedProcess[str]:
         assert repo_root == tmp_path
-        assert role == "primary"
-        assert epic_id == 26
+        assert epic_id == 28
         assert story_id is None
         if '"node_type": "discovery_synthesis"' in prompt:
+            assert role == "primary"
             _write_discovery_synthesis(directory)
         elif '"node_type": "epic_definition"' in prompt:
+            assert role == "primary"
             _write_minimal_epic(directory, epic_id)
+        elif '"node_type": "breakdown_planning"' in prompt:
+            assert role == "primary"
+            _write_stage3_plan(directory, epic_id)
+        elif '"node_type": "plan_critique"' in prompt:
+            assert role == "reviewer"
+            _write_plan_critique(directory, "info")
         else:
             raise AssertionError(prompt)
         return subprocess.CompletedProcess([], 0, "", "")
 
     monkeypatch.setattr(nodes, "_run_dispatch", fake_dispatch)
 
-    outputs = run_graph(tmp_path, 26)
+    outputs = run_graph(tmp_path, 28)
 
     assert [output.node_type for output in outputs] == [
         NodeType.DISCOVERY_SYNTHESIS,
         NodeType.EPIC_DEFINITION,
+        NodeType.BREAKDOWN_PLANNING,
+        NodeType.PLAN_CRITIQUE,
     ]
     assert outputs[-1].status == NodeStatus.HALTED
-    assert outputs[-1].next_node == NodeType.BREAKDOWN_PLANNING
+    assert outputs[-1].next_node == NodeType.PLAN_GATE_OPEN
 
 
 def test_critique_dispatch_failure_opens_reviewer_gate(tmp_path: Path, monkeypatch) -> None:

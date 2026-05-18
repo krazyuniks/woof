@@ -47,6 +47,14 @@ def discovery_synthesis_complete(repo_root: Path, epic_id: int) -> bool:
     )
 
 
+def plan_markdown_path(repo_root: Path, epic_id: int) -> Path:
+    return epic_dir(repo_root, epic_id) / "PLAN.md"
+
+
+def plan_critique_path(repo_root: Path, epic_id: int) -> Path:
+    return epic_dir(repo_root, epic_id) / "critique" / "plan.md"
+
+
 def load_plan(repo_root: Path, epic_id: int) -> Plan:
     path = epic_dir(repo_root, epic_id) / "plan.json"
     try:
@@ -190,7 +198,11 @@ def next_node(repo_root: Path, epic_id: int) -> tuple[NodeType | None, str | Non
 
     plan_path = directory / "plan.json"
     if not plan_path.exists():
-        if (directory / "EPIC.md").exists() or discovery_synthesis_complete(repo_root, epic_id):
+        if (directory / "EPIC.md").exists():
+            if epic_event_exists(repo_root, epic_id, event="definition_closed"):
+                return NodeType.BREAKDOWN_PLANNING, None
+            return NodeType.EPIC_DEFINITION, None
+        if discovery_synthesis_complete(repo_root, epic_id):
             return NodeType.EPIC_DEFINITION, None
         if (directory / "spark.md").exists():
             return NodeType.DISCOVERY_SYNTHESIS, None
@@ -198,6 +210,9 @@ def next_node(repo_root: Path, epic_id: int) -> tuple[NodeType | None, str | Non
             f"required planning artefact missing: {directory / 'plan.json'} "
             f"(or pre-plan input {directory / 'spark.md'} / {directory / 'EPIC.md'})"
         )
+
+    if epic_event_exists(repo_root, epic_id, event="breakdown_planned"):
+        return NodeType.PLAN_CRITIQUE, None
 
     plan = load_plan(repo_root, epic_id)
     resumable_story = _resumable_commit_story(repo_root, epic_id, plan)

@@ -694,19 +694,25 @@ Roles in the Woof pipeline are configurable per-project via `.woof/agents.toml`.
 ```toml
 # adapter: claude | codex
 # model: adapter-specific ID, passed through to underlying CLI or inherited
-# mcp: array of MCP server names; empty = no MCPs. Named MCP resolution lands
-#      in ROLE-003; ROLE-002 generates strict empty MCP JSON for Claude routes.
+# effort: low | medium | high | xhigh | max; max is Claude-only
+# mcp: array of Claude MCP server names; empty = no MCPs.
 # flags: arbitrary additional pass-through args after adapter-owned options
 
 [roles.primary]
 adapter = "codex"
 model = "gpt-5.5"
+effort = "xhigh"
 mcp = []
 
 [roles.reviewer]
 adapter = "claude"
 model = "claude-opus-4-7"
+effort = "max"
 mcp = []
+
+[mcp_servers.chrome-devtools]
+command = "npx"
+args = ["-y", "chrome-devtools-mcp@latest"]
 
 [roles.gate-resolver]
 adapter = "in-session"
@@ -718,7 +724,7 @@ adapter = "in-session"
 - `critiquer` is a legacy alias for `reviewer`.
 - Legacy `harness = "cld"` maps to the public `claude` adapter and `harness = "cod"` maps to the public `codex` adapter. The deprecated positional dispatch target is accepted only when it matches the resolved adapter.
 
-**Effort settings.** Effort is part of the route, not hidden prompt prose. ROLE-003 adds explicit `effort` to the schema and maps role effort to the public CLI's per-invocation mechanism. For Claude Code, that is `claude --effort <level>`; the reviewer route uses `--effort max`. For Codex, the route records and applies the configured reasoning effort through the supported CLI/config path.
+**Effort settings.** Effort is part of the route, not hidden prompt prose. Woof maps role effort to the public CLI's per-invocation mechanism. For Claude Code, that is `claude --effort <level>`; the reviewer route uses `--effort max`. For Codex, Woof passes `-c model_reasoning_effort="<level>"`; the preferred primary route uses `xhigh`.
 
 **Adapter guarantees relied on:**
 

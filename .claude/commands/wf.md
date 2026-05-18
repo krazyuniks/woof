@@ -26,4 +26,4 @@ In a consumer repo with Woof vendored or submoduled at `woof/`, use:
 ./woof/bin/woof wf $ARGUMENTS
 ```
 
-Report the command output only. The Python graph is the orchestrator.
+Report the command output only. The Python graph is the orchestration authority.

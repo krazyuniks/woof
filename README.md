@@ -12,7 +12,7 @@ Active. `guitar-tone-shootout` is Woof's first external consumer.
 
 ADR-001 is implemented for the Stage-5 execution path: `woof wf --epic <N>` runs a deterministic Python graph whose nodes dispatch the primary producer, dispatch the reviewer, record non-blocking reviewer dispositions, run verification, open gates, and commit through a transaction manifest. LLM prompts are producer nodes only; they no longer own successor selection, critique dispatch, gate writing, or commits.
 
-ADR-002 is the accepted role-routing direction for the next implementation pass: Woof is graph-led, GPT-5.5 is the preferred primary producer route, Claude Opus 4.7 at `max` effort is the preferred reviewer route, and reviewer blockers open human gates rather than model-to-model debate loops. Public Woof owns raw `claude` / `codex` command construction and cannot depend on Ryan-local shell wrappers.
+ADR-002 is the accepted role-routing policy: Woof is graph-led, GPT-5.5 is the preferred primary producer route, Claude Opus 4.7 at `max` effort is the preferred reviewer route, and reviewer blockers open human gates rather than model-to-model debate loops. Public Woof owns raw `claude` / `codex` command construction and cannot depend on Ryan-local shell wrappers.
 
 Discovery, definition, and breakdown remain documented in [`docs/architecture.md`](docs/architecture.md). The old skill-driven Stage-5 topology is superseded by [`docs/adr/001-orchestration-topology.md`](docs/adr/001-orchestration-topology.md).
 

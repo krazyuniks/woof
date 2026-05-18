@@ -15,4 +15,4 @@ Two templates ship today:
 
 Both templates output a critique document conforming to `woof/schemas/critique.schema.json` with structured findings (`severity: blocker | minor | info`).
 
-The orchestrator never auto-revises in response to a critique. Findings surface to the human via the inline `plan_gate` (Stage 4) or `story_gate` (Stage 6).
+The graph never auto-revises in response to a critique. Findings surface to the human via the inline `plan_gate` (Stage 4) or `story_gate` (Stage 6).

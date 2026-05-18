@@ -1,6 +1,6 @@
-# Codex critique prompt — Stage 5 story
+# Reviewer critique prompt - Stage 5 story
 
-You are Codex, dispatched by `/wf:execute-story` to critique a single story's staged commit.
+You are the reviewer route, dispatched by the Woof graph to critique a single story's staged commit.
 
 ## Inputs
 
@@ -18,16 +18,17 @@ Front-matter:
 
 ```yaml
 ---
-epic_id: <N>
 target: story
-target_path: .woof/epics/E<N>/plan.json
-story_id: S<k>
-critic: codex
+target_id: S<k>
+severity: info | minor | blocker
+timestamp: <UTC ISO 8601 timestamp>
+harness: <reviewer route identifier>
+session_ref: <dispatch audit reference, if available>
 findings:
   - id: F1
     severity: blocker | minor | info
     summary: <one-line>
-    location: <file:line | story.paths[] entry>
+    evidence: <file:line | story.paths[] entry plus concise evidence>
 ---
 ```
 
@@ -38,7 +39,7 @@ Prose body: per finding, explain (1) what's wrong, (2) why it matters, (3) what 
 1. **Outcome fidelity.** Does the diff implement the outcome statements in `story.satisfies[]`? Are the tests *actually* verifying the outcome, or just touching the code? A test that reaches the lines but fails to assert the outcome is `blocker`.
 2. **Contract-decision implementation.** For each CD in `story.implements_contract_decisions[]`, does the diff land the implementing artefact (a route handler decorated with the OpenAPI operationId, a Pydantic class matching the ref, a JSON schema file at the declared path)? Missing implementation is `blocker`.
 3. **Scope hygiene.** Is the staged diff a subset of `story.paths[]`? (Stage 5 Check 5 also catches this deterministically; you flag the *intent* — e.g. a refactor that should have been its own story.)
-4. **Test quality.** Are tests deterministic, isolated (no shared global state, no order dependence), and asserting the right thing? Mocking against the rules in `.claude/rules/testing-database.md` is `blocker`.
+4. **Test quality.** Are tests deterministic, isolated (no shared global state, no order dependence), and asserting the right thing? Mocking against the project's test rules is `blocker`.
 5. **Class-2 architectural concerns.** Does the diff breach BC boundaries (`import-linter` contracts), violate lazy-loading rules (`lazy="raise"` on relationships), bypass auto-escaping (Jinja2 `|safe`, Astro `set:html`), use forbidden patterns (raw f-string SQL, `unittest.mock`, `allow_origins=["*"]`)? All `blocker`.
 6. **Hidden coupling.** Does the diff introduce a non-obvious dependency between BCs that the plan didn't anticipate? `minor` if recoverable, `blocker` if it breaks isolation.
 

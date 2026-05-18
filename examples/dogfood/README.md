@@ -6,3 +6,5 @@ These are selected public artefacts from Woof's first two dogfood epics while it
 - `E182` demonstrates the Stage-5 driver/checker epic that exposed the larger orchestration-topology flaw captured in ADR-001.
 
 Raw `audit/` transcripts are intentionally omitted. They contain bulky harness command/output captures from the consumer repository and are not needed to understand the workflow evidence. The durable contracts, plans, critiques, and JSONL traces are preserved here.
+
+These examples pre-date ADR-002, so some preserved artefacts contain legacy provider-shaped role names, wrapper names, and harness fields. Treat those entries as historical compatibility evidence only; current prompts and docs use `primary` / `reviewer` role terminology.

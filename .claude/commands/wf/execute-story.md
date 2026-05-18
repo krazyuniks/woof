@@ -1,5 +1,5 @@
 ---
-description: Pure story executor node. Produces code/test changes and executor_result.json only.
+description: Pure primary story producer node. Produces code/test changes and executor_result.json only.
 allowed-tools: Bash(just:*), Bash(git:*), Bash(test:*), Bash(ls:*), Bash(cat:*), Bash(grep:*), Bash(jq:*), Bash(rg:*), Read, Edit, Write, Glob, Grep
 argument-hint: "<E<N>> <S<k>>"
 ---
@@ -37,7 +37,7 @@ Use `outcome: "aborted_with_position"` when the story cannot be completed inside
 
 ## Do Not
 
-- Do not dispatch Codex or any other subprocess.
+- Do not dispatch the reviewer or any other subprocess.
 - Do not run `woof check`.
 - Do not write or edit `gate.md`.
 - Do not commit.

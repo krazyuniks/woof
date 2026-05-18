@@ -158,7 +158,7 @@ Save the research to a file:
 - Goes beyond surface-level (not just "what" but "why" and "when")
 - Identifies limitations honestly
 - Synthesizes into actionable understanding
-- Implementation context is specific enough for Claude to apply
+- Implementation context is specific enough for the primary route to apply
 - Clear about what's still unknown
 - Output saved to artifacts/research/ directory
 </success_criteria>

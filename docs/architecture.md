@@ -25,7 +25,7 @@ When this document conflicts with `docs/adr/001-orchestration-topology.md`, `doc
 ## 1. Principles
 
 1. **Epic contract is law.** User-facing observable outcomes are canonical. Implementation may bridge repo conventions; it must never replace the epic contract. (See `docs/research.md` §2.)
-2. **Gates are human conversations, opened with a Context block.** Validator or critic produces structured findings → agent surfaces each with its own position → user dialogue → convergence. No auto-revision loops, no binary approval menus, no silent self-fixes. Context block: working doc, source inputs, stage, last decision.
+2. **Gates are human conversations, opened with a Context block.** Validator or reviewer produces structured findings -> the graph surfaces each role's position -> user dialogue -> convergence. No auto-revision loops, no binary approval menus, no silent self-fixes. Context block: working doc, source inputs, stage, last decision.
 3. **Python owns orchestration where determinism matters.** The graph is code; LLMs and humans are typed nodes. Infrastructure is selected by contract fit, not by prompt convenience.
 4. **No silent degradation.** Required infrastructure must be present at invocation. Fail loud if missing; no fallbacks.
 5. **`.woof/` is runtime only.** Epic execution artefacts live at `.woof/epics/E<N>/`. System-design work does not live in `.woof/`.
@@ -428,7 +428,7 @@ Nine checks, derived from a failure-class taxonomy. Checks 1–8 run after the s
 3. `critique_dispatch` dispatches the `reviewer` and expects `critique/story-S<k>.md`.
 4. `review_disposition` opens a story gate immediately for reviewer `blocker` severity; for `info` or `minor`, it dispatches the `primary` to write `dispositions/story-S<k>.md`.
 5. `verification` runs `woof check stage-5 --epic <N> --story <S<k>> --format json` and writes `check-result.json`.
-6. `gate_open` writes `gate.md` if the executor outcome, subprocess result, verifier result, or an incomplete Stage-5 handoff state requires human review.
+6. `gate_open` writes `gate.md` if the primary result, subprocess result, verifier result, or an incomplete Stage-5 handoff state requires human review.
 7. `commit` computes the transaction manifest, stages the exact expected file set, verifies the index, appends graph events, commits, and removes transient `executor_result.json` / `check-result.json`.
 8. Existing `gate.md` halts at `human_review` until `woof wf --epic <N> --resolve <decision>` records the structured gate decision and removes the gate.
 
@@ -446,7 +446,7 @@ If a process dies during the commit transition after the plan has been marked `d
 
 `woof wf --epic <N>` is the Stage-5 graph entry point. The graph owns story selection, dispatch, verification, gate opening, gate resolution, and commit transactions.
 
-**Story selection.** The graph reads `plan.json`, selects the first dependency-ready `pending` story, and marks it `in_progress` before executor dispatch. Selection is deterministic: dependency readiness first, then story ID order.
+**Story selection.** The graph reads `plan.json`, selects the first dependency-ready `pending` story, and marks it `in_progress` before primary dispatch. Selection is deterministic: dependency readiness first, then story ID order.
 
 **Dispatch.** The graph invokes producer and reviewer nodes through `woof dispatch --role <role-name>`. Producers receive structured input, write declared output artefacts, and do not choose successor nodes. The deprecated `woof dispatch <claude|codex> --role <role-name>` shape is retained only as a compatibility check and must match the adapter resolved from `.woof/agents.toml`.
 

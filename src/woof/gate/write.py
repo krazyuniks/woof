@@ -183,6 +183,8 @@ def write_gate_for_trigger(
 
 
 def _gate_type_for_triggers(triggered_by: list[str]) -> str:
+    if triggered_by == ["plan_review"]:
+        return "plan_gate"
     if triggered_by == ["check_9_review_valve"]:
         return "review_gate"
     if triggered_by == ["github_sync_conflict"]:

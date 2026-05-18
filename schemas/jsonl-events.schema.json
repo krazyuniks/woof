@@ -19,6 +19,7 @@
         "plan_critiqued",
         "plan_gate_opened",
         "plan_gate_resolved",
+        "gate_resolved",
         "story_started",
         "story_completed",
         "story_gate_opened",
@@ -38,7 +39,7 @@
         "cartography_refreshed",
         "token_usage"
       ],
-      "description": "Event kind. Stage events (epic.jsonl): spark_created, discovery_*, definition_*, plan_*, story_*, *_gate_*, epic_completed, executor_result_recorded, check_run, story_committed. Dispatch events (dispatch.jsonl): subprocess_*. Operational events (either): preflight_run, github_synced, github_sync_conflict, cartography_refreshed, token_usage."
+      "description": "Event kind. Stage events (epic.jsonl): spark_created, discovery_*, definition_*, plan_*, story_*, *_gate_*, gate_resolved, epic_completed, executor_result_recorded, check_run, story_committed. Dispatch events (dispatch.jsonl): subprocess_*. Operational events (either): preflight_run, github_synced, github_sync_conflict, cartography_refreshed, token_usage."
     },
     "at": {
       "type": "string",
@@ -253,6 +254,13 @@
     {
       "if": {
         "properties": { "event": { "const": "plan_gate_resolved" } },
+        "required": ["event"]
+      },
+      "then": { "required": ["decision"] }
+    },
+    {
+      "if": {
+        "properties": { "event": { "const": "gate_resolved" } },
         "required": ["event"]
       },
       "then": { "required": ["decision"] }

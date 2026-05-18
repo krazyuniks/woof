@@ -59,16 +59,15 @@ def _resolve_gate(repo_root: Path, epic_id: int, decision: GateDecision) -> int:
         except GithubSyncError as exc:
             sys.stderr.write(f"woof wf: github sync failed: {exc}\n")
             return 2
-    append_epic_event(
-        repo_root,
-        epic_id,
-        {
-            "event": "gate_resolved",
-            "at": _now(),
-            "epic_id": epic_id,
-            "decision": decision,
-        },
-    )
+    event = {
+        "event": "gate_resolved",
+        "at": _now(),
+        "epic_id": epic_id,
+        "decision": decision,
+    }
+    if gate_type:
+        event["gate_type"] = gate_type
+    append_epic_event(repo_root, epic_id, event)
     gate.unlink()
     sys.stdout.write(f"woof wf: gate resolved decision={decision}\n")
     return 0

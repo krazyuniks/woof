@@ -17,11 +17,11 @@ The Woof repository currently implements ADR-001 for the Stage-5 execution path 
 - `woof wf --epic <N>` is the operator entry point for the deterministic Python graph.
 - Stage 1 Discovery synthesis dispatches the primary producer to create or validate `discovery/synthesis/{CONCEPT,PRINCIPLES,ARCHITECTURE,OPEN_QUESTIONS}.md`.
 - Stage 2 Definition dispatches the primary producer to create or validate schema-valid `EPIC.md`.
-- Stage 3 Breakdown dispatches the primary producer to create or validate schema-valid `plan.json`, renders deterministic `PLAN.md`, dispatches the reviewer to create schema-valid `critique/plan.md`, and then halts at the Stage 4 plan-gate boundary until the mandatory plan gate node is implemented.
+- Stage 3 Breakdown dispatches the primary producer to create or validate schema-valid `plan.json`, renders deterministic `PLAN.md`, dispatches the reviewer to create schema-valid `critique/plan.md`, and Stage 4 opens the mandatory `plan_gate` before any story execution.
 - Stage-5 graph nodes dispatch the primary producer, dispatch the reviewer, run Stage-5 verification, open gates, and commit through a transaction manifest.
 - `.claude/commands/wf*.md` and `playbooks/` prompts are wrappers or producer-node prompts. They do not own successor selection, critique dispatch, gate writing, or commits.
 - ADR-002 defines the current role-routing policy: the graph orchestrates; GPT-5.5 is the preferred primary producer route; Claude Opus 4.7 at `max` effort is the preferred reviewer route.
-- Plan Gate and remaining lifecycle polish are implemented only where command code exists under `src/woof/cli/`; remaining work is tracked in `docs/implementation-plan.md`.
+- Remaining lifecycle polish is tracked in `docs/implementation-plan.md`.
 
 When this document conflicts with `docs/adr/001-orchestration-topology.md`, `docs/adr/002-graph-led-role-routing.md`, or the current source under `src/woof/`, source and accepted ADRs win.
 
@@ -139,7 +139,7 @@ JSONL event logs (`epic.jsonl`, `dispatch.jsonl`) enable crash-resume and post-h
 
 **Canonical authority.** Filesystem state is canonical; `epic.jsonl` is audit. On crash-resume, if the two disagree (e.g., last jsonl event says `stage_3_plan_generated` but no `plan.json` exists), the filesystem wins and the jsonl is treated as incomplete.
 
-**Mandatory gate write.** After Stage 3 plan generation completes, `gate.md` MUST be written before `/wf` returns control to the user. There is no valid filesystem state where `plan.json` + `critique/plan.md` exist without either an open `gate.md` or a `gate_resolved` event in `epic.jsonl`. Reconstitution detects the illegal state and synthesises the plan_gate that should have been opened.
+**Mandatory gate write.** After Stage 3 plan generation completes, `gate.md` MUST be written before `/wf` returns control to the user. There is no valid filesystem state where `plan.json` + `critique/plan.md` exist without either an open `gate.md` or a `gate_resolved` event with `gate_type=plan_gate` in `epic.jsonl`. Reconstitution detects the illegal state and synthesises the plan_gate that should have been opened.
 
 **Audit-trail reconstruction.** Every dispatched subprocess records its role route and adapter session ID in `dispatch.jsonl` (`{event: "subprocess_spawned", role, story_id, adapter, model, effort, cc_session_id|codex_audit_path, at}`). Claude subprocess transcripts live in Claude Code's standard per-project location under `~/.claude/projects/<project-slug>/`; woof references portable home-relative paths rather than host-specific absolute paths. Codex output is tee'd to `.woof/epics/E<N>/audit/codex-<stage>-<scope>-<ts>.{prompt,output,meta}` because Codex CLI does not persist sessions in a standard location. `just wf-audit-bundle <E<N>>` (recipe) bundles referenced Claude transcripts into `.woof/epics/E<N>/audit/claude-code/` for archival or hand-off; default mode is reference-only.
 

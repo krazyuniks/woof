@@ -55,6 +55,10 @@ def plan_critique_path(repo_root: Path, epic_id: int) -> Path:
     return epic_dir(repo_root, epic_id) / "critique" / "plan.md"
 
 
+def gate_path(repo_root: Path, epic_id: int) -> Path:
+    return epic_dir(repo_root, epic_id) / "gate.md"
+
+
 def load_plan(repo_root: Path, epic_id: int) -> Plan:
     path = epic_dir(repo_root, epic_id) / "plan.json"
     try:
@@ -132,6 +136,26 @@ def append_epic_event_once(
         append_epic_event(repo_root, epic_id, event_payload)
 
 
+def plan_gate_resolved(repo_root: Path, epic_id: int) -> bool:
+    """Return whether the mandatory Stage-4 plan gate has been resolved."""
+
+    path = epic_dir(repo_root, epic_id) / "epic.jsonl"
+    if not path.exists():
+        return False
+    for line in path.read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if event.get("event") == "plan_gate_resolved":
+            return True
+        if event.get("event") == "gate_resolved" and event.get("gate_type") == "plan_gate":
+            return True
+    return False
+
+
 def _load_json(path: Path) -> dict:
     try:
         return json.loads(path.read_text())
@@ -193,7 +217,7 @@ def next_node(repo_root: Path, epic_id: int) -> tuple[NodeType | None, str | Non
     """Return the next node and story id from filesystem state."""
 
     directory = epic_dir(repo_root, epic_id)
-    if (directory / "gate.md").exists():
+    if gate_path(repo_root, epic_id).exists():
         return NodeType.HUMAN_REVIEW, None
 
     plan_path = directory / "plan.json"
@@ -211,8 +235,15 @@ def next_node(repo_root: Path, epic_id: int) -> tuple[NodeType | None, str | Non
             f"(or pre-plan input {directory / 'spark.md'} / {directory / 'EPIC.md'})"
         )
 
+    critique_path = plan_critique_path(repo_root, epic_id)
     if epic_event_exists(repo_root, epic_id, event="breakdown_planned"):
-        return NodeType.PLAN_CRITIQUE, None
+        if not epic_event_exists(repo_root, epic_id, event="plan_critiqued"):
+            return NodeType.PLAN_CRITIQUE, None
+        if not plan_gate_resolved(repo_root, epic_id):
+            return NodeType.PLAN_GATE_OPEN, None
+
+    if critique_path.exists() and not plan_gate_resolved(repo_root, epic_id):
+        return NodeType.PLAN_GATE_OPEN, None
 
     plan = load_plan(repo_root, epic_id)
     resumable_story = _resumable_commit_story(repo_root, epic_id, plan)

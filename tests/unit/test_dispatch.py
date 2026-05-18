@@ -34,11 +34,13 @@ def woof_project(tmp_path: Path) -> Path:
 [roles.primary]
 adapter = "codex"
 model = "gpt-5.5"
+effort = "xhigh"
 flags = ["--max-turns", "20"]
 
 [roles.reviewer]
 adapter = "claude"
 model = "claude-opus-4-7"
+effort = "max"
 
 [roles.gate-resolver]
 adapter = "in-session"
@@ -94,6 +96,8 @@ def test_dry_run_reviewer_uses_raw_claude_argv(woof_project: Path) -> None:
         "json",
         "--model",
         "claude-opus-4-7",
+        "--effort",
+        "max",
         "do the thing\n",
     ]
     assert payload["epic"] == 42
@@ -101,6 +105,9 @@ def test_dry_run_reviewer_uses_raw_claude_argv(woof_project: Path) -> None:
     assert payload["role"] == "reviewer"
     assert payload["adapter"] == "claude"
     assert payload["harness"] == "claude"
+    assert payload["effort"] == "max"
+    assert payload["mcp"] == []
+    assert payload["mcp_config"] == '{"mcpServers":{}}'
     assert payload["timeout_min"] == 15
 
 
@@ -130,6 +137,8 @@ def test_dry_run_primary_uses_raw_codex_argv(woof_project: Path) -> None:
         "never",
         "--model",
         "gpt-5.5",
+        "-c",
+        'model_reasoning_effort="xhigh"',
         "--max-turns",
         "20",
         "critique this\n",
@@ -137,6 +146,7 @@ def test_dry_run_primary_uses_raw_codex_argv(woof_project: Path) -> None:
     assert payload["story"] is None
     assert payload["adapter"] == "codex"
     assert payload["harness"] == "codex"
+    assert payload["effort"] == "xhigh"
 
 
 def test_prompt_file_overrides_stdin(woof_project: Path, tmp_path: Path) -> None:
@@ -430,7 +440,46 @@ default_minutes = 15
     assert payload["argv"][2] == "claude"
 
 
-def test_named_mcp_requires_public_route_config(woof_project: Path) -> None:
+def test_named_mcp_generates_strict_claude_config(woof_project: Path) -> None:
+    agents = woof_project / ".woof" / "agents.toml"
+    agents.write_text(
+        agents.read_text().replace(
+            'model = "claude-opus-4-7"\n',
+            'model = "claude-opus-4-7"\nmcp = ["chrome-devtools"]\n',
+        )
+        + """\
+
+[mcp_servers.chrome-devtools]
+command = "npx"
+args = ["-y", "chrome-devtools-mcp@latest"]
+"""
+    )
+
+    proc = run_dispatch(
+        woof_project,
+        "--role",
+        "reviewer",
+        "--epic",
+        "1",
+        "--dry-run",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    assert payload["mcp"] == ["chrome-devtools"]
+    assert json.loads(payload["mcp_config"]) == {
+        "mcpServers": {
+            "chrome-devtools": {
+                "command": "npx",
+                "args": ["-y", "chrome-devtools-mcp@latest"],
+            }
+        }
+    }
+    assert "--strict-mcp-config" in payload["argv"]
+    assert "--mcp-config" in payload["argv"]
+
+
+def test_named_mcp_requires_declared_server(woof_project: Path) -> None:
     agents = woof_project / ".woof" / "agents.toml"
     agents.write_text(
         agents.read_text().replace(
@@ -449,7 +498,7 @@ def test_named_mcp_requires_public_route_config(woof_project: Path) -> None:
     )
 
     assert proc.returncode == 2
-    assert "MCP" in proc.stderr
+    assert "[mcp_servers.chrome-devtools]" in proc.stderr
 
 
 # ---------------------------------------------------------------------------
@@ -521,6 +570,8 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
     assert meta["harness"] == "claude"
     assert meta["adapter"] == "claude"
     assert meta["role"] == "reviewer"
+    assert meta["effort"] == "max"
+    assert meta["mcp_config"] == '{"mcpServers":{}}'
     assert meta["epic_id"] == 7
     assert meta["story_id"] == "S2"
     assert meta["exit_code"] == 0
@@ -544,6 +595,9 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
     events = [json.loads(ln) for ln in lines]
     assert events[0]["event"] == "subprocess_spawned"
     assert events[1]["event"] == "subprocess_returned"
+    assert events[0]["effort"] == "max"
+    assert events[0]["mcp"] == []
+    assert events[0]["argv"][-1] == "<prompt>"
     assert events[1]["tokens_in"] == 7
     assert events[1]["tokens_out"] == 11
     assert events[1]["cc_session_id"] == "00000000-0000-0000-0000-000000000001"
@@ -597,6 +651,8 @@ def test_end_to_end_codex_records_thread_and_audit_path(woof_project: Path, tmp_
     jsonl = woof_project / ".woof" / "epics" / "E9" / "dispatch.jsonl"
     events = [json.loads(ln) for ln in jsonl.read_text().splitlines() if ln.strip()]
     returned = events[1]
+    assert returned["effort"] == "xhigh"
+    assert returned["argv"][-1] == "<prompt>"
     assert returned["tokens_in"] == 50
     assert returned["tokens_out"] == 7  # 5 + 2 reasoning
     assert returned["cache_read_tokens"] == 10

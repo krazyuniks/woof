@@ -254,6 +254,8 @@ def cmd_validate(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 ADAPTERS = {"claude", "codex"}
+EFFORTS = {"low", "medium", "high", "xhigh", "max"}
+CODEX_EFFORTS = {"low", "medium", "high", "xhigh"}
 LEGACY_HARNESS_TO_ADAPTER = {"cld": "claude", "cod": "codex", "in-session": "in-session"}
 LEGACY_ROLE_ALIASES = {
     "planner": "primary",
@@ -396,20 +398,97 @@ def resolve_role_route(roles: dict[str, Any], requested_role: str) -> RoleRoute:
     raise DispatchConfigError(f"role '{requested_role}' not declared")
 
 
-def _claude_mcp_config(role: dict[str, Any]) -> str:
-    mcp = role.get("mcp") or []
-    if mcp:
+def _role_effort(adapter: str, role: dict[str, Any]) -> str | None:
+    effort = role.get("effort")
+    if effort is None:
+        return None
+    effort = str(effort)
+    if effort not in EFFORTS:
         raise DispatchConfigError(
-            "named Claude MCP server resolution is not available in ROLE-002; "
-            "set mcp = [] or omit mcp until ROLE-003 lands MCP route config"
+            f"{adapter} effort {effort!r} is not supported; expected one of {sorted(EFFORTS)}"
         )
-    return json.dumps({"mcpServers": {}}, separators=(",", ":"))
+    if adapter == "codex" and effort not in CODEX_EFFORTS:
+        raise DispatchConfigError(
+            f"Codex effort {effort!r} is not supported; use low, medium, high, or xhigh"
+        )
+    return effort
 
 
-def build_argv(adapter: str, role: dict[str, Any], prompt: str) -> list[str]:
+def _mcp_names(role: dict[str, Any]) -> list[str]:
+    return [str(name) for name in role.get("mcp") or []]
+
+
+def _validate_portable_mcp_value(value: str, *, context: str) -> None:
+    if (
+        value.startswith("/home/")
+        or value.startswith("/Users/")
+        or value.startswith("~/.dotfiles")
+        or "/.dotfiles" in value
+        or "/agent-sync" in value
+    ):
+        raise DispatchConfigError(
+            f"MCP server {context} uses host-specific path {value!r}; "
+            "use a PATH command, project-relative path, or portable home-relative path"
+        )
+
+
+def _normalise_mcp_server(name: str, server: dict[str, Any]) -> dict[str, Any]:
+    command = str(server["command"])
+    if command in {"cld", "cod", "agent-sync"}:
+        raise DispatchConfigError(
+            f"MCP server {name!r} uses Ryan-local command {command!r}; use a public command"
+        )
+    _validate_portable_mcp_value(command, context=f"{name}.command")
+
+    rendered: dict[str, Any] = {"command": command}
+    args = [str(arg) for arg in server.get("args") or []]
+    for index, arg in enumerate(args):
+        _validate_portable_mcp_value(arg, context=f"{name}.args[{index}]")
+    if args:
+        rendered["args"] = args
+
+    env = {str(key): str(value) for key, value in (server.get("env") or {}).items()}
+    for key, value in env.items():
+        _validate_portable_mcp_value(value, context=f"{name}.env.{key}")
+    if env:
+        rendered["env"] = env
+
+    cwd = server.get("cwd")
+    if cwd is not None:
+        cwd = str(cwd)
+        _validate_portable_mcp_value(cwd, context=f"{name}.cwd")
+        rendered["cwd"] = cwd
+    return rendered
+
+
+def _claude_mcp_config(role: dict[str, Any], mcp_servers: dict[str, Any] | None = None) -> str:
+    mcp = role.get("mcp") or []
+    if mcp and mcp_servers is None:
+        raise DispatchConfigError(
+            "role declares MCP servers but no top-level mcp_servers table was loaded"
+        )
+    rendered: dict[str, Any] = {}
+    for name in _mcp_names(role):
+        raw = (mcp_servers or {}).get(name)
+        if not isinstance(raw, dict):
+            raise DispatchConfigError(
+                f"role references MCP server {name!r}, but [mcp_servers.{name}] is not declared"
+            )
+        rendered[name] = _normalise_mcp_server(name, raw)
+    return json.dumps({"mcpServers": rendered}, separators=(",", ":"), sort_keys=True)
+
+
+def build_argv(
+    adapter: str,
+    role: dict[str, Any],
+    prompt: str,
+    *,
+    mcp_servers: dict[str, Any] | None = None,
+) -> list[str]:
     """Construct a public claude/codex invocation argv from a role definition."""
     flags = [str(flag) for flag in role.get("flags") or []]
     model = role.get("model")
+    effort = _role_effort(adapter, role)
 
     if adapter == "claude":
         argv = [
@@ -417,18 +496,20 @@ def build_argv(adapter: str, role: dict[str, Any], prompt: str) -> list[str]:
             "--dangerously-skip-permissions",
             "--strict-mcp-config",
             "--mcp-config",
-            _claude_mcp_config(role),
+            _claude_mcp_config(role, mcp_servers),
             "-p",
             "--output-format",
             "json",
         ]
         if model:
             argv += ["--model", str(model)]
+        if effort:
+            argv += ["--effort", effort]
         argv += flags
     elif adapter == "codex":
         if role.get("mcp"):
             raise DispatchConfigError(
-                "Codex MCP route config is not available in ROLE-002; set mcp = [] or omit mcp"
+                "Codex roles cannot declare MCP servers; MCP route config is Claude-only"
             )
         argv = [
             "codex",
@@ -443,6 +524,8 @@ def build_argv(adapter: str, role: dict[str, Any], prompt: str) -> list[str]:
         ]
         if model:
             argv += ["--model", str(model)]
+        if effort:
+            argv += ["-c", f'model_reasoning_effort="{effort}"']
         argv += flags
     else:
         raise DispatchConfigError(f"cannot dispatch adapter {adapter!r}")
@@ -457,6 +540,11 @@ def claude_project_slug(repo_root: Path) -> str:
 
 def claude_transcript_path(repo_root: Path, session_id: str) -> str:
     return f"~/.claude/projects/{claude_project_slug(repo_root)}/{session_id}.jsonl"
+
+
+def audit_argv(wrapped_argv: list[str]) -> list[str]:
+    """Return argv suitable for durable audit events without duplicating the prompt."""
+    return [*wrapped_argv[:-1], "<prompt>"]
 
 
 def cmd_dispatch(args: argparse.Namespace) -> int:
@@ -504,31 +592,34 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         return 2
 
     timeout_min = int((agents.get("timeouts") or {}).get("default_minutes", 30))
+    mcp_servers = agents.get("mcp_servers") or {}
     try:
-        argv = build_argv(route.adapter, route.config, prompt)
+        effort = _role_effort(route.adapter, route.config)
+        mcp_names = _mcp_names(route.config)
+        argv = build_argv(route.adapter, route.config, prompt, mcp_servers=mcp_servers)
     except DispatchConfigError as exc:
         sys.stderr.write(f"woof: {exc}\n")
         return 2
 
     if args.dry_run:
         wrapped = ["timeout", f"{timeout_min}m", *argv]
-        print(
-            json.dumps(
-                {
-                    "argv": wrapped,
-                    "epic": args.epic,
-                    "story": args.story,
-                    "role": args.role,
-                    "config_role": route.config_role,
-                    "adapter": route.adapter,
-                    "harness": route.adapter,
-                    "model": route.config.get("model"),
-                    "mcp": route.config.get("mcp") or [],
-                    "flags": route.config.get("flags") or [],
-                    "timeout_min": timeout_min,
-                }
-            )
-        )
+        payload = {
+            "argv": wrapped,
+            "epic": args.epic,
+            "story": args.story,
+            "role": args.role,
+            "config_role": route.config_role,
+            "adapter": route.adapter,
+            "harness": route.adapter,
+            "model": route.config.get("model"),
+            "effort": effort,
+            "mcp": mcp_names,
+            "flags": route.config.get("flags") or [],
+            "timeout_min": timeout_min,
+        }
+        if route.adapter == "claude":
+            payload["mcp_config"] = _claude_mcp_config(route.config, mcp_servers)
+        print(json.dumps(payload))
         return 0
 
     epic_dir = repo_root / ".woof" / "epics" / f"E{args.epic}"
@@ -545,6 +636,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
 
     dispatch_jsonl = epic_dir / "dispatch.jsonl"
     wrapped_argv = ["timeout", f"{timeout_min}m", *argv]
+    event_argv = audit_argv(wrapped_argv)
 
     proc = subprocess.Popen(wrapped_argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
@@ -556,6 +648,8 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         "harness": route.adapter,
         "adapter": route.adapter,
         "pid": proc.pid,
+        "mcp": mcp_names,
+        "argv": event_argv,
     }
     if route.config_role != args.role:
         spawned_event["config_role"] = route.config_role
@@ -563,6 +657,8 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         spawned_event["story_id"] = args.story
     if route.config.get("model"):
         spawned_event["model"] = route.config["model"]
+    if effort:
+        spawned_event["effort"] = effort
     append_jsonl(dispatch_jsonl, spawned_event)
 
     try:
@@ -622,6 +718,8 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         "pid": proc.pid,
         "exit_code": proc.returncode,
         "duration_ms": duration_ms,
+        "mcp": mcp_names,
+        "argv": event_argv,
     }
     if route.config_role != args.role:
         returned["config_role"] = route.config_role
@@ -629,6 +727,8 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         returned["story_id"] = args.story
     if route.config.get("model"):
         returned["model"] = route.config["model"]
+    if effort:
+        returned["effort"] = effort
     if tokens:
         returned.update(tokens)
     if session_id:
@@ -646,9 +746,10 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         "epic_id": args.epic,
         "story_id": args.story,
         "model": route.config.get("model"),
-        "mcp": route.config.get("mcp") or [],
+        "effort": effort,
+        "mcp": mcp_names,
         "flags": route.config.get("flags") or [],
-        "argv": wrapped_argv,
+        "argv": event_argv,
         "pid": proc.pid,
         "started_at": iso_utc(started_at),
         "ended_at": iso_utc(ended_at),
@@ -657,6 +758,8 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         "timed_out": timed_out,
         "tokens": tokens,
     }
+    if route.adapter == "claude":
+        meta["mcp_config"] = _claude_mcp_config(route.config, mcp_servers)
     if session_id:
         meta["cc_session_id"] = session_id
         meta["claude_transcript_path"] = claude_transcript_path(repo_root, session_id)

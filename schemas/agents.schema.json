@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://woof.dev/schemas/agents.schema.json",
   "title": "woof agent role configuration",
-  "description": "Project-side declaration at .woof/agents.toml. Dispatchable roles resolve to public CLI adapters (claude or codex); Woof builds the subprocess invocation itself and does not require private shell wrappers. Legacy role names and legacy harness values are accepted only as migration input and are resolved to public adapters at runtime.",
+  "description": "Project-side declaration at .woof/agents.toml. Dispatchable roles resolve to public CLI adapters (claude or codex); Woof builds the subprocess invocation itself and does not require private shell wrappers. Roles may declare adapter-specific model, effort, flags, and Claude MCP server names. Legacy role names and legacy harness values are accepted only as migration input and are resolved to public adapters at runtime.",
   "type": "object",
   "additionalProperties": false,
   "required": ["roles"],
@@ -50,6 +50,11 @@
           "description": "Open a review_gate after the last story completes, before epic close. Recommended on."
         }
       }
+    },
+    "mcp_servers": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/mcp_server" },
+      "description": "Project-owned Claude MCP server definitions. Role mcp[] entries reference keys from this table. Woof renders these into --strict-mcp-config --mcp-config JSON; absent or empty mcp[] renders {\"mcpServers\":{}}."
     },
     "audit": {
       "type": "object",
@@ -119,13 +124,18 @@
         },
         "think": {
           "type": "boolean",
-          "description": "Legacy cld wrapper hint retained for schema compatibility. Public adapter effort is modelled explicitly in ROLE-003."
+          "description": "Legacy cld wrapper hint retained for schema compatibility. Public adapters use effort instead."
+        },
+        "effort": {
+          "type": "string",
+          "enum": ["low", "medium", "high", "xhigh", "max"],
+          "description": "Per-invocation reasoning effort. Claude maps this to --effort <level>; Codex maps low/medium/high/xhigh to -c model_reasoning_effort=\"<level>\"."
         },
         "mcp": {
           "type": "array",
           "items": { "type": "string", "minLength": 1 },
           "uniqueItems": true,
-          "description": "MCP server names. Empty array or omission means no MCP servers. Named MCP route resolution lands in ROLE-003."
+          "description": "Claude MCP server names. Empty array or omission means no MCP servers. Names must resolve through top-level mcp_servers."
         },
         "flags": {
           "type": "array",
@@ -156,6 +166,7 @@
               "anyOf": [
                 { "required": ["model"] },
                 { "required": ["think"] },
+                { "required": ["effort"] },
                 { "required": ["mcp"] },
                 { "required": ["flags"] }
               ]
@@ -163,6 +174,33 @@
           }
         }
       ]
+    },
+    "mcp_server": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command"],
+      "properties": {
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Executable name for a stdio MCP server. Prefer PATH-resolved command names or portable home-relative paths."
+        },
+        "args": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "default": {}
+        },
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional working directory. Use project-relative or home-relative paths; host-specific absolute paths are rejected by dispatch."
+        }
+      }
     }
   }
 }

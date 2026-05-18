@@ -86,6 +86,23 @@
       "type": "string",
       "minLength": 1
     },
+    "effort": {
+      "type": "string",
+      "enum": ["low", "medium", "high", "xhigh", "max"],
+      "description": "Resolved per-invocation reasoning effort for the subprocess route."
+    },
+    "mcp": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true,
+      "description": "Resolved MCP server names for the subprocess route."
+    },
+    "argv": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1,
+      "description": "Resolved public command argv. Prompt payloads may be replaced with <prompt> in durable events."
+    },
     "pid": {
       "type": "integer",
       "minimum": 1

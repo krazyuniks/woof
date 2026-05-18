@@ -219,5 +219,5 @@ Workflow:
 - In the final response, paste this complete continuation prompt block so it can be copied into a new session.
 
 Start with:
-Workstream R: Role routing and startup preflight (`ROLE-001`, `ROLE-002`, `ROLE-003`, `ROLE-004`, `ROLE-005`, `ROLE-006`). Finish any item already `In progress`; otherwise start with `ROLE-005`. Do not start `STG-002` until Workstream R is complete.
+Workstream R: Role routing and startup preflight (`ROLE-001`, `ROLE-002`, `ROLE-003`, `ROLE-004`, `ROLE-005`, `ROLE-006`). Finish any item already `In progress`; otherwise start with `ROLE-006`. Do not start `STG-002` until Workstream R is complete.
 ```

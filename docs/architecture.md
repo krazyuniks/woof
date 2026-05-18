@@ -153,6 +153,20 @@ JSONL event logs (`epic.jsonl`, `dispatch.jsonl`) enable crash-resume and post-h
 
 **Dispatch adapter layer.** Subprocesses are spawned via graph-owned role dispatch, not via Ryan-local wrappers or shell aliases. ADR-002 migrates the internal primitive to `woof dispatch --role <role-name>` so the role route, not a provider target, selects the public CLI adapter. The adapter reads `.woof/agents.toml`, constructs the raw `claude` or `codex` invocation, generates any required MCP JSON, and emits dispatch events. This boundary stops CLI interface drift from breaking graph call sites.
 
+### Consumer checkout boundary
+
+Woof is a tool checkout or installed package that runs against a separate consumer repository. A consumer repository owns project policy declarations under `.woof/*.toml`; it does not vendor-copy Woof source, schemas, playbooks, tests, dogfood examples, or generated state from the Woof repository.
+
+`guitar-tone-shootout` is the first external consumer. Its responsibilities are:
+
+- Keep application source, development commands, Docker/runtime topology, and GitHub issue ownership in the GTS repository.
+- Declare project-specific Woof inputs under `.woof/`: role routes in `agents.toml`, infrastructure and GitHub scope in `prerequisites.toml`, quality gates in `quality-gates.toml`, and optional checker config such as `test-markers.toml` or `docs-paths.toml`.
+- Route project verification through GTS commands such as `just check`, because Woof check runners execute declared commands from the consumer root.
+- Express host and server readiness as preflight declarations, not as Woof-specific scripts copied into GTS.
+- Use semantic public role routes. New or refreshed consumer config uses `primary` / `reviewer` with public `codex` / `claude` adapters; legacy `planner`, `story-executor`, `critiquer`, `cld`, and `cod` spellings are migration input only.
+
+Woof's responsibilities remain in this repository: graph transitions, schema contracts, prompt templates, dispatch command construction, gate authoring, check-runner behaviour, transaction manifests, and dogfood evidence. Consumer integration is documented in `docs/consumers.md`.
+
 ### GitHub integration
 
 **Model.** Hybrid: gh owns the epic-level contract; filesystem owns runtime. Per `AGENTS.md`, one gh issue per epic; no child issues for stories.

@@ -24,6 +24,7 @@ Discovery, definition, and breakdown remain documented in [`docs/architecture.md
 - [`docs/research.md`](docs/research.md) — framework evaluation, E146 contract-fidelity case study, lessons.
 - [`docs/adr/001-orchestration-topology.md`](docs/adr/001-orchestration-topology.md) — accepted graph topology for execution.
 - [`docs/adr/002-graph-led-role-routing.md`](docs/adr/002-graph-led-role-routing.md) — accepted primary/reviewer role policy and model-routing pivot.
+- [`docs/consumers.md`](docs/consumers.md) — external consumer checkout boundary, including GTS.
 - [`docs/implementation-plan.md`](docs/implementation-plan.md) — current implementation plan, roadmap, and progress ledger.
 - [`examples/dogfood/`](examples/dogfood/) — selected artefacts from the first Woof dogfood epics.
 
@@ -66,6 +67,12 @@ Use `--once` to run a single graph node, `--format json` for machine-readable no
 For GitHub-backed epics, approving a `plan_gate` with `woof wf --epic <N> --resolve approve` pushes a deterministic plan summary to the issue body. When all stories reach `done`, `woof wf --epic <N>` appends the closing summary and closes the issue.
 
 Run `woof preflight` from a consumer checkout to validate the Woof install/assets, `.woof/` config schemas, public CLI availability, primary/reviewer route settings, generated Claude MCP config, GitHub access, language tooling, optional Tree-sitter grammars, quality-gate command resolution, and project host/server readiness before invoking the graph. Stable prerequisite checks are cached under `.woof/.preflight-floor`; short-lived GitHub runtime checks are cached under `.woof/.preflight-runtime`. Use `woof preflight --force` to refresh both caches.
+
+## Consumer checkouts
+
+Consumer repositories keep project-specific declarations under `.woof/*.toml` and run the external `woof` command from the consumer root. Woof owns the graph, schemas, dispatch adapters, check runners, playbooks, and gate-writing logic; those assets stay in the Woof checkout or package.
+
+`guitar-tone-shootout` is the first external consumer. Its Woof integration should define only consumer config such as `.woof/agents.toml`, `.woof/prerequisites.toml`, and `.woof/quality-gates.toml`; it must not vendor-copy Woof source, schemas, playbooks, tests, dogfood examples, or Ryan-local wrapper assumptions into the GTS repository. See [`docs/consumers.md`](docs/consumers.md).
 
 ## Components
 

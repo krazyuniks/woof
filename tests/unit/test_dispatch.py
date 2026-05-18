@@ -501,6 +501,33 @@ def test_named_mcp_requires_declared_server(woof_project: Path) -> None:
     assert "[mcp_servers.chrome-devtools]" in proc.stderr
 
 
+def test_named_mcp_rejects_absolute_host_paths(woof_project: Path) -> None:
+    agents = woof_project / ".woof" / "agents.toml"
+    agents.write_text(
+        agents.read_text().replace(
+            'model = "claude-opus-4-7"\n',
+            'model = "claude-opus-4-7"\nmcp = ["local-server"]\n',
+        )
+        + """\
+
+[mcp_servers.local-server]
+command = "/usr/local/bin/local-mcp"
+"""
+    )
+
+    proc = run_dispatch(
+        woof_project,
+        "--role",
+        "reviewer",
+        "--epic",
+        "1",
+        "--dry-run",
+    )
+
+    assert proc.returncode == 2
+    assert "host-specific path" in proc.stderr
+
+
 # ---------------------------------------------------------------------------
 # end-to-end with a stub harness on PATH
 # ---------------------------------------------------------------------------

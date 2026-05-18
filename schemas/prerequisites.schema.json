@@ -82,6 +82,33 @@
           "description": "Languages requiring LSP. Preflight resolves each via woof/languages/<lang>.toml and verifies binary + plugin presence."
         }
       }
+    },
+    "host": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Project-specific host prerequisites that cannot be represented as simple versioned binaries. Preflight checks the current platform and runs declared commands from the project root.",
+      "properties": {
+        "platforms": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["linux", "darwin", "windows"]
+          },
+          "description": "Supported host platforms for this consumer checkout."
+        },
+        "checks": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/command_check" },
+          "description": "Named project-specific host checks. Each command must exit 0 when the host is ready."
+        }
+      }
+    },
+    "servers": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/server_check" },
+      "description": "Named local or project-specific server prerequisites. Each entry either runs a readiness command from the project root or probes a URL for the expected HTTP status."
     }
   },
   "$defs": {
@@ -89,6 +116,84 @@
       "type": "string",
       "pattern": "^(any|\\d+(\\.\\d+){0,2}\\+?)$",
       "description": "Version specification. 'any' = presence-only check. 'X', 'X.Y', 'X.Y.Z' = exact-floor (preflight accepts equal-or-greater). Trailing '+' is permitted as documentation; the floor semantics apply either way."
+    },
+    "command_check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command"],
+      "properties": {
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Command run from the project root. It must exit 0 when the prerequisite is satisfied."
+        },
+        "required": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Human-readable requirement shown in failed preflight output."
+        },
+        "install": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Command or concise instruction shown in failed preflight output."
+        },
+        "notes": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "default": []
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 20
+        }
+      }
+    },
+    "server_check": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Readiness command run from the project root. It must exit 0 when the server is ready."
+        },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "description": "HTTP URL to probe for readiness."
+        },
+        "expected_status": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 599,
+          "default": 200
+        },
+        "required": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Human-readable requirement shown in failed preflight output."
+        },
+        "install": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Command or concise instruction shown in failed preflight output."
+        },
+        "notes": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "default": []
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 5
+        }
+      },
+      "oneOf": [
+        { "required": ["command"] },
+        { "required": ["url"] }
+      ]
     }
   }
 }

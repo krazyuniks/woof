@@ -420,8 +420,7 @@ def _mcp_names(role: dict[str, Any]) -> list[str]:
 
 def _validate_portable_mcp_value(value: str, *, context: str) -> None:
     if (
-        value.startswith("/home/")
-        or value.startswith("/Users/")
+        value.startswith("/")
         or value.startswith("~/.dotfiles")
         or "/.dotfiles" in value
         or "/agent-sync" in value

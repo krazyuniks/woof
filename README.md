@@ -63,7 +63,7 @@ Use `--once` to run a single graph node, `--format json` for machine-readable no
 
 For GitHub-backed epics, approving a `plan_gate` with `woof wf --epic <N> --resolve approve` pushes a deterministic plan summary to the issue body. When all stories reach `done`, `woof wf --epic <N>` appends the closing summary and closes the issue.
 
-Run `woof preflight` from a consumer checkout to validate local prerequisites, GitHub access, language tooling, optional Tree-sitter grammars, quality-gate command resolution, and `.woof/` config schemas before invoking the graph. Stable prerequisite checks are cached under `.woof/.preflight-floor`; short-lived GitHub runtime checks are cached under `.woof/.preflight-runtime`. Use `woof preflight --force` to refresh both caches.
+Run `woof preflight` from a consumer checkout to validate the Woof install/assets, `.woof/` config schemas, public CLI availability, primary/reviewer route settings, generated Claude MCP config, GitHub access, language tooling, optional Tree-sitter grammars, quality-gate command resolution, and project host/server readiness before invoking the graph. Stable prerequisite checks are cached under `.woof/.preflight-floor`; short-lived GitHub runtime checks are cached under `.woof/.preflight-runtime`. Use `woof preflight --force` to refresh both caches.
 
 ## Components
 

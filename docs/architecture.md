@@ -553,6 +553,19 @@ grammars = ["python", "typescript", "rust", "go"]   # subset per project
 
 [lsp]
 languages = ["python", "typescript", "rust", "go"]
+
+[host]
+platforms = ["linux", "darwin"]
+
+[host.checks.dev-env]
+command = "just doctor"
+required = "project local developer environment is ready"
+install = "just bootstrap"
+
+[servers.app]
+command = "just health"
+required = "local application stack is reachable"
+install = "just dev"
 ```
 
 **Tool-level language registry** (ships with Woof — `woof/languages/<lang>.toml`) — declares *how* to install per language:
@@ -606,7 +619,8 @@ For each declared prereq, in order:
 2. Version meets floor (parse `<binary> --version`, semver compare)
 3. Per Tree-sitter grammar: parse `verify_snippet` with `verify_scope`; success = grammar working
 4. Per LSP plugin: `claude plugin list | grep <plugin>`
-5. Per role route: configured harness exists, configured model is explicit or inherited from a verified settings file, configured effort is explicit, and the harness supports the required per-invocation effort flag or a verified settings fallback.
+5. Per role route: configured public adapter exists, configured model is explicit, configured effort is explicit, and the adapter can construct the required per-invocation effort flag plus any generated Claude MCP JSON.
+6. Per host/server prerequisite: declared platform matches and each configured readiness command or HTTP probe succeeds.
 
 ANY failure → exit non-zero with structured output (install commands + gotchas inline). The preflight output IS the per-language documentation — no separate setup docs maintained.
 
@@ -676,7 +690,7 @@ Required `.gitignore` entries (consumer adds at first setup):
 
 **Cross-worktree epic activity.** An epic is active in exactly one worktree at a time. `.woof/` is per-worktree by convention; cross-worktree handover happens via gh issue (the canonical contract), not by copying `.woof/`. No mechanical enforcement; document-level rule.
 
-**Config initialisation.** Preflight with no `.woof/prerequisites.toml` emits a template with `<replace>` placeholders and exits non-zero. Subsequent configs (`agents.toml`, `test-markers.toml`) use built-in defaults if absent — opt-in customisation, not required.
+**Config initialisation.** Preflight with no `.woof/prerequisites.toml` emits a template with `<replace>` placeholders and exits non-zero. `.woof/agents.toml` is required before graph execution because role routes are startup infrastructure; optional configs such as `test-markers.toml` keep built-in defaults when absent.
 
 ### Agent role configuration
 
@@ -750,7 +764,7 @@ The CLI is the operator surface. Prompt wrappers may call these commands, but th
 | `woof wf --epic <N>` | Run the deterministic graph for the current epic. |
 | `woof wf new "<spark>"` | Create a GitHub issue-backed epic, initialise local state, and select it as `.woof/.current-epic`. |
 | `woof wf --epic <N> --resolve <decision>` | Resolve an open gate with a structured decision. |
-| `woof preflight` | Validate local prerequisites, GitHub access, language tooling, quality-gate command resolution, and `.woof/` config schemas. |
+| `woof preflight` | Validate Woof assets, local prerequisites, role routes, generated MCP config, GitHub access, language tooling, host/server readiness, quality-gate command resolution, and `.woof/` config schemas. |
 | `woof hooks install` | Install the Woof-managed post-commit hook block without overwriting user-managed hook content. |
 | `woof validate ...` | Validate JSON, TOML, JSONL, and front-matter artefacts against shipped schemas. |
 | `woof check stage-5 --epic <N> --story <S<k>>` | Run Stage-5 checks and emit structured results. |

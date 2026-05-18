@@ -5,10 +5,24 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+STANDARD_AGENTS = """\
+[roles.primary]
+adapter = "codex"
+model = "gpt-5.5"
+effort = "xhigh"
+
+[roles.reviewer]
+adapter = "claude"
+model = "claude-opus-4-7"
+effort = "max"
+mcp = []
+"""
 
 
 def _write_exe(path: Path, body: str) -> None:
@@ -20,11 +34,14 @@ def _write_project(
     root: Path,
     *,
     prerequisites: str,
+    agents: str | None = STANDARD_AGENTS,
     quality_gates: str | None = None,
 ) -> None:
     woof_dir = root / ".woof"
     woof_dir.mkdir()
     (woof_dir / "prerequisites.toml").write_text(prerequisites)
+    if agents is not None:
+        (woof_dir / "agents.toml").write_text(agents)
     if quality_gates is not None:
         (woof_dir / "quality-gates.toml").write_text(quality_gates)
 
@@ -141,12 +158,236 @@ timeout_seconds = 30
     payload = json.loads(proc.stdout)
     assert payload["ok"] is True
     assert {finding["id"] for finding in payload["findings"]} >= {
+        "woof.install",
         "config.prerequisites",
+        "config.agents",
+        "agents.primary.route",
+        "agents.reviewer.route",
+        "agents.reviewer.mcp_config",
         "github.repo",
         "lsp.python.binary",
         "tree-sitter.python",
         "quality-gates.test",
     }
+
+
+def test_preflight_validates_named_mcp_route(tmp_path: Path, run_woof) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _stub_core_tools(bin_dir)
+    _write_exe(bin_dir / "npx", 'echo "npx 10.0.0"\n')
+
+    agents = (
+        STANDARD_AGENTS.replace("mcp = []\n", 'mcp = ["chrome-devtools"]\n')
+        + """
+[mcp_servers.chrome-devtools]
+command = "npx"
+args = ["-y", "chrome-devtools-mcp@latest"]
+"""
+    )
+    _write_project(
+        tmp_path,
+        prerequisites="""\
+[infra]
+just = "any"
+git = "any"
+gh = "any"
+
+[commands]
+claude = "any"
+codex = "any"
+
+[validators]
+ajv = "any"
+ajv-formats = "any"
+
+[github]
+repo = "example/project"
+""",
+        agents=agents,
+    )
+
+    proc = run_woof(
+        "preflight",
+        "--project-root",
+        str(tmp_path),
+        "--format",
+        "json",
+        env=_env_with_path(bin_dir),
+    )
+
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    payload = json.loads(proc.stdout)
+    assert {
+        "agents.reviewer.route",
+        "agents.reviewer.mcp_config",
+        "agents.reviewer.mcp.chrome-devtools",
+    } <= {finding["id"] for finding in payload["findings"]}
+    mcp = next(
+        finding for finding in payload["findings"] if finding["id"] == "agents.reviewer.mcp_config"
+    )
+    assert '"chrome-devtools"' in mcp["detail"]
+
+
+def test_preflight_fails_for_incomplete_role_route(tmp_path: Path, run_woof) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _stub_core_tools(bin_dir)
+
+    _write_project(
+        tmp_path,
+        prerequisites="""\
+[infra]
+just = "any"
+git = "any"
+gh = "any"
+
+[commands]
+claude = "any"
+codex = "any"
+
+[validators]
+ajv = "any"
+ajv-formats = "any"
+
+[github]
+repo = "example/project"
+""",
+        agents="""\
+[roles.primary]
+adapter = "codex"
+model = "gpt-5.5"
+
+[roles.reviewer]
+adapter = "claude"
+model = "claude-opus-4-7"
+effort = "max"
+mcp = []
+""",
+    )
+
+    proc = run_woof(
+        "preflight",
+        "--project-root",
+        str(tmp_path),
+        "--format",
+        "json",
+        env=_env_with_path(bin_dir),
+    )
+
+    assert proc.returncode == 1
+    payload = json.loads(proc.stdout)
+    primary = next(
+        finding for finding in payload["findings"] if finding["id"] == "agents.primary.route"
+    )
+    assert primary["ok"] is False
+    assert "effort is not declared" in primary["detail"]
+
+
+def test_preflight_requires_agents_toml(tmp_path: Path, run_woof) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _stub_core_tools(bin_dir)
+
+    _write_project(
+        tmp_path,
+        prerequisites="""\
+[infra]
+just = "any"
+git = "any"
+gh = "any"
+
+[commands]
+claude = "any"
+codex = "any"
+
+[validators]
+ajv = "any"
+ajv-formats = "any"
+
+[github]
+repo = "example/project"
+""",
+        agents=None,
+    )
+
+    proc = run_woof(
+        "preflight",
+        "--project-root",
+        str(tmp_path),
+        "--format",
+        "json",
+        env=_env_with_path(bin_dir),
+    )
+
+    assert proc.returncode == 1
+    payload = json.loads(proc.stdout)
+    agents = next(finding for finding in payload["findings"] if finding["id"] == "agents.config")
+    assert agents["ok"] is False
+    assert "agents.toml" in agents["detail"]
+
+
+def test_preflight_runs_host_and_server_checks(tmp_path: Path, run_woof) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _stub_core_tools(bin_dir)
+    _write_exe(bin_dir / "host-ready", "exit 0\n")
+    _write_exe(bin_dir / "server-ready", "exit 0\n")
+    if sys.platform.startswith("linux"):
+        platform = "linux"
+    elif sys.platform == "darwin":
+        platform = "darwin"
+    else:
+        platform = "windows"
+
+    _write_project(
+        tmp_path,
+        prerequisites=f"""\
+[infra]
+just = "any"
+git = "any"
+gh = "any"
+
+[commands]
+claude = "any"
+codex = "any"
+
+[validators]
+ajv = "any"
+ajv-formats = "any"
+
+[github]
+repo = "example/project"
+
+[host]
+platforms = ["{platform}"]
+
+[host.checks.project]
+command = "host-ready"
+required = "project host tooling ready"
+
+[servers.dev]
+command = "server-ready"
+required = "local dev server ready"
+""",
+    )
+
+    proc = run_woof(
+        "preflight",
+        "--project-root",
+        str(tmp_path),
+        "--format",
+        "json",
+        env=_env_with_path(bin_dir),
+    )
+
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    payload = json.loads(proc.stdout)
+    assert {
+        "host.platform",
+        "host.project",
+        "servers.dev",
+    } <= {finding["id"] for finding in payload["findings"]}
 
 
 def test_preflight_reports_missing_prerequisites_template(tmp_path: Path, run_woof) -> None:

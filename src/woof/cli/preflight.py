@@ -13,13 +13,25 @@ import subprocess
 import sys
 import tempfile
 import tomllib
+import urllib.error
+import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from woof.cli.main import SCHEMAS, load_payload, run_ajv
+from woof.cli.main import (
+    SCHEMAS,
+    DispatchConfigError,
+    _claude_mcp_config,
+    _mcp_names,
+    _role_effort,
+    build_argv,
+    load_payload,
+    resolve_role_route,
+    run_ajv,
+)
 from woof.paths import schema_dir, tool_root
 
 CONFIG_SCHEMAS = {
@@ -189,12 +201,16 @@ def _load_toml(path: Path) -> dict[str, Any] | str:
 
 def _run_floor_checks(repo_root: Path, prereq: dict[str, Any]) -> list[PreflightFinding]:
     findings: list[PreflightFinding] = []
+    findings.extend(_check_woof_install())
     findings.extend(_check_config_schemas(repo_root))
     findings.extend(_check_declared_binaries(prereq))
+    findings.extend(_check_role_routes(repo_root))
     findings.extend(_check_ajv_formats(prereq))
     findings.extend(_check_language_tools(prereq))
     findings.extend(_check_tree_sitter(prereq))
     findings.extend(_check_quality_gate_commands(repo_root))
+    findings.extend(_check_host_prerequisites(repo_root, prereq))
+    findings.extend(_check_server_prerequisites(repo_root, prereq))
     return findings
 
 
@@ -319,6 +335,34 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+def _check_woof_install() -> list[PreflightFinding]:
+    root = tool_root()
+    required = [
+        root / "schemas" / "prerequisites.schema.json",
+        root / "schemas" / "agents.schema.json",
+        root / "languages",
+    ]
+    missing = [path for path in required if not path.exists()]
+    if missing:
+        return [
+            PreflightFinding(
+                id="woof.install",
+                label="Woof checkout/install",
+                ok=False,
+                detail="missing Woof tool asset(s): " + ", ".join(str(path) for path in missing),
+                install="Install Woof from the source checkout or package including schemas/ and languages/.",
+            )
+        ]
+    return [
+        PreflightFinding(
+            id="woof.install",
+            label="Woof checkout/install",
+            ok=True,
+            detail=f"tool assets found at {root}",
+        )
+    ]
+
+
 def _check_config_schemas(repo_root: Path) -> list[PreflightFinding]:
     if shutil.which("ajv") is None:
         return [
@@ -368,6 +412,169 @@ def _check_config_schemas(repo_root: Path) -> list[PreflightFinding]:
             )
         )
     return findings
+
+
+def _check_role_routes(repo_root: Path) -> list[PreflightFinding]:
+    agents_path = repo_root / ".woof" / "agents.toml"
+    if not agents_path.is_file():
+        return [
+            PreflightFinding(
+                id="agents.config",
+                label="agents.toml",
+                ok=False,
+                detail=f"{agents_path} not found; cannot verify primary/reviewer routes",
+                install=_agents_template(),
+            )
+        ]
+
+    loaded = _load_toml(agents_path)
+    if not isinstance(loaded, dict):
+        return [
+            PreflightFinding(
+                id="agents.config",
+                label="agents.toml",
+                ok=False,
+                detail=loaded,
+            )
+        ]
+
+    findings: list[PreflightFinding] = []
+    roles = loaded.get("roles") or {}
+    mcp_servers = loaded.get("mcp_servers") or {}
+    for role_name in ("primary", "reviewer"):
+        findings.extend(_check_dispatch_role_route(role_name, roles, mcp_servers, repo_root))
+    return findings
+
+
+def _check_dispatch_role_route(
+    role_name: str,
+    roles: dict[str, Any],
+    mcp_servers: dict[str, Any],
+    repo_root: Path,
+) -> list[PreflightFinding]:
+    label = f"{role_name} route"
+    try:
+        route = resolve_role_route(roles, role_name)
+    except DispatchConfigError as exc:
+        return [
+            PreflightFinding(
+                id=f"agents.{role_name}.route",
+                label=label,
+                ok=False,
+                detail=str(exc),
+            )
+        ]
+
+    errors: list[str] = []
+    if route.adapter == "in-session":
+        errors.append("dispatchable role resolves to in-session")
+    elif shutil.which(route.adapter) is None:
+        errors.append(f"{route.adapter} not found on PATH")
+
+    model = route.config.get("model")
+    if not model:
+        errors.append("model is not declared")
+
+    try:
+        effort = _role_effort(route.adapter, route.config)
+    except DispatchConfigError as exc:
+        effort = None
+        errors.append(str(exc))
+    if effort is None:
+        errors.append("effort is not declared")
+
+    try:
+        build_argv(route.adapter, route.config, "preflight route probe", mcp_servers=mcp_servers)
+    except DispatchConfigError as exc:
+        errors.append(str(exc))
+
+    findings = [
+        PreflightFinding(
+            id=f"agents.{role_name}.route",
+            label=label,
+            ok=not errors,
+            detail=(
+                f"[roles.{route.config_role}] resolves adapter={route.adapter}, "
+                f"model={model}, effort={effort}"
+                if not errors
+                else "; ".join(errors)
+            ),
+            required="explicit adapter, model, and effort",
+        )
+    ]
+
+    if route.adapter == "claude":
+        findings.extend(_check_claude_mcp_config(role_name, route.config, mcp_servers, repo_root))
+    return findings
+
+
+def _check_claude_mcp_config(
+    role_name: str,
+    role: dict[str, Any],
+    mcp_servers: dict[str, Any],
+    repo_root: Path,
+) -> list[PreflightFinding]:
+    try:
+        mcp_config = _claude_mcp_config(role, mcp_servers)
+        parsed = json.loads(mcp_config)
+    except (DispatchConfigError, json.JSONDecodeError) as exc:
+        return [
+            PreflightFinding(
+                id=f"agents.{role_name}.mcp_config",
+                label=f"{role_name} Claude MCP config",
+                ok=False,
+                detail=str(exc),
+            )
+        ]
+
+    findings = [
+        PreflightFinding(
+            id=f"agents.{role_name}.mcp_config",
+            label=f"{role_name} Claude MCP config",
+            ok=isinstance(parsed.get("mcpServers"), dict),
+            detail=mcp_config
+            if isinstance(parsed.get("mcpServers"), dict)
+            else "generated MCP config is missing mcpServers object",
+        )
+    ]
+    for name in _mcp_names(role):
+        server = (mcp_servers or {}).get(name)
+        if isinstance(server, dict):
+            findings.append(_check_mcp_server_command(role_name, name, server, repo_root))
+    return findings
+
+
+def _check_mcp_server_command(
+    role_name: str,
+    server_name: str,
+    server: dict[str, Any],
+    repo_root: Path,
+) -> PreflightFinding:
+    command = str(server["command"])
+    resolved = _resolve_declared_command(command, repo_root)
+    ok = resolved is not None
+    return PreflightFinding(
+        id=f"agents.{role_name}.mcp.{server_name}",
+        label=f"{role_name} MCP server: {server_name}",
+        ok=ok,
+        detail=f"{command} resolves to {resolved}" if ok else f"{command} not found",
+        required=command,
+    )
+
+
+def _agents_template() -> str:
+    return """Create .woof/agents.toml, for example:
+[roles.primary]
+adapter = "codex"
+model = "gpt-5.5"
+effort = "xhigh"
+
+[roles.reviewer]
+adapter = "claude"
+model = "claude-opus-4-7"
+effort = "max"
+mcp = []
+"""
 
 
 def _check_declared_binaries(prereq: dict[str, Any]) -> list[PreflightFinding]:
@@ -747,13 +954,178 @@ def _check_quality_gate_commands(repo_root: Path) -> list[PreflightFinding]:
     return findings
 
 
-def _command_exists(command: str, repo_root: Path) -> bool:
-    if "/" in command:
-        candidate = (
-            (repo_root / command).resolve() if not command.startswith("/") else Path(command)
+def _check_host_prerequisites(
+    repo_root: Path,
+    prereq: dict[str, Any],
+) -> list[PreflightFinding]:
+    host = prereq.get("host") or {}
+    findings: list[PreflightFinding] = []
+    platforms = [str(platform) for platform in host.get("platforms") or []]
+    if platforms:
+        current = _current_platform()
+        findings.append(
+            PreflightFinding(
+                id="host.platform",
+                label="host platform",
+                ok=current in platforms,
+                detail=f"current platform is {current}",
+                required=", ".join(platforms),
+            )
         )
-        return candidate.exists() and os.access(candidate, os.X_OK)
-    return shutil.which(command) is not None
+
+    for name, check in (host.get("checks") or {}).items():
+        findings.append(
+            _run_configured_command_check(
+                id_=f"host.{name}",
+                label=f"host check: {name}",
+                check=check,
+                repo_root=repo_root,
+            )
+        )
+    return findings
+
+
+def _check_server_prerequisites(
+    repo_root: Path,
+    prereq: dict[str, Any],
+) -> list[PreflightFinding]:
+    findings: list[PreflightFinding] = []
+    for name, check in (prereq.get("servers") or {}).items():
+        if "url" in check:
+            findings.append(_run_server_url_check(name, check))
+        else:
+            findings.append(
+                _run_configured_command_check(
+                    id_=f"servers.{name}",
+                    label=f"server check: {name}",
+                    check=check,
+                    repo_root=repo_root,
+                )
+            )
+    return findings
+
+
+def _current_platform() -> str:
+    if sys.platform.startswith("linux"):
+        return "linux"
+    if sys.platform == "darwin":
+        return "darwin"
+    if sys.platform.startswith(("win32", "cygwin", "msys")):
+        return "windows"
+    return sys.platform
+
+
+def _run_configured_command_check(
+    *,
+    id_: str,
+    label: str,
+    check: dict[str, Any],
+    repo_root: Path,
+) -> PreflightFinding:
+    command = str(check.get("command") or "")
+    install = check.get("install")
+    notes = [str(note) for note in check.get("notes") or []]
+    try:
+        argv = shlex.split(command)
+    except ValueError as exc:
+        return PreflightFinding(
+            id=id_,
+            label=label,
+            ok=False,
+            detail=f"cannot parse command {command!r}: {exc}",
+            required=check.get("required") or command,
+            install=str(install) if install is not None else None,
+            notes=notes,
+        )
+    if not argv:
+        return PreflightFinding(
+            id=id_,
+            label=label,
+            ok=False,
+            detail="command is empty",
+            required=check.get("required") or command,
+            install=str(install) if install is not None else None,
+            notes=notes,
+        )
+
+    resolved = _resolve_declared_command(argv[0], repo_root)
+    if resolved is None:
+        return PreflightFinding(
+            id=id_,
+            label=label,
+            ok=False,
+            detail=f"{argv[0]} not found",
+            required=check.get("required") or command,
+            install=str(install) if install is not None else None,
+            notes=notes,
+        )
+
+    timeout = int(check.get("timeout_seconds") or 20)
+    returncode, output = _run_capture(argv, timeout=timeout, cwd=repo_root)
+    return PreflightFinding(
+        id=id_,
+        label=label,
+        ok=returncode == 0,
+        detail=(
+            f"command succeeded: {command}"
+            if returncode == 0
+            else f"command exited {returncode}: {output}"
+        ),
+        required=check.get("required") or command,
+        install=str(install) if install is not None else None,
+        notes=notes,
+    )
+
+
+def _run_server_url_check(name: str, check: dict[str, Any]) -> PreflightFinding:
+    url = str(check["url"])
+    timeout = int(check.get("timeout_seconds") or 5)
+    expected_status = int(check.get("expected_status") or 200)
+    install = check.get("install")
+    notes = [str(note) for note in check.get("notes") or []]
+    request = urllib.request.Request(url, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            status = int(response.status)
+    except urllib.error.HTTPError as exc:
+        status = int(exc.code)
+    except (OSError, TimeoutError, urllib.error.URLError) as exc:
+        return PreflightFinding(
+            id=f"servers.{name}",
+            label=f"server check: {name}",
+            ok=False,
+            detail=f"{url} unreachable: {exc}",
+            required=f"HTTP {expected_status} from {url}",
+            install=str(install) if install is not None else None,
+            notes=notes,
+        )
+
+    return PreflightFinding(
+        id=f"servers.{name}",
+        label=f"server check: {name}",
+        ok=status == expected_status,
+        detail=(
+            f"{url} returned HTTP {status}"
+            if status == expected_status
+            else f"{url} returned HTTP {status}; expected {expected_status}"
+        ),
+        required=f"HTTP {expected_status} from {url}",
+        install=str(install) if install is not None else None,
+        notes=notes,
+    )
+
+
+def _resolve_declared_command(command: str, repo_root: Path) -> str | None:
+    if "/" in command:
+        candidate = Path(command).expanduser()
+        if not candidate.is_absolute():
+            candidate = (repo_root / candidate).resolve()
+        return str(candidate) if candidate.exists() and os.access(candidate, os.X_OK) else None
+    return shutil.which(command)
+
+
+def _command_exists(command: str, repo_root: Path) -> bool:
+    return _resolve_declared_command(command, repo_root) is not None
 
 
 def _run_command_check(
@@ -782,9 +1154,14 @@ def _run_command_check(
     )
 
 
-def _run_capture(argv: list[str], *, timeout: int) -> tuple[int, str]:
+def _run_capture(
+    argv: list[str],
+    *,
+    timeout: int,
+    cwd: Path | None = None,
+) -> tuple[int, str]:
     try:
-        proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+        proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, cwd=cwd)
     except FileNotFoundError:
         return 127, f"{argv[0]} not found on PATH"
     except subprocess.TimeoutExpired as exc:

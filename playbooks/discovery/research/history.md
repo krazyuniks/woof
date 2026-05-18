@@ -168,7 +168,7 @@ Save the research to a file:
 - Failure analysis goes to root cause (not surface)
 - Lessons are actionable (not just "be careful")
 - Acknowledges what's changed since then
-- Implementation context gives Claude specific patterns to adopt/avoid
+- Implementation context gives the primary route specific patterns to adopt/avoid
 - Informs current approach concretely
 - Output saved to artifacts/research/ directory
 </success_criteria>

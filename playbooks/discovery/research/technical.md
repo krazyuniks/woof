@@ -163,7 +163,7 @@ Save the research to a file:
 - Tradeoffs are honest, not salesy
 - Libraries are specific and current
 - Recommendation fits the stated constraints
-- Implementation context has everything Claude needs to start building
+- Implementation context has everything the primary route needs to start building
 - Enough detail to begin implementing immediately
 - Output saved to artifacts/research/ directory
 </success_criteria>

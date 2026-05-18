@@ -161,6 +161,6 @@ Save the research to a file:
 - Ratings are justified, not arbitrary
 - Recommendation follows from analysis
 - Runner-up provides contingency
-- Implementation context gives Claude everything needed to proceed
+- Implementation context gives the primary route everything needed to proceed
 - Output saved to artifacts/research/ directory
 </success_criteria>

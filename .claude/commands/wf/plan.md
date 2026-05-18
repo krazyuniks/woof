@@ -1,5 +1,5 @@
 ---
-description: Pure planner node. Produces plan.json only.
+description: Pure primary planning producer node. Produces plan.json only.
 allowed-tools: Bash(woof:*), Bash(./bin/woof:*), Bash(./woof/bin/woof:*), Bash(test:*), Bash(ls:*), Bash(cat:*), Bash(jq:*), Read, Write, Edit, Glob, Grep
 argument-hint: "<E<N>>"
 ---
@@ -22,6 +22,6 @@ Plan rules:
 - Every contract decision is implemented by exactly one story `implements_contract_decisions[]`.
 - Story `paths[]` scopes do not overlap.
 - `depends_on[]` is acyclic.
-- Stories are small enough for one executor node.
+- Stories are small enough for one primary story producer node.
 
 Validate the JSON before writing when the Woof CLI is available. Write only `plan.json` using tmp-file plus rename. Do not write gates, dispatch critique, or revise the epic.

@@ -167,7 +167,7 @@ Save the research to a file:
 - Players are correctly positioned
 - Trends are backed by evidence
 - Gaps are genuine opportunities (not just missing features)
-- Implementation context gives Claude strategic and technical direction
+- Implementation context gives the primary route strategic and technical direction
 - Provides strategic clarity about the space
 - Output saved to artifacts/research/ directory
 </success_criteria>

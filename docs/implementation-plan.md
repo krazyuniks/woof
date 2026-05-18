@@ -8,7 +8,7 @@
 
 Woof has an implemented ADR-001 Stage-5 execution path. `woof wf --epic <N>` runs the deterministic Python graph for story selection, executor dispatch, critique dispatch, verification, gate opening, structured gate resolution, and commit transaction verification.
 
-ADR-002 is now accepted and must be implemented before Stage 1-4 graph migration continues. Woof is graph-led, GPT-5.5 is the preferred primary producer route, Claude Opus 4.7 at `max` effort is the preferred reviewer route, and reviewer blockers open human gates rather than model-to-model debate loops. ROLE-002 has migrated Stage-5 dispatch to semantic `primary` / `reviewer` roles and public raw `claude` / `codex` adapters owned by Woof. ROLE-004 has expanded preflight into the startup infrastructure check. The remaining Workstream R items add reviewer dispositions and prompt/docs cleanup.
+ADR-002 is now accepted and implemented. Woof is graph-led, GPT-5.5 is the preferred primary producer route, Claude Opus 4.7 at `max` effort is the preferred reviewer route, and reviewer blockers open human gates rather than model-to-model debate loops. Stage-5 dispatch uses semantic `primary` / `reviewer` roles and public raw `claude` / `codex` adapters owned by Woof. Preflight is the startup infrastructure check. Workstream R is complete, so Stage 1-4 graph migration can continue.
 
 Implemented surfaces:
 
@@ -141,7 +141,7 @@ This phase implements ADR-002 before Stage 1-4 graph migration continues.
 | ROLE-003 | Completed | Add effort-aware role configuration and MCP JSON construction. | `agents.schema.json` supports public adapters and role `effort`; Claude routes map effort to `claude --effort <level>`; reviewer dry-run shows `--effort max`; Codex routes set or verify reasoning effort through the supported CLI/config path; Woof generates `--strict-mcp-config --mcp-config` JSON for Claude roles; dispatch events record resolved command, model, effort, and MCP set. | `just woof validate --schema agents .woof/agents.toml` passed. Targeted dispatch tests passed: 21 tests. `just check` passed: Ruff lint, Ruff format check, and 204 tests. | `feat(config): add public role routes` |
 | ROLE-004 | Completed | Expand preflight into the startup infrastructure check. | `woof preflight` verifies Woof checkout/install, consumer `.woof/` schemas, public CLI availability (`claude`, `codex`), route model/effort settings, generated MCP config, GitHub access, quality-gate command resolution, language tooling, and project-specific host/server prerequisites. | Focused preflight/dispatch tests passed: 32 tests. Self-preflight passed: 18 checks. `just woof validate --schema prerequisites .woof/prerequisites.toml` and `just woof validate --schema agents .woof/agents.toml` passed. `just check` passed: Ruff lint, Ruff format check, and 209 tests. | `feat(preflight): verify startup infrastructure` |
 | ROLE-005 | Completed | Add non-blocking reviewer disposition handling. | Reviewer `info` and `minor` findings require a primary disposition record; accepted feedback may update artefacts; reviewer `blocker` opens a human gate with primary and reviewer positions; no model debate loop exists. | Focused graph/disposition/schema tests passed: 87 tests. `just check` passed: Ruff lint, Ruff format check, and 214 tests. | `feat(graph): record reviewer dispositions` |
-| ROLE-006 | Ready | Update producer/reviewer prompts and docs after routing lands. | Prompt files, examples, architecture, and README use primary/reviewer terminology; provider names appear only in route examples and compatibility notes. | Prompt static assertions or docs review plus `just check`. | `docs(workflow): align prompts with role routing` |
+| ROLE-006 | Completed | Update producer/reviewer prompts and docs after routing lands. | Prompt files, examples, architecture, and README use primary/reviewer terminology; provider names appear only in route examples and compatibility notes. | Focused prompt terminology assertion passed: `uv run pytest tests/unit/test_prompt_role_terminology.py`. `just check` passed: Ruff lint, Ruff format check, and 215 tests. | `docs(workflow): align prompts with role routing` |
 
 ### Phase 3: Stage 1-4 Graph Migration
 
@@ -219,5 +219,5 @@ Workflow:
 - In the final response, paste this complete continuation prompt block so it can be copied into a new session.
 
 Start with:
-Workstream R: Role routing and startup preflight (`ROLE-001`, `ROLE-002`, `ROLE-003`, `ROLE-004`, `ROLE-005`, `ROLE-006`). Finish any item already `In progress`; otherwise start with `ROLE-006`. Do not start `STG-002` until Workstream R is complete.
+Workstream F: Stage 1-4 graph migration (`STG-001`, `STG-002`, `STG-003`, `STG-004`, `STG-005`). Workstream R is complete. Finish any item already `In progress`; otherwise start with `STG-002`.
 ```

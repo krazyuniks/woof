@@ -173,7 +173,7 @@ Save the research to a file:
 - Maintenance status is verified (not abandoned)
 - License compatibility is checked
 - Build vs. use tradeoff is honest
-- Implementation context has exact package info Claude needs
+- Implementation context has exact package info the primary route needs
 - Recommendation saves complexity without creating technical debt
 - Output saved to artifacts/research/ directory
 </success_criteria>

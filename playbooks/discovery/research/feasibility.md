@@ -159,7 +159,7 @@ Save the research to a file:
 - Blockers are specific and addressable
 - De-risking options are actionable
 - Verdict is clear with reasoning
-- Implementation context gives Claude clear path forward
+- Implementation context gives the primary route a clear path forward
 - Enables informed go/no-go decision
 - Output saved to artifacts/research/ directory
 </success_criteria>

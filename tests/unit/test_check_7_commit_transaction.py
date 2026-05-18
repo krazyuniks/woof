@@ -57,16 +57,30 @@ def _ctx(repo_root: Path, plan: dict) -> CheckContext:
 def _write_required(repo_root: Path, plan: dict) -> list[str]:
     epic_dir = repo_root / ".woof" / "epics" / "E7"
     critique_dir = epic_dir / "critique"
+    disposition_dir = epic_dir / "dispositions"
     critique_dir.mkdir(parents=True)
+    disposition_dir.mkdir()
     (epic_dir / "plan.json").write_text(json.dumps(plan))
     (epic_dir / "epic.jsonl").write_text("{}\n")
     (epic_dir / "dispatch.jsonl").write_text("{}\n")
-    (critique_dir / "story-S1.md").write_text("---\nseverity: info\n---\n")
+    (critique_dir / "story-S1.md").write_text(
+        "---\ntarget: story\ntarget_id: S1\nseverity: info\n"
+        "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
+        "findings: []\n---\n"
+    )
+    (disposition_dir / "story-S1.md").write_text(
+        "---\ntarget: story\ntarget_id: S1\n"
+        "critique_path: .woof/epics/E7/critique/story-S1.md\n"
+        "severity: info\n"
+        "timestamp: '2026-01-01T00:00:00Z'\nharness: test-primary\n"
+        "dispositions: []\n---\n"
+    )
     return [
         ".woof/epics/E7/plan.json",
         ".woof/epics/E7/epic.jsonl",
         ".woof/epics/E7/dispatch.jsonl",
         ".woof/epics/E7/critique/story-S1.md",
+        ".woof/epics/E7/dispositions/story-S1.md",
     ]
 
 

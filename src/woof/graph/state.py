@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 class NodeType(StrEnum):
     EXECUTOR_DISPATCH = "executor_dispatch"
     CRITIQUE_DISPATCH = "critique_dispatch"
+    REVIEW_DISPOSITION = "review_disposition"
     VERIFICATION = "verification"
     COMMIT = "commit"
     GATE_OPEN = "gate_open"

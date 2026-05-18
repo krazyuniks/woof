@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://woof.dev/schemas/disposition.schema.json",
+  "title": "woof reviewer disposition front-matter",
+  "description": "YAML front-matter of .woof/epics/E<N>/dispositions/story-S<k>.md. Written by the primary route after a non-blocking reviewer critique. Blocker critiques open a human gate instead of producing a disposition.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "target",
+    "target_id",
+    "critique_path",
+    "severity",
+    "timestamp",
+    "harness",
+    "dispositions"
+  ],
+  "properties": {
+    "target": {
+      "type": "string",
+      "const": "story",
+      "description": "Disposition target. ROLE-005 covers Stage-5 story critiques."
+    },
+    "target_id": {
+      "type": "string",
+      "pattern": "^S[1-9]\\d*$",
+      "description": "Story ID this disposition covers."
+    },
+    "critique_path": {
+      "type": "string",
+      "pattern": "^\\.woof/epics/E[1-9]\\d*/critique/story-S[1-9]\\d*\\.md$",
+      "description": "Repo-relative path of the reviewer critique this disposition answers."
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["info", "minor"],
+      "description": "Roll-up reviewer severity being answered. Blocker is intentionally excluded."
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "harness": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Identifier of the primary route that wrote the disposition."
+    },
+    "session_ref": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Optional dispatch audit pointer for the primary disposition subprocess."
+    },
+    "updated_paths": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true,
+      "description": "Repo-relative paths the primary updated while accepting reviewer feedback."
+    },
+    "dispositions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/disposition" },
+      "description": "One entry for each reviewer finding. Empty only when the critique has no findings."
+    }
+  },
+  "$defs": {
+    "disposition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["finding_id", "decision", "rationale"],
+      "properties": {
+        "finding_id": {
+          "type": "string",
+          "pattern": "^F[1-9]\\d*$"
+        },
+        "decision": {
+          "type": "string",
+          "enum": ["accepted", "rejected", "deferred"],
+          "description": "accepted = artefacts were updated or no code change was needed; rejected = primary disagrees and records why; deferred = follow-up work is needed outside this story."
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 1
+        },
+        "updated_paths": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        }
+      }
+    }
+  }
+}

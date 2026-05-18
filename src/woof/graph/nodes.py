@@ -10,6 +10,16 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from woof.gate.write import write_gate_for_trigger, write_gate_from_check_result
+from woof.graph.dispositions import (
+    FrontMatterError,
+    critique_severity,
+    read_markdown_front_matter,
+    reviewer_blocker_gate_body,
+    story_critique_path,
+    story_disposition_path,
+    story_disposition_relpath,
+    validate_story_disposition,
+)
 from woof.graph.git import git, staged_paths
 from woof.graph.manifest import build_story_manifest, verify_staged_manifest
 from woof.graph.state import NodeInput, NodeOutput, NodeStatus, NodeType, ValidationSummary
@@ -83,6 +93,11 @@ Invoke /wf:execute-story with arguments "E{epic_id} {story_id}".
 Produce .woof/epics/E{epic_id}/executor_result.json and exit.
 Do not dispatch critique, verify, open gates, or commit.
 """
+
+
+def _disposition_prompt(epic_id: int, story_id: str) -> str:
+    template = (tool_root() / "playbooks" / "disposition" / "story.md").read_text()
+    return template.format(epic_id=epic_id, story_id=story_id)
 
 
 def _run_dispatch(
@@ -181,7 +196,116 @@ def critique_dispatch_node(inp: NodeInput) -> NodeOutput:
         status=NodeStatus.COMPLETED,
         epic_id=inp.epic_id,
         story_id=inp.story_id,
+        next_node=NodeType.REVIEW_DISPOSITION,
+    )
+
+
+def _write_position_gate(inp: NodeInput, *, trigger: str, position: str) -> NodeOutput:
+    position_path = epic_dir(inp.repo_root, inp.epic_id) / "gate-position.md"
+    position_path.write_text(position)
+    try:
+        write_gate_for_trigger(
+            trigger=trigger,
+            epic_dir=epic_dir(inp.repo_root, inp.epic_id),
+            story_id=inp.story_id,
+            position_path=position_path,
+            schema_path=schema_dir() / "gate.schema.json",
+        )
+    finally:
+        position_path.unlink(missing_ok=True)
+    return NodeOutput(
+        node_type=inp.node_type,
+        status=NodeStatus.GATE_OPENED,
+        epic_id=inp.epic_id,
+        story_id=inp.story_id,
+        gate_path=_gate_path(inp.epic_id),
+        triggered_by=[trigger],
+        message=position,
+    )
+
+
+def _write_disposition_incomplete_gate(inp: NodeInput, message: str) -> NodeOutput:
+    return _write_position_gate(
+        inp,
+        trigger="incomplete_stage_state",
+        position=(
+            f"{message}\n\n"
+            "The graph cannot continue until the reviewer critique and primary disposition "
+            "are restored to a valid, matching state."
+        ),
+    )
+
+
+def review_disposition_node(inp: NodeInput) -> NodeOutput:
+    if not inp.story_id:
+        raise ValueError("review_disposition requires story_id")
+    directory = epic_dir(inp.repo_root, inp.epic_id)
+    critique_path = story_critique_path(directory, inp.story_id)
+
+    try:
+        critique = read_markdown_front_matter(critique_path)
+    except (FileNotFoundError, FrontMatterError) as exc:
+        return _write_disposition_incomplete_gate(inp, f"Reviewer critique is unreadable: {exc}")
+
+    severity = critique_severity(critique.front)
+    if severity == "blocker":
+        body = reviewer_blocker_gate_body(
+            epic_id=inp.epic_id,
+            story_id=inp.story_id,
+            critique=critique,
+        )
+        return _write_position_gate(
+            inp,
+            trigger="check_6_critique_blocker",
+            position=body,
+        )
+    if severity not in {"info", "minor"}:
+        return _write_disposition_incomplete_gate(
+            inp,
+            "Reviewer critique severity must be info, minor, or blocker.",
+        )
+
+    disposition_path = story_disposition_path(directory, inp.story_id)
+    if not disposition_path.exists():
+        proc = _run_dispatch(
+            inp.repo_root,
+            role="primary",
+            epic_id=inp.epic_id,
+            story_id=inp.story_id,
+            prompt=_disposition_prompt(inp.epic_id, inp.story_id),
+        )
+        if proc.returncode != 0:
+            write_gate_for_trigger(
+                trigger="subprocess_crash",
+                epic_dir=directory,
+                story_id=inp.story_id,
+                exit_code=proc.returncode,
+                schema_path=schema_dir() / "gate.schema.json",
+            )
+            return NodeOutput(
+                node_type=inp.node_type,
+                status=NodeStatus.GATE_OPENED,
+                epic_id=inp.epic_id,
+                story_id=inp.story_id,
+                gate_path=_gate_path(inp.epic_id),
+                triggered_by=["subprocess_crash"],
+                message=proc.stderr.strip(),
+            )
+
+    validation = validate_story_disposition(directory, inp.epic_id, inp.story_id)
+    if not validation.ok:
+        return _write_disposition_incomplete_gate(
+            inp,
+            "Primary disposition is invalid: " + "; ".join(validation.errors),
+        )
+
+    return NodeOutput(
+        node_type=inp.node_type,
+        status=NodeStatus.COMPLETED,
+        epic_id=inp.epic_id,
+        story_id=inp.story_id,
         next_node=NodeType.VERIFICATION,
+        paths=[story_disposition_relpath(inp.epic_id, inp.story_id)],
     )
 
 
@@ -544,6 +668,7 @@ def default_registry() -> dict[NodeType, NodeHandler]:
     return {
         NodeType.EXECUTOR_DISPATCH: executor_dispatch_node,
         NodeType.CRITIQUE_DISPATCH: critique_dispatch_node,
+        NodeType.REVIEW_DISPOSITION: review_disposition_node,
         NodeType.VERIFICATION: verification_node,
         NodeType.COMMIT: commit_node,
         NodeType.GATE_OPEN: gate_open_node,

@@ -6,6 +6,13 @@ import json
 import subprocess
 from pathlib import Path
 
+from woof.graph.dispositions import (
+    critique_severity,
+    read_markdown_front_matter,
+    story_critique_path,
+    story_disposition_path,
+    validate_story_disposition,
+)
 from woof.graph.git import changed_paths, staged_paths
 from woof.graph.manifest import build_story_manifest
 from woof.graph.state import NodeType, Plan, StorySpec
@@ -178,7 +185,7 @@ def next_node(repo_root: Path, epic_id: int) -> tuple[NodeType | None, str | Non
         return NodeType.EXECUTOR_DISPATCH, ready.id
 
     result_path = directory / "executor_result.json"
-    critique_path = directory / "critique" / f"story-{in_progress.id}.md"
+    critique_path = story_critique_path(directory, in_progress.id)
     check_result_path = directory / "check-result.json"
 
     if not result_path.exists():
@@ -194,6 +201,17 @@ def next_node(repo_root: Path, epic_id: int) -> tuple[NodeType | None, str | Non
         return NodeType.GATE_OPEN, in_progress.id
     if not critique_path.exists():
         return NodeType.CRITIQUE_DISPATCH, in_progress.id
+    try:
+        critique_front = read_markdown_front_matter(critique_path).front
+    except (FileNotFoundError, ValueError):
+        return NodeType.REVIEW_DISPOSITION, in_progress.id
+    if critique_severity(critique_front) == "blocker":
+        return NodeType.REVIEW_DISPOSITION, in_progress.id
+    if not story_disposition_path(directory, in_progress.id).exists():
+        return NodeType.REVIEW_DISPOSITION, in_progress.id
+    disposition = validate_story_disposition(directory, epic_id, in_progress.id)
+    if not disposition.ok:
+        return NodeType.REVIEW_DISPOSITION, in_progress.id
     if not check_result_path.exists():
         return NodeType.VERIFICATION, in_progress.id
     if not _json_loads_ok(check_result_path):

@@ -117,6 +117,26 @@ def _write_last_sync(directory: Path, epic_id: int, *, body: str = "<previous>")
     )
 
 
+def _write_disposition(directory: Path, epic_id: int, story_id: str = "S1") -> Path:
+    disposition_dir = directory / "dispositions"
+    disposition_dir.mkdir(exist_ok=True)
+    path = disposition_dir / f"story-{story_id}.md"
+    path.write_text(
+        f"""---
+target: story
+target_id: {story_id}
+critique_path: .woof/epics/E{epic_id}/critique/story-{story_id}.md
+severity: info
+timestamp: '2026-01-01T00:00:00Z'
+harness: test-primary
+dispositions: []
+---
+No reviewer findings.
+"""
+    )
+    return path
+
+
 def _make_gh_completion_stub(bin_dir: Path) -> dict[str, str]:
     bin_dir.mkdir(parents=True, exist_ok=True)
     last_body = bin_dir / "_last_body"
@@ -209,7 +229,12 @@ def _write_ready_commit_state(root: Path, epic_id: int = 1) -> Path:
     )
     critique_dir = directory / "critique"
     critique_dir.mkdir()
-    (critique_dir / "story-S1.md").write_text("---\nseverity: info\n---\n")
+    (critique_dir / "story-S1.md").write_text(
+        "---\ntarget: story\ntarget_id: S1\nseverity: info\n"
+        "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
+        "findings: []\n---\n"
+    )
+    _write_disposition(directory, epic_id, "S1")
     audit_dir = directory / "audit"
     audit_dir.mkdir()
     (audit_dir / "cod-critiquer-1.prompt").write_text("prompt")
@@ -253,6 +278,13 @@ def test_graph_runs_executor_then_critique_then_verification_then_commit(tmp_pat
             node_type=inp.node_type, status=NodeStatus.COMPLETED, epic_id=1, story_id=inp.story_id
         )
 
+    def disposition(inp: NodeInput) -> NodeOutput:
+        seen.append(inp.node_type)
+        _write_disposition(epic_dir(inp.repo_root, inp.epic_id), inp.epic_id, inp.story_id or "")
+        return NodeOutput(
+            node_type=inp.node_type, status=NodeStatus.COMPLETED, epic_id=1, story_id=inp.story_id
+        )
+
     def verify(inp: NodeInput) -> NodeOutput:
         seen.append(inp.node_type)
         (epic_dir(inp.repo_root, inp.epic_id) / "check-result.json").write_text(
@@ -284,6 +316,7 @@ def test_graph_runs_executor_then_critique_then_verification_then_commit(tmp_pat
         registry={
             NodeType.EXECUTOR_DISPATCH: executor,
             NodeType.CRITIQUE_DISPATCH: critique,
+            NodeType.REVIEW_DISPOSITION: disposition,
             NodeType.VERIFICATION: verify,
             NodeType.COMMIT: commit,
         },
@@ -292,6 +325,7 @@ def test_graph_runs_executor_then_critique_then_verification_then_commit(tmp_pat
     assert seen == [
         NodeType.EXECUTOR_DISPATCH,
         NodeType.CRITIQUE_DISPATCH,
+        NodeType.REVIEW_DISPOSITION,
         NodeType.VERIFICATION,
         NodeType.COMMIT,
     ]
@@ -365,6 +399,122 @@ def test_critique_dispatch_failure_opens_reviewer_gate(tmp_path: Path, monkeypat
     assert output.triggered_by == ["reviewer_unreachable"]
     gate_fm = _read_gate_fm(tmp_path / ".woof" / "epics" / "E1" / "gate.md")
     assert gate_fm["triggered_by"] == ["reviewer_unreachable"]
+
+
+def test_review_disposition_dispatches_primary_for_non_blocking_critique(
+    tmp_path: Path, monkeypatch
+) -> None:
+    directory = _write_plan(tmp_path, 1)
+    mark_story_status(tmp_path, 1, "S1", "in_progress")
+    (directory / "executor_result.json").write_text(
+        json.dumps(
+            {
+                "epic_id": 1,
+                "story_id": "S1",
+                "outcome": "staged_for_verification",
+                "commit_body": "done",
+                "position": None,
+            }
+        )
+    )
+    critique_dir = directory / "critique"
+    critique_dir.mkdir()
+    (critique_dir / "story-S1.md").write_text(
+        "---\ntarget: story\ntarget_id: S1\nseverity: minor\n"
+        "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
+        "findings:\n  - id: F1\n    severity: minor\n    summary: needs note\n---\n"
+    )
+
+    def fake_dispatch(
+        repo_root: Path,
+        role: str,
+        epic_id: int,
+        story_id: str | None,
+        prompt: str,
+    ) -> subprocess.CompletedProcess[str]:
+        assert repo_root == tmp_path
+        assert role == "primary"
+        assert epic_id == 1
+        assert story_id == "S1"
+        assert "dispositions/story-S1.md" in prompt
+        disposition_dir = directory / "dispositions"
+        disposition_dir.mkdir()
+        (disposition_dir / "story-S1.md").write_text(
+            "---\ntarget: story\ntarget_id: S1\n"
+            "critique_path: .woof/epics/E1/critique/story-S1.md\n"
+            "severity: minor\n"
+            "timestamp: '2026-01-01T00:00:00Z'\nharness: test-primary\n"
+            "dispositions:\n"
+            "  - finding_id: F1\n"
+            "    decision: accepted\n"
+            "    rationale: Added a note.\n"
+            "---\n"
+        )
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setattr(nodes, "_run_dispatch", fake_dispatch)
+
+    assert next_node(tmp_path, 1) == (NodeType.REVIEW_DISPOSITION, "S1")
+    output = nodes.review_disposition_node(
+        NodeInput(
+            node_type=NodeType.REVIEW_DISPOSITION,
+            epic_id=1,
+            story_id="S1",
+            repo_root=tmp_path,
+        )
+    )
+
+    assert output.status == NodeStatus.COMPLETED
+    assert output.next_node == NodeType.VERIFICATION
+    assert output.paths == [".woof/epics/E1/dispositions/story-S1.md"]
+
+
+def test_reviewer_blocker_opens_gate_without_primary_debate(tmp_path: Path, monkeypatch) -> None:
+    directory = _write_plan(tmp_path, 1)
+    mark_story_status(tmp_path, 1, "S1", "in_progress")
+    (directory / "executor_result.json").write_text(
+        json.dumps(
+            {
+                "epic_id": 1,
+                "story_id": "S1",
+                "outcome": "staged_for_verification",
+                "commit_body": "done",
+                "position": None,
+            }
+        )
+    )
+    critique_dir = directory / "critique"
+    critique_dir.mkdir()
+    (critique_dir / "story-S1.md").write_text(
+        "---\ntarget: story\ntarget_id: S1\nseverity: blocker\n"
+        "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
+        "findings:\n  - id: F1\n    severity: blocker\n    summary: missing assertion\n"
+        "---\nReviewer says the staged test does not assert O1.\n"
+    )
+
+    def fail_dispatch(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise AssertionError("blocker disposition must not dispatch the primary")
+
+    monkeypatch.setattr(nodes, "_run_dispatch", fail_dispatch)
+
+    assert next_node(tmp_path, 1) == (NodeType.REVIEW_DISPOSITION, "S1")
+    output = nodes.review_disposition_node(
+        NodeInput(
+            node_type=NodeType.REVIEW_DISPOSITION,
+            epic_id=1,
+            story_id="S1",
+            repo_root=tmp_path,
+        )
+    )
+
+    assert output.status == NodeStatus.GATE_OPENED
+    assert output.triggered_by == ["check_6_critique_blocker"]
+    gate = directory / "gate.md"
+    gate_fm = _read_gate_fm(gate)
+    assert gate_fm["triggered_by"] == ["check_6_critique_blocker"]
+    gate_text = gate.read_text()
+    assert "## Primary position" in gate_text
+    assert "## Reviewer position" in gate_text
 
 
 def test_graph_resumes_interrupted_commit_transaction(tmp_path: Path) -> None:
@@ -443,6 +593,7 @@ def test_complete_epic_cleans_stale_transient_files(tmp_path: Path) -> None:
         ".woof/epics/E1/epic.jsonl",
         ".woof/epics/E1/dispatch.jsonl",
         ".woof/epics/E1/critique/story-S1.md",
+        ".woof/epics/E1/dispositions/story-S1.md",
         ".woof/epics/E1/audit/cod-critiquer-1.prompt",
         check=True,
     )
@@ -514,7 +665,12 @@ def test_malformed_check_result_opens_incomplete_state_gate(tmp_path: Path) -> N
     )
     critique_dir = directory / "critique"
     critique_dir.mkdir()
-    (critique_dir / "story-S1.md").write_text("---\nseverity: info\n---\n")
+    (critique_dir / "story-S1.md").write_text(
+        "---\ntarget: story\ntarget_id: S1\nseverity: info\n"
+        "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
+        "findings: []\n---\n"
+    )
+    _write_disposition(directory, 1, "S1")
     (directory / "check-result.json").write_text("{")
 
     assert next_node(tmp_path, 1) == (NodeType.GATE_OPEN, "S1")
@@ -544,7 +700,11 @@ def test_failed_check_result_reopens_structured_gate_on_reentry(tmp_path: Path) 
     )
     critique_dir = directory / "critique"
     critique_dir.mkdir()
-    (critique_dir / "story-S1.md").write_text("---\nseverity: blocker\n---\n")
+    (critique_dir / "story-S1.md").write_text(
+        "---\ntarget: story\ntarget_id: S1\nseverity: blocker\n"
+        "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
+        "findings:\n  - id: F1\n    severity: blocker\n    summary: test\n---\n"
+    )
     (directory / "check-result.json").write_text(
         json.dumps(
             {
@@ -569,11 +729,12 @@ def test_failed_check_result_reopens_structured_gate_on_reentry(tmp_path: Path) 
         )
     )
 
-    assert next_node(tmp_path, 1) == (NodeType.GATE_OPEN, "S1")
+    assert next_node(tmp_path, 1) == (NodeType.REVIEW_DISPOSITION, "S1")
 
     outputs = run_graph(tmp_path, 1)
 
     assert outputs[0].status == NodeStatus.GATE_OPENED
+    assert outputs[0].node_type == NodeType.REVIEW_DISPOSITION
     assert outputs[0].triggered_by == ["check_6_critique_blocker"]
     gate_fm = _read_gate_fm(directory / "gate.md")
     assert gate_fm["triggered_by"] == ["check_6_critique_blocker"]
@@ -733,7 +894,11 @@ def test_wf_gate_case_reports_stable_json_contract(tmp_path: Path) -> None:
     )
     critique_dir = directory / "critique"
     critique_dir.mkdir()
-    (critique_dir / "story-S1.md").write_text("---\nseverity: blocker\n---\n")
+    (critique_dir / "story-S1.md").write_text(
+        "---\ntarget: story\ntarget_id: S1\nseverity: blocker\n"
+        "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
+        "findings:\n  - id: F1\n    severity: blocker\n    summary: test\n---\n"
+    )
     (directory / "check-result.json").write_text(
         json.dumps(
             {
@@ -764,21 +929,27 @@ def test_wf_gate_case_reports_stable_json_contract(tmp_path: Path) -> None:
     lines = [json.loads(line) for line in proc.stdout.splitlines()]
     assert lines == [
         {
-            "node_type": "gate_open",
+            "node_type": "review_disposition",
             "status": "gate_opened",
             "epic_id": 11,
             "story_id": "S1",
             "next_node": None,
             "gate_path": ".woof/epics/E11/gate.md",
-            "validation_summary": {
-                "ok": False,
-                "stage": 5,
-                "triggered_by": ["check_6_critique_blocker"],
-                "check_count": 1,
-                "failed_check_count": 1,
-            },
+            "validation_summary": None,
             "triggered_by": ["check_6_critique_blocker"],
-            "message": "",
+            "message": (
+                "## Context\n\n"
+                "Reviewer critique `.woof/epics/E11/critique/story-S1.md` marked story S1 as blocker. "
+                "Woof does not start a model-to-model debate loop for blocker findings.\n\n"
+                "## Findings\n\n"
+                "- F1: test\n\n"
+                "## Primary position\n\n"
+                "The primary story output remains staged for operator inspection. "
+                "No primary disposition was requested because blocker findings require a human gate.\n\n"
+                "## Reviewer position\n\n"
+                "Source: `.woof/epics/E11/critique/story-S1.md`\n\n"
+                "Reviewer body was empty.\n"
+            ),
             "paths": [],
         }
     ]
@@ -809,7 +980,12 @@ def test_transaction_manifest_requires_audit_and_rejects_extra_staged_file(tmp_p
     (directory / "dispatch.jsonl").write_text("{}\n")
     critique_dir = directory / "critique"
     critique_dir.mkdir()
-    (critique_dir / "story-S1.md").write_text("---\nseverity: info\n---\n")
+    (critique_dir / "story-S1.md").write_text(
+        "---\ntarget: story\ntarget_id: S1\nseverity: info\n"
+        "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
+        "findings: []\n---\n"
+    )
+    _write_disposition(directory, 1, "S1")
     audit_dir = directory / "audit"
     audit_dir.mkdir()
     (audit_dir / "cod-critiquer-1.prompt").write_text("prompt")
@@ -829,6 +1005,7 @@ def test_transaction_manifest_requires_audit_and_rejects_extra_staged_file(tmp_p
 
     assert ".woof/epics/E1/audit/cod-critiquer-1.prompt" in manifest.expected_paths
     assert ".woof/epics/E1/critique/story-S1.md" in manifest.expected_paths
+    assert ".woof/epics/E1/dispositions/story-S1.md" in manifest.expected_paths
     assert "src/app.py" in manifest.expected_paths
 
     _git(tmp_path, "add", "--", *manifest.expected_paths, "extra.txt", check=True)
@@ -844,7 +1021,12 @@ def test_transaction_manifest_reports_missing_expected_index_paths(tmp_path: Pat
     (directory / "dispatch.jsonl").write_text("{}\n")
     critique_dir = directory / "critique"
     critique_dir.mkdir()
-    (critique_dir / "story-S1.md").write_text("---\nseverity: info\n---\n")
+    (critique_dir / "story-S1.md").write_text(
+        "---\ntarget: story\ntarget_id: S1\nseverity: info\n"
+        "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
+        "findings: []\n---\n"
+    )
+    _write_disposition(directory, 16, "S1")
     audit_dir = directory / "audit"
     audit_dir.mkdir()
     (audit_dir / "cod-critiquer-1.prompt").write_text("prompt")

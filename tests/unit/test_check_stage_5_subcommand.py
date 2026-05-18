@@ -213,6 +213,15 @@ def test_check_stage_5_reports_review_valve_not_due_as_info(tmp_path: Path) -> N
         "timestamp: '2026-01-01T00:00:00Z'\nharness: test\n"
         "findings: []\n---\n"
     )
+    disposition_dir = epic_dir / "dispositions"
+    disposition_dir.mkdir()
+    (disposition_dir / "story-S1.md").write_text(
+        "---\ntarget: story\ntarget_id: S1\n"
+        "critique_path: .woof/epics/E999/critique/story-S1.md\n"
+        "severity: info\n"
+        "timestamp: '2026-01-01T00:00:00Z'\nharness: test-primary\n"
+        "dispositions: []\n---\n"
+    )
 
     proc = _run(
         "check",

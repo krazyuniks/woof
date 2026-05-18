@@ -46,6 +46,7 @@ def test_shipped_schema_count() -> None:
         "plan.schema.json",
         "gate.schema.json",
         "critique.schema.json",
+        "disposition.schema.json",
         "jsonl-events.schema.json",
         "prerequisites.schema.json",
         "agents.schema.json",
@@ -403,6 +404,43 @@ def test_validate_gate_valid(tmp_path: Path, run_woof) -> None:
     proc = run_woof("validate", str(path))
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "valid (gate)" in proc.stdout
+
+
+# ---------------------------------------------------------------------------
+# Disposition (path-based detection)
+# ---------------------------------------------------------------------------
+
+
+VALID_DISPOSITION = """\
+---
+target: story
+target_id: S1
+critique_path: .woof/epics/E7/critique/story-S1.md
+severity: minor
+timestamp: "2026-01-01T00:00:00Z"
+harness: test-primary
+dispositions:
+  - finding_id: F1
+    decision: accepted
+    rationale: Updated the staged artefact.
+    updated_paths:
+      - src/app.py
+updated_paths:
+  - src/app.py
+---
+
+Disposition body.
+"""
+
+
+def test_validate_disposition_via_path(tmp_path: Path, run_woof) -> None:
+    disposition_dir = tmp_path / ".woof" / "epics" / "E7" / "dispositions"
+    disposition_dir.mkdir(parents=True)
+    path = disposition_dir / "story-S1.md"
+    path.write_text(VALID_DISPOSITION)
+    proc = run_woof("validate", str(path))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "valid (disposition)" in proc.stdout
 
 
 # ---------------------------------------------------------------------------

@@ -20,6 +20,12 @@
     "node_type": {
       "type": "string",
       "enum": [
+        "discovery_synthesis",
+        "epic_definition",
+        "breakdown_planning",
+        "plan_critique",
+        "plan_gate_open",
+        "plan_gate_resolve",
         "executor_dispatch",
         "critique_dispatch",
         "review_disposition",
@@ -46,6 +52,12 @@
         {
           "type": "string",
           "enum": [
+            "discovery_synthesis",
+            "epic_definition",
+            "breakdown_planning",
+            "plan_critique",
+            "plan_gate_open",
+            "plan_gate_resolve",
             "executor_dispatch",
             "critique_dispatch",
             "review_disposition",

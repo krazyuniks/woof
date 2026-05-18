@@ -19,11 +19,32 @@ from woof.graph.state import NodeType, Plan, StorySpec
 
 
 class StageStateError(RuntimeError):
-    """Filesystem state cannot be mapped to a valid Stage-5 graph node."""
+    """Filesystem state cannot be mapped to a valid graph node."""
 
 
 def epic_dir(repo_root: Path, epic_id: int) -> Path:
     return repo_root / ".woof" / "epics" / f"E{epic_id}"
+
+
+def discovery_synthesis_dir(repo_root: Path, epic_id: int) -> Path:
+    return epic_dir(repo_root, epic_id) / "discovery" / "synthesis"
+
+
+def discovery_synthesis_paths(repo_root: Path, epic_id: int) -> dict[str, Path]:
+    directory = discovery_synthesis_dir(repo_root, epic_id)
+    return {
+        "concept_path": directory / "CONCEPT.md",
+        "principles_path": directory / "PRINCIPLES.md",
+        "architecture_path": directory / "ARCHITECTURE.md",
+        "open_questions_path": directory / "OPEN_QUESTIONS.md",
+    }
+
+
+def discovery_synthesis_complete(repo_root: Path, epic_id: int) -> bool:
+    return all(
+        path.is_file() and path.read_text(encoding="utf-8").strip()
+        for path in discovery_synthesis_paths(repo_root, epic_id).values()
+    )
 
 
 def load_plan(repo_root: Path, epic_id: int) -> Plan:
@@ -166,6 +187,17 @@ def next_node(repo_root: Path, epic_id: int) -> tuple[NodeType | None, str | Non
     directory = epic_dir(repo_root, epic_id)
     if (directory / "gate.md").exists():
         return NodeType.HUMAN_REVIEW, None
+
+    plan_path = directory / "plan.json"
+    if not plan_path.exists():
+        if (directory / "EPIC.md").exists() or discovery_synthesis_complete(repo_root, epic_id):
+            return NodeType.EPIC_DEFINITION, None
+        if (directory / "spark.md").exists():
+            return NodeType.DISCOVERY_SYNTHESIS, None
+        raise StageStateError(
+            f"required planning artefact missing: {directory / 'plan.json'} "
+            f"(or pre-plan input {directory / 'spark.md'} / {directory / 'EPIC.md'})"
+        )
 
     plan = load_plan(repo_root, epic_id)
     resumable_story = _resumable_commit_story(repo_root, epic_id, plan)

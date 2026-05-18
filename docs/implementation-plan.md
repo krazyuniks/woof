@@ -152,7 +152,7 @@ This phase promotes Discovery, Definition, Breakdown, and Plan Gate into the sam
 | STG-001 | Completed | Define Stage 1-4 node input and output schemas. | Schemas exist for discovery synthesis, epic definition, breakdown planning, plan critique, plan gate open, and plan gate resolution. | Targeted schema tests passed: 46 tests. `just lint` passed. `just check` passed: Ruff lint, Ruff format check, and 199 tests. | `feat(schemas): add planning graph contracts` |
 | STG-002 | Completed | Add graph nodes for discovery synthesis and epic definition. | Graph can produce or validate Discovery synthesis and `EPIC.md` artefacts through typed producer nodes without successor selection in prompts. | Focused graph/schema/prompt tests passed: 78 tests. `just check` passed: Ruff lint, Ruff format check, and 221 tests. | `feat(graph): add discovery definition nodes` |
 | STG-003 | Completed | Add graph nodes for breakdown planning and plan critique. | Stage 3 produces `plan.json`, `PLAN.md`, and `critique/plan.md` through graph-owned transitions. | Focused graph and schema tests passed: 79 tests. Prompt terminology guard passed. `just lint` passed. `just check` passed: Ruff lint, Ruff format check, and 223 tests. | `feat(graph): add breakdown plan nodes` |
-| STG-004 | Ready | Make Stage 4 plan gate mandatory after valid plan and critique. | No valid filesystem state can contain a new plan and critique without an open `gate.md` or recorded `gate_resolved` event. | Gate reconstitution tests plus `just check`. | `feat(graph): enforce mandatory plan gate` |
+| STG-004 | Completed | Make Stage 4 plan gate mandatory after valid plan and critique. | No valid filesystem state can contain a new plan and critique without an open `gate.md` or recorded `gate_resolved` event with `gate_type=plan_gate`. | Focused graph gate tests passed: 4 tests. Focused validation tests passed: 20 tests. `just check` passed: Ruff lint, Ruff format check, and 225 tests. | `feat(graph): enforce mandatory plan gate` |
 | STG-005 | Ready | Move Stage 3 plan generation from design prose into producer-node prompts. | Prompt files are pure producer prompts; executable orchestration remains in Python. | Prompt registry tests or static assertions plus `just check`. | `refactor(playbooks): isolate planning prompts` |
 
 ### Phase 4: GitHub Issue Sync
@@ -219,5 +219,5 @@ Workflow:
 - In the final response, paste this complete continuation prompt block so it can be copied into a new session.
 
 Start with:
-Workstream F: Stage 1-4 graph migration (`STG-001`, `STG-002`, `STG-003`, `STG-004`, `STG-005`). Workstream R is complete. Finish any item already `In progress`; otherwise start with `STG-004`.
+Workstream F: Stage 1-4 graph migration (`STG-001`, `STG-002`, `STG-003`, `STG-004`, `STG-005`). Workstream R is complete. Finish any item already `In progress`; otherwise start with `STG-005`.
 ```

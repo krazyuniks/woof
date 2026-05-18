@@ -685,11 +685,10 @@ def test_plan_critique_node_dispatches_reviewer_validates_critique_and_halts(
         tmp_path,
         nodes._plan_critique_payload(tmp_path, 27),
     )
-    assert output.status == NodeStatus.HALTED
+    assert output.status == NodeStatus.COMPLETED
     assert output.next_node == NodeType.PLAN_GATE_OPEN
     assert output.validation_summary and output.validation_summary.stage == 3
     assert output.paths == [".woof/epics/E27/critique/plan.md"]
-    assert "plan gate node is not implemented yet" in output.message
     events = [json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines()]
     assert events[-1]["event"] == "plan_critiqued"
     assert events[-1]["severity"] == "minor"
@@ -697,7 +696,7 @@ def test_plan_critique_node_dispatches_reviewer_validates_critique_and_halts(
     _assert_node_output_schema(tmp_path, json.loads(output.model_dump_json()))
 
 
-def test_graph_runs_discovery_definition_breakdown_until_plan_gate_boundary(
+def test_graph_runs_discovery_definition_breakdown_and_opens_plan_gate(
     tmp_path: Path, monkeypatch
 ) -> None:
     directory = _write_spark(tmp_path, 28)
@@ -737,9 +736,84 @@ def test_graph_runs_discovery_definition_breakdown_until_plan_gate_boundary(
         NodeType.EPIC_DEFINITION,
         NodeType.BREAKDOWN_PLANNING,
         NodeType.PLAN_CRITIQUE,
+        NodeType.PLAN_GATE_OPEN,
     ]
-    assert outputs[-1].status == NodeStatus.HALTED
-    assert outputs[-1].next_node == NodeType.PLAN_GATE_OPEN
+    assert outputs[-1].status == NodeStatus.GATE_OPENED
+    assert outputs[-1].gate_path == ".woof/epics/E28/gate.md"
+    gate = directory / "gate.md"
+    gate_fm = _read_gate_fm(gate)
+    assert gate_fm["type"] == "plan_gate"
+    assert gate_fm["stage"] == 4
+    assert gate_fm["story_id"] is None
+    assert gate_fm["triggered_by"] == ["plan_review"]
+    gate_text = gate.read_text()
+    assert "## Context" in gate_text
+    assert "## Primary position" in gate_text
+    assert "## Reviewer position" in gate_text
+    events = [json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines()]
+    assert events[-1]["event"] == "plan_gate_opened"
+    assert events[-1]["gate_type"] == "plan_gate"
+    assert events[-1]["triggered_by"] == ["plan_review"]
+
+
+def test_plan_gate_open_node_reconstitutes_missing_gate_after_valid_critique(
+    tmp_path: Path,
+) -> None:
+    directory = _write_spark(tmp_path, 29)
+    _write_minimal_epic(directory, 29)
+    _write_stage3_plan(directory, 29)
+    (directory / "PLAN.md").write_text(nodes._render_plan_markdown(nodes.load_plan(tmp_path, 29)))
+    _write_plan_critique(directory, "blocker")
+
+    assert next_node(tmp_path, 29) == (NodeType.PLAN_GATE_OPEN, None)
+
+    output = nodes.plan_gate_open_node(
+        NodeInput(
+            node_type=NodeType.PLAN_GATE_OPEN,
+            epic_id=29,
+            repo_root=tmp_path,
+        )
+    )
+
+    assert output.status == NodeStatus.GATE_OPENED
+    assert output.triggered_by == ["plan_review"]
+    assert output.validation_summary
+    assert output.validation_summary.stage == 4
+    assert output.validation_summary.ok is True
+    _assert_node_output_schema(tmp_path, json.loads(output.model_dump_json()))
+    _assert_planning_node_input_schema(tmp_path, nodes._plan_gate_open_payload(tmp_path, 29))
+    gate = directory / "gate.md"
+    gate_fm = _read_gate_fm(gate)
+    assert gate_fm["type"] == "plan_gate"
+    assert gate_fm["stage"] == 4
+    assert gate_fm["story_id"] is None
+    assert gate_fm["triggered_by"] == ["plan_review"]
+    gate_text = gate.read_text()
+    assert "F1 [blocker]: tighten story scope" in gate_text
+    assert "Plan critique body." in gate_text
+    assert next_node(tmp_path, 29) == (NodeType.HUMAN_REVIEW, None)
+
+
+def test_plan_gate_resolution_unblocks_stage_5_story_execution(tmp_path: Path) -> None:
+    directory = _write_spark(tmp_path, 30)
+    _write_minimal_epic(directory, 30)
+    _write_stage3_plan(directory, 30)
+    (directory / "PLAN.md").write_text(nodes._render_plan_markdown(nodes.load_plan(tmp_path, 30)))
+    _write_plan_critique(directory, "info")
+    (directory / "epic.jsonl").write_text(
+        json.dumps(
+            {
+                "event": "gate_resolved",
+                "at": "2026-01-01T00:00:00Z",
+                "epic_id": 30,
+                "gate_type": "plan_gate",
+                "decision": "approve",
+            }
+        )
+        + "\n"
+    )
+
+    assert next_node(tmp_path, 30) == (NodeType.EXECUTOR_DISPATCH, "S1")
 
 
 def test_critique_dispatch_failure_opens_reviewer_gate(tmp_path: Path, monkeypatch) -> None:
@@ -1345,6 +1419,7 @@ def test_wf_resolve_records_gate_decision_and_removes_gate(tmp_path: Path) -> No
     events = [json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines()]
     assert events[-1]["event"] == "gate_resolved"
     assert events[-1]["epic_id"] == 9
+    assert events[-1]["gate_type"] == "story_gate"
     assert events[-1]["decision"] == "approve"
 
 

@@ -9,9 +9,10 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
-from woof.gate.write import write_gate_for_trigger, write_gate_from_check_result
+from woof.gate.write import write_gate, write_gate_for_trigger, write_gate_from_check_result
 from woof.graph.dispositions import (
     FrontMatterError,
+    MarkdownFrontMatter,
     critique_findings,
     critique_severity,
     read_markdown_front_matter,
@@ -36,6 +37,9 @@ from woof.graph.transitions import (
     plan_critique_path,
     plan_markdown_path,
     story_by_id,
+)
+from woof.graph.transitions import (
+    gate_path as graph_gate_path,
 )
 from woof.lib.audit import prepare_commit_audit
 from woof.paths import schema_dir, tool_root
@@ -215,6 +219,23 @@ def _plan_critique_payload(repo_root: Path, epic_id: int) -> dict:
             "plan_path": _relpath(repo_root, directory / "plan.json"),
             "plan_markdown_path": _relpath(repo_root, plan_markdown_path(repo_root, epic_id)),
             "critique_path": _relpath(repo_root, plan_critique_path(repo_root, epic_id)),
+        },
+    }
+
+
+def _plan_gate_open_payload(repo_root: Path, epic_id: int) -> dict:
+    directory = epic_dir(repo_root, epic_id)
+    return {
+        "node_type": NodeType.PLAN_GATE_OPEN.value,
+        "epic_id": epic_id,
+        "repo_root": str(repo_root),
+        "epic_dir": _relpath(repo_root, directory),
+        "inputs": {
+            "plan_path": _relpath(repo_root, directory / "plan.json"),
+            "plan_markdown_path": _relpath(repo_root, plan_markdown_path(repo_root, epic_id)),
+            "critique_path": _relpath(repo_root, plan_critique_path(repo_root, epic_id)),
+            "gate_path": _gate_path(epic_id),
+            "triggered_by": ["plan_review"],
         },
     }
 
@@ -756,7 +777,7 @@ def plan_critique_node(inp: NodeInput) -> NodeOutput:
     )
     return NodeOutput(
         node_type=inp.node_type,
-        status=NodeStatus.HALTED,
+        status=NodeStatus.COMPLETED,
         epic_id=inp.epic_id,
         next_node=NodeType.PLAN_GATE_OPEN,
         validation_summary=_planning_validation(
@@ -765,8 +786,132 @@ def plan_critique_node(inp: NodeInput) -> NodeOutput:
             check_count=1,
             failed_check_count=0,
         ),
-        message="plan critique complete; plan gate node is not implemented yet",
         paths=[critique_relpath],
+    )
+
+
+def _plan_gate_body(
+    *,
+    epic_id: int,
+    plan_relpath: str,
+    critique_relpath: str,
+    critique: MarkdownFrontMatter,
+) -> str:
+    front = critique.front
+    severity = critique_severity(front) or "info"
+    finding_lines = []
+    for finding in critique_findings(front):
+        finding_id = str(finding.get("id") or "finding")
+        finding_severity = str(finding.get("severity") or severity)
+        summary = str(finding.get("summary") or "reviewer finding")
+        finding_lines.append(f"- {finding_id} [{finding_severity}]: {summary}")
+        evidence = finding.get("evidence")
+        if isinstance(evidence, str) and evidence.strip():
+            finding_lines.append(f"  Evidence: {evidence.strip()}")
+    if not finding_lines:
+        finding_lines.append(f"- Reviewer severity: {severity}; no findings recorded.")
+
+    reviewer_body = critique.body.strip() or "Reviewer body was empty."
+    return (
+        "## Context\n\n"
+        f"Stage 4 plan gate for E{epic_id}. "
+        f"`{plan_relpath}` and `{critique_relpath}` are present and valid. "
+        "Woof always opens this gate before story execution.\n\n"
+        "## Findings\n\n" + "\n".join(finding_lines) + "\n\n## Primary position\n\n"
+        f"Source: `{plan_relpath}`\n\n"
+        "The primary plan is ready for human review before Stage 5 starts.\n\n"
+        "## Reviewer position\n\n"
+        f"Source: `{critique_relpath}`\n\n"
+        f"{reviewer_body}\n"
+    )
+
+
+def plan_gate_open_node(inp: NodeInput) -> NodeOutput:
+    if inp.story_id:
+        raise ValueError("plan_gate_open does not accept story_id")
+    directory = epic_dir(inp.repo_root, inp.epic_id)
+    plan_path = directory / "plan.json"
+    plan_md_path = plan_markdown_path(inp.repo_root, inp.epic_id)
+    critique_path = plan_critique_path(inp.repo_root, inp.epic_id)
+    gate = graph_gate_path(inp.repo_root, inp.epic_id)
+    plan_relpath = _relpath(inp.repo_root, plan_path)
+    plan_md_relpath = _relpath(inp.repo_root, plan_md_path)
+    critique_relpath = _relpath(inp.repo_root, critique_path)
+    gate_relpath = _gate_path(inp.epic_id)
+    paths = [plan_relpath, plan_md_relpath, critique_relpath, gate_relpath]
+
+    missing = [
+        _relpath(inp.repo_root, path)
+        for path in (plan_path, plan_md_path, critique_path)
+        if not path.exists()
+    ]
+    if missing:
+        return _planning_halt(
+            inp,
+            stage=4,
+            message="Required Stage-4 plan gate inputs are missing: " + ", ".join(missing),
+            triggered_by=["incomplete_stage_state"],
+            check_count=3,
+            failed_check_count=len(missing),
+            paths=paths,
+        )
+
+    plan_ok, plan_message = _validate_plan(inp.repo_root, inp.epic_id, plan_path)
+    if not plan_ok:
+        return _planning_halt(
+            inp,
+            stage=4,
+            message=plan_message,
+            triggered_by=["schema_validation_failed"],
+            check_count=1,
+            failed_check_count=1,
+            paths=[plan_relpath],
+        )
+
+    critique_ok, critique_message = _validate_plan_critique(inp.repo_root, critique_path)
+    if not critique_ok:
+        return _planning_halt(
+            inp,
+            stage=4,
+            message=critique_message,
+            triggered_by=["schema_validation_failed"],
+            check_count=1,
+            failed_check_count=1,
+            paths=[critique_relpath],
+        )
+
+    if not gate.exists():
+        critique = read_markdown_front_matter(critique_path)
+        write_gate(
+            epic_dir=directory,
+            story_id=None,
+            triggered_by=["plan_review"],
+            position_text=_plan_gate_body(
+                epic_id=inp.epic_id,
+                plan_relpath=plan_md_relpath,
+                critique_relpath=critique_relpath,
+                critique=critique,
+            ),
+            schema_path=schema_dir() / "gate.schema.json",
+            validate=True,
+            gate_type="plan_gate",
+        )
+
+    return NodeOutput(
+        node_type=inp.node_type,
+        status=NodeStatus.GATE_OPENED,
+        epic_id=inp.epic_id,
+        gate_path=gate_relpath,
+        validation_summary=_planning_validation(
+            ok=True,
+            stage=4,
+            triggered_by=["plan_review"],
+            check_count=3,
+            failed_check_count=0,
+        ),
+        triggered_by=["plan_review"],
+        message="plan gate opened after valid plan and critique",
+        paths=paths,
     )
 
 
@@ -1314,6 +1459,7 @@ def default_registry() -> dict[NodeType, NodeHandler]:
         NodeType.EPIC_DEFINITION: epic_definition_node,
         NodeType.BREAKDOWN_PLANNING: breakdown_planning_node,
         NodeType.PLAN_CRITIQUE: plan_critique_node,
+        NodeType.PLAN_GATE_OPEN: plan_gate_open_node,
         NodeType.EXECUTOR_DISPATCH: executor_dispatch_node,
         NodeType.CRITIQUE_DISPATCH: critique_dispatch_node,
         NodeType.REVIEW_DISPOSITION: review_disposition_node,

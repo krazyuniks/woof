@@ -168,6 +168,71 @@ def test_prompt_file_overrides_stdin(woof_project: Path, tmp_path: Path) -> None
     assert payload["argv"][-1] == "from file"
 
 
+def test_dry_run_records_repo_relative_artefacts(woof_project: Path) -> None:
+    epic_dir = woof_project / ".woof" / "epics" / "E1"
+    epic_dir.mkdir(parents=True)
+    (epic_dir / "EPIC.md").write_text("contract\n")
+    (epic_dir / "plan.json").write_text("{}\n")
+
+    proc = run_dispatch(
+        woof_project,
+        "--role",
+        "primary",
+        "--epic",
+        "1",
+        "--artefact",
+        ".woof/epics/E1/EPIC.md",
+        "--artefact-loaded",
+        ".woof/epics/E1/plan.json",
+        "--artefact",
+        ".woof/epics/E1/EPIC.md",
+        "--dry-run",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    assert payload["artefacts_loaded"] == [
+        ".woof/epics/E1/EPIC.md",
+        ".woof/epics/E1/plan.json",
+    ]
+
+
+@pytest.mark.parametrize(
+    "artefact",
+    ["/tmp/outside.md", "../outside.md", "~/.claude/projects/session.jsonl"],
+)
+def test_dispatch_rejects_non_repo_relative_artefacts(woof_project: Path, artefact: str) -> None:
+    proc = run_dispatch(
+        woof_project,
+        "--role",
+        "primary",
+        "--epic",
+        "1",
+        "--artefact",
+        artefact,
+        "--dry-run",
+    )
+
+    assert proc.returncode == 2
+    assert "not repo-relative" in proc.stderr
+
+
+def test_dispatch_rejects_missing_artefact(woof_project: Path) -> None:
+    proc = run_dispatch(
+        woof_project,
+        "--role",
+        "primary",
+        "--epic",
+        "1",
+        "--artefact",
+        ".woof/epics/E1/missing.md",
+        "--dry-run",
+    )
+
+    assert proc.returncode == 2
+    assert "does not exist as a file" in proc.stderr
+
+
 # ---------------------------------------------------------------------------
 # error paths
 # ---------------------------------------------------------------------------
@@ -561,6 +626,9 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
         }
     )
     _make_stub(bin_dir, "claude", claude_response)
+    epic_dir = woof_project / ".woof" / "epics" / "E7"
+    epic_dir.mkdir(parents=True)
+    (epic_dir / "EPIC.md").write_text("contract\n")
     # ``timeout`` is needed in PATH too — let it resolve from the original PATH.
     env = {
         "PATH": f"{bin_dir}:{__import__('os').environ['PATH']}",
@@ -577,6 +645,8 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
             "7",
             "--story",
             "S2",
+            "--artefact",
+            ".woof/epics/E7/EPIC.md",
         ],
         capture_output=True,
         text=True,
@@ -601,6 +671,7 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
     assert meta["mcp_config"] == '{"mcpServers":{}}'
     assert meta["epic_id"] == 7
     assert meta["story_id"] == "S2"
+    assert meta["artefacts_loaded"] == [".woof/epics/E7/EPIC.md"]
     assert meta["exit_code"] == 0
     assert meta["tokens"] == {
         "tokens_in": 7,
@@ -625,6 +696,8 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
     assert events[0]["effort"] == "max"
     assert events[0]["mcp"] == []
     assert events[0]["argv"][-1] == "<prompt>"
+    assert events[0]["artefacts_loaded"] == [".woof/epics/E7/EPIC.md"]
+    assert events[1]["artefacts_loaded"] == [".woof/epics/E7/EPIC.md"]
     assert events[1]["tokens_in"] == 7
     assert events[1]["tokens_out"] == 11
     assert events[1]["cc_session_id"] == "00000000-0000-0000-0000-000000000001"

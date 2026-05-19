@@ -428,12 +428,14 @@ def test_dispatch_helper_uses_role_route_without_provider_target(
         epic_id=1,
         story_id="S1",
         prompt="do work",
+        artefacts_loaded=[".woof/epics/E1/plan.json"],
     )
 
     args = captured["args"]
     assert args[1:4] == ["dispatch", "--role", "primary"]
     assert "claude" not in args[1:4]
     assert "codex" not in args[1:4]
+    assert args[-2:] == ["--artefact", ".woof/epics/E1/plan.json"]
     assert captured["cwd"] == tmp_path
 
 
@@ -455,12 +457,14 @@ def test_discovery_synthesis_node_dispatches_primary_and_validates_outputs(
         epic_id: int,
         story_id: str | None,
         prompt: str,
+        artefacts_loaded: list[str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         captured["repo_root"] = repo_root
         captured["role"] = role
         captured["epic_id"] = epic_id
         captured["story_id"] = story_id
         captured["prompt"] = prompt
+        captured["artefacts_loaded"] = artefacts_loaded
         _write_discovery_synthesis(directory)
         return subprocess.CompletedProcess([], 0, "", "")
 
@@ -479,6 +483,7 @@ def test_discovery_synthesis_node_dispatches_primary_and_validates_outputs(
     assert captured["epic_id"] == 22
     assert captured["story_id"] is None
     assert '"node_type": "discovery_synthesis"' in captured["prompt"]
+    assert captured["artefacts_loaded"] == [".woof/epics/E22/spark.md"]
     assert "The graph validates the files and selects the next node." in captured["prompt"]
     _assert_planning_node_input_schema(
         tmp_path,
@@ -534,12 +539,14 @@ def test_epic_definition_node_dispatches_primary_validates_epic_and_continues(
         epic_id: int,
         story_id: str | None,
         prompt: str,
+        artefacts_loaded: list[str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         captured["repo_root"] = repo_root
         captured["role"] = role
         captured["epic_id"] = epic_id
         captured["story_id"] = story_id
         captured["prompt"] = prompt
+        captured["artefacts_loaded"] = artefacts_loaded
         _write_minimal_epic(directory, epic_id)
         return subprocess.CompletedProcess([], 0, "", "")
 
@@ -558,6 +565,12 @@ def test_epic_definition_node_dispatches_primary_validates_epic_and_continues(
     assert captured["epic_id"] == 24
     assert captured["story_id"] is None
     assert '"node_type": "epic_definition"' in captured["prompt"]
+    assert captured["artefacts_loaded"] == [
+        ".woof/epics/E24/discovery/synthesis/CONCEPT.md",
+        ".woof/epics/E24/discovery/synthesis/PRINCIPLES.md",
+        ".woof/epics/E24/discovery/synthesis/ARCHITECTURE.md",
+        ".woof/epics/E24/discovery/synthesis/OPEN_QUESTIONS.md",
+    ]
     _assert_planning_node_input_schema(
         tmp_path,
         nodes._epic_definition_payload(tmp_path, 24),
@@ -603,12 +616,14 @@ def test_breakdown_planning_node_dispatches_primary_validates_plan_and_renders_m
         epic_id: int,
         story_id: str | None,
         prompt: str,
+        artefacts_loaded: list[str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         captured["repo_root"] = repo_root
         captured["role"] = role
         captured["epic_id"] = epic_id
         captured["story_id"] = story_id
         captured["prompt"] = prompt
+        captured["artefacts_loaded"] = artefacts_loaded
         _write_stage3_plan(directory, epic_id)
         return subprocess.CompletedProcess([], 0, "", "")
 
@@ -627,6 +642,7 @@ def test_breakdown_planning_node_dispatches_primary_validates_plan_and_renders_m
     assert captured["epic_id"] == 26
     assert captured["story_id"] is None
     assert '"node_type": "breakdown_planning"' in captured["prompt"]
+    assert captured["artefacts_loaded"] == [".woof/epics/E26/EPIC.md"]
     assert "Right-sized stories" in captured["prompt"]
     assert "Do not author `PLAN.md`" in captured["prompt"]
     _assert_planning_node_input_schema(
@@ -659,12 +675,14 @@ def test_plan_critique_node_dispatches_reviewer_validates_critique_and_halts(
         epic_id: int,
         story_id: str | None,
         prompt: str,
+        artefacts_loaded: list[str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         captured["repo_root"] = repo_root
         captured["role"] = role
         captured["epic_id"] = epic_id
         captured["story_id"] = story_id
         captured["prompt"] = prompt
+        captured["artefacts_loaded"] = artefacts_loaded
         _write_plan_critique(directory)
         return subprocess.CompletedProcess([], 0, "", "")
 
@@ -683,6 +701,11 @@ def test_plan_critique_node_dispatches_reviewer_validates_critique_and_halts(
     assert captured["epic_id"] == 27
     assert captured["story_id"] is None
     assert '"node_type": "plan_critique"' in captured["prompt"]
+    assert captured["artefacts_loaded"] == [
+        ".woof/epics/E27/EPIC.md",
+        ".woof/epics/E27/plan.json",
+        ".woof/epics/E27/PLAN.md",
+    ]
     _assert_planning_node_input_schema(
         tmp_path,
         nodes._plan_critique_payload(tmp_path, 27),
@@ -709,10 +732,12 @@ def test_graph_runs_discovery_definition_breakdown_and_opens_plan_gate(
         epic_id: int,
         story_id: str | None,
         prompt: str,
+        artefacts_loaded: list[str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         assert repo_root == tmp_path
         assert epic_id == 28
         assert story_id is None
+        assert artefacts_loaded
         if '"node_type": "discovery_synthesis"' in prompt:
             assert role == "primary"
             _write_discovery_synthesis(directory)
@@ -819,7 +844,8 @@ def test_plan_gate_resolution_unblocks_stage_5_story_execution(tmp_path: Path) -
 
 
 def test_critique_dispatch_failure_opens_reviewer_gate(tmp_path: Path, monkeypatch) -> None:
-    _write_plan(tmp_path, 1)
+    directory = _write_plan(tmp_path, 1)
+    (directory / "EPIC.md").write_text("---\nepic_id: 1\n---\n")
 
     def fake_dispatch(
         repo_root: Path,
@@ -827,12 +853,17 @@ def test_critique_dispatch_failure_opens_reviewer_gate(tmp_path: Path, monkeypat
         epic_id: int,
         story_id: str | None,
         prompt: str,
+        artefacts_loaded: list[str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         assert repo_root == tmp_path
         assert role == "reviewer"
         assert epic_id == 1
         assert story_id == "S1"
         assert prompt
+        assert artefacts_loaded == [
+            ".woof/epics/E1/plan.json",
+            ".woof/epics/E1/EPIC.md",
+        ]
         return subprocess.CompletedProcess([], 2, "", "reviewer failed")
 
     monkeypatch.setattr(nodes, "_run_dispatch", fake_dispatch)
@@ -856,6 +887,7 @@ def test_review_disposition_dispatches_primary_for_non_blocking_critique(
     tmp_path: Path, monkeypatch
 ) -> None:
     directory = _write_plan(tmp_path, 1)
+    (directory / "EPIC.md").write_text("---\nepic_id: 1\n---\n")
     mark_story_status(tmp_path, 1, "S1", "in_progress")
     (directory / "executor_result.json").write_text(
         json.dumps(
@@ -882,12 +914,18 @@ def test_review_disposition_dispatches_primary_for_non_blocking_critique(
         epic_id: int,
         story_id: str | None,
         prompt: str,
+        artefacts_loaded: list[str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         assert repo_root == tmp_path
         assert role == "primary"
         assert epic_id == 1
         assert story_id == "S1"
         assert "dispositions/story-S1.md" in prompt
+        assert artefacts_loaded == [
+            ".woof/epics/E1/EPIC.md",
+            ".woof/epics/E1/plan.json",
+            ".woof/epics/E1/critique/story-S1.md",
+        ]
         disposition_dir = directory / "dispositions"
         disposition_dir.mkdir()
         (disposition_dir / "story-S1.md").write_text(

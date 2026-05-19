@@ -63,6 +63,10 @@ def _relpath(repo_root: Path, path: Path) -> str:
     return path.relative_to(repo_root).as_posix()
 
 
+def _existing_prompt_artefacts(repo_root: Path, paths: list[Path]) -> list[str]:
+    return [_relpath(repo_root, path) for path in paths if path.is_file()]
+
+
 def _validation_summary(check_result: dict) -> ValidationSummary:
     checks = check_result.get("checks")
     if not isinstance(checks, list):
@@ -178,6 +182,12 @@ def _discovery_synthesis_payload(repo_root: Path, epic_id: int) -> dict:
     return payload
 
 
+def _discovery_synthesis_artefacts(repo_root: Path, epic_id: int) -> list[str]:
+    directory = epic_dir(repo_root, epic_id)
+    source_paths = [repo_root / path for path in _discovery_source_paths(repo_root, epic_id)]
+    return _existing_prompt_artefacts(repo_root, [directory / "spark.md", *source_paths])
+
+
 def _epic_definition_payload(repo_root: Path, epic_id: int) -> dict:
     directory = epic_dir(repo_root, epic_id)
     return {
@@ -190,6 +200,13 @@ def _epic_definition_payload(repo_root: Path, epic_id: int) -> dict:
             "epic_path": _relpath(repo_root, directory / "EPIC.md"),
         },
     }
+
+
+def _epic_definition_artefacts(repo_root: Path, epic_id: int) -> list[str]:
+    return _existing_prompt_artefacts(
+        repo_root,
+        list(discovery_synthesis_paths(repo_root, epic_id).values()),
+    )
 
 
 def _breakdown_planning_payload(repo_root: Path, epic_id: int) -> dict:
@@ -207,6 +224,10 @@ def _breakdown_planning_payload(repo_root: Path, epic_id: int) -> dict:
     }
 
 
+def _breakdown_planning_artefacts(repo_root: Path, epic_id: int) -> list[str]:
+    return _existing_prompt_artefacts(repo_root, [epic_dir(repo_root, epic_id) / "EPIC.md"])
+
+
 def _plan_critique_payload(repo_root: Path, epic_id: int) -> dict:
     directory = epic_dir(repo_root, epic_id)
     return {
@@ -221,6 +242,18 @@ def _plan_critique_payload(repo_root: Path, epic_id: int) -> dict:
             "critique_path": _relpath(repo_root, plan_critique_path(repo_root, epic_id)),
         },
     }
+
+
+def _plan_critique_artefacts(repo_root: Path, epic_id: int) -> list[str]:
+    directory = epic_dir(repo_root, epic_id)
+    return _existing_prompt_artefacts(
+        repo_root,
+        [
+            directory / "EPIC.md",
+            directory / "plan.json",
+            plan_markdown_path(repo_root, epic_id),
+        ],
+    )
 
 
 def _plan_gate_open_payload(repo_root: Path, epic_id: int) -> dict:
@@ -386,6 +419,32 @@ Do not dispatch critique, verify, open gates, or commit.
 """
 
 
+def _story_context_artefacts(repo_root: Path, epic_id: int) -> list[str]:
+    directory = epic_dir(repo_root, epic_id)
+    return _existing_prompt_artefacts(
+        repo_root,
+        [
+            repo_root / ".woof" / ".current-epic",
+            directory / "plan.json",
+            directory / "EPIC.md",
+            repo_root / "CLAUDE.md",
+            repo_root / "AGENTS.md",
+        ],
+    )
+
+
+def _disposition_artefacts(repo_root: Path, epic_id: int, story_id: str) -> list[str]:
+    directory = epic_dir(repo_root, epic_id)
+    return _existing_prompt_artefacts(
+        repo_root,
+        [
+            directory / "EPIC.md",
+            directory / "plan.json",
+            story_critique_path(directory, story_id),
+        ],
+    )
+
+
 def _disposition_prompt(epic_id: int, story_id: str) -> str:
     template = (tool_root() / "playbooks" / "disposition" / "story.md").read_text()
     return template.format(epic_id=epic_id, story_id=story_id)
@@ -397,6 +456,7 @@ def _run_dispatch(
     epic_id: int,
     story_id: str | None,
     prompt: str,
+    artefacts_loaded: list[str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     prompt_file = _write_prompt_file(prompt)
     try:
@@ -412,6 +472,8 @@ def _run_dispatch(
         ]
         if story_id:
             args.extend(["--story", story_id])
+        for artefact in artefacts_loaded or []:
+            args.extend(["--artefact", artefact])
         return subprocess.run(args, cwd=repo_root, capture_output=True, text=True)
     finally:
         prompt_file.unlink(missing_ok=True)
@@ -445,6 +507,7 @@ def discovery_synthesis_node(inp: NodeInput) -> NodeOutput:
             epic_id=inp.epic_id,
             story_id=None,
             prompt=_discovery_synthesis_prompt(inp.repo_root, inp.epic_id),
+            artefacts_loaded=_discovery_synthesis_artefacts(inp.repo_root, inp.epic_id),
         )
         if proc.returncode != 0:
             return _planning_halt(
@@ -519,6 +582,7 @@ def epic_definition_node(inp: NodeInput) -> NodeOutput:
             epic_id=inp.epic_id,
             story_id=None,
             prompt=_epic_definition_prompt(inp.repo_root, inp.epic_id),
+            artefacts_loaded=_epic_definition_artefacts(inp.repo_root, inp.epic_id),
         )
         if proc.returncode != 0:
             return _planning_halt(
@@ -619,6 +683,7 @@ def breakdown_planning_node(inp: NodeInput) -> NodeOutput:
             epic_id=inp.epic_id,
             story_id=None,
             prompt=_breakdown_planning_prompt(inp.repo_root, inp.epic_id),
+            artefacts_loaded=_breakdown_planning_artefacts(inp.repo_root, inp.epic_id),
         )
         if proc.returncode != 0:
             return _planning_halt(
@@ -724,6 +789,7 @@ def plan_critique_node(inp: NodeInput) -> NodeOutput:
             epic_id=inp.epic_id,
             story_id=None,
             prompt=_plan_critique_prompt(inp.repo_root, inp.epic_id),
+            artefacts_loaded=_plan_critique_artefacts(inp.repo_root, inp.epic_id),
         )
         if proc.returncode != 0:
             return _planning_halt(
@@ -925,6 +991,7 @@ def executor_dispatch_node(inp: NodeInput) -> NodeOutput:
         epic_id=inp.epic_id,
         story_id=inp.story_id,
         prompt=_story_prompt(inp.epic_id, inp.story_id),
+        artefacts_loaded=_story_context_artefacts(inp.repo_root, inp.epic_id),
     )
     if proc.returncode != 0:
         write_gate_for_trigger(
@@ -962,6 +1029,7 @@ def critique_dispatch_node(inp: NodeInput) -> NodeOutput:
         epic_id=inp.epic_id,
         story_id=inp.story_id,
         prompt=prompt,
+        artefacts_loaded=_story_context_artefacts(inp.repo_root, inp.epic_id),
     )
     if proc.returncode != 0:
         write_gate_for_trigger(
@@ -1062,6 +1130,7 @@ def review_disposition_node(inp: NodeInput) -> NodeOutput:
             epic_id=inp.epic_id,
             story_id=inp.story_id,
             prompt=_disposition_prompt(inp.epic_id, inp.story_id),
+            artefacts_loaded=_disposition_artefacts(inp.repo_root, inp.epic_id, inp.story_id),
         )
         if proc.returncode != 0:
             write_gate_for_trigger(

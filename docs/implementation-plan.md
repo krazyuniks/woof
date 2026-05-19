@@ -190,9 +190,17 @@ GitHub sync must fail loud on auth, network, repo access, and rate-limit failure
 
 | ID | Status | Work item | Observable outcomes | Validation | Commit |
 |---|---|---|---|---|---|
-| DOC-001 | Ready | Keep README as the entry map. | README links to architecture, research, ADR-001, this implementation plan, and examples without duplicating architecture detail. | Docs review plus `just check`. | `docs(readme): align entry map` |
+| DOC-001 | Completed | Keep README as the entry map. | README links to architecture, research, ADR-001, this implementation plan, and examples without duplicating architecture detail. | Docs review passed. `git diff --check` passed. `just check` passed: Ruff lint, Ruff format check, and 227 tests. | `docs(readme): align entry map` |
 | DOC-002 | Ready | Keep architecture focused on design contract and current implementation boundary. | `docs/architecture.md` avoids live backlog content and points implementation sequencing here. | Docs review plus `just check`. | `docs(architecture): point roadmap to implementation plan` |
 | DOC-003 | Ready | Add concise examples for core safety behaviours. | Examples demonstrate graph-owned orchestration, second-LLM critique enforcement, manifest-verified commits, gate resolution, and E146 contract fidelity. | Example validation where applicable plus `just check`. | `docs(examples): demonstrate woof safety model` |
+
+### Phase 8: Producer Execution Discipline
+
+This phase codifies a tracer-bullet red-green-refactor rhythm inside the Stage-5 primary producer turn. The graph topology is unchanged: the producer remains a single subprocess that returns `executor_result.json`, the Stage-5 deterministic checks remain Check 1-9, and the commit transaction remains one-commit-per-story. The discipline lives in the producer prompt; a sibling reviewer finding catches the failure mode the discipline is designed to prevent (tests that assert data shape rather than the declared outcome). May land as a short commit series.
+
+| ID | Status | Work item | Observable outcomes | Validation | Commit |
+|---|---|---|---|---|---|
+| PRD-001 | Ready | Codify tracer-bullet RGR rhythm in the primary producer prompt and add an assertion-first reviewer fidelity check. | `.claude/commands/wf/execute-story.md` instructs the producer to enumerate `story.satisfies[]` outcomes up front, write one assertion-bearing test per outcome before its implementation, run the configured quality command after each cycle, and run a refactor pass with tests as harness once all outcomes are GREEN; the prompt names the horizontal-slicing anti-pattern (all tests then all impl) and the imagined-behaviour fingerprint it produces. `playbooks/critique/story.md` documents a test-fingerprint finding category that separates behaviour-anchored assertions from data-structure-anchored ones with severity `minor`, accumulating into the Check 9 periodic-review valve. `docs/architecture.md` references the rhythm as the recommended producer-internal discipline at Stage 5. Graph topology, Check 1-9 behaviour, and commit transaction semantics are unchanged. | `uv run pytest tests/unit/test_prompt_role_terminology.py` covers the new prompt phrases and survives prompt edits. `just check` passes. | `docs(workflow): codify tracer-bullet producer rhythm` |
 
 ## Next Continuation Prompt
 
@@ -219,5 +227,5 @@ Workflow:
 - In the final response, paste this complete continuation prompt block so it can be copied into a new session.
 
 Start with:
-Workstream G: Consumer and evidence polish (`DOG-001`, `GTS-001`, `GTS-002`, `DOC-001`, `DOC-002`, `DOC-003`). Workstreams R and F are complete, and `DOG-001`, `GTS-001`, and `GTS-002` are complete. Finish any item already `In progress`; otherwise start with `DOC-001`.
+Workstream G: Consumer and evidence polish (`DOG-001`, `GTS-001`, `GTS-002`, `DOC-001`, `DOC-002`, `DOC-003`). Workstreams R and F are complete, and `DOG-001`, `GTS-001`, `GTS-002`, and `DOC-001` are complete. Finish any item already `In progress`; otherwise start with `DOC-002`.
 ```

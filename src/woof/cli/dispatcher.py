@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -36,6 +37,7 @@ ROLE_CONFIG_FALLBACKS = {
     "reviewer": ("reviewer", "critiquer"),
 }
 STORY_ID_RE = re.compile(r"^S[1-9]\d*$")
+AUDIT_COMPONENT_RE = re.compile(r"[^A-Za-z0-9_-]+")
 AGENTS_SCHEMA_PATH = schema_dir() / "agents.schema.json"
 
 
@@ -349,6 +351,64 @@ def audit_argv(wrapped_argv: list[str]) -> list[str]:
     return [*wrapped_argv[:-1], "<prompt>"]
 
 
+def audit_file_stem(
+    adapter: str,
+    role: str,
+    started_at: datetime,
+    *,
+    process_id: int | None = None,
+    sequence: int | None = None,
+) -> str:
+    """Return a portable, path-safe stem for dispatch audit files."""
+    pid = os.getpid() if process_id is None else process_id
+    ts = started_at.strftime("%Y%m%dT%H%M%S%fZ")
+    components = [
+        _safe_audit_component(adapter, fallback="adapter"),
+        _safe_audit_component(role, fallback="role"),
+        ts,
+        f"p{pid}",
+    ]
+    if sequence is not None:
+        components.append(str(sequence))
+    return "-".join(components)
+
+
+def reserve_audit_base(
+    audit_dir: Path,
+    adapter: str,
+    role: str,
+    started_at: datetime,
+    prompt: str,
+    *,
+    process_id: int | None = None,
+) -> Path:
+    """Atomically reserve a dispatch audit stem by creating its prompt file."""
+    sequence: int | None = None
+    while True:
+        stem = audit_file_stem(
+            adapter,
+            role,
+            started_at,
+            process_id=process_id,
+            sequence=sequence,
+        )
+        base = audit_dir / stem
+        prompt_file = base.with_suffix(".prompt")
+        try:
+            fd = os.open(prompt_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            sequence = 2 if sequence is None else sequence + 1
+            continue
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(prompt)
+        return base
+
+
+def _safe_audit_component(value: str, *, fallback: str) -> str:
+    safe = AUDIT_COMPONENT_RE.sub("-", value).strip("-_")
+    return safe or fallback
+
+
 def _ensure_ajv() -> None:
     if shutil.which("ajv") is None:
         sys.stderr.write(
@@ -463,13 +523,10 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     audit_dir = epic_dir / "audit"
     audit_dir.mkdir(parents=True, exist_ok=True)
     started_at = datetime.now(UTC)
-    ts = started_at.strftime("%Y%m%dT%H%M%SZ")
-    base = audit_dir / f"{route.adapter}-{args.role}-{ts}"
-    prompt_file = base.with_suffix(".prompt")
+    base = reserve_audit_base(audit_dir, route.adapter, args.role, started_at, prompt)
     output_file = base.with_suffix(".output")
     stderr_file = base.with_suffix(".stderr")
     meta_file = base.with_suffix(".meta")
-    prompt_file.write_text(prompt)
 
     dispatch_jsonl = epic_dir / "dispatch.jsonl"
     wrapped_argv = ["timeout", f"{timeout_min}m", *argv]
@@ -516,14 +573,14 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
                 "reason": "manual_cancel",
             },
         )
-        output_file.write_text(stdout or "")
-        stderr_file.write_text(stderr or "")
+        output_file.write_text(stdout or "", encoding="utf-8")
+        stderr_file.write_text(stderr or "", encoding="utf-8")
         return 130
 
     ended_at = datetime.now(UTC)
     duration_ms = int((ended_at - started_at).total_seconds() * 1000)
-    output_file.write_text(stdout)
-    stderr_file.write_text(stderr)
+    output_file.write_text(stdout, encoding="utf-8")
+    stderr_file.write_text(stderr, encoding="utf-8")
 
     if route.adapter == "claude":
         tokens, session_id = parse_claude_output(stdout)
@@ -605,6 +662,6 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         meta["claude_transcript_path"] = claude_transcript_path(repo_root, session_id)
     if thread_id:
         meta["codex_thread_id"] = thread_id
-    meta_file.write_text(json.dumps(meta, indent=2) + "\n")
+    meta_file.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
 
     return proc.returncode

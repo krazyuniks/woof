@@ -202,6 +202,14 @@ This phase codifies a tracer-bullet red-green-refactor rhythm inside the Stage-5
 |---|---|---|---|---|---|
 | PRD-001 | Completed | Codify tracer-bullet RGR rhythm in the primary producer prompt and add an assertion-first reviewer fidelity check. | `.claude/commands/wf/execute-story.md` instructs the producer to enumerate `story.satisfies[]` outcomes up front, write one assertion-bearing test per outcome before its implementation, run the configured quality command after each cycle, and run a refactor pass with tests as harness once all outcomes are GREEN; the prompt names the horizontal-slicing anti-pattern (all tests then all impl) and the imagined-behaviour fingerprint it produces. `playbooks/critique/story.md` documents a test-fingerprint finding category that separates behaviour-anchored assertions from data-structure-anchored ones with severity `minor`, accumulating into the Check 9 periodic-review valve. `docs/architecture.md` references the rhythm as the recommended producer-internal discipline at Stage 5. Graph topology, Check 1-9 behaviour, and commit transaction semantics are unchanged. | Focused prompt terminology test passed: 4 tests. `just check` passed: Ruff lint, Ruff format check, and 228 tests. | `docs(workflow): codify tracer-bullet producer rhythm` |
 
+### Phase 9: Audit Reconstruction And Portability
+
+This phase fills implementation gaps discovered after the Stage 1-5 graph and role-routing workstreams completed. Items stay narrow and must preserve ADR-002 portability constraints.
+
+| ID | Status | Work item | Observable outcomes | Validation | Commit |
+|---|---|---|---|---|---|
+| AUD-001 | Completed | Implement the Claude transcript audit bundle helper promised by the architecture. | `just wf-audit-bundle <E<N>>` copies portable `~/.claude/projects/<project-slug>/<session>.jsonl` references from `.woof/epics/E<N>/dispatch.jsonl` into `.woof/epics/E<N>/audit/claude-code/`, reports copied and missing transcripts, and rejects non-portable transcript paths without depending on host-specific absolute paths. | Targeted audit bundle tests passed: 7 tests. `git diff --check` passed. `just check` passed: Ruff lint, Ruff format check, and 232 tests. | `feat(audit): bundle claude transcripts` |
+
 ## Next Continuation Prompt
 
 ```text
@@ -227,5 +235,5 @@ Workflow:
 - In the final response, paste this complete continuation prompt block so it can be copied into a new session.
 
 Start with:
-Workstreams R, F, G, and Phase 8 `PRD-001` are complete. No `Ready` items remain in this plan. If continuing implementation, add the next scoped work item to `docs/implementation-plan.md` before editing, then start that item.
+Workstreams R, F, G, Phase 8 `PRD-001`, and Phase 9 `AUD-001` are complete. No `Ready` items remain in this plan. If continuing implementation, add the next scoped work item to `docs/implementation-plan.md` before editing, then start that item.
 ```

@@ -59,6 +59,8 @@ def _env_with_path(bin_dir: Path, extra: dict[str, str] | None = None) -> dict[s
             str(Path(sh).parent),
         ]
     )
+    env.setdefault("ANTHROPIC_API_KEY", "stub-anthropic")
+    env.setdefault("OPENAI_API_KEY", "stub-openai")
     if extra:
         env.update(extra)
     return env
@@ -662,3 +664,277 @@ exit 42
     )
     assert rate_limit["ok"] is False
     assert "expired gh auth" in rate_limit["detail"]
+
+
+def test_preflight_passes_adapter_auth_when_env_keys_set(tmp_path: Path, run_woof) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _stub_core_tools(bin_dir)
+
+    _write_project(
+        tmp_path,
+        prerequisites="""\
+[infra]
+just = "any"
+git = "any"
+gh = "any"
+
+[commands]
+claude = "any"
+codex = "any"
+
+[validators]
+ajv = "any"
+ajv-formats = "any"
+
+[github]
+repo = "example/project"
+""",
+    )
+
+    proc = run_woof(
+        "preflight",
+        "--project-root",
+        str(tmp_path),
+        "--format",
+        "json",
+        env=_env_with_path(bin_dir),
+    )
+
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    payload = json.loads(proc.stdout)
+    primary = next(f for f in payload["findings"] if f["id"] == "agents.primary.auth")
+    reviewer = next(f for f in payload["findings"] if f["id"] == "agents.reviewer.auth")
+    assert primary["ok"] is True
+    assert "ANTHROPIC_API_KEY" not in primary["detail"]
+    assert "OPENAI_API_KEY" in primary["detail"]
+    assert reviewer["ok"] is True
+    assert "ANTHROPIC_API_KEY" in reviewer["detail"]
+
+
+def test_preflight_passes_adapter_auth_when_credential_files_present(
+    tmp_path: Path, run_woof
+) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _stub_core_tools(bin_dir)
+
+    claude_home = tmp_path / "claude-home"
+    codex_home = tmp_path / "codex-home"
+    claude_home.mkdir()
+    codex_home.mkdir()
+    (claude_home / ".credentials.json").write_text("{}\n")
+    (codex_home / "auth.json").write_text("{}\n")
+
+    _write_project(
+        tmp_path,
+        prerequisites="""\
+[infra]
+just = "any"
+git = "any"
+gh = "any"
+
+[commands]
+claude = "any"
+codex = "any"
+
+[validators]
+ajv = "any"
+ajv-formats = "any"
+
+[github]
+repo = "example/project"
+""",
+    )
+
+    env = _env_with_path(
+        bin_dir,
+        {
+            "CLAUDE_CONFIG_DIR": str(claude_home),
+            "CODEX_HOME": str(codex_home),
+        },
+    )
+    env.pop("ANTHROPIC_API_KEY", None)
+    env.pop("OPENAI_API_KEY", None)
+
+    proc = run_woof(
+        "preflight",
+        "--project-root",
+        str(tmp_path),
+        "--format",
+        "json",
+        env=env,
+    )
+
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    payload = json.loads(proc.stdout)
+    primary = next(f for f in payload["findings"] if f["id"] == "agents.primary.auth")
+    reviewer = next(f for f in payload["findings"] if f["id"] == "agents.reviewer.auth")
+    assert primary["ok"] is True
+    assert str(codex_home / "auth.json") in primary["detail"]
+    assert reviewer["ok"] is True
+    assert str(claude_home / ".credentials.json") in reviewer["detail"]
+
+
+def test_preflight_fails_when_adapter_auth_marker_missing(tmp_path: Path, run_woof) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _stub_core_tools(bin_dir)
+
+    empty_home = tmp_path / "empty-home"
+    empty_home.mkdir()
+
+    _write_project(
+        tmp_path,
+        prerequisites="""\
+[infra]
+just = "any"
+git = "any"
+gh = "any"
+
+[commands]
+claude = "any"
+codex = "any"
+
+[validators]
+ajv = "any"
+ajv-formats = "any"
+
+[github]
+repo = "example/project"
+""",
+    )
+
+    env = _env_with_path(
+        bin_dir,
+        {
+            "CLAUDE_CONFIG_DIR": str(empty_home),
+            "CODEX_HOME": str(empty_home),
+        },
+    )
+    env.pop("ANTHROPIC_API_KEY", None)
+    env.pop("OPENAI_API_KEY", None)
+
+    proc = run_woof(
+        "preflight",
+        "--project-root",
+        str(tmp_path),
+        "--format",
+        "json",
+        env=env,
+    )
+
+    assert proc.returncode == 1
+    payload = json.loads(proc.stdout)
+    primary = next(f for f in payload["findings"] if f["id"] == "agents.primary.auth")
+    reviewer = next(f for f in payload["findings"] if f["id"] == "agents.reviewer.auth")
+    assert primary["ok"] is False
+    assert "codex dispatch will fail" in primary["detail"]
+    assert primary["install"] == "codex login"
+    assert reviewer["ok"] is False
+    assert "claude dispatch will fail" in reviewer["detail"]
+    assert reviewer["install"] == "claude /login"
+
+
+def test_preflight_flags_non_executable_cartography_script(tmp_path: Path, run_woof) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _stub_core_tools(bin_dir)
+
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    cartography = scripts_dir / "refresh-cartography"
+    cartography.write_text("#!/usr/bin/env sh\necho cartography\n")
+    cartography.chmod(0o644)
+
+    _write_project(
+        tmp_path,
+        prerequisites="""\
+[infra]
+just = "any"
+git = "any"
+gh = "any"
+
+[commands]
+claude = "any"
+codex = "any"
+
+[validators]
+ajv = "any"
+ajv-formats = "any"
+
+[github]
+repo = "example/project"
+""",
+    )
+
+    proc = run_woof(
+        "preflight",
+        "--project-root",
+        str(tmp_path),
+        "--format",
+        "json",
+        env=_env_with_path(bin_dir),
+    )
+
+    assert proc.returncode == 1
+    payload = json.loads(proc.stdout)
+    cart = next(f for f in payload["findings"] if f["id"] == "cartography.script")
+    assert cart["ok"] is False
+    assert "not executable" in cart["detail"]
+    assert cart["install"] == f"chmod +x {cartography}"
+
+    cartography.chmod(0o755)
+    forced = run_woof(
+        "preflight",
+        "--project-root",
+        str(tmp_path),
+        "--format",
+        "json",
+        "--force",
+        env=_env_with_path(bin_dir),
+    )
+    assert forced.returncode == 0, forced.stderr + forced.stdout
+    payload = json.loads(forced.stdout)
+    cart = next(f for f in payload["findings"] if f["id"] == "cartography.script")
+    assert cart["ok"] is True
+
+
+def test_preflight_omits_cartography_finding_when_script_absent(tmp_path: Path, run_woof) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _stub_core_tools(bin_dir)
+
+    _write_project(
+        tmp_path,
+        prerequisites="""\
+[infra]
+just = "any"
+git = "any"
+gh = "any"
+
+[commands]
+claude = "any"
+codex = "any"
+
+[validators]
+ajv = "any"
+ajv-formats = "any"
+
+[github]
+repo = "example/project"
+""",
+    )
+
+    proc = run_woof(
+        "preflight",
+        "--project-root",
+        str(tmp_path),
+        "--format",
+        "json",
+        env=_env_with_path(bin_dir),
+    )
+
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    payload = json.loads(proc.stdout)
+    assert all(f["id"] != "cartography.script" for f in payload["findings"])

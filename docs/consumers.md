@@ -4,6 +4,24 @@ Woof runs from its own checkout or installed package against a separate consumer
 
 `guitar-tone-shootout` is the first external consumer. In that role, GTS remains responsible for its own application source, `just` recipes, Docker topology, GitHub issue scope, quality gates, language choices, and project-specific host or server checks. Woof remains responsible for graph execution, schemas, role dispatch, check runners, gate writing, and transaction verification.
 
+## First-Run Bootstrap
+
+From the consumer repository root:
+
+```bash
+woof init
+```
+
+`woof init` scaffolds `.woof/prerequisites.toml`, `.woof/agents.toml`, `.woof/quality-gates.toml`, and `.woof/test-markers.toml` with explicit `<replace>` placeholders for project-specific values, and inserts a fenced `# >>> woof` block into the repository `.gitignore` containing the required runtime entries (`.woof/.current-epic`, `.woof/.preflight-*`, `.woof/epics/*/.wf.lock`, `.woof/epics/*/audit/raw/`, and the cartography artefacts). Pass `--with-docs-paths` to also scaffold `.woof/docs-paths.toml`. The command is idempotent; existing TOMLs are preserved unless `--force` is set, and the gitignore block is updated in place rather than duplicated.
+
+After `woof init`:
+
+1. Replace every `<replace>` placeholder in `.woof/*.toml`.
+2. Authenticate the model CLIs once: `claude /login` for the reviewer route and `codex login` for the primary route. `woof preflight` accepts either credential files (`~/.claude/.credentials.json`, `~/.codex/auth.json`) or the matching API-key environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`).
+3. Optionally provide `./scripts/refresh-cartography` if the project wants the post-commit hook to regenerate cartography artefacts. Cartography substance is consumer-owned because the artefacts depend on the project's language stack; the Woof hook block is a no-op when the script is absent.
+4. Run `woof preflight` and resolve any remaining failures.
+5. Run `woof hooks install` to enable the post-commit cartography hook block.
+
 ## Consumer-Owned Files
 
 Consumer checkouts may keep these files in their own `.woof/` directory:

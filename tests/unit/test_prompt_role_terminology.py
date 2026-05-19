@@ -11,6 +11,8 @@ PROMPT_ROOTS = (
     REPO_ROOT / ".claude" / "commands",
 )
 PLANNING_BREAKDOWN_PROMPT = REPO_ROOT / "playbooks" / "planning" / "breakdown.md"
+EXECUTE_STORY_PROMPT = REPO_ROOT / ".claude" / "commands" / "wf" / "execute-story.md"
+STORY_CRITIQUE_PROMPT = REPO_ROOT / "playbooks" / "critique" / "story.md"
 ARCHITECTURE_DOC = REPO_ROOT / "docs" / "architecture.md"
 FORBIDDEN_PATTERNS = {
     "provider-specific prompt identity": re.compile(r"\b(?:Claude|Codex|claude|codex)\b"),
@@ -33,6 +35,31 @@ REQUIRED_STAGE3_BREAKDOWN_PROMPT_PHRASES = (
     "`woof dispatch`",
     "Do not write `gate.md`",
     "Do not select the next node",
+)
+REQUIRED_STAGE5_EXECUTE_STORY_PROMPT_PHRASES = (
+    "Tracer-bullet red-green-refactor discipline",
+    "`story.satisfies[]` outcomes",
+    "one assertion-bearing test",
+    "before implementation",
+    "Run the configured quality command after each cycle",
+    "refactor pass with the tests as the harness",
+    "horizontal-slicing anti-pattern",
+    "all tests first then all implementation",
+    "imagined-behaviour fingerprint",
+)
+REQUIRED_STAGE5_STORY_CRITIQUE_PROMPT_PHRASES = (
+    "Test-fingerprint fidelity",
+    "Behaviour-anchored assertions",
+    "Data-structure-anchored assertions",
+    "`test-fingerprint` finding with `severity: minor`",
+    "Check 9 periodic-review valve",
+)
+REQUIRED_STAGE5_ARCHITECTURE_PHRASES = (
+    "tracer-bullet red-green-refactor",
+    "assertion-bearing RED test before implementation",
+    "horizontal-slicing anti-pattern",
+    "imagined-behaviour fingerprint",
+    "Checks 1-9",
 )
 
 
@@ -62,6 +89,36 @@ def test_stage3_breakdown_prompt_owns_plan_generation_rules() -> None:
 
     assert not missing, "missing Stage 3 breakdown prompt phrases: " + ", ".join(missing)
     assert not (REPO_ROOT / "playbooks" / "discovery" / "breakdown.md").exists()
+
+
+def test_stage5_story_prompts_codify_producer_discipline() -> None:
+    execute_text = EXECUTE_STORY_PROMPT.read_text()
+    critique_text = STORY_CRITIQUE_PROMPT.read_text()
+    architecture_text = ARCHITECTURE_DOC.read_text()
+
+    execute_missing = [
+        phrase
+        for phrase in REQUIRED_STAGE5_EXECUTE_STORY_PROMPT_PHRASES
+        if phrase not in execute_text
+    ]
+    critique_missing = [
+        phrase
+        for phrase in REQUIRED_STAGE5_STORY_CRITIQUE_PROMPT_PHRASES
+        if phrase not in critique_text
+    ]
+    architecture_missing = [
+        phrase for phrase in REQUIRED_STAGE5_ARCHITECTURE_PHRASES if phrase not in architecture_text
+    ]
+
+    assert not execute_missing, "missing Stage 5 execute-story phrases: " + ", ".join(
+        execute_missing
+    )
+    assert not critique_missing, "missing Stage 5 story critique phrases: " + ", ".join(
+        critique_missing
+    )
+    assert not architecture_missing, "missing Stage 5 architecture phrases: " + ", ".join(
+        architecture_missing
+    )
 
 
 def test_stage3_plan_generation_rules_are_not_architecture_prose() -> None:

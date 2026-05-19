@@ -437,6 +437,10 @@ Nine checks, derived from a failure-class taxonomy. Checks 1–8 run after the s
 7. `commit` computes the transaction manifest, stages the exact expected file set, verifies the index, appends graph events, commits, and removes transient `executor_result.json` / `check-result.json`.
 8. Existing `gate.md` halts at `human_review` until `woof wf --epic <N> --resolve <decision>` records the structured gate decision and removes the gate.
 
+**Producer-internal rhythm.** The graph dispatches the primary producer once per story and does not manage inner test cycles, but the recommended Stage 5 discipline inside that subprocess is tracer-bullet red-green-refactor. The producer enumerates the selected story's `satisfies[]` outcomes, then for each outcome writes an assertion-bearing RED test before implementation, implements a narrow GREEN vertical slice, and runs the configured quality command. After all outcomes are GREEN, the producer refactors with tests as the harness and reruns quality.
+
+This prevents the horizontal-slicing anti-pattern, where a producer writes all tests first then all implementation. That pattern tends to leave an imagined-behaviour fingerprint: tests verify data structures, helper calls, or fixture setup instead of the declared observable outcome. The deterministic graph, Checks 1-9, and one-commit-per-story transaction remain unchanged.
+
 If a process dies during the commit transition after the plan has been marked `done` but before the git commit exists, the next `woof wf --epic <N>` run reconstitutes the interrupted transaction from `executor_result.json`, `check-result.json`, the critique, and uncommitted manifest paths. It resumes the `commit` node without duplicating durable JSONL events, then removes transient result files after the transaction is committed or after a previously committed transaction is detected.
 
 **No auto-revision after `gate.md`.** First check is final within the block; revision authority lies with the human at Stage 6 (principle #2).

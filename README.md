@@ -8,7 +8,7 @@ Woof addresses the inner loop: the structured, auditable cycle of an individual 
 
 ## Status
 
-Pre-release. The internal architecture is implemented and dogfooded against `guitar-tone-shootout`. A release-closure audit (RC-3 through RC-7) is open against the current architecture; a separate Phase B is required before Woof is usable against arbitrary consumer repositories.
+Pre-release. The internal architecture is implemented and dogfooded against `guitar-tone-shootout`. A release-closure audit (RC-5 through RC-7) is open against the current architecture; a separate Phase B is required before Woof is usable against arbitrary consumer repositories.
 
 The current architecture is graph-led. `woof wf --epic <N>` runs the deterministic graph; LLM prompts are producer or reviewer nodes, not workflow orchestrators. ADR-002 defines the current role policy: GPT-5.5 is the preferred primary producer route, Claude Opus 4.7 at `max` effort is the preferred reviewer route, and reviewer blockers open human gates rather than model-to-model debate loops.
 

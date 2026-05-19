@@ -162,7 +162,7 @@ def run_preflight(repo_root: Path, *, force: bool = False) -> PreflightResult:
                 cache_key=cache_key,
                 ttl=RUNTIME_CACHE_TTL,
                 force=force,
-                producer=lambda: _check_github(prereq),
+                producer=lambda: _run_runtime_checks(repo_root, prereq),
             )
         )
     else:
@@ -211,8 +211,16 @@ def _run_floor_checks(repo_root: Path, prereq: dict[str, Any]) -> list[Preflight
     findings.extend(_check_language_tools(prereq))
     findings.extend(_check_tree_sitter(prereq))
     findings.extend(_check_quality_gate_commands(repo_root))
+    findings.extend(_check_cartography_script(repo_root))
     findings.extend(_check_host_prerequisites(repo_root, prereq))
     findings.extend(_check_server_prerequisites(repo_root, prereq))
+    return findings
+
+
+def _run_runtime_checks(repo_root: Path, prereq: dict[str, Any]) -> list[PreflightFinding]:
+    findings: list[PreflightFinding] = []
+    findings.extend(_check_github(prereq))
+    findings.extend(_check_adapter_auth_markers(repo_root))
     return findings
 
 
@@ -761,6 +769,140 @@ def _check_github_rate_limit() -> PreflightFinding:
         ),
         install=install,
     )
+
+
+def _check_adapter_auth_markers(repo_root: Path) -> list[PreflightFinding]:
+    """Probe Claude/Codex credential markers for each configured dispatchable role.
+
+    The marker check is intentionally conservative: it confirms either an API-key
+    environment variable is set or the adapter has been logged in once (its
+    credential file exists). Live API auth state and model availability are only
+    validated at first dispatch — runtime token expiry, revoked credentials, or
+    a model the underlying API has retired surface as a fail-loud dispatch
+    error rather than a preflight finding.
+    """
+
+    agents_path = repo_root / ".woof" / "agents.toml"
+    if not agents_path.is_file():
+        return []
+    loaded = _load_toml(agents_path)
+    if not isinstance(loaded, dict):
+        return []
+    roles = loaded.get("roles") or {}
+    findings: list[PreflightFinding] = []
+    seen: set[tuple[str, str]] = set()
+    for role_name in ("primary", "reviewer"):
+        try:
+            route = resolve_role_route(roles, role_name)
+        except DispatchConfigError:
+            continue
+        if route.adapter not in ADAPTER_AUTH_MARKERS:
+            continue
+        key = (role_name, route.adapter)
+        if key in seen:
+            continue
+        seen.add(key)
+        findings.append(_check_adapter_auth(role_name, route.adapter))
+    return findings
+
+
+ADAPTER_AUTH_MARKERS: dict[str, dict[str, str]] = {
+    "claude": {
+        "env_key": "ANTHROPIC_API_KEY",
+        "config_env": "CLAUDE_CONFIG_DIR",
+        "default_dir": "~/.claude",
+        "marker_name": ".credentials.json",
+        "install": "claude /login",
+    },
+    "codex": {
+        "env_key": "OPENAI_API_KEY",
+        "config_env": "CODEX_HOME",
+        "default_dir": "~/.codex",
+        "marker_name": "auth.json",
+        "install": "codex login",
+    },
+}
+
+
+def _check_adapter_auth(role_name: str, adapter: str) -> PreflightFinding:
+    spec = ADAPTER_AUTH_MARKERS[adapter]
+    finding_id = f"agents.{role_name}.auth"
+    label = f"{role_name} adapter auth ({adapter})"
+    env_key = spec["env_key"]
+    if os.environ.get(env_key):
+        return PreflightFinding(
+            id=finding_id,
+            label=label,
+            ok=True,
+            detail=(
+                f"{env_key} set; live auth and model availability are validated at first dispatch"
+            ),
+        )
+    config_dir = os.environ.get(spec["config_env"])
+    home = Path(config_dir).expanduser() if config_dir else Path(spec["default_dir"]).expanduser()
+    marker = home / spec["marker_name"]
+    if marker.is_file():
+        return PreflightFinding(
+            id=finding_id,
+            label=label,
+            ok=True,
+            detail=(
+                f"{marker} present; live auth and model availability are validated "
+                "at first dispatch"
+            ),
+        )
+    return PreflightFinding(
+        id=finding_id,
+        label=label,
+        ok=False,
+        detail=(
+            f"no {env_key} environment variable and no credential file at {marker}; "
+            f"{adapter} dispatch will fail"
+        ),
+        install=spec["install"],
+    )
+
+
+def _check_cartography_script(repo_root: Path) -> list[PreflightFinding]:
+    """Validate the optional consumer-owned cartography script.
+
+    Cartography is consumer-owned: the Woof post-commit hook block invokes
+    ``./scripts/refresh-cartography`` only when present. If the script exists,
+    preflight verifies it is a regular executable file so a stale or
+    non-executable script fails loud rather than silently no-oping in the
+    post-commit hook.
+    """
+
+    script = repo_root / "scripts" / "refresh-cartography"
+    if not script.exists():
+        return []
+    if not script.is_file():
+        return [
+            PreflightFinding(
+                id="cartography.script",
+                label="cartography script",
+                ok=False,
+                detail=f"{script} exists but is not a regular file",
+            )
+        ]
+    if not os.access(script, os.X_OK):
+        return [
+            PreflightFinding(
+                id="cartography.script",
+                label="cartography script",
+                ok=False,
+                detail=f"{script} is not executable",
+                install=f"chmod +x {script}",
+            )
+        ]
+    return [
+        PreflightFinding(
+            id="cartography.script",
+            label="cartography script",
+            ok=True,
+            detail=f"{script} is present and executable",
+        )
+    ]
 
 
 def _check_language_tools(prereq: dict[str, Any]) -> list[PreflightFinding]:

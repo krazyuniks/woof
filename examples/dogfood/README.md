@@ -4,6 +4,7 @@ These are selected public artefacts from Woof's first two dogfood epics while it
 
 - `E181` demonstrates the audit redaction / size-cap epic that exposed the critique-blocker handling failure.
 - `E182` demonstrates the Stage-5 driver/checker epic that exposed the larger orchestration-topology flaw captured in ADR-001.
+- [../safety-model.md](../safety-model.md) maps those retained artefacts to the current safety behaviours: graph-owned orchestration, reviewer enforcement, manifest-verified commits, gate resolution, and E146 contract fidelity.
 
 ## Curation policy
 

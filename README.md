@@ -22,6 +22,7 @@ Current implementation status, remaining work, and the session continuation prom
 - [`docs/adr/002-graph-led-role-routing.md`](docs/adr/002-graph-led-role-routing.md) - accepted primary/reviewer role policy and model-routing pivot.
 - [`docs/consumers.md`](docs/consumers.md) - external consumer checkout boundary, including GTS.
 - [`docs/implementation-plan.md`](docs/implementation-plan.md) - implementation plan, roadmap, progress ledger, and continuation prompt.
+- [`examples/safety-model.md`](examples/safety-model.md) - concise examples of Woof's core safety behaviours.
 - [`examples/dogfood/`](examples/dogfood/) - selected artefacts from the first Woof dogfood epics.
 
 ## Development

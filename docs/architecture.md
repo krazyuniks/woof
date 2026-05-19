@@ -4,7 +4,7 @@
 > **Position:** Inner-loop counterpart to outer-loop / programme-level systems. Where outer-loop systems govern enterprise adoption across teams, providers, and lifecycle stages, Woof governs the developer's own AI-assisted work cycle: discovery → definition → breakdown → execution → gate, with schema-governed contracts and a JSONL audit trail per epic.
 > **Evidence base:** `docs/research.md`.
 > **Status:** Active. `guitar-tone-shootout` is Woof's first external consumer.
-> **Rule:** All design work lives here. No parallel design docs. `.woof/` is runtime-state only.
+> **Rule:** All design contract work lives here. Implementation sequencing and the live progress ledger live in `docs/implementation-plan.md`. `.woof/` is runtime-state only.
 
 > **ADR-001:** Stage-5 orchestration is graph-owned Python (`woof wf --epic <N>`). LLM prompts are producer nodes only.
 
@@ -12,7 +12,7 @@
 
 ## 0. Current implementation boundary
 
-The Woof repository currently implements ADR-001 for the Stage-5 execution path and the first Stage 1-3 planning nodes:
+The Woof repository currently implements the graph-owned path from Stage 1 Discovery synthesis through Stage 5 story execution:
 
 - `woof wf --epic <N>` is the operator entry point for the deterministic Python graph.
 - Stage 1 Discovery synthesis dispatches the primary producer to create or validate `discovery/synthesis/{CONCEPT,PRINCIPLES,ARCHITECTURE,OPEN_QUESTIONS}.md`.
@@ -21,7 +21,7 @@ The Woof repository currently implements ADR-001 for the Stage-5 execution path 
 - Stage-5 graph nodes dispatch the primary producer, dispatch the reviewer, run Stage-5 verification, open gates, and commit through a transaction manifest.
 - `.claude/commands/wf*.md` and `playbooks/` prompts are wrappers or producer-node prompts. They do not own successor selection, critique dispatch, gate writing, or commits.
 - ADR-002 defines the current role-routing policy: the graph orchestrates; GPT-5.5 is the preferred primary producer route; Claude Opus 4.7 at `max` effort is the preferred reviewer route.
-- Remaining lifecycle polish is tracked in `docs/implementation-plan.md`.
+- Implementation sequencing, workstream status, validation evidence, and the continuation prompt are tracked in `docs/implementation-plan.md`.
 
 When this document conflicts with `docs/adr/001-orchestration-topology.md`, `docs/adr/002-graph-led-role-routing.md`, or the current source under `src/woof/`, source and accepted ADRs win.
 
@@ -89,7 +89,7 @@ E146 was a surface failure enabled by a direction vacuum — no principle had lo
 | Stage | Gate behaviour | Why |
 |---|---|---|
 | 4 Plan gate | **Always opens** — even if the reviewer returns `severity: info` | Plans are architectural commitments; Class-2 errors at plan time cascade into N stories of rework. Mandatory review is cheap insurance. |
-| 6 Story gate | **Conditional** — opens only when the 8 deterministic checks fail OR critique returns `severity: blocker` | Stories are mechanical execution. Background autonomy depends on this asymmetry. |
+| 6 Story gate | **Conditional** — opens only when a deterministic Stage-5 check fails, a subprocess or incomplete-state trigger fires, or critique returns `severity: blocker` | Stories are mechanical execution. Background autonomy depends on this asymmetry. |
 
 This makes the autonomy gradient (§2 Stages overview) concrete: humans review architectural commitments; automation handles mechanical execution.
 
@@ -112,7 +112,7 @@ timestamp: <ISO 8601>
 ## Reviewer position
 ```
 
-**Autonomous driver.** External shell loop shipped with the tool: `while ! test -f gate.md; do /epic-next; done`. Parses nothing from gate.md — existence check only. Decouples driver from gate semantics.
+**Autonomous driver.** External shell loops can repeatedly invoke `woof wf --epic <N>` until `.woof/epics/E<N>/gate.md` exists. They parse nothing from `gate.md` — existence check only. Decouples driver mechanics from gate semantics.
 
 ### Core loop (within a stage)
 
@@ -508,9 +508,9 @@ Cartography that serves graph-owned consumers: deterministic gate checks, review
 
 **Why on-disk static + runtime semantic:** graph-owned consumers such as gate checks and reviewer prompts need file-readable artefacts; active model sessions may also have native LSP access. Caching semantic info to disk would silently degrade as code changes — LSP servers cache internally; we don't reproduce that.
 
-### Implementation
+### Contract implementation model
 
-**Skill-first.** Primitives live as Bash invocations from skill prompts until a specific primitive fails a readability stress-test. Compiled helpers earn their keep one at a time; language-of-helper is a per-helper decision, not a global one.
+**Contract-first.** JSON Schemas define artefact shape; the Python graph implements deterministic transitions, gates, validation, and commit manifests; prompt files provide producer or reviewer guidance only. Shell snippets in docs are operator examples, not orchestration authority.
 
 **Tooling split:**
 
@@ -782,6 +782,6 @@ The CLI is the operator surface. Prompt wrappers may call these commands, but th
 
 ---
 
-## 3. Roadmap
+## 3. Implementation Sequencing
 
-The implementation roadmap and progress ledger live in `docs/implementation-plan.md`. Architecture changes that alter graph topology or stage contracts require an ADR.
+This architecture document does not carry live backlog rows, workstream status, or continuation prompts. The implementation roadmap and progress ledger live in `docs/implementation-plan.md`. Architecture changes that alter graph topology or stage contracts require an ADR and, when implementation remains, a matching ledger item.

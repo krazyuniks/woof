@@ -191,7 +191,7 @@ GitHub sync must fail loud on auth, network, repo access, and rate-limit failure
 | ID | Status | Work item | Observable outcomes | Validation | Commit |
 |---|---|---|---|---|---|
 | DOC-001 | Completed | Keep README as the entry map. | README links to architecture, research, ADR-001, this implementation plan, and examples without duplicating architecture detail. | Docs review passed. `git diff --check` passed. `just check` passed: Ruff lint, Ruff format check, and 227 tests. | `docs(readme): align entry map` |
-| DOC-002 | Ready | Keep architecture focused on design contract and current implementation boundary. | `docs/architecture.md` avoids live backlog content and points implementation sequencing here. | Docs review plus `just check`. | `docs(architecture): point roadmap to implementation plan` |
+| DOC-002 | Completed | Keep architecture focused on design contract and current implementation boundary. | `docs/architecture.md` avoids live backlog content and points implementation sequencing here. | Docs review passed. `git diff --check` passed for touched docs. `just check` passed: Ruff lint, Ruff format check, and 227 tests. | `docs(architecture): point roadmap to implementation plan` |
 | DOC-003 | Ready | Add concise examples for core safety behaviours. | Examples demonstrate graph-owned orchestration, second-LLM critique enforcement, manifest-verified commits, gate resolution, and E146 contract fidelity. | Example validation where applicable plus `just check`. | `docs(examples): demonstrate woof safety model` |
 
 ### Phase 8: Producer Execution Discipline
@@ -227,5 +227,5 @@ Workflow:
 - In the final response, paste this complete continuation prompt block so it can be copied into a new session.
 
 Start with:
-Workstream G: Consumer and evidence polish (`DOG-001`, `GTS-001`, `GTS-002`, `DOC-001`, `DOC-002`, `DOC-003`). Workstreams R and F are complete, and `DOG-001`, `GTS-001`, `GTS-002`, and `DOC-001` are complete. Finish any item already `In progress`; otherwise start with `DOC-002`.
+Workstream G: Consumer and evidence polish (`DOG-001`, `GTS-001`, `GTS-002`, `DOC-001`, `DOC-002`, `DOC-003`). Workstreams R and F are complete, and `DOG-001`, `GTS-001`, `GTS-002`, `DOC-001`, and `DOC-002` are complete. Finish any item already `In progress`; otherwise start with `DOC-003`.
 ```

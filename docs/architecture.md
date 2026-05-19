@@ -258,7 +258,7 @@ Each stage has a typed interface — defined inputs, defined outputs, invariants
 | 5 Story execution | `plan.json` + `story_id` | git commit (code + `.woof` state in one transaction) + updated `plan.json` + `critique/story-S<k>.md` + `dispositions/story-S<k>.md`, OR `gate.md` | 9 deterministic checks (see "Stage 5 deterministic gate checks" below); diff ⊆ `story.paths[]` |
 | 6 Story gate | `gate.md` + story artefacts | Revision + `gate.md` deleted, OR session terminated | Same as Stage 4 |
 
-Invariants are **mechanically checkable, fail loud, no agent judgement**. Validation failure produces a `gate.md` rather than a silent proceed. Contract format is JSON Schema; Pydantic / zod / equivalents are implementations of a contract, not alternatives to one.
+Invariants are **mechanically checkable, fail loud, no agent judgement**. Validation failure produces a `gate.md` rather than a silent proceed. Woof-owned structural contract artefacts are JSON Schema. Runtime models such as Pydantic or zod may mirror those artefacts in implementation code, but they do not become a second source of truth for Woof-owned schemas.
 
 Planning graph node boundaries for Stages 1-4 are schema-governed by `schemas/planning-node-input.schema.json` and `schemas/planning-node-output.schema.json`. Those contracts cover discovery synthesis, epic definition, breakdown planning, plan critique, plan gate opening, and plan gate resolution; artefact payloads remain validated by their dedicated schemas such as `epic.schema.json`, `plan.schema.json`, `critique.schema.json`, and `gate.schema.json`.
 
@@ -311,7 +311,7 @@ acceptance_criteria:
 | `contract_decisions[].json_schema_ref` | conditional | Path to a JSON Schema file. |
 | `contract_decisions[].notes` | optional | Free-form prose for rationale (not contract content). |
 
-**Why standard contract artefacts.** Surfaces that already have industry-standard contract formats (OpenAPI for HTTP, Pydantic / JSON Schema for data shapes) are referenced by their native ref form rather than re-encoded inline. Stage 5 Check 4 delegates verification to that artefact's native tooling (schemathesis, Pydantic itself, ajv-cli). woof never reinvents validation. If a surface doesn't fit any of those three artefact types, it shouldn't be a contract decision — capture it as an `acceptance_criteria` prose statement instead.
+**Why standard contract artefacts.** A contract decision is the domain-level promise: a route, data shape, user-visible string, or other surface the implementation must honour. The referenced artefact is the machine-checkable representation of that promise. Surfaces that already have standard representations are referenced by their native ref form rather than re-encoded inline: OpenAPI for HTTP, JSON Schema for portable data shapes, and `pydantic_ref` only when the owning project already uses a Pydantic model as the native data-shape artefact. Stage 5 Check 4 delegates verification to that artefact's native tooling (schemathesis, Pydantic itself, ajv-cli). Woof never reinvents validation. If a surface doesn't fit any of those three artefact types, it shouldn't be a contract decision — capture it as an `acceptance_criteria` prose statement instead.
 
 **ID immutability.** Once Definition closes, outcome and CD IDs are append-only. Wording and evidence edits are free; ID removal requires explicit deprecation via gate-conversation revision. `/wf` validates EPIC.md edits — any removed ID surfaces every `satisfies[]` reference in `plan.json` and every test marker location, requiring an explicit propagation decision. Splits (`O2 → O2a + O2b`) are not supported; use `deprecate O2; add O5 (narrower scope replacing O2)` instead. Story-level rule: pre-commit, plan.json stories are freely revisable; post-commit, stories are immutable (new work goes into new stories appended to `plan.json`).
 
@@ -528,7 +528,14 @@ Cartography that serves graph-owned consumers: deterministic gate checks, review
 
 `ajv-cli` ≠ `jq` — they solve different problems (validation vs. extraction). Use both, not interchangeably.
 
-JSON Schema is the canonical contract format. Runtime implementations may use Pydantic, zod, or shell helpers, but those implementations do not replace the schema contract.
+JSON Schema is the canonical contract format. Runtime code may use Pydantic, zod, or shell helpers to parse, validate, or transform data, but that code does not replace the schema artefact.
+
+**Python data model boundary.** Woof uses two Python data-modelling styles intentionally:
+
+- **Pydantic** is used at schema and serialisation boundaries: graph node input/output, `plan.json`, transaction manifests, and any durable JSON artefact where Woof parses external data into Python or emits Python state back to JSON. Pydantic models are the Python runtime representation of those boundary shapes; the matching JSON Schema remains the portable contract artefact.
+- **Dataclasses** are used for trusted in-process records: check runner context/outcomes, preflight findings, GitHub sync return values, audit summaries, and small helper result objects. These objects are already constructed by Woof code from normalised inputs, do not define external artefact shape, and should not imply additional Pydantic coercion or schema authority.
+
+Do not mix the two casually. If a type crosses a durable JSON, CLI, LLM-node, or consumer-facing boundary, prefer Pydantic and keep the JSON Schema aligned. If a type is only an internal carrier between Python functions, a dataclass is acceptable and usually clearer. `pydantic_ref` in an epic contract decision is a special case: it means the consumer project has chosen a Pydantic model as the native machine-checkable artefact for that surface, not that Woof treats Pydantic as the domain contract itself.
 
 **Standalone, opinionated, portable.** Woof assumes `just`, Docker, GitHub, worktrees, and the `.woof/` convention. Does *not* assume an existing project — Stages 1–2 support blank-project starts. `guitar-tone-shootout` is Woof's first external consumer.
 

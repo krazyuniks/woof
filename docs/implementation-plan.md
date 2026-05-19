@@ -210,6 +210,14 @@ This phase fills implementation gaps discovered after the Stage 1-5 graph and ro
 |---|---|---|---|---|---|
 | AUD-001 | Completed | Implement the Claude transcript audit bundle helper promised by the architecture. | `just wf-audit-bundle <E<N>>` copies portable `~/.claude/projects/<project-slug>/<session>.jsonl` references from `.woof/epics/E<N>/dispatch.jsonl` into `.woof/epics/E<N>/audit/claude-code/`, reports copied and missing transcripts, and rejects non-portable transcript paths without depending on host-specific absolute paths. | Targeted audit bundle tests passed: 7 tests. `git diff --check` passed. `just check` passed: Ruff lint, Ruff format check, and 232 tests. | `feat(audit): bundle claude transcripts` |
 
+### Phase 10: Contract Implementation Model
+
+This phase records implementation-boundary clarifications discovered after the Stage 1-5 graph, role-routing, and audit-portability workstreams completed. Items stay narrow and must keep JSON Schema as the portable contract authority while reflecting the Python runtime model actually used by Woof.
+
+| ID | Status | Work item | Observable outcomes | Validation | Commit |
+|---|---|---|---|---|---|
+| CIM-001 | Completed | Clarify the JSON Schema, Pydantic, and dataclass boundary in architecture docs. | README, ADR-001, and architecture docs state that Woof-owned durable artefact contracts are JSON Schema-governed; Pydantic is the Python runtime representation at schema and serialisation boundaries; dataclasses remain acceptable for trusted in-process records such as check outcomes, preflight findings, GitHub sync results, and audit summaries. No graph topology, schema, or runtime behaviour changes. | Representative Pydantic and dataclass source uses inspected. Docs review passed. `git diff --check` passed. `just check` passed: Ruff lint, Ruff format check, and 232 tests. | `docs(architecture): clarify contract model boundaries` |
+
 ## Next Continuation Prompt
 
 ```text
@@ -235,5 +243,5 @@ Workflow:
 - In the final response, paste this complete continuation prompt block so it can be copied into a new session.
 
 Start with:
-Workstreams R, F, G, Phase 8 `PRD-001`, and Phase 9 `AUD-001` are complete. No `Ready` items remain in this plan. If continuing implementation, add the next scoped work item to `docs/implementation-plan.md` before editing, then start that item.
+Workstreams R, F, G, Phase 8 `PRD-001`, Phase 9 `AUD-001`, and Phase 10 `CIM-001` are complete. No `Ready` items remain in this plan. If continuing implementation, add the next scoped work item to `docs/implementation-plan.md` before editing, then start that item.
 ```

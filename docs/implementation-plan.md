@@ -274,6 +274,14 @@ This phase tightens dispatch audit file safety after prompt-artefact recording a
 |---|---|---|---|---|---|
 | AUD-003 | Completed | Make dispatch audit file stems collision-resistant and path-safe. | Dispatch-created `.prompt`, `.output`, `.stderr`, and `.meta` files use a stem that cannot collide across concurrent same-epic same-role dispatch invocations and cannot derive path separators or unsafe filename characters from role text; Codex audit references remain repo-relative and JSONL-valid. | Focused dispatch tests passed: 29 tests. `git diff --check` passed. `just check` passed: Ruff lint, Ruff format check, and 242 tests. | `fix(dispatch): harden audit file stems` |
 
+### Phase 18: Workflow Locking
+
+This phase implements the per-epic workflow lock promised by the architecture after graph execution, GitHub runtime checks, and audit-event schema tightening landed. Items must preserve the graph-owned mutation boundary: only one `woof wf --epic <N>` graph execution may mutate a given epic at a time, live locks fail loud, and recognised stale locks are removed with durable audit evidence.
+
+| ID | Status | Work item | Observable outcomes | Validation | Commit |
+|---|---|---|---|---|---|
+| WFL-001 | Completed | Enforce the graph workflow lockfile. | `run_graph` acquires `.woof/epics/E<N>/.wf.lock` for the duration of graph execution, refuses to run when a same-host live lock exists, removes same-host stale locks whose recorded process is gone, writes a JSONL-valid `wf_lock_stale_removed` audit event, and releases only the lock it owns. | Focused graph lock tests passed: 36 tests. Focused JSONL schema validation tests passed: 48 tests. `git diff --check` passed. `just check` passed: Ruff lint, Ruff format check, and 245 tests. | `fix(graph): enforce workflow lockfile` |
+
 ## Next Continuation Prompt
 
 ```text
@@ -299,5 +307,5 @@ Workflow:
 - In the final response, paste this complete continuation prompt block so it can be copied into a new session.
 
 Start with:
-Workstreams R, F, G, Phase 8 `PRD-001`, Phase 9 `AUD-001`, Phase 10 `CIM-001`, Phase 11 `CHK-010`, Phase 12 `AUD-002`, Phase 13 `DPA-001`, Phase 14 `WFR-001`, Phase 15 `JEV-001`, Phase 16 `PFT-001`, and Phase 17 `AUD-003` are complete. No `Ready` items remain in this plan. If continuing implementation, add the next scoped work item to `docs/implementation-plan.md` before editing, then start that item.
+Workstreams R, F, G, Phase 8 `PRD-001`, Phase 9 `AUD-001`, Phase 10 `CIM-001`, Phase 11 `CHK-010`, Phase 12 `AUD-002`, Phase 13 `DPA-001`, Phase 14 `WFR-001`, Phase 15 `JEV-001`, Phase 16 `PFT-001`, Phase 17 `AUD-003`, and Phase 18 `WFL-001` are complete. No `Ready` items remain in this plan. If continuing implementation, add the next scoped work item to `docs/implementation-plan.md` before editing, then start that item.
 ```

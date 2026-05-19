@@ -523,11 +523,20 @@ def test_validate_jsonl_per_line(tmp_path: Path, run_woof) -> None:
             "story_id": "S1",
             "manifest": {"expected_paths": [".woof/epics/E1/plan.json"]},
         },
+        {
+            "event": "wf_lock_stale_removed",
+            "at": "2026-04-26T12:01:00Z",
+            "epic_id": 1,
+            "pid": 4242,
+            "reason": "pid_not_running",
+            "hostname": "build-host",
+            "paths": [".woof/epics/E1/.wf.lock"],
+        },
     ]
     path.write_text("\n".join(json.dumps(line) for line in lines) + "\n")
     proc = run_woof("validate", str(path))
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert "valid (jsonl-events, 5 line(s))" in proc.stdout
+    assert "valid (jsonl-events, 6 line(s))" in proc.stdout
 
 
 def test_validate_jsonl_bad_line_fails(tmp_path: Path, run_woof) -> None:

@@ -18,6 +18,31 @@ Consumer checkouts may keep these files in their own `.woof/` directory:
 
 Generated epic state belongs under `.woof/epics/E<N>/` only when Woof creates it for that consumer repository. Do not seed a consumer checkout by copying `.woof/epics/` content, audit output, locks, codebase maps, or dogfood examples from the Woof repository.
 
+## Policy Generalisation
+
+Consumer policy starts in the consumer repository. Woof only absorbs a policy
+when it can be expressed as a reusable declaration under `.woof/`, validated by
+a Woof schema, enforced by a checker or preflight path, and covered by tests.
+Until those conditions are true, the policy stays in the consumer's own `just`
+recipes, CI, docs, or application code.
+
+Current reusable policy surfaces are:
+
+| Policy need | Woof surface | Enforcement |
+|---|---|---|
+| Project verification commands | `.woof/quality-gates.toml` | Stage 5 Check 1 runs each declared command from the consumer root. |
+| Outcome marker conventions | `.woof/test-markers.toml` | Stage 5 Check 2 scans staged test diffs using configured marker rules. |
+| Code-to-doc drift requirements | `.woof/docs-paths.toml` | Stage 5 Check 8 requires mapped docs changes in the same transaction. |
+| Public role routes, review cadence, and audit policy | `.woof/agents.toml` | Dispatch, review-valve, and audit code read the declared route and policy settings. |
+| Host, server, GitHub, language, and tool prerequisites | `.woof/prerequisites.toml` | `woof preflight` validates declared infrastructure before graph execution. |
+
+Do not hard-code GTS paths, servers, Docker service names, issue labels, no-mock
+rules, or framework-specific conventions into Woof. If a second consumer needs
+the same rule, first design the smallest portable config shape, add or extend
+the schema, implement the checker/preflight behaviour, and document the failure
+mode. Otherwise, call the consumer's existing command from
+`.woof/quality-gates.toml` and let that repository own the rule.
+
 ## Tool-Owned Assets
 
 These stay in Woof, not in GTS or another consumer repository:

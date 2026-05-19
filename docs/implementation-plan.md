@@ -184,7 +184,7 @@ GitHub sync must fail loud on auth, network, repo access, and rate-limit failure
 |---|---|---|---|---|---|
 | DOG-001 | Completed | Keep dogfood artefacts curated as evidence. | `examples/dogfood/` records only reusable evidence: contracts, plans, critiques, audit summaries, gates, and lessons that demonstrate Woof behaviour or failure modes. | Example schema validation passed for retained epic, plan, critique, and JSONL event artefacts. `git diff --check` passed. `just check` passed: Ruff lint, Ruff format check, and 227 tests. | `docs(dogfood): curate evidence examples` |
 | GTS-001 | Completed | Document GTS as an external consumer checkout. | Woof docs describe GTS responsibilities for `.woof/` config without vendor-copying Woof into GTS. | Docs review passed. `git diff --check` passed. `just check` passed: Ruff lint, Ruff format check, and 227 tests. | `docs(consumers): define gts integration boundary`; `docs(workflow): advance continuation prompt` |
-| GTS-002 | Ready | Generalise consumer policies into configurable checks only when reusable. | Consumer-specific policy remains outside Woof unless represented by documented configuration and checker behaviour. | Relevant checker tests plus `just check`. | `docs(consumers): constrain policy generalisation` |
+| GTS-002 | Completed | Generalise consumer policies into configurable checks only when reusable. | Consumer-specific policy remains outside Woof unless represented by documented configuration and checker behaviour. | Docs review passed. Focused configurable-policy tests passed: quality gates, outcome markers, docs drift, and preflight, 25 tests. `git diff --check` passed. `just check` passed: Ruff lint, Ruff format check, and 227 tests. | `docs(consumers): constrain policy generalisation` |
 
 ### Phase 7: Documentation And Evidence Polish
 
@@ -219,5 +219,5 @@ Workflow:
 - In the final response, paste this complete continuation prompt block so it can be copied into a new session.
 
 Start with:
-Workstream G: Consumer and evidence polish (`DOG-001`, `GTS-001`, `GTS-002`, `DOC-001`, `DOC-002`, `DOC-003`). Workstreams R and F are complete, and `DOG-001` and `GTS-001` are complete. Finish any item already `In progress`; otherwise start with `GTS-002`.
+Workstream G: Consumer and evidence polish (`DOG-001`, `GTS-001`, `GTS-002`, `DOC-001`, `DOC-002`, `DOC-003`). Workstreams R and F are complete, and `DOG-001`, `GTS-001`, and `GTS-002` are complete. Finish any item already `In progress`; otherwise start with `DOC-001`.
 ```

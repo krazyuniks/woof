@@ -167,6 +167,12 @@ Woof is a tool checkout or installed package that runs against a separate consum
 
 Woof's responsibilities remain in this repository: graph transitions, schema contracts, prompt templates, dispatch command construction, gate authoring, check-runner behaviour, transaction manifests, and dogfood evidence. Consumer integration is documented in `docs/consumers.md`.
 
+Consumer-specific policies do not enter Woof as hard-coded GTS behaviour. A
+policy becomes tool-owned only when it has a reusable `.woof/` declaration,
+schema validation, checker or preflight enforcement, tests, and documentation;
+otherwise it stays in the consumer repository and is invoked through declared
+quality gates or prerequisites.
+
 ### GitHub integration
 
 **Model.** Hybrid: gh owns the epic-level contract; filesystem owns runtime. Per `AGENTS.md`, one gh issue per epic; no child issues for stories.

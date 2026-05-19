@@ -37,3 +37,7 @@ install-hooks:
 # Run the Woof CLI from this checkout.
 woof *ARGS:
     ./bin/woof {{ARGS}}
+
+# Bundle Claude Code transcripts referenced by an epic dispatch log.
+wf-audit-bundle EPIC:
+    ./bin/woof audit-bundle {{EPIC}}

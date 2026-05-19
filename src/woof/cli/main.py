@@ -6,6 +6,7 @@ Subcommands:
     hooks        Manage Woof-owned git hook blocks.
     validate     Validate artefacts against woof JSON Schemas via ajv-cli.
     dispatch     Spawn a public CLI subprocess for a role declared in agents.toml.
+    audit-bundle Copy referenced Claude transcripts into an epic audit folder.
     render-epic  Render EPIC.md front-matter into the gh issue body; optionally
                  sync to GitHub with conflict detection (.last-sync).
     check-cd     Verify each contract_decision's referenced artefact actually
@@ -38,6 +39,11 @@ from woof.cli.github import (
     render_epic_issue_body,
     split_epic_front_matter,
     sync_epic_definition,
+)
+from woof.lib.audit_bundle import (
+    AuditBundleError,
+    NonPortableTranscriptError,
+    bundle_claude_transcripts,
 )
 from woof.paths import schema_dir
 
@@ -772,6 +778,46 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# audit-bundle
+# ---------------------------------------------------------------------------
+
+
+def cmd_audit_bundle(args: argparse.Namespace) -> int:
+    repo_root = find_woof_root(Path.cwd().resolve())
+    try:
+        result = bundle_claude_transcripts(repo_root, args.epic)
+    except NonPortableTranscriptError as exc:
+        sys.stderr.write(f"woof: {exc}\n")
+        return 2
+    except AuditBundleError as exc:
+        sys.stderr.write(f"woof: {exc}\n")
+        return 2
+
+    destination = _display_path(repo_root, result.destination_dir)
+    if result.copied:
+        print(f"{result.epic}: copied {len(result.copied)} Claude transcript(s) into {destination}")
+        for item in result.copied:
+            print(f"  copied {item.reference} -> {_display_path(repo_root, item.destination)}")
+    else:
+        print(f"{result.epic}: copied 0 Claude transcript(s) into {destination}")
+
+    if result.missing:
+        sys.stderr.write(f"{result.epic}: missing {len(result.missing)} Claude transcript(s)\n")
+        for item in result.missing:
+            sys.stderr.write(f"  missing {item.reference}\n")
+        return 1
+
+    return 0
+
+
+def _display_path(repo_root: Path, path: Path) -> str:
+    try:
+        return path.relative_to(repo_root).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+# ---------------------------------------------------------------------------
 # render-epic
 # ---------------------------------------------------------------------------
 
@@ -915,6 +961,13 @@ def main() -> int:
         help="print the resolved invocation as JSON and exit without spawning",
     )
     dispatch.set_defaults(func=cmd_dispatch)
+
+    audit_bundle = sub.add_parser(
+        "audit-bundle",
+        help="copy referenced Claude transcripts into an epic audit folder",
+    )
+    audit_bundle.add_argument("epic", help="epic reference, e.g. E17 or 17")
+    audit_bundle.set_defaults(func=cmd_audit_bundle)
 
     render = sub.add_parser(
         "render-epic",

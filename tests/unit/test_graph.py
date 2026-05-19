@@ -571,17 +571,21 @@ def test_wf_reports_live_workflow_lock(tmp_path: Path) -> None:
 def test_dispatch_helper_uses_role_route_without_provider_target(
     tmp_path: Path, monkeypatch
 ) -> None:
+    import sys
+
     captured: dict[str, Any] = {}
 
     def fake_run(
         args: list[str],
         *,
         cwd: Path,
+        env: dict[str, str] | None = None,
         capture_output: bool,
         text: bool,
     ) -> subprocess.CompletedProcess[str]:
         captured["args"] = args
         captured["cwd"] = cwd
+        captured["env"] = env
         captured["capture_output"] = capture_output
         captured["text"] = text
         return subprocess.CompletedProcess(args, 0, "", "")
@@ -598,11 +602,16 @@ def test_dispatch_helper_uses_role_route_without_provider_target(
     )
 
     args = captured["args"]
-    assert args[1:4] == ["dispatch", "--role", "primary"]
-    assert "claude" not in args[1:4]
-    assert "codex" not in args[1:4]
+    assert args[0] == sys.executable
+    assert args[1:3] == ["-m", "woof"]
+    assert args[3:6] == ["dispatch", "--role", "primary"]
+    assert "claude" not in args[:6]
+    assert "codex" not in args[:6]
     assert args[-2:] == ["--artefact", ".woof/epics/E1/plan.json"]
     assert captured["cwd"] == tmp_path
+    env = captured["env"]
+    assert env is not None
+    assert "PYTHONPATH" in env
 
 
 def test_pre_plan_transition_enters_discovery_when_spark_exists(tmp_path: Path) -> None:

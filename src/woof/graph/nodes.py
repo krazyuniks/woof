@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import sys
 import tempfile
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -57,8 +59,52 @@ def _now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _woof_bin() -> Path:
-    return tool_root() / "bin" / "woof"
+def _woof_subprocess_argv() -> list[str]:
+    """Return a portable argv prefix for shelling back into Woof.
+
+    Uses the active Python interpreter plus the ``woof`` module so the
+    invocation works from an installed wheel as well as the source checkout.
+    The source-checkout ``bin/woof`` wrapper depends on ``uv`` + script-mode
+    metadata that does not declare the ``woof`` package itself, so it is
+    unsafe to execute from an isolated wheel install.
+    """
+
+    return [sys.executable, "-m", "woof"]
+
+
+def _woof_subprocess_env(extra: dict[str, str] | None = None) -> dict[str, str]:
+    """Return an env dict that lets the child Python import ``woof``.
+
+    The active interpreter's ``sys.path`` is not inherited by subprocesses,
+    so prepend a ``PYTHONPATH`` entry covering both the source-checkout
+    ``src`` directory (when present) and the resolved ``tool_root()``. This
+    keeps `[sys.executable, "-m", "woof"]` working from a uv-run-script
+    parent that imported the woof package by manipulating ``sys.path``.
+    Wheel installs already have ``woof`` on ``sys.path``; the extra entries
+    are harmless.
+    """
+
+    env = dict(os.environ)
+    if extra:
+        env.update(extra)
+    root = tool_root()
+    src = root / "src"
+    candidates: list[str] = []
+    if (src / "woof" / "__init__.py").is_file():
+        candidates.append(str(src))
+    if (root / "woof" / "__init__.py").is_file():
+        candidates.append(str(root))
+    existing = env.get("PYTHONPATH", "")
+    existing_parts = existing.split(os.pathsep) if existing else []
+    new_parts = [path for path in candidates if path not in existing_parts]
+    if new_parts:
+        env["PYTHONPATH"] = (
+            os.pathsep.join([*new_parts, *existing_parts])
+            if existing_parts
+            else os.pathsep.join(new_parts)
+        )
+    env.setdefault("WOOF_TOOL_ROOT", str(root))
+    return env
 
 
 def _gate_path(epic_id: int) -> str:
@@ -341,8 +387,9 @@ def _plan_critique_prompt(repo_root: Path, epic_id: int) -> str:
 
 def _validate_epic(repo_root: Path, epic_path: Path) -> tuple[bool, str]:
     proc = subprocess.run(
-        [str(_woof_bin()), "validate", "--schema", "epic", str(epic_path)],
+        [*_woof_subprocess_argv(), "validate", "--schema", "epic", str(epic_path)],
         cwd=repo_root,
+        env=_woof_subprocess_env(),
         capture_output=True,
         text=True,
     )
@@ -351,8 +398,9 @@ def _validate_epic(repo_root: Path, epic_path: Path) -> tuple[bool, str]:
 
 def _validate_plan(repo_root: Path, epic_id: int, plan_path: Path) -> tuple[bool, str]:
     proc = subprocess.run(
-        [str(_woof_bin()), "validate", "--schema", "plan", str(plan_path)],
+        [*_woof_subprocess_argv(), "validate", "--schema", "plan", str(plan_path)],
         cwd=repo_root,
+        env=_woof_subprocess_env(),
         capture_output=True,
         text=True,
     )
@@ -369,8 +417,9 @@ def _validate_plan(repo_root: Path, epic_id: int, plan_path: Path) -> tuple[bool
 
 def _validate_plan_critique(repo_root: Path, critique_path: Path) -> tuple[bool, str]:
     proc = subprocess.run(
-        [str(_woof_bin()), "validate", "--schema", "critique", str(critique_path)],
+        [*_woof_subprocess_argv(), "validate", "--schema", "critique", str(critique_path)],
         cwd=repo_root,
+        env=_woof_subprocess_env(),
         capture_output=True,
         text=True,
     )
@@ -487,7 +536,7 @@ def _run_dispatch(
     prompt_file = _write_prompt_file(prompt)
     try:
         args = [
-            str(_woof_bin()),
+            *_woof_subprocess_argv(),
             "dispatch",
             "--role",
             role,
@@ -500,7 +549,13 @@ def _run_dispatch(
             args.extend(["--story", story_id])
         for artefact in artefacts_loaded or []:
             args.extend(["--artefact", artefact])
-        return subprocess.run(args, cwd=repo_root, capture_output=True, text=True)
+        return subprocess.run(
+            args,
+            cwd=repo_root,
+            env=_woof_subprocess_env(),
+            capture_output=True,
+            text=True,
+        )
     finally:
         prompt_file.unlink(missing_ok=True)
 
@@ -1284,7 +1339,7 @@ def verification_node(inp: NodeInput) -> NodeOutput:
     result_path = epic_dir(inp.repo_root, inp.epic_id) / "check-result.json"
     proc = subprocess.run(
         [
-            str(_woof_bin()),
+            *_woof_subprocess_argv(),
             "check",
             "stage-5",
             "--epic",
@@ -1295,6 +1350,7 @@ def verification_node(inp: NodeInput) -> NodeOutput:
             "json",
         ],
         cwd=inp.repo_root,
+        env=_woof_subprocess_env(),
         capture_output=True,
         text=True,
     )

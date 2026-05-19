@@ -137,31 +137,31 @@ def _base_planning_input(node_type: str, inputs: dict) -> dict:
 
 def _base_planning_output(
     node_type: str,
-    produced: dict,
     *,
     next_node: str | None,
     stage: int,
     status: str = "completed",
     gate_path: str | None = None,
+    paths: list[str] | None = None,
+    triggered_by: list[str] | None = None,
 ) -> dict:
     return {
         "node_type": node_type,
         "status": status,
         "epic_id": 7,
+        "story_id": None,
         "next_node": next_node,
         "gate_path": gate_path,
         "validation_summary": {
             "ok": True,
             "stage": stage,
-            "triggered_by": [],
-            "validated_schemas": [],
-            "failed_schema_count": 0,
+            "triggered_by": triggered_by or [],
+            "check_count": len(paths or []),
+            "failed_check_count": 0,
         },
         "message": "",
-        "paths": list(produced.values())
-        if all(isinstance(v, str) for v in produced.values())
-        else [],
-        "produced": produced,
+        "paths": paths or [],
+        "triggered_by": triggered_by or [],
     }
 
 
@@ -240,12 +240,12 @@ def _base_planning_output(
         (
             _base_planning_output(
                 "discovery_synthesis",
-                {
-                    "concept_path": ".woof/epics/E7/discovery/synthesis/CONCEPT.md",
-                    "principles_path": ".woof/epics/E7/discovery/synthesis/PRINCIPLES.md",
-                    "architecture_path": ".woof/epics/E7/discovery/synthesis/ARCHITECTURE.md",
-                    "open_questions_path": ".woof/epics/E7/discovery/synthesis/OPEN_QUESTIONS.md",
-                },
+                paths=[
+                    ".woof/epics/E7/discovery/synthesis/CONCEPT.md",
+                    ".woof/epics/E7/discovery/synthesis/PRINCIPLES.md",
+                    ".woof/epics/E7/discovery/synthesis/ARCHITECTURE.md",
+                    ".woof/epics/E7/discovery/synthesis/OPEN_QUESTIONS.md",
+                ],
                 next_node="epic_definition",
                 stage=1,
             ),
@@ -254,7 +254,7 @@ def _base_planning_output(
         (
             _base_planning_output(
                 "epic_definition",
-                {"epic_path": ".woof/epics/E7/EPIC.md"},
+                paths=[".woof/epics/E7/EPIC.md"],
                 next_node="breakdown_planning",
                 stage=2,
             ),
@@ -263,10 +263,7 @@ def _base_planning_output(
         (
             _base_planning_output(
                 "breakdown_planning",
-                {
-                    "plan_path": ".woof/epics/E7/plan.json",
-                    "plan_markdown_path": ".woof/epics/E7/PLAN.md",
-                },
+                paths=[".woof/epics/E7/plan.json", ".woof/epics/E7/PLAN.md"],
                 next_node="plan_critique",
                 stage=3,
             ),
@@ -275,11 +272,7 @@ def _base_planning_output(
         (
             _base_planning_output(
                 "plan_critique",
-                {
-                    "critique_path": ".woof/epics/E7/critique/plan.md",
-                    "severity": "minor",
-                    "finding_count": 1,
-                },
+                paths=[".woof/epics/E7/critique/plan.md"],
                 next_node="plan_gate_open",
                 stage=3,
             ),
@@ -288,27 +281,26 @@ def _base_planning_output(
         (
             _base_planning_output(
                 "plan_gate_open",
-                {
-                    "gate_path": ".woof/epics/E7/gate.md",
-                    "triggered_by": ["plan_review"],
-                },
                 next_node=None,
                 stage=4,
                 status="gate_opened",
                 gate_path=".woof/epics/E7/gate.md",
+                paths=[
+                    ".woof/epics/E7/plan.json",
+                    ".woof/epics/E7/PLAN.md",
+                    ".woof/epics/E7/critique/plan.md",
+                    ".woof/epics/E7/gate.md",
+                ],
+                triggered_by=["plan_review"],
             ),
             "planning-node-output",
         ),
         (
             _base_planning_output(
                 "plan_gate_resolve",
-                {
-                    "decision": "approve",
-                    "event_path": ".woof/epics/E7/epic.jsonl",
-                    "gate_deleted": True,
-                },
                 next_node=None,
                 stage=4,
+                paths=[".woof/epics/E7/epic.jsonl"],
             ),
             "planning-node-output",
         ),

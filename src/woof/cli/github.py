@@ -75,6 +75,10 @@ WOOF_SENTINEL = (
 _HEADING_RE = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
 _STRUCTURED_HEADING_RE = re.compile(r"^##\s+Observable Outcomes\s*$", re.MULTILINE)
 _OUTCOME_RE = re.compile(r"^- \*\*(O[1-9]\d*)\*\*\s+(?:\u2014|-)\s+(.+?)\s*$")
+_OPEN_QUESTION_RE = re.compile(
+    r"^- \*\*(OQ[1-9]\d*)\*\*\s+(?:\u2014|-)\s+(.+?)"
+    r"(?:\s+\(Deferred:\s+(.+?)\))?\s*$"
+)
 _VERIFICATION_RE = re.compile(r"^\s+- Verification:\s+(.+?)\s*$")
 _DEPRECATED_OUTCOME_RE = re.compile(r"\s+_\(deprecated(?:\s+\u2192\s+(O[1-9]\d*))?\)_$")
 _DEPRECATED_CD_RE = re.compile(r"\s+_\(deprecated(?:\s+\u2192\s+(CD[1-9]\d*))?\)_$")
@@ -236,7 +240,7 @@ def render_epic_issue_body(
     if open_questions:
         out.append("## Open Questions\n\n")
         for question in open_questions:
-            out.append(f"- {_single_line(question)}\n")
+            out.append(f"- {_open_question_line(question)}\n")
         out.append("\n")
 
     if plan is not None:
@@ -906,7 +910,7 @@ def epic_markdown_from_issue(*, epic_id: int, title: str, body: str) -> str | No
             sections["Acceptance Criteria"], label="Acceptance Criteria", require_items=True
         ),
     }
-    open_questions = _parse_bullets(sections.get("Open Questions", ""), label="Open Questions")
+    open_questions = _parse_open_questions(sections.get("Open Questions", ""))
     if open_questions:
         front["open_questions"] = open_questions
 
@@ -1103,6 +1107,18 @@ def _contract_ref(decision: dict[str, Any]) -> str:
     return ""
 
 
+def _open_question_line(question: object) -> str:
+    if not isinstance(question, dict):
+        return _single_line(str(question))
+    question_id = str(question.get("id", "")).strip()
+    text = _single_line(str(question.get("question", "")))
+    reason = _single_line(str(question.get("deferral_reason", "")))
+    line = f"**{question_id}** — {text}"
+    if reason:
+        line += f" (Deferred: {reason})"
+    return line
+
+
 def _read_last_sync(path: Path) -> dict[str, Any] | None:
     if not path.is_file():
         return None
@@ -1137,6 +1153,28 @@ def _parse_bullets(markdown: str, *, label: str, require_items: bool = False) ->
     if require_items and not items:
         raise GithubSyncError(f"{label} has no parseable bullet items")
     return items
+
+
+def _parse_open_questions(markdown: str) -> list[dict[str, str]]:
+    questions: list[dict[str, str]] = []
+    for raw in markdown.splitlines():
+        line = raw.strip()
+        if not line.startswith("- "):
+            continue
+        match = _OPEN_QUESTION_RE.match(line)
+        if match:
+            question_id, question, deferral_reason = match.groups()
+        else:
+            question_id = f"OQ{len(questions) + 1}"
+            question = line[2:].strip()
+            deferral_reason = "carried forward from GitHub issue"
+        item = {
+            "id": question_id,
+            "question": _single_line(question),
+            "deferral_reason": _single_line(deferral_reason or "carried forward from GitHub issue"),
+        }
+        questions.append(item)
+    return questions
 
 
 def _append_jsonl(path: Path, event: dict[str, Any]) -> None:

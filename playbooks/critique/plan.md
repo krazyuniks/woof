@@ -41,8 +41,8 @@ Evaluate the plan along these axes:
 
 1. **Outcome coverage.** Does every `observable_outcome.id` appear in ≥1 story's `satisfies[]`? An unreferenced outcome is a `blocker`.
 2. **Decomposition quality.** Are stories right-sized (~30–40k tokens of agent work)? Catch over-decomposition (fragments that have no standalone value) AND under-decomposition (catch-all stories bundling unrelated outcomes). Either is `minor` unless an over-stuffed story would obviously not commit cleanly — that is a `blocker`.
-3. **Scope hygiene.** Do `paths[]` overlap between stories? Overlap is a `blocker` because Stage 5 Check 5 cannot disambiguate ownership.
-4. **Dependency correctness.** Is `depends_on[]` topologically consistent? Are there cycles? Cycles are `blocker`. A missing edge (story B calls into a surface story A creates, but B does not depend on A) is a `minor`.
+3. **Scope hygiene.** Do `paths[]` overlap between stories beyond intentional shared files already justified by the plan? Duplicate pathspecs are blocked deterministically before this critique; unresolved broader ownership ambiguity is a `blocker`.
+4. **Dependency correctness.** Is `depends_on[]` semantically complete? The graph has already blocked cycles and non-topological ordering. A missing edge (story B calls into a surface story A creates, but B does not depend on A) is a `minor`.
 5. **Contract-decision implementation completeness.** Is every `contract_decision.id` referenced exactly once via `implements_contract_decisions[]`? Double-booking or omission is `blocker`.
 6. **Missed Class-2 (architectural) concerns.** Will the plan, if executed as written, breach BC isolation, the import-linter contracts, the lazy-loading rules, or any other invariant declared in CLAUDE.md / AGENTS.md? `blocker` if so.
 

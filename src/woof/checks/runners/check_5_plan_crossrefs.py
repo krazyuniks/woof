@@ -37,7 +37,7 @@ def check_5_plan_crossrefs_runner(ctx: CheckContext) -> CheckOutcome:
             failures.append(f"plan.json schema invalid: {output}")
 
     if plan is not None and epic is not None:
-        failures.extend(_crossref_failures(plan, epic, ctx.story_id))
+        failures.extend(stage5_plan_contract_failures(plan, epic, ctx.story_id))
 
     if failures:
         return CheckOutcome(
@@ -144,7 +144,27 @@ def _validate_plan_schema(plan_path: Path, plan: dict[str, Any]) -> tuple[bool, 
     return False, output or f"ajv exited {proc.returncode}"
 
 
-def _crossref_failures(plan: dict[str, Any], epic: dict[str, Any], story_id: str) -> list[str]:
+def stage3_plan_contract_failures(plan: dict[str, Any], epic: dict[str, Any]) -> list[str]:
+    """Return plan invariant failures that must be fixed before the plan gate."""
+
+    return _crossref_failures(plan, epic, current_story_id=None, stage=3)
+
+
+def stage5_plan_contract_failures(
+    plan: dict[str, Any], epic: dict[str, Any], story_id: str
+) -> list[str]:
+    """Return plan invariant failures checked during Stage 5 verification."""
+
+    return _crossref_failures(plan, epic, current_story_id=story_id, stage=5)
+
+
+def _crossref_failures(
+    plan: dict[str, Any],
+    epic: dict[str, Any],
+    *,
+    current_story_id: str | None,
+    stage: int,
+) -> list[str]:
     failures: list[str] = []
     stories = _object_items(plan.get("stories"))
     outcomes = _object_items(epic.get("observable_outcomes"))
@@ -238,7 +258,14 @@ def _crossref_failures(plan: dict[str, Any], epic: dict[str, Any], story_id: str
             )
 
     failures.extend(_cycle_failures(stories, story_id_set))
-    failures.extend(_status_failures(stories, story_id, story_id_set))
+    failures.extend(_topological_order_failures(stories, story_id_set))
+    failures.extend(_path_scope_failures(stories))
+    if stage == 3:
+        failures.extend(_stage3_status_failures(stories))
+    else:
+        if current_story_id is None:
+            raise ValueError("current_story_id is required for Stage-5 plan validation")
+        failures.extend(_stage5_status_failures(stories, current_story_id, story_id_set))
     return failures
 
 
@@ -300,7 +327,56 @@ def _cycle_failures(stories: list[dict[str, Any]], story_id_set: set[str]) -> li
     return [f"dependency cycle detected: {' -> '.join(cycle)}" for cycle in sorted(cycles)]
 
 
-def _status_failures(
+def _topological_order_failures(stories: list[dict[str, Any]], story_id_set: set[str]) -> list[str]:
+    story_order = {
+        story["id"]: index
+        for index, story in enumerate(stories)
+        if isinstance(story.get("id"), str)
+    }
+    failures: list[str] = []
+    for story in stories:
+        sid = story.get("id")
+        if not isinstance(sid, str):
+            continue
+        for dep_id in _string_list(story.get("depends_on")):
+            if dep_id in story_id_set and story_order[dep_id] > story_order[sid]:
+                failures.append(
+                    f"{sid}: depends_on {dep_id} appears after dependent story; "
+                    "stories must be topologically sorted"
+                )
+    return failures
+
+
+def _path_scope_failures(stories: list[dict[str, Any]]) -> list[str]:
+    owners_by_pathspec: dict[str, list[str]] = defaultdict(list)
+    for story in stories:
+        sid = story.get("id")
+        if not isinstance(sid, str):
+            continue
+        for pathspec in _string_list(story.get("paths")):
+            owners_by_pathspec[pathspec].append(sid)
+    return [
+        f"pathspec {pathspec!r} appears in multiple stories: {owners}"
+        for pathspec, owners in sorted(owners_by_pathspec.items())
+        if len(owners) > 1
+    ]
+
+
+def _stage3_status_failures(stories: list[dict[str, Any]]) -> list[str]:
+    failures: list[str] = []
+    for story in stories:
+        sid = story.get("id")
+        if not isinstance(sid, str):
+            continue
+        status = story.get("status")
+        if status != "pending":
+            failures.append(
+                f"{sid}: Stage-3 plans must enter the plan gate with status=pending, got {status}"
+            )
+    return failures
+
+
+def _stage5_status_failures(
     stories: list[dict[str, Any]], current_story_id: str, story_id_set: set[str]
 ) -> list[str]:
     failures: list[str] = []

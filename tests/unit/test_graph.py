@@ -91,8 +91,22 @@ def _write_spark(root: Path, epic_id: int = 1) -> Path:
 def _write_discovery_synthesis(directory: Path) -> None:
     synthesis = directory / "discovery" / "synthesis"
     synthesis.mkdir(parents=True, exist_ok=True)
-    for name in ("CONCEPT.md", "PRINCIPLES.md", "ARCHITECTURE.md", "OPEN_QUESTIONS.md"):
-        (synthesis / name).write_text(f"# {name}\n\nFilled.\n")
+    (synthesis / "CONCEPT.md").write_text(
+        "# Concept\n\n## Problem Framing\n\nThe current workflow needs a useful thing.\n"
+    )
+    (synthesis / "PRINCIPLES.md").write_text("# Principles\n\nFilled.\n")
+    (synthesis / "ARCHITECTURE.md").write_text("# Architecture\n\nFilled.\n")
+    (synthesis / "OPEN_QUESTIONS.md").write_text("# Open Questions\n\nNo open questions.\n")
+
+
+def _write_discovery_synthesis_with_open_question(directory: Path) -> None:
+    _write_discovery_synthesis(directory)
+    synthesis = directory / "discovery" / "synthesis"
+    (synthesis / "OPEN_QUESTIONS.md").write_text(
+        "# Open Questions\n\n"
+        "## OQ1 - Which rollout path should be used?\n\n"
+        "**Decision needed by:** Definition must decide once the user-visible surface is known.\n"
+    )
 
 
 def _run_woof(
@@ -158,6 +172,27 @@ observable_outcomes:
 contract_decisions: []
 acceptance_criteria:
   - Outcome verified.
+---
+Test epic intent.
+"""
+    )
+
+
+def _write_epic_with_resolved_open_question(directory: Path, epic_id: int) -> None:
+    directory.joinpath("EPIC.md").write_text(
+        f"""---
+epic_id: {epic_id}
+title: Test epic
+observable_outcomes:
+  - id: O1
+    statement: First outcome.
+    verification: automated
+contract_decisions: []
+acceptance_criteria:
+  - Outcome verified.
+resolved_open_questions:
+  - id: OQ1
+    resolution: Use the smallest release path.
 ---
 Test epic intent.
 """
@@ -657,6 +692,49 @@ def test_discovery_synthesis_node_validates_existing_outputs_without_dispatch(
     assert output.next_node == NodeType.EPIC_DEFINITION
 
 
+def test_discovery_synthesis_node_rejects_missing_problem_framing(tmp_path: Path) -> None:
+    directory = _write_spark(tmp_path, 230)
+    _write_discovery_synthesis(directory)
+    (directory / "discovery" / "synthesis" / "CONCEPT.md").write_text(
+        "# Concept\n\nUseful but missing the required section.\n"
+    )
+
+    output = nodes.discovery_synthesis_node(
+        NodeInput(
+            node_type=NodeType.DISCOVERY_SYNTHESIS,
+            epic_id=230,
+            repo_root=tmp_path,
+        )
+    )
+
+    assert output.status == NodeStatus.HALTED
+    assert output.triggered_by == ["schema_validation_failed"]
+    assert "Problem Framing" in output.message
+
+
+def test_discovery_synthesis_node_rejects_open_question_without_deferral_reason(
+    tmp_path: Path,
+) -> None:
+    directory = _write_spark(tmp_path, 231)
+    _write_discovery_synthesis(directory)
+    (directory / "discovery" / "synthesis" / "OPEN_QUESTIONS.md").write_text(
+        "# Open Questions\n\n## OQ1 - Which rollout path should be used?\n\n"
+    )
+
+    output = nodes.discovery_synthesis_node(
+        NodeInput(
+            node_type=NodeType.DISCOVERY_SYNTHESIS,
+            epic_id=231,
+            repo_root=tmp_path,
+        )
+    )
+
+    assert output.status == NodeStatus.HALTED
+    assert output.triggered_by == ["schema_validation_failed"]
+    assert "OQ1" in output.message
+    assert "Deferral reason" in output.message
+
+
 def test_epic_definition_node_dispatches_primary_validates_epic_and_continues(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -714,6 +792,60 @@ def test_epic_definition_node_dispatches_primary_validates_epic_and_continues(
     events = [json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines()]
     assert events[-1]["event"] == "definition_closed"
     _assert_node_output_schema(tmp_path, json.loads(output.model_dump_json()))
+
+
+def test_epic_definition_node_rechecks_existing_discovery_contract(tmp_path: Path) -> None:
+    directory = _write_spark(tmp_path, 239)
+    _write_discovery_synthesis(directory)
+    (directory / "discovery" / "synthesis" / "CONCEPT.md").write_text("# Concept\n")
+
+    output = nodes.epic_definition_node(
+        NodeInput(
+            node_type=NodeType.EPIC_DEFINITION,
+            epic_id=239,
+            repo_root=tmp_path,
+        )
+    )
+
+    assert output.status == NodeStatus.HALTED
+    assert output.validation_summary and output.validation_summary.stage == 1
+    assert "Problem Framing" in output.message
+
+
+def test_epic_definition_node_requires_open_question_resolution(tmp_path: Path) -> None:
+    directory = _write_spark(tmp_path, 240)
+    _write_discovery_synthesis_with_open_question(directory)
+    _write_minimal_epic(directory, 240)
+
+    output = nodes.epic_definition_node(
+        NodeInput(
+            node_type=NodeType.EPIC_DEFINITION,
+            epic_id=240,
+            repo_root=tmp_path,
+        )
+    )
+
+    assert output.status == NodeStatus.HALTED
+    assert output.triggered_by == ["schema_validation_failed"]
+    assert "OQ1" in output.message
+    assert "resolve or carry forward" in output.message
+
+
+def test_epic_definition_node_accepts_resolved_open_question(tmp_path: Path) -> None:
+    directory = _write_spark(tmp_path, 241)
+    _write_discovery_synthesis_with_open_question(directory)
+    _write_epic_with_resolved_open_question(directory, 241)
+
+    output = nodes.epic_definition_node(
+        NodeInput(
+            node_type=NodeType.EPIC_DEFINITION,
+            epic_id=241,
+            repo_root=tmp_path,
+        )
+    )
+
+    assert output.status == NodeStatus.COMPLETED
+    assert output.next_node == NodeType.BREAKDOWN_PLANNING
 
 
 def test_epic_definition_node_halts_on_invalid_existing_epic(tmp_path: Path) -> None:
@@ -789,6 +921,45 @@ def test_breakdown_planning_node_dispatches_primary_validates_plan_and_renders_m
     events = [json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines()]
     assert events[-1]["event"] == "breakdown_planned"
     _assert_node_output_schema(tmp_path, json.loads(output.model_dump_json()))
+
+
+def test_breakdown_planning_node_rejects_crossref_invalid_plan_before_critique(
+    tmp_path: Path, monkeypatch
+) -> None:
+    directory = _write_spark(tmp_path, 260)
+    _write_minimal_epic(directory, 260)
+    captured: dict[str, Any] = {}
+
+    def fake_dispatch(
+        repo_root: Path,
+        role: str,
+        epic_id: int,
+        story_id: str | None,
+        prompt: str,
+        artefacts_loaded: list[str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        captured["role"] = role
+        _write_stage3_plan(directory, epic_id)
+        plan = json.loads((directory / "plan.json").read_text())
+        plan["stories"][0]["satisfies"] = ["O999"]
+        (directory / "plan.json").write_text(json.dumps(plan))
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setattr(nodes, "_run_dispatch", fake_dispatch)
+
+    output = nodes.breakdown_planning_node(
+        NodeInput(
+            node_type=NodeType.BREAKDOWN_PLANNING,
+            epic_id=260,
+            repo_root=tmp_path,
+        )
+    )
+
+    assert captured["role"] == "primary"
+    assert output.status == NodeStatus.HALTED
+    assert output.triggered_by == ["schema_validation_failed"]
+    assert "satisfies unknown outcome O999" in output.message
+    assert not (directory / "PLAN.md").exists()
 
 
 def test_plan_critique_node_dispatches_reviewer_validates_critique_and_halts(

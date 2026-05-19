@@ -253,16 +253,16 @@ Each stage has a typed interface — defined inputs, defined outputs, invariants
 
 | Stage | Input | Output | Boundary invariants |
 |---|---|---|---|
-| 1 Discovery | `spark.md`, tool-level `PHILOSOPHY.md`, `PRINCIPLES.md` | `discovery/synthesis/{CONCEPT,PRINCIPLES,ARCHITECTURE,OPEN_QUESTIONS}.md` | Non-empty problem framing; every `OPEN_QUESTION` has ID + deferral reason |
-| 2 Definition | `discovery/synthesis/*` | `EPIC.md` with front-matter `observable_outcomes[]`, `contract_decisions[]`, `acceptance_criteria[]` | Every `OPEN_QUESTION` resolved or explicitly carried forward; every `contract_decision` has `epic_contract` + `resolution ∈ {epic, bridge}` (no `repo`) — E146 invariant |
-| 3 Breakdown | `EPIC.md` | `plan.json`, `PLAN.md`, `critique/plan.md` | Every `observable_outcome.id` referenced by ≥1 story; every `contract_decision.id` referenced; no story-scope overlap; dependency order topologically sorted |
+| 1 Discovery | `spark.md`, tool-level `PHILOSOPHY.md`, `PRINCIPLES.md` | `discovery/synthesis/{CONCEPT,PRINCIPLES,ARCHITECTURE,OPEN_QUESTIONS}.md` | `CONCEPT.md` has non-empty `## Problem Framing`; every active `OPEN_QUESTIONS.md` entry uses an `OQ<n>` heading plus deferral reason |
+| 2 Definition | `discovery/synthesis/*` | `EPIC.md` with front-matter `observable_outcomes[]`, `contract_decisions[]`, `acceptance_criteria[]` | Every active discovery `OQ<n>` is represented in `resolved_open_questions[]` or carried in `open_questions[]`; every `contract_decision` references a native contract artefact |
+| 3 Breakdown | `EPIC.md` | `plan.json`, `PLAN.md`, `critique/plan.md` | Every `observable_outcome.id` referenced by ≥1 story; every `contract_decision.id` referenced; duplicate pathspec overlap rejected; dependency order topologically sorted; all story statuses `pending` before the plan gate |
 | 4 Plan gate | `gate.md` + Stage-3 artefacts | Revised artefacts + `gate.md` deleted, OR session terminated | Resolution action recorded in `epic.jsonl` |
 | 5 Story execution | `plan.json` + `story_id` | git commit (code + `.woof` state in one transaction) + updated `plan.json` + `critique/story-S<k>.md` + `dispositions/story-S<k>.md`, OR `gate.md` | 9 deterministic checks (see "Stage 5 deterministic gate checks" below); diff ⊆ `story.paths[]` |
 | 6 Story gate | `gate.md` + story artefacts | Revision + `gate.md` deleted, OR session terminated | Same as Stage 4 |
 
 Invariants are **mechanically checkable, fail loud, no agent judgement**. Validation failure produces a `gate.md` rather than a silent proceed. Woof-owned structural contract artefacts are JSON Schema. Runtime models such as Pydantic or zod may mirror those artefacts in implementation code, but they do not become a second source of truth for Woof-owned schemas.
 
-Planning graph node boundaries for Stages 1-4 are schema-governed by `schemas/planning-node-input.schema.json` and `schemas/planning-node-output.schema.json`. Those contracts cover discovery synthesis, epic definition, breakdown planning, plan critique, plan gate opening, and plan gate resolution; artefact payloads remain validated by their dedicated schemas such as `epic.schema.json`, `plan.schema.json`, `critique.schema.json`, and `gate.schema.json`.
+Planning graph node inputs for Stages 1-4 are schema-governed by `schemas/planning-node-input.schema.json`. Planning node outputs use the same runtime output shape as `schemas/node-output.schema.json`, with `schemas/planning-node-output.schema.json` retained as the planning-node-restricted view of that contract. Artefact payloads remain validated by their dedicated schemas such as `epic.schema.json`, `plan.schema.json`, `critique.schema.json`, and `gate.schema.json`.
 
 ### Observable Outcomes contract
 

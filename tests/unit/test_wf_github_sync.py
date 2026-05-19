@@ -189,6 +189,13 @@ def test_wf_cold_start_initialises_epic_from_structured_issue(tmp_path: Path) ->
         "All outcomes verified by tests in diff.",
         "Contract decisions validate via native tooling.",
     ]
+    assert front["open_questions"] == [
+        {
+            "id": "OQ1",
+            "question": "Should drafts be persisted server-side?",
+            "deferral_reason": "carried forward from GitHub issue",
+        }
+    ]
     last_sync = json.loads((epic_dir / ".last-sync").read_text())
     assert last_sync["issue_number"] == 42
     assert last_sync["updated_at"] == "2026-01-02T12:34:56Z"

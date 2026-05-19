@@ -79,14 +79,16 @@ Consumer repositories keep project-specific declarations under `.woof/*.toml` an
 
 - `bin/woof` - source-checkout executable wrapper.
 - `src/woof/cli/` - argparse-driven command implementations.
-- `src/woof/graph/` - deterministic graph, typed node contracts, transition table, and transaction manifest verification.
-- `src/woof/checks/` - Stage-5 checker registry, runners, and `Check` model.
+- `src/woof/graph/` - deterministic graph, JSON Schema-backed Pydantic boundary models, transition table, and transaction manifest verification.
+- `src/woof/checks/` - Stage-5 checker registry, runners, and internal check context/outcome records.
 - `src/woof/gate/` - gate-authoring helpers.
 - `src/woof/lib/` - shared Python helpers.
 - `schemas/` - JSON schemas for runtime artefacts, graph node I/O, and transaction manifests.
 - `playbooks/` - prompt templates loaded into dispatched LLM contexts.
 - `languages/` - per-language install, lint, and test registry files.
 - `.claude/commands/wf*.md` - thin wrappers and producer-node prompts; orchestration lives in Python.
+
+Data-modelling rule: Pydantic is used at schema and serialisation boundaries; dataclasses are acceptable for trusted in-process records that do not define external artefact shape. The detailed rule lives in [`docs/architecture.md`](docs/architecture.md#contract-implementation-model).
 
 ## License
 

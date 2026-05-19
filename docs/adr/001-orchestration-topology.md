@@ -29,7 +29,7 @@ Concretely:
 
 1. **The graph is owned by Python code.** Stages, transitions, and gate conditions are encoded as a state machine in the woof codebase, not as prose in skill bodies.
 
-2. **Nodes are typed.** Each node has a fixed type — `executor_dispatch`, `critique_dispatch`, `verification`, `commit`, `gate_open`, `gate_resolve`, `human_review` — with a Pydantic-defined input contract, output contract, and successor edges. Adding a new node type is a schema + graph edit, not a prose edit.
+2. **Nodes are typed.** Each node has a fixed type drawn from the graph's `NodeType` enum, with JSON Schema-governed input and output contracts, Pydantic runtime models for Python serialisation, and explicit successor edges. Adding a new node type is a schema + graph edit, not a prose edit.
 
 3. **LLM nodes are pure producers.** An LLM node receives a structured input (validated), runs inference, and produces a structured output (validated against an output schema). It never invokes another node, never dispatches a subprocess, never selects which step happens next, never writes outside its declared output.
 

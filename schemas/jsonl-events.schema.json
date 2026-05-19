@@ -190,8 +190,13 @@
     },
     "artefacts_loaded": {
       "type": "array",
-      "items": { "type": "string", "minLength": 1 },
-      "description": "Paths of artefacts read into the prompt. Useful for token-budget post-mortems."
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^(?!/)(?!~)(?!.*(^|/)\\.\\.(/|$)).+"
+      },
+      "uniqueItems": true,
+      "description": "Repo-relative artefact references explicitly loaded or embedded into the dispatched prompt. Useful for audit reconstruction and token-budget post-mortems."
     }
   },
   "allOf": [

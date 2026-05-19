@@ -226,6 +226,14 @@ This phase removes the final bootstrap-era tolerance path now that every Stage-5
 |---|---|---|---|---|---|
 | CHK-010 | Completed | Fail closed when a Stage-5 check runner is not implemented. | `woof check stage-5 --format json` emits a schema-valid blocker check entry and exits 1 when any registered runner raises `NotImplementedError`; the runner is included in `triggered_by`; the old bootstrap placeholder `ok=true` path is removed; docs state that unimplemented registry slots are blocker failures. | Focused Stage-5 check subcommand tests passed: 6 tests. `git diff --check` passed. `just check` passed: Ruff lint, Ruff format check, and 233 tests. | `fix(checks): fail closed on unimplemented runners` |
 
+### Phase 12: Dispatch Audit Completeness
+
+This phase tightens dispatch audit reconstruction after transcript bundling by making the durable event stream record the graph-owned artefacts loaded into each prompt.
+
+| ID | Status | Work item | Observable outcomes | Validation | Commit |
+|---|---|---|---|---|---|
+| AUD-002 | Completed | Record prompt artefact references in dispatch events. | `woof dispatch` accepts explicit repo-relative artefact references, records them as `artefacts_loaded[]` on spawned and returned dispatch events plus adapter meta, rejects absolute or parent-traversal references, and graph dispatch call sites pass the stage/story artefacts they embed into prompts. | Focused dispatch and graph tests passed: 60 tests. `git diff --check` passed. `just check` passed: Ruff lint, Ruff format check, and 238 tests. | `feat(audit): record dispatch artefacts` |
+
 ## Next Continuation Prompt
 
 ```text
@@ -251,5 +259,5 @@ Workflow:
 - In the final response, paste this complete continuation prompt block so it can be copied into a new session.
 
 Start with:
-Workstreams R, F, G, Phase 8 `PRD-001`, Phase 9 `AUD-001`, Phase 10 `CIM-001`, and Phase 11 `CHK-010` are complete. No `Ready` items remain in this plan. If continuing implementation, add the next scoped work item to `docs/implementation-plan.md` before editing, then start that item.
+Workstreams R, F, G, Phase 8 `PRD-001`, Phase 9 `AUD-001`, Phase 10 `CIM-001`, Phase 11 `CHK-010`, and Phase 12 `AUD-002` are complete. No `Ready` items remain in this plan. If continuing implementation, add the next scoped work item to `docs/implementation-plan.md` before editing, then start that item.
 ```

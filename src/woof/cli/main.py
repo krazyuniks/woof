@@ -549,6 +549,39 @@ def claude_transcript_path(repo_root: Path, session_id: str) -> str:
     return f"~/.claude/projects/{claude_project_slug(repo_root)}/{session_id}.jsonl"
 
 
+def normalise_artefacts_loaded(repo_root: Path, values: list[str] | None) -> list[str]:
+    """Validate and canonicalise repo-relative artefact references for dispatch audit."""
+    artefacts: list[str] = []
+    seen: set[str] = set()
+    root = repo_root.resolve()
+    for raw in values or []:
+        value = str(raw).strip()
+        path = Path(value)
+        if (
+            not value
+            or value.startswith("~")
+            or path.is_absolute()
+            or any(part == ".." for part in path.parts)
+        ):
+            raise DispatchConfigError(
+                f"artefact reference {raw!r} is not repo-relative; "
+                "use a file path below the project root"
+            )
+        resolved = (root / path).resolve()
+        try:
+            relpath = resolved.relative_to(root).as_posix()
+        except ValueError as exc:
+            raise DispatchConfigError(
+                f"artefact reference {raw!r} resolves outside the project root"
+            ) from exc
+        if not resolved.is_file():
+            raise DispatchConfigError(f"artefact reference {raw!r} does not exist as a file")
+        if relpath not in seen:
+            artefacts.append(relpath)
+            seen.add(relpath)
+    return artefacts
+
+
 def audit_argv(wrapped_argv: list[str]) -> list[str]:
     """Return argv suitable for durable audit events without duplicating the prompt."""
     return [*wrapped_argv[:-1], "<prompt>"]
@@ -604,6 +637,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         effort = _role_effort(route.adapter, route.config)
         mcp_names = _mcp_names(route.config)
         argv = build_argv(route.adapter, route.config, prompt, mcp_servers=mcp_servers)
+        artefacts_loaded = normalise_artefacts_loaded(repo_root, args.artefacts_loaded)
     except DispatchConfigError as exc:
         sys.stderr.write(f"woof: {exc}\n")
         return 2
@@ -623,6 +657,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
             "mcp": mcp_names,
             "flags": route.config.get("flags") or [],
             "timeout_min": timeout_min,
+            "artefacts_loaded": artefacts_loaded,
         }
         if route.adapter == "claude":
             payload["mcp_config"] = _claude_mcp_config(route.config, mcp_servers)
@@ -657,6 +692,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         "pid": proc.pid,
         "mcp": mcp_names,
         "argv": event_argv,
+        "artefacts_loaded": artefacts_loaded,
     }
     if route.config_role != args.role:
         spawned_event["config_role"] = route.config_role
@@ -727,6 +763,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         "duration_ms": duration_ms,
         "mcp": mcp_names,
         "argv": event_argv,
+        "artefacts_loaded": artefacts_loaded,
     }
     if route.config_role != args.role:
         returned["config_role"] = route.config_role
@@ -757,6 +794,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         "mcp": mcp_names,
         "flags": route.config.get("flags") or [],
         "argv": event_argv,
+        "artefacts_loaded": artefacts_loaded,
         "pid": proc.pid,
         "started_at": iso_utc(started_at),
         "ended_at": iso_utc(ended_at),
@@ -954,6 +992,14 @@ def main() -> int:
     dispatch.add_argument(
         "--prompt-file",
         help="path to a file holding the prompt; if omitted, prompt is read from stdin",
+    )
+    dispatch.add_argument(
+        "--artefact",
+        "--artefact-loaded",
+        dest="artefacts_loaded",
+        action="append",
+        default=[],
+        help="repo-relative file path explicitly referenced by the prompt; repeatable",
     )
     dispatch.add_argument(
         "--dry-run",

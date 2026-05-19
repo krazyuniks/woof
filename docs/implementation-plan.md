@@ -250,6 +250,14 @@ This phase tightens the always-online GitHub boundary after the graph, role rout
 |---|---|---|---|---|---|
 | WFR-001 | Completed | Enforce GitHub runtime reachability before `woof wf` graph or gate work. | Every `woof wf` invocation loads `.woof/prerequisites.toml`, verifies `gh api /rate_limit` succeeds before local graph or gate mutation, fails loud on missing auth/unreachable API or exhausted core quota, and keeps cold-start/new/sync behaviour unchanged after the guard passes. | Focused `wf` GitHub sync, graph CLI, render-epic, and preflight tests passed: 64 tests. `git diff --check` passed. `just check` passed: Ruff lint, Ruff format check, and 240 tests. | `fix(wf): enforce github runtime reachability` |
 
+### Phase 15: Event Schema Contract Tightening
+
+This phase aligns the durable JSONL event schema with events already emitted by the graph and GitHub sync code. Items must preserve existing audit logs while ensuring newly emitted workflow events validate against `jsonl-events.schema.json`.
+
+| ID | Status | Work item | Observable outcomes | Validation | Commit |
+|---|---|---|---|---|---|
+| JEV-001 | Completed | Align JSONL event schema with graph-emitted workflow events. | `jsonl-events.schema.json` accepts `current_epic_selected`, `breakdown_planned`, and `transaction_manifest_verified`; focused validation fixtures cover the emitted event vocabulary used by `woof wf new`, Stage 3 breakdown planning, and commit transaction verification. | Focused JSONL validation tests passed: 3 tests. `git diff --check` passed. `just check` passed: Ruff lint, Ruff format check, and 240 tests. | `fix(schema): cover emitted jsonl events` |
+
 ## Next Continuation Prompt
 
 ```text
@@ -275,5 +283,5 @@ Workflow:
 - In the final response, paste this complete continuation prompt block so it can be copied into a new session.
 
 Start with:
-Workstreams R, F, G, Phase 8 `PRD-001`, Phase 9 `AUD-001`, Phase 10 `CIM-001`, Phase 11 `CHK-010`, Phase 12 `AUD-002`, Phase 13 `DPA-001`, and Phase 14 `WFR-001` are complete. No `Ready` items remain in this plan. If continuing implementation, add the next scoped work item to `docs/implementation-plan.md` before editing, then start that item.
+Workstreams R, F, G, Phase 8 `PRD-001`, Phase 9 `AUD-001`, Phase 10 `CIM-001`, Phase 11 `CHK-010`, Phase 12 `AUD-002`, Phase 13 `DPA-001`, Phase 14 `WFR-001`, and Phase 15 `JEV-001` are complete. No `Ready` items remain in this plan. If continuing implementation, add the next scoped work item to `docs/implementation-plan.md` before editing, then start that item.
 ```

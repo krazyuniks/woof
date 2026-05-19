@@ -508,12 +508,26 @@ def test_validate_jsonl_per_line(tmp_path: Path, run_woof) -> None:
     path = tmp_path / "epic.jsonl"
     lines = [
         {"event": "spark_created", "at": "2026-04-26T10:00:00Z", "epic_id": 1},
+        {"event": "current_epic_selected", "at": "2026-04-26T10:00:01Z", "epic_id": 1},
         {"event": "definition_closed", "at": "2026-04-26T10:30:00Z", "epic_id": 1},
+        {
+            "event": "breakdown_planned",
+            "at": "2026-04-26T11:00:00Z",
+            "epic_id": 1,
+            "paths": [".woof/epics/E1/plan.json", ".woof/epics/E1/PLAN.md"],
+        },
+        {
+            "event": "transaction_manifest_verified",
+            "at": "2026-04-26T12:00:00Z",
+            "epic_id": 1,
+            "story_id": "S1",
+            "manifest": {"expected_paths": [".woof/epics/E1/plan.json"]},
+        },
     ]
     path.write_text("\n".join(json.dumps(line) for line in lines) + "\n")
     proc = run_woof("validate", str(path))
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert "valid (jsonl-events, 2 line(s))" in proc.stdout
+    assert "valid (jsonl-events, 5 line(s))" in proc.stdout
 
 
 def test_validate_jsonl_bad_line_fails(tmp_path: Path, run_woof) -> None:

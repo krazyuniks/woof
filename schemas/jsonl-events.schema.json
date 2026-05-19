@@ -11,11 +11,13 @@
       "type": "string",
       "enum": [
         "spark_created",
+        "current_epic_selected",
         "discovery_started",
         "discovery_synthesised",
         "definition_started",
         "definition_closed",
         "plan_generated",
+        "breakdown_planned",
         "plan_critiqued",
         "plan_gate_opened",
         "plan_gate_resolved",
@@ -33,13 +35,14 @@
         "executor_result_recorded",
         "check_run",
         "story_committed",
+        "transaction_manifest_verified",
         "preflight_run",
         "github_synced",
         "github_sync_conflict",
         "cartography_refreshed",
         "token_usage"
       ],
-      "description": "Event kind. Stage events (epic.jsonl): spark_created, discovery_*, definition_*, plan_*, story_*, *_gate_*, gate_resolved, epic_completed, executor_result_recorded, check_run, story_committed. Dispatch events (dispatch.jsonl): subprocess_*. Operational events (either): preflight_run, github_synced, github_sync_conflict, cartography_refreshed, token_usage."
+      "description": "Event kind. Stage events (epic.jsonl): spark_created, current_epic_selected, discovery_*, definition_*, plan_*, breakdown_planned, story_*, *_gate_*, gate_resolved, epic_completed, executor_result_recorded, check_run, story_committed, transaction_manifest_verified. Dispatch events (dispatch.jsonl): subprocess_*. Operational events (either): preflight_run, github_synced, github_sync_conflict, cartography_refreshed, token_usage."
     },
     "at": {
       "type": "string",
@@ -158,6 +161,16 @@
     "commit_sha": {
       "type": "string",
       "pattern": "^[0-9a-f]{7,40}$"
+    },
+    "manifest": {
+      "type": "object",
+      "description": "Transaction manifest payload recorded after graph-owned manifest verification."
+    },
+    "paths": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true,
+      "description": "Repo-relative files or artefacts associated with the event."
     },
     "gate_type": {
       "type": "string",
@@ -304,6 +317,13 @@
         "required": ["event"]
       },
       "then": { "required": ["story_id", "commit_sha"] }
+    },
+    {
+      "if": {
+        "properties": { "event": { "const": "transaction_manifest_verified" } },
+        "required": ["event"]
+      },
+      "then": { "required": ["story_id", "manifest"] }
     }
   ]
 }

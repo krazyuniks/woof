@@ -218,6 +218,14 @@ This phase records implementation-boundary clarifications discovered after the S
 |---|---|---|---|---|---|
 | CIM-001 | Completed | Clarify the JSON Schema, Pydantic, and dataclass boundary in architecture docs. | README, ADR-001, and architecture docs state that Woof-owned durable artefact contracts are JSON Schema-governed; Pydantic is the Python runtime representation at schema and serialisation boundaries; dataclasses remain acceptable for trusted in-process records such as check outcomes, preflight findings, GitHub sync results, and audit summaries. No graph topology, schema, or runtime behaviour changes. | Representative Pydantic and dataclass source uses inspected. Docs review passed. `git diff --check` passed. `just check` passed: Ruff lint, Ruff format check, and 232 tests. | `docs(architecture): clarify contract model boundaries` |
 
+### Phase 11: Stage-5 Check Strictness
+
+This phase removes the final bootstrap-era tolerance path now that every Stage-5 check runner exists. Items stay narrow and preserve the graph-owned Stage-5 verification contract: missing checker implementation is a blocker finding, not a soft pass.
+
+| ID | Status | Work item | Observable outcomes | Validation | Commit |
+|---|---|---|---|---|---|
+| CHK-010 | Completed | Fail closed when a Stage-5 check runner is not implemented. | `woof check stage-5 --format json` emits a schema-valid blocker check entry and exits 1 when any registered runner raises `NotImplementedError`; the runner is included in `triggered_by`; the old bootstrap placeholder `ok=true` path is removed; docs state that unimplemented registry slots are blocker failures. | Focused Stage-5 check subcommand tests passed: 6 tests. `git diff --check` passed. `just check` passed: Ruff lint, Ruff format check, and 233 tests. | `fix(checks): fail closed on unimplemented runners` |
+
 ## Next Continuation Prompt
 
 ```text
@@ -243,5 +251,5 @@ Workflow:
 - In the final response, paste this complete continuation prompt block so it can be copied into a new session.
 
 Start with:
-Workstreams R, F, G, Phase 8 `PRD-001`, Phase 9 `AUD-001`, and Phase 10 `CIM-001` are complete. No `Ready` items remain in this plan. If continuing implementation, add the next scoped work item to `docs/implementation-plan.md` before editing, then start that item.
+Workstreams R, F, G, Phase 8 `PRD-001`, Phase 9 `AUD-001`, Phase 10 `CIM-001`, and Phase 11 `CHK-010` are complete. No `Ready` items remain in this plan. If continuing implementation, add the next scoped work item to `docs/implementation-plan.md` before editing, then start that item.
 ```

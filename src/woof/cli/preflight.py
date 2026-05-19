@@ -21,15 +21,17 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from woof.cli.main import (
-    SCHEMAS,
+from woof.cli.dispatcher import (
     DispatchConfigError,
     _claude_mcp_config,
     _mcp_names,
     _role_effort,
     build_argv,
-    load_payload,
     resolve_role_route,
+)
+from woof.cli.main import (
+    SCHEMAS,
+    load_payload,
     run_ajv,
 )
 from woof.paths import schema_dir, tool_root

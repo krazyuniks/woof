@@ -60,7 +60,7 @@ ajv = "any"
 ajv-formats = "any"
 
 [github]
-repo = "<owner>/<repo>"
+repo = "<replace>/<replace>"
 """
 
 CACHE_VERSION = 1

@@ -397,7 +397,7 @@ def test_preflight_reports_missing_prerequisites_template(tmp_path: Path, run_wo
 
     assert proc.returncode == 1
     assert "prerequisites.toml" in proc.stdout
-    assert 'repo = "<owner>/<repo>"' in proc.stdout
+    assert 'repo = "<replace>/<replace>"' in proc.stdout
 
 
 def test_preflight_fails_for_missing_declared_command(tmp_path: Path, run_woof) -> None:

@@ -234,6 +234,14 @@ This phase tightens dispatch audit reconstruction after transcript bundling by m
 |---|---|---|---|---|---|
 | AUD-002 | Completed | Record prompt artefact references in dispatch events. | `woof dispatch` accepts explicit repo-relative artefact references, records them as `artefacts_loaded[]` on spawned and returned dispatch events plus adapter meta, rejects absolute or parent-traversal references, and graph dispatch call sites pass the stage/story artefacts they embed into prompts. | Focused dispatch and graph tests passed: 60 tests. `git diff --check` passed. `just check` passed: Ruff lint, Ruff format check, and 238 tests. | `feat(audit): record dispatch artefacts` |
 
+### Phase 13: Dispatch Adapter Modularisation
+
+This phase removes a structural follow-up left by the role-routing work: public adapter command construction is implemented, but the reusable dispatch adapter core still lives inside the monolithic CLI module. Items must preserve ADR-002 portability constraints and remain behaviour-preserving unless the row explicitly states a contract change.
+
+| ID | Status | Work item | Observable outcomes | Validation | Commit |
+|---|---|---|---|---|---|
+| DPA-001 | Completed | Move dispatch adapter core into the dedicated dispatcher module. | `src/woof/cli/dispatcher.py` owns role-route resolution, public `claude` / `codex` argv construction, Claude MCP JSON rendering, token-output parsing, artefact reference normalisation, and dispatch execution helpers; `src/woof/cli/main.py` only wires the CLI command and imports the adapter boundary; preflight imports route helpers from the dispatcher module rather than the monolithic CLI. Runtime command output and audit JSONL shape remain unchanged. | Focused dispatch and preflight tests passed: 37 tests. `git diff --check` passed. `just check` passed: Ruff lint, Ruff format check, and 238 tests. | `refactor(dispatch): extract adapter core` |
+
 ## Next Continuation Prompt
 
 ```text
@@ -259,5 +267,5 @@ Workflow:
 - In the final response, paste this complete continuation prompt block so it can be copied into a new session.
 
 Start with:
-Workstreams R, F, G, Phase 8 `PRD-001`, Phase 9 `AUD-001`, Phase 10 `CIM-001`, Phase 11 `CHK-010`, and Phase 12 `AUD-002` are complete. No `Ready` items remain in this plan. If continuing implementation, add the next scoped work item to `docs/implementation-plan.md` before editing, then start that item.
+Workstreams R, F, G, Phase 8 `PRD-001`, Phase 9 `AUD-001`, Phase 10 `CIM-001`, Phase 11 `CHK-010`, Phase 12 `AUD-002`, and Phase 13 `DPA-001` are complete. No `Ready` items remain in this plan. If continuing implementation, add the next scoped work item to `docs/implementation-plan.md` before editing, then start that item.
 ```

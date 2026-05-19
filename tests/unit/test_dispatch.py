@@ -362,9 +362,9 @@ adapter = "wrong-adapter"
 
 def _import_woof_module():
     """Import the CLI module that owns dispatch token parsing."""
-    from woof.cli import main
+    from woof.cli import dispatcher
 
-    return main
+    return dispatcher
 
 
 def test_parse_claude_output() -> None:

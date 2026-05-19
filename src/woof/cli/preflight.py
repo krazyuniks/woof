@@ -29,6 +29,7 @@ from woof.cli.dispatcher import (
     build_argv,
     resolve_role_route,
 )
+from woof.cli.github import GITHUB_RATE_LIMIT_SAFETY_MARGIN, github_core_remaining
 from woof.cli.main import (
     SCHEMAS,
     load_payload,
@@ -65,7 +66,6 @@ repo = "<owner>/<repo>"
 CACHE_VERSION = 1
 FLOOR_CACHE_TTL = timedelta(hours=24)
 RUNTIME_CACHE_TTL = timedelta(minutes=5)
-GITHUB_RATE_LIMIT_SAFETY_MARGIN = 100
 
 
 @dataclass(frozen=True)
@@ -737,7 +737,7 @@ def _check_github_rate_limit() -> PreflightFinding:
             install=install,
         )
 
-    remaining = _github_core_remaining(output)
+    remaining = github_core_remaining(output)
     if remaining is not None and remaining <= GITHUB_RATE_LIMIT_SAFETY_MARGIN:
         return PreflightFinding(
             id=id_,
@@ -761,16 +761,6 @@ def _check_github_rate_limit() -> PreflightFinding:
         ),
         install=install,
     )
-
-
-def _github_core_remaining(output: str) -> int | None:
-    try:
-        payload = json.loads(output)
-    except json.JSONDecodeError:
-        return None
-    core = (payload.get("resources") or {}).get("core") or {}
-    remaining = core.get("remaining")
-    return remaining if isinstance(remaining, int) else None
 
 
 def _check_language_tools(prereq: dict[str, Any]) -> list[PreflightFinding]:

@@ -21,6 +21,8 @@ from woof.gate.write import write_gate
 from woof.graph.state import Plan
 from woof.paths import schema_dir
 
+GITHUB_RATE_LIMIT_SAFETY_MARGIN = 100
+
 
 class GithubSyncError(RuntimeError):
     """GitHub synchronisation failed and must not be silently ignored."""
@@ -86,6 +88,48 @@ def load_github_repo(repo_root: Path) -> str:
     if not isinstance(repo, str) or not repo:
         raise GithubSyncError(f"{prereq} missing [github].repo")
     return repo
+
+
+def github_core_remaining(output: str) -> int | None:
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError:
+        return None
+    core = (payload.get("resources") or {}).get("core") or {}
+    remaining = core.get("remaining")
+    return remaining if isinstance(remaining, int) else None
+
+
+def assert_github_runtime_reachable(repo_root: Path) -> None:
+    """Fail loud when a workflow invocation cannot reach GitHub."""
+
+    repo = load_github_repo(repo_root)
+    try:
+        proc = subprocess.run(
+            ["gh", "api", "/rate_limit"],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+    except FileNotFoundError as exc:
+        raise GithubSyncError("gh not found on PATH; run `gh auth login`") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise GithubSyncError("gh api /rate_limit timed out; check GitHub connectivity") from exc
+
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout).strip()
+        raise GithubSyncError(
+            f"gh api /rate_limit failed before workflow start for {repo}:\n"
+            f"{detail}\n"
+            "Run `gh auth login` and retry."
+        )
+
+    remaining = github_core_remaining(proc.stdout)
+    if remaining is not None and remaining <= GITHUB_RATE_LIMIT_SAFETY_MARGIN:
+        raise GithubSyncError(
+            f"GitHub API core rate limit remaining {remaining}; "
+            f"requires > {GITHUB_RATE_LIMIT_SAFETY_MARGIN}"
+        )
 
 
 def fetch_issue(repo: str, issue_number: int) -> dict[str, Any]:

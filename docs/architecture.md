@@ -398,6 +398,8 @@ The graph dispatches the primary route to produce `plan.json`, validates it agai
 
 Nine checks, derived from a failure-class taxonomy. Checks 1–8 run after the story's inner sequence completes; Check 9 is the periodic-review valve and runs on a cadence (every-N stories and at end-of-epic). Checks operate against repo HEAD plus staged-but-uncommitted state, not just the diff (a contract surface created by S1 and committed earlier is still present in HEAD when S3 runs). Failures collate into `gate.md.triggered_by[]`.
 
+Registry completeness is part of Stage-5 verification. A registered runner that raises `NotImplementedError` is reported as a `blocker` check result, included in `triggered_by[]`, and causes `woof check stage-5` to exit 1. There is no bootstrap placeholder pass path in graph-owned verification.
+
 **Failure classes:**
 
 | Class | Failure | Detection |

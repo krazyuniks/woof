@@ -10,6 +10,7 @@ O4: check-result output conforms to check-result.schema.json;
 
 from __future__ import annotations
 
+import argparse
 import json
 import shutil
 import subprocess
@@ -89,6 +90,66 @@ def test_self_test_distinguishes_implemented_from_placeholder_O2() -> None:
             pass  # implemented runner raised for a real reason (None context)
 
     assert failures == []
+
+
+def test_stage_5_fails_closed_when_runner_not_implemented(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Unimplemented registry slots are blocker results, not soft-pass placeholders."""
+    from woof.checks import CheckOutcome
+    from woof.checks.registry import REGISTRY, STAGE_5_CHECK_IDS, Check
+    from woof.cli.commands.check import cmd_check_stage_5
+
+    def ok_runner_for(check_id: str):
+        def runner(_ctx: object) -> CheckOutcome:
+            return CheckOutcome(
+                id=check_id,
+                ok=True,
+                severity=None,
+                summary=f"{check_id}: ok",
+            )
+
+        return runner
+
+    missing_id = STAGE_5_CHECK_IDS[2]
+
+    def missing_runner(_ctx: object) -> CheckOutcome:
+        raise NotImplementedError("not wired")
+
+    for check_id in STAGE_5_CHECK_IDS:
+        runner = missing_runner if check_id == missing_id else ok_runner_for(check_id)
+        monkeypatch.setitem(
+            REGISTRY,
+            check_id,
+            Check(
+                id=check_id,
+                stage=5,
+                cost="cheap",
+                summary=f"{check_id} test stub",
+                runner=runner,
+            ),
+        )
+
+    epic_dir = tmp_path / ".woof" / "epics" / "E1"
+    epic_dir.mkdir(parents=True)
+    (epic_dir / "plan.json").write_text(json.dumps({"epic_id": 1, "goal": "test", "stories": []}))
+    monkeypatch.chdir(tmp_path)
+
+    exit_code = cmd_check_stage_5(
+        argparse.Namespace(self_test=False, epic=1, story="S1", format="json")
+    )
+    captured = capsys.readouterr()
+    result = json.loads(captured.out)
+
+    assert exit_code == 1
+    assert result["ok"] is False
+    assert result["triggered_by"] == [missing_id]
+
+    by_id = {check["id"]: check for check in result["checks"]}
+    assert by_id[missing_id]["ok"] is False
+    assert by_id[missing_id]["severity"] == "blocker"
+    assert by_id[missing_id]["summary"] == f"{missing_id}: runner is not implemented"
+    assert by_id[missing_id]["evidence"] == "not wired"
 
 
 # ---------------------------------------------------------------------------

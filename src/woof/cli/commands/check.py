@@ -47,6 +47,20 @@ def _outcome_to_dict(outcome: object) -> dict:
     return d
 
 
+def _not_implemented_to_dict(check_id: str, exc: NotImplementedError) -> dict:
+    evidence = str(exc) or "runner raised NotImplementedError"
+    return {
+        "id": check_id,
+        "ok": False,
+        "severity": "blocker",
+        "summary": f"{check_id}: runner is not implemented",
+        "evidence": evidence,
+        "paths": [],
+        "command": None,
+        "exit_code": None,
+    }
+
+
 def _self_test(registry: dict, stage_ids: list[str]) -> int:
     """Check every stage-5 runner is implemented. Exit 0 if all ok, 1 if any missing."""
     failures: list[str] = []
@@ -114,22 +128,9 @@ def cmd_check_stage_5(args: argparse.Namespace) -> int:
         check = REGISTRY[check_id]
         try:
             outcome = check.runner(ctx)
-        except NotImplementedError:
-            # Bootstrap-tolerant: placeholder runners report ok=true severity=info
-            # so the per-story driver does not deadlock during the registry-population
-            # window. --self-test remains the strict CI gate for unimplemented runners.
-            outcomes.append(
-                {
-                    "id": check_id,
-                    "ok": True,
-                    "severity": "info",
-                    "summary": f"{check_id}: runner not yet implemented (bootstrap placeholder)",
-                    "evidence": None,
-                    "paths": [],
-                    "command": None,
-                    "exit_code": None,
-                }
-            )
+        except NotImplementedError as exc:
+            outcomes.append(_not_implemented_to_dict(check_id, exc))
+            triggered_by.append(check_id)
             continue
         d = _outcome_to_dict(outcome)
         outcomes.append(d)

@@ -25,6 +25,7 @@ class ContractRefFinding:
     ref: str
     ok: bool
     detail: str
+    source_path: str | None = None
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,12 @@ class ContractRefResult:
 
 class ContractRefUsageError(Exception):
     """Raised when the EPIC.md artefact itself cannot be loaded or validated."""
+
+
+AJV_MISSING_HINT = (
+    "ajv-cli not found on PATH; install ajv-cli and ajv-formats "
+    "(for example `volta install ajv-cli ajv-formats`) and verify with `woof preflight`"
+)
 
 
 def validate_contract_refs(
@@ -60,9 +67,7 @@ def validate_contract_refs(
     except (ValueError, yaml.YAMLError) as exc:
         raise ContractRefUsageError(f"{epic_md}: {exc}") from exc
 
-    ok, output = _validate_epic_schema(front)
-    if not ok:
-        raise ContractRefUsageError(f"{epic_md}: front-matter invalid\n{output}")
+    _validate_epic_schema(epic_md, front)
 
     repo_root = _repo_root_for(epic_md)
     cds = front.get("contract_decisions") or []
@@ -111,9 +116,9 @@ def _load_epic_front_matter(epic_md: Path) -> dict[str, Any]:
     return front
 
 
-def _validate_epic_schema(front: dict[str, Any]) -> tuple[bool, str]:
+def _validate_epic_schema(epic_md: Path, front: dict[str, Any]) -> None:
     if shutil.which("ajv") is None:
-        return False, "ajv-cli not found on PATH"
+        raise ContractRefUsageError(AJV_MISSING_HINT)
 
     schema_path = schema_dir() / "epic.schema.json"
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
@@ -140,8 +145,9 @@ def _validate_epic_schema(front: dict[str, Any]) -> tuple[bool, str]:
     finally:
         data_path.unlink(missing_ok=True)
 
-    output = (proc.stdout + proc.stderr).strip()
-    return proc.returncode == 0, output
+    if proc.returncode != 0:
+        output = (proc.stdout + proc.stderr).strip()
+        raise ContractRefUsageError(f"{epic_md}: front-matter invalid\n{output}")
 
 
 def _repo_root_for(epic_md: Path) -> Path:
@@ -157,17 +163,33 @@ def _check_contract_decision(repo_root: Path, cd: dict[str, Any]) -> ContractRef
     cd_id = str(cd.get("id", "<missing>"))
     if cd.get("openapi_ref"):
         ref = str(cd["openapi_ref"])
+        source = _openapi_source_path(ref)
         ok, detail = _check_openapi_ref(repo_root, ref)
-        return ContractRefFinding(cd_id, "openapi_ref", ref, ok, detail)
+        return ContractRefFinding(cd_id, "openapi_ref", ref, ok, detail, source)
     if cd.get("pydantic_ref"):
         ref = str(cd["pydantic_ref"])
+        source = _pydantic_source_path(ref)
         ok, detail = _check_pydantic_ref(repo_root, ref)
-        return ContractRefFinding(cd_id, "pydantic_ref", ref, ok, detail)
+        return ContractRefFinding(cd_id, "pydantic_ref", ref, ok, detail, source)
     if cd.get("json_schema_ref"):
         ref = str(cd["json_schema_ref"])
+        source = ref
         ok, detail = _check_json_schema_ref(repo_root, ref)
-        return ContractRefFinding(cd_id, "json_schema_ref", ref, ok, detail)
+        return ContractRefFinding(cd_id, "json_schema_ref", ref, ok, detail, source)
     return ContractRefFinding(cd_id, "missing", "", False, "no contract reference declared")
+
+
+def _openapi_source_path(ref: str) -> str:
+    return ref.split("#", 1)[0] if "#" in ref else ref
+
+
+def _pydantic_source_path(ref: str) -> str | None:
+    if ":" not in ref:
+        return None
+    locator = ref.rsplit(":", 1)[0]
+    if locator.endswith(".py") or "/" in locator:
+        return locator
+    return None
 
 
 def _resolve_json_pointer(doc: object, pointer: str) -> object | None:
@@ -261,7 +283,7 @@ def _check_pydantic_ref(repo_root: Path, ref: str) -> tuple[bool, str]:
 
 def _check_json_schema_ref(repo_root: Path, ref: str) -> tuple[bool, str]:
     if shutil.which("ajv") is None:
-        return False, "ajv-cli not found on PATH"
+        raise ContractRefUsageError(AJV_MISSING_HINT)
 
     schema_path = (repo_root / ref).resolve()
     if not schema_path.is_file():

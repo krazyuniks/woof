@@ -9,12 +9,12 @@ Verifies that the pending story transaction is commit-ready:
 
 from __future__ import annotations
 
-import fnmatch
 import subprocess
 from pathlib import Path
 
 from woof.checks import CheckContext, CheckOutcome
 from woof.graph.dispositions import story_disposition_relpath
+from woof.graph.pathspec import PathspecEvaluationError, staged_paths_matching
 
 CHECK_ID = "check_7_commit_transaction"
 
@@ -56,10 +56,6 @@ def _story(ctx: CheckContext) -> dict | None:
         if isinstance(story, dict) and story.get("id") == ctx.story_id:
             return story
     return None
-
-
-def _matches_any(path: str, patterns: list[str]) -> bool:
-    return any(fnmatch.fnmatch(path, pattern) for pattern in patterns)
 
 
 def _required_paths(ctx: CheckContext) -> list[str]:
@@ -128,10 +124,17 @@ def check_7_commit_transaction_runner(ctx: CheckContext) -> CheckOutcome:
             paths=[],
         )
 
+    try:
+        story_matched_staged = set(staged_paths_matching(ctx.repo_root, story_patterns))
+    except PathspecEvaluationError as exc:
+        return _failure(
+            summary=f"git pathspec evaluation failed for story {ctx.story_id}",
+            evidence=[str(exc) or exc.command_string()],
+            paths=[],
+        )
+
     staged_story_paths = [
-        path
-        for path in staged
-        if not path.startswith(".woof/") and _matches_any(path, story_patterns)
+        path for path in staged if not path.startswith(".woof/") and path in story_matched_staged
     ]
     missing_required = sorted(path for path in required if path not in staged)
     foreign_staged = sorted(
@@ -139,7 +142,7 @@ def check_7_commit_transaction_runner(ctx: CheckContext) -> CheckOutcome:
         for path in staged
         if (
             (path.startswith(".woof/") and not _is_allowed_woof_path(ctx, path, required))
-            or (not path.startswith(".woof/") and not _matches_any(path, story_patterns))
+            or (not path.startswith(".woof/") and path not in story_matched_staged)
         )
     )
     unstaged = sorted(path for status, path in status_entries if _is_unstaged(status))

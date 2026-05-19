@@ -33,7 +33,7 @@
         "ajv-formats": { "$ref": "#/$defs/version_spec" },
         "schemathesis": { "$ref": "#/$defs/version_spec" }
       },
-      "description": "Required schema validators. ajv and ajv-formats are mandatory: woof validate uses ajv-cli for all internal artefact validation, and three schemas (gate, critique, jsonl-events) use the format keyword which ajv-cli only enforces when ajv-formats is loaded via -c ajv-formats. schemathesis is required only when contract decisions reference openapi documents."
+      "description": "Required schema validators. ajv and ajv-formats are mandatory: woof validate uses ajv-cli for all internal artefact validation, three schemas (gate, critique, jsonl-events) use the format keyword which ajv-cli only enforces when ajv-formats is loaded via -c ajv-formats, and Stage 5 Check 4 calls `ajv compile` for every owned json_schema_ref. schemathesis is an optional declaration for consumer projects that drive their own OpenAPI conformance through a quality-gate command; Stage 5 Check 4 itself does not run schemathesis."
     },
     "github": {
       "type": "object",

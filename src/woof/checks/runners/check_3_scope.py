@@ -2,16 +2,18 @@
 
 Verifies that every staged non-.woof path is within the current story's
 ``paths[]`` allow-list, using Git's own pathspec matcher. Durable Stage-5
-artefacts for the current epic/story are allowed separately.
+artefacts for the current epic/story are allowed separately, including the
+reviewer-disposition file required by Check 7 and the transaction manifest.
 """
 
 from __future__ import annotations
 
 import shlex
-import subprocess
 
 from woof.checks import CheckContext, CheckOutcome
+from woof.graph.dispositions import story_disposition_relpath
 from woof.graph.git import staged_paths
+from woof.graph.pathspec import PathspecEvaluationError, staged_paths_matching
 
 CHECK_ID = "check_3_scope"
 
@@ -43,9 +45,18 @@ def check_3_scope_runner(ctx: CheckContext) -> CheckOutcome:
         path for path in staged if path.startswith(".woof/") and path not in allowed_woof_paths
     ]
 
-    allowed_story_paths = _git_pathspec_matches(ctx, story_pathspecs)
-    if isinstance(allowed_story_paths, CheckOutcome):
-        return allowed_story_paths
+    try:
+        allowed_story_paths = staged_paths_matching(ctx.repo_root, story_pathspecs)
+    except PathspecEvaluationError as exc:
+        return CheckOutcome(
+            id=CHECK_ID,
+            ok=False,
+            severity="blocker",
+            summary=f"git pathspec evaluation failed for story {ctx.story_id}",
+            evidence=str(exc) or None,
+            command=exc.command_string(),
+            exit_code=exc.returncode,
+        )
 
     allowed_story_path_set = set(allowed_story_paths)
     forbidden_story_paths = [
@@ -84,27 +95,6 @@ def _story_for_context(ctx: CheckContext) -> dict | None:
     return None
 
 
-def _git_pathspec_matches(ctx: CheckContext, pathspecs: list[str]) -> list[str] | CheckOutcome:
-    command = ["git", "diff", "--cached", "--name-only", "-z", "--", *pathspecs]
-    proc = subprocess.run(
-        command,
-        cwd=ctx.repo_root,
-        capture_output=True,
-        check=False,
-    )
-    if proc.returncode != 0:
-        return CheckOutcome(
-            id=CHECK_ID,
-            ok=False,
-            severity="blocker",
-            summary=f"git pathspec evaluation failed for story {ctx.story_id}",
-            evidence=proc.stderr.decode(errors="replace").strip() or None,
-            command=_pathspec_command(pathspecs),
-            exit_code=proc.returncode,
-        )
-    return sorted(path.decode() for path in proc.stdout.split(b"\0") if path)
-
-
 def _is_allowed_woof_path(ctx: CheckContext, path: str) -> bool:
     epic_prefix = f".woof/epics/E{ctx.epic_id}/"
     allowed_exact = {
@@ -112,6 +102,7 @@ def _is_allowed_woof_path(ctx: CheckContext, path: str) -> bool:
         f"{epic_prefix}epic.jsonl",
         f"{epic_prefix}dispatch.jsonl",
         f"{epic_prefix}critique/story-{ctx.story_id}.md",
+        story_disposition_relpath(ctx.epic_id, ctx.story_id),
     }
     if path in allowed_exact:
         return True

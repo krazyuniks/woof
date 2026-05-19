@@ -10,7 +10,11 @@ from __future__ import annotations
 from typing import Any
 
 from woof.checks import CheckContext, CheckOutcome
-from woof.checks.contract_refs import ContractRefUsageError, validate_contract_refs
+from woof.checks.contract_refs import (
+    AJV_MISSING_HINT,
+    ContractRefUsageError,
+    validate_contract_refs,
+)
 
 CHECK_ID = "check_4_contract_refs"
 
@@ -50,12 +54,17 @@ def check_4_contract_refs_runner(ctx: CheckContext) -> CheckOutcome:
     try:
         result = validate_contract_refs(epic_md, only_ids=owned_cd_ids)
     except ContractRefUsageError as exc:
+        message = str(exc)
+        if message == AJV_MISSING_HINT:
+            summary = "ajv-cli unavailable; run `woof preflight` for install instructions"
+        else:
+            summary = "contract reference validation could not load EPIC.md"
         return CheckOutcome(
             id=CHECK_ID,
             ok=False,
             severity="blocker",
-            summary="contract reference validation could not load EPIC.md",
-            evidence=str(exc),
+            summary=summary,
+            evidence=message,
             paths=[_display_path(epic_md, ctx.repo_root)],
         )
 
@@ -65,9 +74,11 @@ def check_4_contract_refs_runner(ctx: CheckContext) -> CheckOutcome:
         for finding in result.findings
         if not finding.ok
     )
-    paths = [_display_path(epic_md, ctx.repo_root)]
+    epic_display = _display_path(epic_md, ctx.repo_root)
 
     if failed:
+        broken_sources = sorted({finding.source_path for finding in failed if finding.source_path})
+        paths = [epic_display, *broken_sources]
         return CheckOutcome(
             id=CHECK_ID,
             ok=False,
@@ -75,7 +86,7 @@ def check_4_contract_refs_runner(ctx: CheckContext) -> CheckOutcome:
             summary=f"{len(failed)} owned contract reference(s) failed validation",
             evidence=evidence,
             paths=paths,
-            command=f"woof check-cd --format json {paths[0]}",
+            command=f"woof check-cd --format json {epic_display}",
             exit_code=1,
         )
 
@@ -85,8 +96,8 @@ def check_4_contract_refs_runner(ctx: CheckContext) -> CheckOutcome:
         severity="info",
         summary=f"all {result.verified} owned contract reference(s) verified",
         evidence=_format_verified(result.findings),
-        paths=paths,
-        command=f"woof check-cd --format json {paths[0]}",
+        paths=[epic_display],
+        command=f"woof check-cd --format json {epic_display}",
         exit_code=0,
     )
 

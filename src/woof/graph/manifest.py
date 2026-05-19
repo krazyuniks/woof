@@ -2,20 +2,16 @@
 
 from __future__ import annotations
 
-import fnmatch
 from pathlib import Path
 
 from woof.graph.dispositions import story_disposition_relpath
 from woof.graph.git import changed_paths, staged_paths
+from woof.graph.pathspec import PathspecEvaluationError, filter_paths_matching
 from woof.graph.state import ManifestVerification, StorySpec, TransactionManifest
 
 
 def _rel(repo_root: Path, path: Path) -> str:
     return path.relative_to(repo_root).as_posix()
-
-
-def _matches_any(path: str, patterns: list[str]) -> bool:
-    return any(fnmatch.fnmatch(path, pattern) for pattern in patterns)
 
 
 def _audit_paths(epic_dir: Path, repo_root: Path) -> list[str]:
@@ -41,11 +37,11 @@ def build_story_manifest(repo_root: Path, epic_id: int, story: StorySpec) -> Tra
         story_disposition_relpath(epic_id, story.id),
     ]
     audit_paths = _audit_paths(epic_dir, repo_root)
-    story_paths = [
-        path
-        for path in changed_paths(repo_root)
-        if not path.startswith(".woof/") and _matches_any(path, story.paths)
-    ]
+    candidate_paths = [path for path in changed_paths(repo_root) if not path.startswith(".woof/")]
+    try:
+        story_paths = filter_paths_matching(repo_root, candidate_paths, list(story.paths))
+    except PathspecEvaluationError:
+        story_paths = []
     expected = sorted(set(required_paths + audit_paths + story_paths))
     return TransactionManifest(
         epic_id=epic_id,

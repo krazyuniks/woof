@@ -156,6 +156,29 @@ def test_unstaged_path_fails(tmp_path: Path) -> None:
     assert "unstaged or untracked paths remain" in (outcome.evidence or "")
 
 
+def test_recursive_glob_pathspec_accepts_nested_story_paths(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    story = {
+        "id": "S1",
+        "title": "first",
+        "paths": [":(glob)src/**/*.py"],
+        "satisfies": ["O1"],
+        "status": "in_progress",
+    }
+    plan = _plan(story)
+    required = _write_required(tmp_path, plan)
+    nested = tmp_path / "src" / "pkg" / "subpkg"
+    nested.mkdir(parents=True)
+    nested_file = nested / "deep.py"
+    nested_file.write_text("print('O1')\n")
+    _git(tmp_path, "add", "--", *required, "src/pkg/subpkg/deep.py")
+
+    outcome = check_7_commit_transaction_runner(_ctx(tmp_path, plan))
+
+    assert outcome.ok, outcome.evidence
+    assert "src/pkg/subpkg/deep.py" in outcome.paths
+
+
 def test_foreign_staged_path_fails(tmp_path: Path) -> None:
     _init_repo(tmp_path)
     plan = _plan()

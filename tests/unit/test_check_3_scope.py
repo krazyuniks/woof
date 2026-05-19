@@ -158,6 +158,45 @@ def test_git_pathspec_edge_cases_use_git_matching(tmp_path: Path) -> None:
     assert outcome.paths == ["src/package/data.json"]
 
 
+def test_staged_disposition_file_is_allowed_durable_woof_path(tmp_path: Path) -> None:
+    _init_git_repo(tmp_path)
+    _write(tmp_path / "src/app.py")
+    _write(tmp_path / ".woof/epics/E7/plan.json", json.dumps({"ok": True}))
+    _write(tmp_path / ".woof/epics/E7/epic.jsonl", "{}\n")
+    _write(tmp_path / ".woof/epics/E7/dispatch.jsonl", "{}\n")
+    _write(tmp_path / ".woof/epics/E7/critique/story-S1.md", "---\nseverity: info\n---\n")
+    _write(tmp_path / ".woof/epics/E7/dispositions/story-S1.md", "---\nseverity: info\n---\n")
+    _git_add(
+        tmp_path,
+        "src/app.py",
+        ".woof/epics/E7/plan.json",
+        ".woof/epics/E7/epic.jsonl",
+        ".woof/epics/E7/dispatch.jsonl",
+        ".woof/epics/E7/critique/story-S1.md",
+        ".woof/epics/E7/dispositions/story-S1.md",
+    )
+
+    outcome = check_3_scope_runner(_ctx(tmp_path, ["src/"]))
+
+    assert outcome.ok
+    assert outcome.severity is None
+    assert ".woof/epics/E7/dispositions/story-S1.md" in outcome.paths
+
+
+def test_recursive_glob_pathspec_matches_via_git_engine(tmp_path: Path) -> None:
+    _init_git_repo(tmp_path)
+    _write(tmp_path / "src/pkg/subpkg/deep.py")
+    _write(tmp_path / "src/pkg/shallow.py")
+    _git_add(tmp_path, "src/pkg/subpkg/deep.py", "src/pkg/shallow.py")
+
+    outcome = check_3_scope_runner(_ctx(tmp_path, [":(glob)src/**/*.py"]))
+
+    assert outcome.ok
+    assert outcome.severity is None
+    assert "src/pkg/subpkg/deep.py" in outcome.paths
+    assert "src/pkg/shallow.py" in outcome.paths
+
+
 def test_missing_story_fails_with_structured_outcome(tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
 

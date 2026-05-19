@@ -372,6 +372,7 @@ def cmd_check_cd(args: argparse.Namespace) -> int:
                             "ref": finding.ref,
                             "ok": finding.ok,
                             "detail": finding.detail,
+                            "source_path": finding.source_path,
                         }
                         for finding in result.findings
                     ],

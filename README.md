@@ -8,7 +8,7 @@ Woof addresses the inner loop: the structured, auditable cycle of an individual 
 
 ## Status
 
-Pre-release. The internal architecture is implemented and dogfooded against `guitar-tone-shootout`. A release-closure audit (RC-6 and RC-7) is open against the current architecture; a separate Phase B is required before Woof is usable against arbitrary consumer repositories.
+Pre-release. The internal architecture is implemented and dogfooded against `guitar-tone-shootout`. The release-closure audit is in its final workstream (RC-7); a separate Phase B is required before Woof is usable against arbitrary consumer repositories.
 
 The current architecture is graph-led. `woof wf --epic <N>` runs the deterministic graph; LLM prompts are producer or reviewer nodes, not workflow orchestrators. ADR-002 defines the current role policy: GPT-5.5 is the preferred primary producer route, Claude Opus 4.7 at `max` effort is the preferred reviewer route, and reviewer blockers open human gates rather than model-to-model debate loops.
 
@@ -45,6 +45,25 @@ just woof --help
 ```
 
 `uv.lock` is committed. Git hooks are installed with `just install-hooks`; pre-commit runs Ruff and Woof config schema validation, pre-push runs the unit suite, and `woof hooks install` adds the idempotent Woof-managed post-commit cartography block.
+
+## Installed Package Smoke
+
+Woof is also distributed as a wheel; graph subprocesses re-enter through `python -m woof`, so the installed package must work without the source-checkout `bin/woof` wrapper or `uv`. The packaging smoke test (`tests/unit/test_packaging_install.py`) builds a wheel into a temporary directory, installs it into an isolated virtual environment, and verifies that:
+
+- `python -m woof --help` exits 0 from the installed interpreter.
+- `tool_root()` resolves `schemas/`, `playbooks/`, and `languages/` from inside the installed package.
+- `_woof_subprocess_argv()` / `_woof_subprocess_env()` produce `[sys.executable, "-m", "woof", ...]` plus a `PYTHONPATH` that loads the installed `woof` package.
+
+The test runs as part of `just check` and `just test`. To reproduce manually:
+
+```bash
+uv build --wheel
+uv venv /tmp/woof-smoke
+/tmp/woof-smoke/bin/python -m pip install dist/woof-*.whl
+/tmp/woof-smoke/bin/python -m woof --help
+```
+
+This is the release smoke path; consumer projects should `uv tool install woof` (or `pip install woof`) and invoke `woof` directly rather than calling `bin/woof` from the source checkout.
 
 ## Operator Usage
 
@@ -88,7 +107,8 @@ Consumer repositories keep project-specific declarations under `.woof/*.toml` an
 
 ## Source Map
 
-- `bin/woof` - source-checkout executable wrapper.
+- `bin/woof` - source-checkout convenience wrapper (`uv run --script`); not used by graph subprocesses.
+- `src/woof/__main__.py` - module entry (`python -m woof`); the install-safe boundary for graph re-entry.
 - `src/woof/cli/` - argparse-driven command implementations.
 - `src/woof/graph/` - deterministic graph, JSON Schema-backed Pydantic boundary models, transition table, and transaction manifest verification.
 - `src/woof/checks/` - Stage-5 checker registry, runners, and internal check context/outcome records.

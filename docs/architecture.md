@@ -149,7 +149,7 @@ JSONL event logs (`epic.jsonl`, `dispatch.jsonl`) enable crash-resume and post-h
 - Per-file size cap (default 256 KB). Output exceeding the cap is truncated to the cap with a `... [truncated, full output at .woof/epics/E<N>/audit/raw/<file>]` footer; the raw output stays in `.woof/epics/E<N>/audit/raw/` which is gitignored and excluded from transaction manifests.
 - Retention: audit files older than the epic's close timestamp + 90 days are eligible for archival via the configured archive command.
 
-**Token usage logging.** Every subprocess return event (`subprocess_returned`) includes `tokens_in`, `tokens_out`, `cache_read_tokens`, `cache_write_tokens`, `duration_ms`, and `artefacts_loaded[]` when the adapter can determine them. `artefacts_loaded[]` contains explicit repo-relative artefact references that the graph or operator loaded into the dispatched prompt payload; absolute paths, home-relative paths, and parent traversal are rejected. In-session work logs `token_usage` events at stage transitions.
+**Token usage logging.** Subprocess dispatch records token usage; the Python graph itself does not spend tokens. Every `subprocess_returned` event includes `tokens_in`, `tokens_out`, `cache_read_tokens`, `cache_write_tokens`, `duration_ms`, and `artefacts_loaded[]` when the adapter can determine them. `artefacts_loaded[]` contains explicit repo-relative artefact references that the graph or operator loaded into the dispatched prompt payload; absolute paths, home-relative paths, and parent traversal are rejected. No stage-transition `token_usage` emitter exists, because graph transitions are deterministic Python and do not consume tokens; the `token_usage` enum value in `schemas/jsonl-events.schema.json` is reserved for future driver modes that may run an LLM in the same process.
 
 **Dispatch adapter layer.** Subprocesses are spawned via graph-owned role dispatch, not via Ryan-local wrappers or shell aliases. ADR-002 migrates the internal primitive to `woof dispatch --role <role-name>` so the role route, not a provider target, selects the public CLI adapter. The adapter reads `.woof/agents.toml`, constructs the raw `claude` or `codex` invocation, generates any required MCP JSON, and emits dispatch events. This boundary stops CLI interface drift from breaking graph call sites.
 
@@ -674,7 +674,7 @@ ANY failure → exit non-zero with structured output (install commands + gotchas
 Re-run `woof preflight` after installing.
 ```
 
-**Version policy:** floor-with-latest-preferred per global rule (latest stable releases unless specifically pinned for compatibility). `just upgrade-prereqs` recipe bumps everything to current latest.
+**Version policy:** floor-with-latest-preferred (latest stable releases unless `.woof/prerequisites.toml` pins a version for compatibility). Operators upgrade prerequisites manually using the install commands `woof preflight` prints alongside any stale-floor finding; there is no Woof-managed bulk upgrade recipe.
 
 **Preflight caching.** Two-tier:
 

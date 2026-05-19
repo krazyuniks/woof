@@ -39,10 +39,11 @@
         "preflight_run",
         "github_synced",
         "github_sync_conflict",
+        "wf_lock_stale_removed",
         "cartography_refreshed",
         "token_usage"
       ],
-      "description": "Event kind. Stage events (epic.jsonl): spark_created, current_epic_selected, discovery_*, definition_*, plan_*, breakdown_planned, story_*, *_gate_*, gate_resolved, epic_completed, executor_result_recorded, check_run, story_committed, transaction_manifest_verified. Dispatch events (dispatch.jsonl): subprocess_*. Operational events (either): preflight_run, github_synced, github_sync_conflict, cartography_refreshed, token_usage."
+      "description": "Event kind. Stage events (epic.jsonl): spark_created, current_epic_selected, discovery_*, definition_*, plan_*, breakdown_planned, story_*, *_gate_*, gate_resolved, epic_completed, executor_result_recorded, check_run, story_committed, transaction_manifest_verified. Dispatch events (dispatch.jsonl): subprocess_*. Operational events (either): preflight_run, github_synced, github_sync_conflict, wf_lock_stale_removed, cartography_refreshed, token_usage."
     },
     "at": {
       "type": "string",
@@ -121,6 +122,11 @@
     "signal": {
       "type": "string",
       "minLength": 1
+    },
+    "hostname": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Host that observed or emitted the event."
     },
     "reason": {
       "type": "string",
@@ -324,6 +330,13 @@
         "required": ["event"]
       },
       "then": { "required": ["story_id", "manifest"] }
+    },
+    {
+      "if": {
+        "properties": { "event": { "const": "wf_lock_stale_removed" } },
+        "required": ["event"]
+      },
+      "then": { "required": ["epic_id", "pid", "reason", "paths", "hostname"] }
     }
   ]
 }

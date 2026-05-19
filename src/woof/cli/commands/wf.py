@@ -19,6 +19,7 @@ from woof.cli.github import (
     sync_epic_completion,
     sync_plan_summary,
 )
+from woof.graph.lock import WorkflowLockError
 from woof.graph.runner import run_graph
 from woof.graph.state import GateDecision, NodeStatus
 from woof.graph.transitions import (
@@ -161,6 +162,9 @@ def cmd_wf(args: argparse.Namespace) -> int:
 
     try:
         outputs = run_graph(repo_root, args.epic, once=args.once)
+    except WorkflowLockError as exc:
+        sys.stderr.write(f"woof wf: workflow lock active: {exc}\n")
+        return 2
     except StageStateError as exc:
         sys.stderr.write(f"woof wf: incomplete_stage_state: {exc}\n")
         return 2

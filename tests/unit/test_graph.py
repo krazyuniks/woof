@@ -3,14 +3,17 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import socket
 import subprocess
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 
 from woof.graph import nodes
 from woof.graph.git import git_env
+from woof.graph.lock import LOCK_FILENAME, WorkflowLockError
 from woof.graph.manifest import build_story_manifest, verify_staged_manifest
 from woof.graph.runner import run_graph
 from woof.graph.state import NodeInput, NodeOutput, NodeStatus, NodeType, StorySpec
@@ -430,6 +433,98 @@ def test_graph_runs_executor_then_critique_then_verification_then_commit(tmp_pat
         NodeType.COMMIT,
     ]
     assert outputs[-1].status == NodeStatus.EPIC_COMPLETE
+
+
+def test_run_graph_refuses_live_workflow_lock(tmp_path: Path) -> None:
+    directory = _write_plan(tmp_path, 21)
+    lock = directory / LOCK_FILENAME
+    lock.write_text(
+        json.dumps(
+            {
+                "pid": os.getpid(),
+                "hostname": socket.gethostname(),
+                "created_at": "2026-01-01T00:00:00Z",
+                "token": "held-by-test",
+                "command": ["woof", "wf", "--epic", "21"],
+            }
+        )
+        + "\n"
+    )
+
+    with pytest.raises(WorkflowLockError) as exc:
+        run_graph(tmp_path, 21, once=True)
+
+    assert "E21 is already locked" in str(exc.value)
+    assert lock.exists()
+
+
+def test_run_graph_removes_stale_workflow_lock_and_records_event(tmp_path: Path) -> None:
+    directory = _write_plan(tmp_path, 22)
+    dead_process = subprocess.Popen(["true"])
+    dead_process.wait(timeout=5)
+    lock = directory / LOCK_FILENAME
+    lock.write_text(
+        json.dumps(
+            {
+                "pid": dead_process.pid,
+                "hostname": socket.gethostname(),
+                "created_at": "2026-01-01T00:00:00Z",
+                "token": "stale-test-lock",
+                "command": ["woof", "wf", "--epic", "22"],
+            }
+        )
+        + "\n"
+    )
+
+    def halt(inp: NodeInput) -> NodeOutput:
+        return NodeOutput(
+            node_type=inp.node_type,
+            status=NodeStatus.HALTED,
+            epic_id=inp.epic_id,
+            story_id=inp.story_id,
+        )
+
+    outputs = run_graph(
+        tmp_path,
+        22,
+        once=True,
+        registry={NodeType.EXECUTOR_DISPATCH: halt},
+    )
+
+    assert outputs[0].status == NodeStatus.HALTED
+    assert not lock.exists()
+    events = [json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines()]
+    assert events[0]["event"] == "wf_lock_stale_removed"
+    assert events[0]["epic_id"] == 22
+    assert events[0]["pid"] == dead_process.pid
+    assert events[0]["reason"] == "pid_not_running"
+    assert events[0]["paths"] == [".woof/epics/E22/.wf.lock"]
+
+
+def test_wf_reports_live_workflow_lock(tmp_path: Path) -> None:
+    _write_github_prerequisites(tmp_path)
+    directory = _write_plan(tmp_path, 23)
+    lock = directory / LOCK_FILENAME
+    lock.write_text(
+        json.dumps(
+            {
+                "pid": os.getpid(),
+                "hostname": socket.gethostname(),
+                "created_at": "2026-01-01T00:00:00Z",
+                "token": "held-by-parent-test-process",
+                "command": ["woof", "wf", "--epic", "23"],
+            }
+        )
+        + "\n"
+    )
+    env = _make_gh_rate_limit_stub(tmp_path / "bin")
+
+    proc = _run_woof(tmp_path, "wf", "--epic", "23", "--once", env=env)
+
+    assert proc.returncode == 2
+    assert "woof wf: workflow lock active:" in proc.stderr
+    assert "E23 is already locked" in proc.stderr
+    assert lock.exists()
 
 
 def test_dispatch_helper_uses_role_route_without_provider_target(

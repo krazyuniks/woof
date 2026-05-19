@@ -12,6 +12,7 @@ import yaml
 
 from woof.cli.github import (
     GithubSyncError,
+    assert_github_runtime_reachable,
     create_epic_from_spark,
     has_github_sync_state,
     initialise_epic_from_issue,
@@ -80,12 +81,22 @@ def cmd_wf(args: argparse.Namespace) -> int:
         sys.stderr.write(f"woof wf: {exc}\n")
         return 2
 
+    def check_runtime() -> bool:
+        try:
+            assert_github_runtime_reachable(repo_root)
+        except GithubSyncError as exc:
+            sys.stderr.write(f"woof wf: github runtime check failed: {exc}\n")
+            return False
+        return True
+
     if args.action == "new":
         if args.epic is not None:
             sys.stderr.write("woof wf new: --epic is assigned by GitHub; omit --epic\n")
             return 2
         if not args.spark:
             sys.stderr.write('woof wf new: spark is required, e.g. `woof wf new "..."`\n')
+            return 2
+        if not check_runtime():
             return 2
         try:
             result = create_epic_from_spark(repo_root, args.spark)
@@ -115,6 +126,9 @@ def cmd_wf(args: argparse.Namespace) -> int:
 
     if args.epic is None:
         sys.stderr.write('woof wf: --epic is required unless using `woof wf new "<spark>"`\n')
+        return 2
+
+    if not check_runtime():
         return 2
 
     if args.resolve:

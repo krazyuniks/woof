@@ -46,6 +46,32 @@ def _write_plan(root: Path, epic_id: int = 1) -> Path:
     return directory
 
 
+def _write_github_prerequisites(root: Path) -> None:
+    woof_dir = root / ".woof"
+    woof_dir.mkdir(exist_ok=True)
+    (woof_dir / "prerequisites.toml").write_text('[github]\nrepo = "acme/widgets"\n')
+
+
+def _make_gh_rate_limit_stub(bin_dir: Path) -> dict[str, str]:
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    script = bin_dir / "gh"
+    script.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        'if [[ "${1:-}" == "api" && "${2:-}" == "/rate_limit" ]]; then\n'
+        '  printf \'%s\' \'{"resources":{"core":{"remaining":5000}}}\'\n'
+        "  exit 0\n"
+        "fi\n"
+        'echo "unexpected gh invocation: $*" >&2\n'
+        "exit 2\n"
+    )
+    script.chmod(0o755)
+    return {
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "HOME": os.environ.get("HOME", "/tmp"),
+    }
+
+
 def _write_spark(root: Path, epic_id: int = 1) -> Path:
     directory = root / ".woof" / "epics" / f"E{epic_id}"
     directory.mkdir(parents=True, exist_ok=True)
@@ -231,6 +257,10 @@ def _make_gh_completion_stub(bin_dir: Path) -> dict[str, str]:
         'mode="$1"; shift\n'
         'case "$mode" in\n'
         "  api)\n"
+        '    if [[ "${1:-}" == "/rate_limit" ]]; then\n'
+        '      printf \'%s\' \'{"resources":{"core":{"remaining":5000}}}\'\n'
+        "      exit 0\n"
+        "    fi\n"
         f'    if [[ -f "{closed}" ]]; then\n'
         f"      printf '%s' '{after_close}'\n"
         f'    elif [[ -f "{last_body}" ]]; then\n'
@@ -1348,9 +1378,11 @@ def test_wf_epic_reports_complete_epic_as_json(tmp_path: Path) -> None:
 
 
 def test_wf_reports_missing_plan_as_structured_failure(tmp_path: Path) -> None:
+    _write_github_prerequisites(tmp_path)
     (tmp_path / ".woof" / "epics" / "E10").mkdir(parents=True)
+    env = _make_gh_rate_limit_stub(tmp_path / "bin")
 
-    proc = _run_woof(tmp_path, "wf", "--epic", "10")
+    proc = _run_woof(tmp_path, "wf", "--epic", "10", env=env)
 
     assert proc.returncode == 2
     assert "woof wf: incomplete_stage_state:" in proc.stderr
@@ -1359,16 +1391,19 @@ def test_wf_reports_missing_plan_as_structured_failure(tmp_path: Path) -> None:
 
 
 def test_wf_epic_halts_when_gate_is_open(tmp_path: Path) -> None:
+    _write_github_prerequisites(tmp_path)
     directory = _write_plan(tmp_path, 8)
     (directory / "gate.md").write_text("---\ntype: story_gate\n---\n")
+    env = _make_gh_rate_limit_stub(tmp_path / "bin")
 
-    proc = _run_woof(tmp_path, "wf", "--epic", "8")
+    proc = _run_woof(tmp_path, "wf", "--epic", "8", env=env)
 
     assert proc.returncode == 0, proc.stderr
     assert "woof wf: human_review -> halted: gate open at .woof/epics/E8/gate.md" in proc.stdout
 
 
 def test_wf_gate_case_reports_stable_json_contract(tmp_path: Path) -> None:
+    _write_github_prerequisites(tmp_path)
     directory = _write_plan(tmp_path, 11)
     mark_story_status(tmp_path, 11, "S1", "in_progress")
     (directory / "executor_result.json").write_text(
@@ -1413,7 +1448,8 @@ def test_wf_gate_case_reports_stable_json_contract(tmp_path: Path) -> None:
         )
     )
 
-    proc = _run_woof(tmp_path, "wf", "--epic", "11", "--format", "json")
+    env = _make_gh_rate_limit_stub(tmp_path / "bin")
+    proc = _run_woof(tmp_path, "wf", "--epic", "11", "--format", "json", env=env)
 
     assert proc.returncode == 0, proc.stderr
     lines = [json.loads(line) for line in proc.stdout.splitlines()]
@@ -1447,11 +1483,13 @@ def test_wf_gate_case_reports_stable_json_contract(tmp_path: Path) -> None:
 
 
 def test_wf_resolve_records_gate_decision_and_removes_gate(tmp_path: Path) -> None:
+    _write_github_prerequisites(tmp_path)
     directory = _write_plan(tmp_path, 9)
     gate = directory / "gate.md"
     gate.write_text("---\ntype: story_gate\n---\n")
+    env = _make_gh_rate_limit_stub(tmp_path / "bin")
 
-    proc = _run_woof(tmp_path, "wf", "--epic", "9", "--resolve", "approve")
+    proc = _run_woof(tmp_path, "wf", "--epic", "9", "--resolve", "approve", env=env)
 
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout == "woof wf: gate resolved decision=approve\n"

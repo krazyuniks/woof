@@ -38,16 +38,37 @@ def _stub_env(bin_dir: Path) -> dict[str, str]:
     }
 
 
-def _make_gh_stub(bin_dir: Path, payload: dict | None = None, *, fail: bool = False) -> None:
+def _make_gh_stub(
+    bin_dir: Path,
+    payload: dict | None = None,
+    *,
+    fail: bool = False,
+    fail_rate_limit: bool = False,
+    rate_remaining: int = 5000,
+) -> None:
     bin_dir.mkdir(parents=True, exist_ok=True)
     script = bin_dir / "gh"
-    if fail:
-        script.write_text("#!/usr/bin/env bash\necho 'HTTP 404: Not Found' >&2\nexit 1\n")
-    else:
-        assert payload is not None
-        script.write_text(
-            f"#!/usr/bin/env bash\nset -euo pipefail\nprintf '%s' '{json.dumps(payload)}'\n"
-        )
+    rate_payload = json.dumps({"resources": {"core": {"remaining": rate_remaining}}})
+    fail_text = "expired gh auth"
+    issue_payload = json.dumps(payload or {})
+    script.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        'mode="${1:-}"; shift || true\n'
+        'if [[ "$mode" == "api" && "${1:-}" == "/rate_limit" ]]; then\n'
+        f'  if [[ "{str(fail_rate_limit).lower()}" == "true" ]]; then\n'
+        f"    echo '{fail_text}' >&2\n"
+        "    exit 1\n"
+        "  fi\n"
+        f"  printf '%s' '{rate_payload}'\n"
+        "  exit 0\n"
+        "fi\n"
+        f'if [[ "{str(fail).lower()}" == "true" ]]; then\n'
+        "  echo 'HTTP 404: Not Found' >&2\n"
+        "  exit 1\n"
+        "fi\n"
+        f"printf '%s' '{issue_payload}'\n"
+    )
     script.chmod(0o755)
 
 
@@ -79,7 +100,11 @@ def _make_gh_create_stub(
         f"    printf '%s\\n' '{issue_url}'\n"
         "    ;;\n"
         "  api)\n"
-        f"    printf '%s' '{json.dumps(fetch_payload)}'\n"
+        '    if [[ "${1:-}" == "/rate_limit" ]]; then\n'
+        '      printf \'%s\' \'{"resources":{"core":{"remaining":5000}}}\'\n'
+        "    else\n"
+        f"      printf '%s' '{json.dumps(fetch_payload)}'\n"
+        "    fi\n"
         "    ;;\n"
         "  *)\n"
         '    echo "unsupported gh mode" >&2\n'
@@ -207,6 +232,39 @@ def test_wf_cold_start_fails_loud_when_issue_fetch_fails(tmp_path: Path) -> None
     assert proc.returncode == 2
     assert "E404 not found" in proc.stderr
     assert not (project / ".woof" / "epics" / "E404").exists()
+
+
+def test_wf_runtime_check_fails_before_gate_mutation(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    epic_dir = project / ".woof" / "epics" / "E3"
+    epic_dir.mkdir(parents=True)
+    (epic_dir / "gate.md").write_text("---\ntype: story_gate\n---\n")
+    (epic_dir / "epic.jsonl").write_text("")
+    bin_dir = tmp_path / "bin"
+    _make_gh_stub(bin_dir, fail_rate_limit=True)
+
+    proc = _run(project, "wf", "--epic", "3", "--resolve", "approve", env=_stub_env(bin_dir))
+
+    assert proc.returncode == 2
+    assert "github runtime check failed" in proc.stderr
+    assert "expired gh auth" in proc.stderr
+    assert (epic_dir / "gate.md").exists()
+    assert (epic_dir / "epic.jsonl").read_text() == ""
+
+
+def test_wf_runtime_check_rejects_exhausted_core_quota(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    epic_dir = project / ".woof" / "epics" / "E4"
+    epic_dir.mkdir(parents=True)
+    (epic_dir / "gate.md").write_text("---\ntype: story_gate\n---\n")
+    bin_dir = tmp_path / "bin"
+    _make_gh_stub(bin_dir, rate_remaining=100)
+
+    proc = _run(project, "wf", "--epic", "4", "--resolve", "approve", env=_stub_env(bin_dir))
+
+    assert proc.returncode == 2
+    assert "GitHub API core rate limit remaining 100" in proc.stderr
+    assert (epic_dir / "gate.md").exists()
 
 
 def test_wf_new_creates_issue_and_initialises_current_epic(tmp_path: Path) -> None:

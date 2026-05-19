@@ -242,6 +242,14 @@ This phase removes a structural follow-up left by the role-routing work: public 
 |---|---|---|---|---|---|
 | DPA-001 | Completed | Move dispatch adapter core into the dedicated dispatcher module. | `src/woof/cli/dispatcher.py` owns role-route resolution, public `claude` / `codex` argv construction, Claude MCP JSON rendering, token-output parsing, artefact reference normalisation, and dispatch execution helpers; `src/woof/cli/main.py` only wires the CLI command and imports the adapter boundary; preflight imports route helpers from the dispatcher module rather than the monolithic CLI. Runtime command output and audit JSONL shape remain unchanged. | Focused dispatch and preflight tests passed: 37 tests. `git diff --check` passed. `just check` passed: Ruff lint, Ruff format check, and 238 tests. | `refactor(dispatch): extract adapter core` |
 
+### Phase 14: Workflow Runtime Prerequisites
+
+This phase tightens the always-online GitHub boundary after the graph, role routing, and dispatch-audit workstreams completed. Items must preserve the existing GitHub sync contract: no offline fallback, auth or network failure fails loud, and graph-owned workflow state is not mutated after a failed startup guard.
+
+| ID | Status | Work item | Observable outcomes | Validation | Commit |
+|---|---|---|---|---|---|
+| WFR-001 | Completed | Enforce GitHub runtime reachability before `woof wf` graph or gate work. | Every `woof wf` invocation loads `.woof/prerequisites.toml`, verifies `gh api /rate_limit` succeeds before local graph or gate mutation, fails loud on missing auth/unreachable API or exhausted core quota, and keeps cold-start/new/sync behaviour unchanged after the guard passes. | Focused `wf` GitHub sync, graph CLI, render-epic, and preflight tests passed: 64 tests. `git diff --check` passed. `just check` passed: Ruff lint, Ruff format check, and 240 tests. | `fix(wf): enforce github runtime reachability` |
+
 ## Next Continuation Prompt
 
 ```text
@@ -267,5 +275,5 @@ Workflow:
 - In the final response, paste this complete continuation prompt block so it can be copied into a new session.
 
 Start with:
-Workstreams R, F, G, Phase 8 `PRD-001`, Phase 9 `AUD-001`, Phase 10 `CIM-001`, Phase 11 `CHK-010`, Phase 12 `AUD-002`, and Phase 13 `DPA-001` are complete. No `Ready` items remain in this plan. If continuing implementation, add the next scoped work item to `docs/implementation-plan.md` before editing, then start that item.
+Workstreams R, F, G, Phase 8 `PRD-001`, Phase 9 `AUD-001`, Phase 10 `CIM-001`, Phase 11 `CHK-010`, Phase 12 `AUD-002`, Phase 13 `DPA-001`, and Phase 14 `WFR-001` are complete. No `Ready` items remain in this plan. If continuing implementation, add the next scoped work item to `docs/implementation-plan.md` before editing, then start that item.
 ```

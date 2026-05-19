@@ -8,9 +8,14 @@ Woof addresses the inner loop: the structured, auditable cycle of an individual 
 
 ## Status
 
-Active. `guitar-tone-shootout` is Woof's first external consumer.
+Pre-release. The internal architecture is implemented and dogfooded against `guitar-tone-shootout`. A release-closure audit (RC-3 through RC-7) is open against the current architecture; a separate Phase B is required before Woof is usable against arbitrary consumer repositories.
 
 The current architecture is graph-led. `woof wf --epic <N>` runs the deterministic graph; LLM prompts are producer or reviewer nodes, not workflow orchestrators. ADR-002 defines the current role policy: GPT-5.5 is the preferred primary producer route, Claude Opus 4.7 at `max` effort is the preferred reviewer route, and reviewer blockers open human gates rather than model-to-model debate loops.
+
+Known portability gaps before any-project use:
+- Stage 1 Discovery currently dispatches a synthesis-only producer node. The upstream `research/`, `thinking/`, `brainstorm/` substance assumes the dispatched session has Ryan-local Claude Code skill plugins installed. A stranger without that environment will get thin Stage 1 output. Tracked as Phase B RC-B1 (`docs/implementation-plan.md`).
+- The issue tracker is coupled to GitHub at architecture-principle level. Linear, Jira, Plane, Forgejo, and local-file consumers cannot use Woof until an issue-tracker abstraction lands. Tracked as Phase B RC-B2.
+- `woof init` does not exist; first-consumer setup requires hand-assembling at least four `.woof/*.toml` files plus `.gitignore` entries and an optional `scripts/refresh-cartography`. Tracked as Phase B RC-B3.
 
 Current implementation status, remaining work, and the session continuation prompt live in [`docs/implementation-plan.md`](docs/implementation-plan.md).
 

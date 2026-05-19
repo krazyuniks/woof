@@ -266,6 +266,14 @@ This phase tightens the first-run consumer configuration path after runtime pref
 |---|---|---|---|---|---|
 | PFT-001 | Completed | Make the missing prerequisites template match the documented bootstrap contract. | `woof preflight` with `.woof/` present but no `.woof/prerequisites.toml` exits non-zero and prints a starter template containing explicit `<replace>` placeholders for project-specific values. | Focused preflight CLI test passed: 1 test. `git diff --check` passed. `just check` passed: Ruff lint, Ruff format check, and 240 tests. | `fix(preflight): show replacement placeholders in template` |
 
+### Phase 17: Dispatch Audit Hardening
+
+This phase tightens dispatch audit file safety after prompt-artefact recording and transcript bundling landed. Items must preserve ADR-002 portability constraints and keep durable audit references repo-relative or portable home-relative.
+
+| ID | Status | Work item | Observable outcomes | Validation | Commit |
+|---|---|---|---|---|---|
+| AUD-003 | Completed | Make dispatch audit file stems collision-resistant and path-safe. | Dispatch-created `.prompt`, `.output`, `.stderr`, and `.meta` files use a stem that cannot collide across concurrent same-epic same-role dispatch invocations and cannot derive path separators or unsafe filename characters from role text; Codex audit references remain repo-relative and JSONL-valid. | Focused dispatch tests passed: 29 tests. `git diff --check` passed. `just check` passed: Ruff lint, Ruff format check, and 242 tests. | `fix(dispatch): harden audit file stems` |
+
 ## Next Continuation Prompt
 
 ```text
@@ -291,5 +299,5 @@ Workflow:
 - In the final response, paste this complete continuation prompt block so it can be copied into a new session.
 
 Start with:
-Workstreams R, F, G, Phase 8 `PRD-001`, Phase 9 `AUD-001`, Phase 10 `CIM-001`, Phase 11 `CHK-010`, Phase 12 `AUD-002`, Phase 13 `DPA-001`, Phase 14 `WFR-001`, Phase 15 `JEV-001`, and Phase 16 `PFT-001` are complete. No `Ready` items remain in this plan. If continuing implementation, add the next scoped work item to `docs/implementation-plan.md` before editing, then start that item.
+Workstreams R, F, G, Phase 8 `PRD-001`, Phase 9 `AUD-001`, Phase 10 `CIM-001`, Phase 11 `CHK-010`, Phase 12 `AUD-002`, Phase 13 `DPA-001`, Phase 14 `WFR-001`, Phase 15 `JEV-001`, Phase 16 `PFT-001`, and Phase 17 `AUD-003` are complete. No `Ready` items remain in this plan. If continuing implementation, add the next scoped work item to `docs/implementation-plan.md` before editing, then start that item.
 ```

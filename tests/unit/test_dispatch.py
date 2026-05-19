@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -443,6 +444,51 @@ def test_parse_codex_output_no_turns() -> None:
     tokens, thread = mod.parse_codex_output(line)
     assert tokens == {}
     assert thread == "abc"
+
+
+def test_audit_file_stem_is_path_safe() -> None:
+    mod = _import_woof_module()
+    started_at = datetime(2026, 5, 19, 12, 0, 1, 123456, tzinfo=UTC)
+
+    stem = mod.audit_file_stem(
+        "codex",
+        "primary/../../reviewer?x",
+        started_at,
+        process_id=99,
+    )
+
+    assert stem == "codex-primary-reviewer-x-20260519T120001123456Z-p99"
+    assert "/" not in stem
+    assert "." not in stem
+
+
+def test_reserve_audit_base_avoids_existing_prompt_collision(tmp_path: Path) -> None:
+    mod = _import_woof_module()
+    started_at = datetime(2026, 5, 19, 12, 0, 1, 123456, tzinfo=UTC)
+    audit_dir = tmp_path / "audit"
+    audit_dir.mkdir()
+
+    first = mod.reserve_audit_base(
+        audit_dir,
+        "codex",
+        "primary",
+        started_at,
+        "first prompt",
+        process_id=99,
+    )
+    second = mod.reserve_audit_base(
+        audit_dir,
+        "codex",
+        "primary",
+        started_at,
+        "second prompt",
+        process_id=99,
+    )
+
+    assert first.name == "codex-primary-20260519T120001123456Z-p99"
+    assert second.name == "codex-primary-20260519T120001123456Z-p99-2"
+    assert first.with_suffix(".prompt").read_text() == "first prompt"
+    assert second.with_suffix(".prompt").read_text() == "second prompt"
 
 
 def test_build_argv_minimal_role() -> None:

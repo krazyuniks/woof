@@ -97,7 +97,13 @@ def write_gate(
         front["exit_code"] = exit_code
 
     fm_yaml = yaml.dump(front, default_flow_style=False, allow_unicode=True)
-    body = position_text.strip()
+    body = _ensure_gate_sections(
+        position_text.strip(),
+        epic_dir=epic_dir,
+        story_id=story_id,
+        gate_type=resolved_gate_type,
+        triggered_by=triggered_by,
+    )
     content = f"---\n{fm_yaml}---\n\n{body}\n"
     gate_path.write_text(content)
 
@@ -208,39 +214,93 @@ def _opened_event_for_gate_type(gate_type: str) -> str:
     return "story_gate_opened"
 
 
+def _ensure_gate_sections(
+    text: str,
+    *,
+    epic_dir: Path,
+    story_id: str | None,
+    gate_type: str,
+    triggered_by: list[str],
+) -> str:
+    required = (
+        "## Context",
+        "## Findings",
+        "## Primary position",
+        "## Reviewer position",
+    )
+    if all(section in text for section in required):
+        return text
+
+    epic = epic_dir.name if epic_dir.name.startswith("E") else "the epic"
+    story = f" story {story_id}" if story_id else ""
+    trigger_text = ", ".join(triggered_by)
+    body = text or "No additional position text was provided."
+    return (
+        "## Context\n\n"
+        f"{gate_type} opened for {epic}{story}. Triggered by: {trigger_text}.\n\n"
+        "## Findings\n\n"
+        f"{body}\n\n"
+        "## Primary position\n\n"
+        "No accepted primary revision has been recorded after this gate trigger.\n\n"
+        "## Reviewer position\n\n"
+        "No separate reviewer position was available for this gate.\n"
+    )
+
+
 def _auto_position(triggered_by: list[str], check_result: dict) -> str:
     checks = check_result.get("checks") or []
     failed = [c for c in checks if not c.get("ok")]
-    lines = [f"Check stage-5 failed: {', '.join(triggered_by)}."]
+    lines = [
+        "## Context\n\n"
+        f"Stage 5 verification opened a gate. Triggered by: {', '.join(triggered_by)}.\n\n"
+        "## Findings\n\n"
+    ]
     for c in failed:
-        lines.append(f"\n- {c['id']}: {c.get('summary', '')}")
+        lines.append(f"- {c['id']}: {c.get('summary', '')}\n")
         if c.get("evidence"):
-            lines.append(f"  Evidence: {c['evidence']}")
-    lines.append("\n\nInvestigate the findings above and retry or revise the story scope.")
+            lines.append(f"  Evidence: {c['evidence']}\n")
+    if not failed:
+        lines.append("- No individual failed check entries were present in check-result.json.\n")
+    lines.append(
+        "\n## Primary position\n\n"
+        "The primary output remains available for operator inspection. No accepted "
+        "revision has been recorded after this failed check result.\n\n"
+        "## Reviewer position\n\n"
+        "The deterministic Stage 5 check runner produced the findings above.\n"
+    )
     return "".join(lines)
 
 
 def _auto_position_for_trigger(trigger: str, exit_code: int | None) -> str:
+    context = f"Gate opened with trigger: {trigger}."
     if trigger == "subprocess_crash":
-        return (
-            f"Story executor subprocess crashed with exit code {exit_code}.\n\n"
-            "Investigate the dispatch.jsonl audit and harness output before re-dispatching."
+        finding = f"Story executor subprocess crashed with exit code {exit_code}."
+        primary = "No primary result was accepted because the subprocess did not complete cleanly."
+    elif trigger == "executor_aborted":
+        finding = (
+            "Story executor reported aborted_with_position, but no separate position prose "
+            "was provided."
         )
-    if trigger == "executor_aborted":
-        return (
-            "Story executor reported aborted_with_position. "
-            "No position prose was provided.\n\n"
-            "Review the executor audit output for the reason."
+        primary = "Review the executor audit output for the primary's reason."
+    elif trigger == "empty_diff_review":
+        finding = "Story executor reported empty_diff."
+        primary = (
+            "Confirm whether earlier stories already realised this outcome. Approve if "
+            "confirmed; revise story scope otherwise."
         )
-    if trigger == "empty_diff_review":
-        return (
-            "Story executor reported empty_diff. "
-            "Confirm whether earlier stories already realised this outcome.\n\n"
-            "Approve if confirmed; revise story scope otherwise."
-        )
-    if trigger == "github_sync_conflict":
-        return (
-            "GitHub issue sync conflict detected. "
-            "Review the remote issue body, local render, and .last-sync before retrying."
-        )
-    return f"Gate opened with trigger: {trigger}."
+    elif trigger == "github_sync_conflict":
+        finding = "GitHub issue sync conflict detected."
+        primary = "Review the remote issue body, local render, and .last-sync before retrying."
+    elif trigger != "subprocess_crash":
+        finding = context
+        primary = "No accepted primary revision has been recorded after this trigger."
+    return (
+        "## Context\n\n"
+        f"{context}\n\n"
+        "## Findings\n\n"
+        f"- {finding}\n\n"
+        "## Primary position\n\n"
+        f"{primary}\n\n"
+        "## Reviewer position\n\n"
+        "No separate reviewer position was available for this gate.\n"
+    )

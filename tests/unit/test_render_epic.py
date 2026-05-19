@@ -557,3 +557,117 @@ def test_wf_plan_gate_approval_opens_sync_conflict_gate(epic_project: Path, tmp_
     assert gate_front["triggered_by"] == ["github_sync_conflict"]
     assert "### Diff: last-pushed -> current remote" in gate_text
     assert "### Diff: last-pushed -> current local render" in gate_text
+
+
+def test_wf_resolve_sync_conflict_keep_local_updates_last_sync_baseline(
+    epic_project: Path, tmp_path: Path
+) -> None:
+    epic_dir = epic_project / ".woof" / "epics" / "E42"
+    _write_last_sync(epic_project, updated_at="2025-12-01T00:00:00Z", body="<old>")
+    (epic_dir / "gate.md").write_text(
+        "---\n"
+        "type: plan_gate\n"
+        "stage: 4\n"
+        "story_id: null\n"
+        "triggered_by: [github_sync_conflict]\n"
+        "timestamp: '2026-01-01T00:00:00Z'\n"
+        "---\n"
+        "## Context\n\nConflict.\n\n"
+        "## Findings\n\n- remote changed\n\n"
+        "## Primary position\n\nKeep local.\n\n"
+        "## Reviewer position\n\nUpdate baseline, then retry.\n"
+    )
+
+    bin_dir = tmp_path / "bin"
+    remote_body = "Remote teammate edit.\n"
+    _make_gh_stub(
+        bin_dir,
+        fetch_payload={"number": 42, "updated_at": "2026-04-01T00:00:00Z", "body": remote_body},
+    )
+
+    proc = _run(
+        epic_project,
+        "wf",
+        "--epic",
+        "42",
+        "--resolve",
+        "keep_local",
+        env=_stub_env(bin_dir),
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert not (epic_dir / "gate.md").exists()
+    assert not (bin_dir / "_last_body").exists()
+    last_sync = json.loads((epic_dir / ".last-sync").read_text())
+    assert last_sync["updated_at"] == "2026-04-01T00:00:00Z"
+    assert last_sync["body"] == remote_body
+    events = [
+        json.loads(line) for line in (epic_dir / "epic.jsonl").read_text().splitlines() if line
+    ]
+    assert events[-1]["event"] == "gate_resolved"
+    assert events[-1]["decision"] == "keep_local"
+    assert events[-1]["triggered_by"] == ["github_sync_conflict"]
+
+
+def test_wf_resolve_sync_conflict_accept_remote_updates_epic_md(
+    epic_project: Path, tmp_path: Path
+) -> None:
+    epic_dir = epic_project / ".woof" / "epics" / "E42"
+    _write_last_sync(epic_project, updated_at="2025-12-01T00:00:00Z", body="<old>")
+    (epic_dir / "gate.md").write_text(
+        "---\n"
+        "type: plan_gate\n"
+        "stage: 4\n"
+        "story_id: null\n"
+        "triggered_by: [github_sync_conflict]\n"
+        "timestamp: '2026-01-01T00:00:00Z'\n"
+        "---\n"
+        "## Context\n\nConflict.\n\n"
+        "## Findings\n\n- remote changed\n\n"
+        "## Primary position\n\nAccept remote.\n\n"
+        "## Reviewer position\n\nMirror GitHub locally.\n"
+    )
+    remote_body = (
+        "Remote canonical intent.\n\n"
+        "## Observable Outcomes\n\n"
+        "- **O1** - Remote outcome.\n"
+        "  - Verification: manual\n\n"
+        "## Acceptance Criteria\n\n"
+        "- Remote criteria.\n\n"
+        "---\n\n"
+        "<!-- woof sentinel -->\n"
+    )
+
+    bin_dir = tmp_path / "bin"
+    _make_gh_stub(
+        bin_dir,
+        fetch_payload={
+            "number": 42,
+            "title": "Remote title",
+            "updated_at": "2026-04-01T00:00:00Z",
+            "body": remote_body,
+        },
+    )
+
+    proc = _run(
+        epic_project,
+        "wf",
+        "--epic",
+        "42",
+        "--resolve",
+        "accept_remote",
+        env=_stub_env(bin_dir),
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert not (epic_dir / "gate.md").exists()
+    front = yaml.safe_load(
+        (epic_dir / "EPIC.md").read_text()[
+            4 : (epic_dir / "EPIC.md").read_text().find("\n---\n", 4)
+        ]
+    )
+    assert front["title"] == "Remote title"
+    assert front["observable_outcomes"][0]["statement"] == "Remote outcome."
+    assert front["acceptance_criteria"] == ["Remote criteria."]
+    last_sync = json.loads((epic_dir / ".last-sync").read_text())
+    assert last_sync["body"] == remote_body

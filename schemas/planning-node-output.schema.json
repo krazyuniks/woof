@@ -260,7 +260,15 @@
       "properties": {
         "decision": {
           "type": "string",
-          "enum": ["approve", "revise_epic_contract", "revise_plan", "abandon_epic"]
+          "enum": [
+            "approve",
+            "revise_epic_contract",
+            "revise_plan",
+            "abandon_epic",
+            "keep_local",
+            "accept_remote",
+            "hand_merge"
+          ]
         },
         "event_path": { "$ref": "#/$defs/path" },
         "gate_deleted": { "type": "boolean", "const": true },

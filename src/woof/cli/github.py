@@ -57,6 +57,15 @@ class LifecycleSyncResult(DefinitionSyncResult):
     closed: bool = False
 
 
+@dataclass(frozen=True)
+class ConflictResolutionResult:
+    epic_id: int
+    decision: str
+    updated_at: str
+    last_sync_path: Path
+    epic_path: Path | None = None
+
+
 STRUCTURED_HEADING = "## Observable Outcomes"
 WOOF_SENTINEL = (
     "<!-- woof — structured sections above are rewritten on Definition/plan "
@@ -363,6 +372,85 @@ def sync_epic_completion(repo_root: Path, epic_id: int) -> LifecycleSyncResult:
 
 def has_github_sync_state(repo_root: Path, epic_id: int) -> bool:
     return (repo_root / ".woof" / "epics" / f"E{epic_id}" / ".last-sync").is_file()
+
+
+def assert_local_epic_github_authority(repo_root: Path, epic_id: int) -> None:
+    """Verify an existing local epic is backed by an accessible GitHub issue."""
+
+    repo = load_github_repo(repo_root)
+    issue = fetch_issue(repo, epic_id)
+    if "pull_request" in issue:
+        raise GithubSyncError(f"E{epic_id} resolves to a pull request, not a GitHub issue")
+    number = issue.get("number")
+    if isinstance(number, int) and number != epic_id:
+        raise GithubSyncError(f"gh returned issue #{number}, expected #{epic_id}")
+
+    last_sync_path = repo_root / ".woof" / "epics" / f"E{epic_id}" / ".last-sync"
+    last_sync = _read_last_sync(last_sync_path)
+    if last_sync is None:
+        raise GithubSyncError(
+            f"{last_sync_path} not found; existing local epics must be initialised "
+            'from GitHub with `woof wf --epic <N>` or `woof wf new "<spark>"`'
+        )
+    synced_issue = last_sync.get("issue_number")
+    if synced_issue != epic_id:
+        raise GithubSyncError(f"{last_sync_path} issue_number={synced_issue!r}, expected {epic_id}")
+
+
+def resolve_github_sync_conflict(
+    repo_root: Path, epic_id: int, decision: str
+) -> ConflictResolutionResult:
+    """Apply the structured resolution for an open GitHub sync conflict gate."""
+
+    if decision not in {"keep_local", "accept_remote", "hand_merge"}:
+        raise GithubSyncError(f"unsupported github_sync_conflict decision: {decision}")
+
+    repo = load_github_repo(repo_root)
+    issue = fetch_issue(repo, epic_id)
+    remote_body = _issue_body(issue)
+    updated_at = _issue_updated_at(issue)
+    epic_directory = repo_root / ".woof" / "epics" / f"E{epic_id}"
+    last_sync_path = epic_directory / ".last-sync"
+    epic_path: Path | None = None
+
+    if decision == "accept_remote":
+        title = issue.get("title")
+        if not isinstance(title, str) or not title.strip():
+            raise GithubSyncError(f"GitHub issue #{epic_id} has no title")
+        epic_text = epic_markdown_from_issue(epic_id=epic_id, title=title, body=remote_body)
+        if epic_text is None:
+            raise GithubSyncError(
+                "accept_remote requires a GitHub issue body with Woof managed sections; "
+                "use hand_merge for unstructured remote bodies"
+            )
+        epic_path = epic_directory / "EPIC.md"
+        _atomic_write_text(epic_path, epic_text)
+
+    _write_last_sync(
+        last_sync_path,
+        {
+            "issue_number": epic_id,
+            "updated_at": updated_at,
+            "body_sha256": _sha256(remote_body),
+            "body": remote_body,
+        },
+    )
+    event: dict[str, Any] = {
+        "event": "github_synced",
+        "at": iso_utc(),
+        "epic_id": epic_id,
+        "conflict_resolution": decision,
+    }
+    if epic_path is not None:
+        event["paths"] = [epic_path.relative_to(repo_root).as_posix()]
+    _append_jsonl(epic_directory / "epic.jsonl", event)
+    return ConflictResolutionResult(
+        epic_id=epic_id,
+        decision=decision,
+        updated_at=updated_at,
+        last_sync_path=last_sync_path,
+        epic_path=epic_path,
+    )
 
 
 def create_epic_from_spark(repo_root: Path, spark: str) -> NewEpicResult:
@@ -772,9 +860,11 @@ def _sync_conflict_gate_body(
         "```diff\n"
         f"{local_diff}\n"
         "```\n\n"
-        "## Position\n\n"
-        "No issue update was sent to GitHub. Resolve the conflict by choosing keep "
-        "local, accept remote, or hand-merge, then retry `/wf`.\n"
+        "## Primary position\n\n"
+        "No issue update was sent to GitHub. The current local render is shown above.\n\n"
+        "## Reviewer position\n\n"
+        "Resolve the conflict with one structured decision: `keep_local`, "
+        "`accept_remote`, or `hand_merge`, then retry `/wf` or `woof render-epic --sync`.\n"
     )
 
 

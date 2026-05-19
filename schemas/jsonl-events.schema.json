@@ -142,9 +142,12 @@
         "revise_story_scope",
         "split_story",
         "abandon_story",
-        "abandon_epic"
+        "abandon_epic",
+        "keep_local",
+        "accept_remote",
+        "hand_merge"
       ],
-      "description": "Gate resolution decision. approve = proceed. revise_epic_contract = re-enter Stage 2. revise_plan = re-enter Stage 3. revise_story_scope = edit current story's paths or satisfies. split_story = replace one story with multiple. abandon_story = skip and continue. abandon_epic = mark incomplete + close gh issue with note."
+      "description": "Gate resolution decision. approve = proceed. revise_epic_contract = re-enter Stage 2. revise_plan = re-enter Stage 3. revise_story_scope = edit current story's paths or satisfies. split_story = replace one story with multiple. abandon_story = skip and continue. abandon_epic = mark incomplete + close gh issue with note. keep_local, accept_remote, and hand_merge resolve GitHub sync-conflict gates."
     },
     "cc_session_id": {
       "type": "string",

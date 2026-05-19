@@ -65,6 +65,11 @@ def _make_gh_rate_limit_stub(bin_dir: Path) -> dict[str, str]:
         '  printf \'%s\' \'{"resources":{"core":{"remaining":5000}}}\'\n'
         "  exit 0\n"
         "fi\n"
+        'if [[ "${1:-}" == "api" && "${2:-}" == /repos/*/issues/* ]]; then\n'
+        '  issue="${2##*/}"\n'
+        '  printf \'{"number":%s,"title":"Stub issue","body":"","updated_at":"2026-01-01T00:00:00Z"}\' "$issue"\n'
+        "  exit 0\n"
+        "fi\n"
         'echo "unexpected gh invocation: $*" >&2\n'
         "exit 2\n"
     )
@@ -504,6 +509,7 @@ def test_run_graph_removes_stale_workflow_lock_and_records_event(tmp_path: Path)
 def test_wf_reports_live_workflow_lock(tmp_path: Path) -> None:
     _write_github_prerequisites(tmp_path)
     directory = _write_plan(tmp_path, 23)
+    _write_last_sync(directory, 23)
     lock = directory / LOCK_FILENAME
     lock.write_text(
         json.dumps(
@@ -1474,7 +1480,9 @@ def test_wf_epic_reports_complete_epic_as_json(tmp_path: Path) -> None:
 
 def test_wf_reports_missing_plan_as_structured_failure(tmp_path: Path) -> None:
     _write_github_prerequisites(tmp_path)
-    (tmp_path / ".woof" / "epics" / "E10").mkdir(parents=True)
+    directory = tmp_path / ".woof" / "epics" / "E10"
+    directory.mkdir(parents=True)
+    _write_last_sync(directory, 10)
     env = _make_gh_rate_limit_stub(tmp_path / "bin")
 
     proc = _run_woof(tmp_path, "wf", "--epic", "10", env=env)
@@ -1488,6 +1496,7 @@ def test_wf_reports_missing_plan_as_structured_failure(tmp_path: Path) -> None:
 def test_wf_epic_halts_when_gate_is_open(tmp_path: Path) -> None:
     _write_github_prerequisites(tmp_path)
     directory = _write_plan(tmp_path, 8)
+    _write_last_sync(directory, 8)
     (directory / "gate.md").write_text("---\ntype: story_gate\n---\n")
     env = _make_gh_rate_limit_stub(tmp_path / "bin")
 
@@ -1543,6 +1552,7 @@ def test_wf_gate_case_reports_stable_json_contract(tmp_path: Path) -> None:
         )
     )
 
+    _write_last_sync(directory, 11)
     env = _make_gh_rate_limit_stub(tmp_path / "bin")
     proc = _run_woof(tmp_path, "wf", "--epic", "11", "--format", "json", env=env)
 
@@ -1580,6 +1590,7 @@ def test_wf_gate_case_reports_stable_json_contract(tmp_path: Path) -> None:
 def test_wf_resolve_records_gate_decision_and_removes_gate(tmp_path: Path) -> None:
     _write_github_prerequisites(tmp_path)
     directory = _write_plan(tmp_path, 9)
+    _write_last_sync(directory, 9)
     gate = directory / "gate.md"
     gate.write_text("---\ntype: story_gate\n---\n")
     env = _make_gh_rate_limit_stub(tmp_path / "bin")
@@ -1594,6 +1605,224 @@ def test_wf_resolve_records_gate_decision_and_removes_gate(tmp_path: Path) -> No
     assert events[-1]["epic_id"] == 9
     assert events[-1]["gate_type"] == "story_gate"
     assert events[-1]["decision"] == "approve"
+
+
+def test_wf_resolve_revise_plan_reenters_breakdown(tmp_path: Path) -> None:
+    _write_github_prerequisites(tmp_path)
+    directory = _write_spark(tmp_path, 31)
+    _write_minimal_epic(directory, 31)
+    _write_stage3_plan(directory, 31)
+    (directory / "PLAN.md").write_text(nodes._render_plan_markdown(nodes.load_plan(tmp_path, 31)))
+    _write_plan_critique(directory, "info")
+    _write_last_sync(directory, 31)
+    (directory / "epic.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "event": "definition_closed",
+                        "at": "2026-01-01T00:00:00Z",
+                        "epic_id": 31,
+                    }
+                ),
+                json.dumps(
+                    {
+                        "event": "breakdown_planned",
+                        "at": "2026-01-01T00:00:01Z",
+                        "epic_id": 31,
+                    }
+                ),
+                json.dumps(
+                    {
+                        "event": "plan_critiqued",
+                        "at": "2026-01-01T00:00:02Z",
+                        "epic_id": 31,
+                    }
+                ),
+            ]
+        )
+        + "\n"
+    )
+    (directory / "gate.md").write_text(
+        "---\n"
+        "type: plan_gate\n"
+        "stage: 4\n"
+        "story_id: null\n"
+        "triggered_by: [plan_review]\n"
+        "timestamp: '2026-01-01T00:00:03Z'\n"
+        "---\n"
+        "## Context\n\nPlan gate.\n\n"
+        "## Findings\n\n- revise\n\n"
+        "## Primary position\n\nRevise plan.\n\n"
+        "## Reviewer position\n\nReviewer agrees.\n"
+    )
+    env = _make_gh_rate_limit_stub(tmp_path / "bin")
+
+    proc = _run_woof(tmp_path, "wf", "--epic", "31", "--resolve", "revise_plan", env=env)
+
+    assert proc.returncode == 0, proc.stderr
+    assert not (directory / "gate.md").exists()
+    assert not (directory / "plan.json").exists()
+    assert not (directory / "PLAN.md").exists()
+    assert not (directory / "critique" / "plan.md").exists()
+    assert next_node(tmp_path, 31) == (NodeType.BREAKDOWN_PLANNING, None)
+
+
+def test_wf_resolve_approve_clears_stale_failed_check_result(tmp_path: Path) -> None:
+    _write_github_prerequisites(tmp_path)
+    directory = _write_plan(tmp_path, 32)
+    _write_last_sync(directory, 32)
+    mark_story_status(tmp_path, 32, "S1", "in_progress")
+    (directory / "executor_result.json").write_text(
+        json.dumps(
+            {
+                "epic_id": 32,
+                "story_id": "S1",
+                "outcome": "staged_for_verification",
+                "commit_body": "done",
+                "position": None,
+            }
+        )
+    )
+    critique_dir = directory / "critique"
+    critique_dir.mkdir()
+    (critique_dir / "story-S1.md").write_text(
+        "---\ntarget: story\ntarget_id: S1\nseverity: info\n"
+        "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
+        "findings: []\n---\n"
+    )
+    _write_disposition(directory, 32, "S1")
+    (directory / "check-result.json").write_text(
+        json.dumps(
+            {
+                "ok": False,
+                "stage": 5,
+                "epic_id": 32,
+                "story_id": "S1",
+                "triggered_by": ["check_1_quality_gates"],
+                "checks": [
+                    {
+                        "id": "check_1_quality_gates",
+                        "ok": False,
+                        "severity": "blocker",
+                        "summary": "quality gate failed",
+                    }
+                ],
+            }
+        )
+    )
+    (directory / "gate.md").write_text(
+        "---\n"
+        "type: story_gate\n"
+        "stage: 6\n"
+        "story_id: S1\n"
+        "triggered_by: [check_1_quality_gates]\n"
+        "timestamp: '2026-01-01T00:00:00Z'\n"
+        "---\n"
+        "## Context\n\nCheck gate.\n\n"
+        "## Findings\n\n- failed\n\n"
+        "## Primary position\n\nFix applied.\n\n"
+        "## Reviewer position\n\nChecks should rerun.\n"
+    )
+    env = _make_gh_rate_limit_stub(tmp_path / "bin")
+
+    proc = _run_woof(tmp_path, "wf", "--epic", "32", "--resolve", "approve", env=env)
+
+    assert proc.returncode == 0, proc.stderr
+    assert not (directory / "check-result.json").exists()
+    assert next_node(tmp_path, 32) == (NodeType.VERIFICATION, "S1")
+
+
+def test_wf_resolve_split_story_clears_stale_failed_check_result(tmp_path: Path) -> None:
+    _write_github_prerequisites(tmp_path)
+    directory = _write_plan(tmp_path, 33)
+    _write_last_sync(directory, 33)
+    mark_story_status(tmp_path, 33, "S1", "in_progress")
+    (directory / "executor_result.json").write_text(
+        json.dumps(
+            {
+                "epic_id": 33,
+                "story_id": "S1",
+                "outcome": "staged_for_verification",
+                "commit_body": "done",
+                "position": None,
+            }
+        )
+    )
+    (directory / "check-result.json").write_text(
+        json.dumps(
+            {
+                "ok": False,
+                "stage": 5,
+                "epic_id": 33,
+                "story_id": "S1",
+                "triggered_by": ["check_3_scope"],
+                "checks": [],
+            }
+        )
+    )
+    (directory / "gate.md").write_text(
+        "---\n"
+        "type: story_gate\n"
+        "stage: 6\n"
+        "story_id: S1\n"
+        "triggered_by: [check_3_scope]\n"
+        "timestamp: '2026-01-01T00:00:00Z'\n"
+        "---\n"
+        "## Context\n\nScope gate.\n\n"
+        "## Findings\n\n- split\n\n"
+        "## Primary position\n\nSplit story.\n\n"
+        "## Reviewer position\n\nRerun checks.\n"
+    )
+    env = _make_gh_rate_limit_stub(tmp_path / "bin")
+
+    proc = _run_woof(tmp_path, "wf", "--epic", "33", "--resolve", "split_story", env=env)
+
+    assert proc.returncode == 0, proc.stderr
+    assert not (directory / "check-result.json").exists()
+
+
+def test_wf_resolve_abandon_story_skips_to_next_ready_story(tmp_path: Path) -> None:
+    _write_github_prerequisites(tmp_path)
+    directory = _write_plan(tmp_path, 34)
+    _write_last_sync(directory, 34)
+    plan = json.loads((directory / "plan.json").read_text())
+    plan["stories"] = [
+        {**plan["stories"][0], "id": "S1", "status": "in_progress"},
+        {**plan["stories"][0], "id": "S2", "title": "second", "status": "pending"},
+    ]
+    (directory / "plan.json").write_text(json.dumps(plan))
+    (directory / "executor_result.json").write_text(
+        json.dumps(
+            {
+                "epic_id": 34,
+                "story_id": "S1",
+                "outcome": "aborted_with_position",
+                "position": "Cannot continue.",
+            }
+        )
+    )
+    (directory / "gate.md").write_text(
+        "---\n"
+        "type: story_gate\n"
+        "stage: 6\n"
+        "story_id: S1\n"
+        "triggered_by: [executor_aborted]\n"
+        "timestamp: '2026-01-01T00:00:00Z'\n"
+        "---\n"
+        "## Context\n\nAbort gate.\n\n"
+        "## Findings\n\n- abandon\n\n"
+        "## Primary position\n\nAbandon story.\n\n"
+        "## Reviewer position\n\nContinue.\n"
+    )
+    env = _make_gh_rate_limit_stub(tmp_path / "bin")
+
+    proc = _run_woof(tmp_path, "wf", "--epic", "34", "--resolve", "abandon_story", env=env)
+
+    assert proc.returncode == 0, proc.stderr
+    plan_after = json.loads((directory / "plan.json").read_text())
+    assert plan_after["stories"][0]["status"] == "done"
+    assert next_node(tmp_path, 34) == (NodeType.EXECUTOR_DISPATCH, "S2")
 
 
 def test_transaction_manifest_requires_audit_and_rejects_extra_staged_file(tmp_path: Path) -> None:

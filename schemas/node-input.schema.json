@@ -50,7 +50,10 @@
             "revise_story_scope",
             "split_story",
             "abandon_story",
-            "abandon_epic"
+            "abandon_epic",
+            "keep_local",
+            "accept_remote",
+            "hand_merge"
           ]
         },
         { "type": "null" }

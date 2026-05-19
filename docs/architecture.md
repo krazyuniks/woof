@@ -206,7 +206,7 @@ All gh invocations pass `--repo <scope>` explicitly (consumer's project rule).
 | Epic complete (all stories `done`) | fs → gh | Append closing summary; `gh issue close` |
 | `woof wf --epic <N>` where neither local nor gh has it | — | Fail loud: "E<N> not found. Use `woof wf new \"<spark>\"` to start a new epic — gh assigns the issue number." |
 
-**Push policy.** Local is authoritative on push, but push is conflict-detected. Each successful push records the gh issue's `updatedAt` timestamp and the SHA-256 of the rendered body in `.woof/epics/E<N>/.last-sync`. Before the next push, `gh api /repos/.../issues/<N>` is fetched: if the remote `updatedAt` differs from the recorded value, woof opens a `gate.md` with `triggered_by: ["github_sync_conflict"]` containing a three-way diff (last-pushed body, current remote body, current local render). Resolution is via gate conversation: keep local, accept remote, or hand-merge. No silent overwrite. Worktree-level handover convention still holds: an epic is active in exactly one worktree at a time; `.last-sync` is per-worktree.
+**Push policy.** Local is authoritative on push, but push is conflict-detected. Each successful push records the gh issue's `updatedAt` timestamp and the SHA-256 of the rendered body in `.woof/epics/E<N>/.last-sync`. Before the next push, `gh api /repos/.../issues/<N>` is fetched: if the remote `updatedAt` differs from the recorded value, woof opens a `gate.md` with `triggered_by: ["github_sync_conflict"]` containing a three-way diff (last-pushed body, current remote body, current local render). Resolution is via gate conversation with one of the structured decisions `keep_local`, `accept_remote`, or `hand_merge`. `keep_local` and `hand_merge` update `.last-sync` to the current remote baseline so the next retry can push the operator-approved local render; `accept_remote` updates `.last-sync` and rewrites local `EPIC.md` from the managed GitHub issue body. No silent overwrite. Worktree-level handover convention still holds: an epic is active in exactly one worktree at a time; `.last-sync` is per-worktree.
 
 **Body rendering schema.** Deterministic transform from `EPIC.md` front-matter to gh markdown body:
 
@@ -244,6 +244,8 @@ All gh invocations pass `--repo <scope>` explicitly (consumer's project rule).
 **Push-sync failure.** Network failure or `gh api` rate limit during a scheduled push: `/wf` fails loud, exits non-zero. User retries `/wf` — skill detects local `EPIC.md` mtime newer than last successful push (stored in `.woof/epics/E<N>/.last-sync`) and re-pushes.
 
 **Preflight runtime check.** Beyond the one-shot `woof preflight` check, every `/wf` invocation verifies gh reachability (`gh api /rate_limit`, ~200ms). Missing auth or unreachable API → fail loud; no silent degradation.
+
+For existing local `.woof/epics/E<N>/` directories, `/wf` also fetches the GitHub issue and requires `.woof/epics/E<N>/.last-sync` to identify the same issue number before graph or gate mutation. A local directory without GitHub authority is not a valid epic.
 
 ### Stage contracts
 

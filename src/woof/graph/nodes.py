@@ -27,6 +27,7 @@ from woof.graph.manifest import build_story_manifest, verify_staged_manifest
 from woof.graph.state import NodeInput, NodeOutput, NodeStatus, NodeType, Plan, ValidationSummary
 from woof.graph.transitions import (
     StageStateError,
+    append_epic_event,
     append_epic_event_once,
     discovery_synthesis_complete,
     discovery_synthesis_dir,
@@ -57,6 +58,22 @@ def _woof_bin() -> Path:
 
 def _gate_path(epic_id: int) -> str:
     return f".woof/epics/E{epic_id}/gate.md"
+
+
+def _gate_operator_message(repo_root: Path, epic_id: int) -> str:
+    relpath = _gate_path(epic_id)
+    path = repo_root / relpath
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return f"gate open at {relpath}"
+    body = text
+    if text.startswith("---\n"):
+        end = text.find("\n---\n", 4)
+        if end >= 0:
+            body = text[end + len("\n---\n") :]
+    body = body.strip()
+    return f"gate open at {relpath}\n\n{body}" if body else f"gate open at {relpath}"
 
 
 def _relpath(repo_root: Path, path: Path) -> str:
@@ -618,7 +635,7 @@ def epic_definition_node(inp: NodeInput) -> NodeOutput:
             paths=[epic_relpath],
         )
 
-    append_epic_event_once(
+    append_epic_event(
         inp.repo_root,
         inp.epic_id,
         {
@@ -627,7 +644,6 @@ def epic_definition_node(inp: NodeInput) -> NodeOutput:
             "epic_id": inp.epic_id,
             "paths": [epic_relpath],
         },
-        event="definition_closed",
     )
     return NodeOutput(
         node_type=inp.node_type,
@@ -721,7 +737,7 @@ def breakdown_planning_node(inp: NodeInput) -> NodeOutput:
 
     plan = load_plan(inp.repo_root, inp.epic_id)
     plan_md_path.write_text(_render_plan_markdown(plan), encoding="utf-8")
-    append_epic_event_once(
+    append_epic_event(
         inp.repo_root,
         inp.epic_id,
         {
@@ -730,7 +746,6 @@ def breakdown_planning_node(inp: NodeInput) -> NodeOutput:
             "epic_id": inp.epic_id,
             "paths": paths,
         },
-        event="breakdown_planned",
     )
     return NodeOutput(
         node_type=inp.node_type,
@@ -828,7 +843,7 @@ def plan_critique_node(inp: NodeInput) -> NodeOutput:
     critique = read_markdown_front_matter(critique_path)
     severity = critique_severity(critique.front) or "info"
     finding_count = len(critique_findings(critique.front))
-    append_epic_event_once(
+    append_epic_event(
         inp.repo_root,
         inp.epic_id,
         {
@@ -839,7 +854,6 @@ def plan_critique_node(inp: NodeInput) -> NodeOutput:
             "finding_count": finding_count,
             "paths": [critique_relpath],
         },
-        event="plan_critiqued",
     )
     return NodeOutput(
         node_type=inp.node_type,
@@ -1518,7 +1532,7 @@ def human_review_node(inp: NodeInput) -> NodeOutput:
         epic_id=inp.epic_id,
         story_id=inp.story_id,
         gate_path=_gate_path(inp.epic_id),
-        message=f"gate open at .woof/epics/E{inp.epic_id}/gate.md",
+        message=_gate_operator_message(inp.repo_root, inp.epic_id),
     )
 
 

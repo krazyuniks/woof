@@ -129,8 +129,12 @@ def test_gate_write_from_check_result_validates_O5(tmp_path: Path) -> None:
     assert fm["type"] == "story_gate"
     assert fm["story_id"] == "S2"
 
-    # Position body is copied verbatim
+    # Position body is preserved inside the structured operator sections.
     assert "Critique returned blocker" in text
+    assert "## Context" in text
+    assert "## Findings" in text
+    assert "## Primary position" in text
+    assert "## Reviewer position" in text
 
 
 def test_gate_write_for_subprocess_crash_O5(tmp_path: Path) -> None:
@@ -162,6 +166,8 @@ def test_gate_write_for_subprocess_crash_O5(tmp_path: Path) -> None:
     fm = yaml.safe_load(text[4 : text.find("\n---\n", 4)])
     assert "subprocess_crash" in fm["triggered_by"]
     assert fm["exit_code"] == 1
+    assert "## Context" in text
+    assert "## Primary position" in text
 
 
 def test_gate_write_for_github_sync_conflict_is_epic_level_gate(tmp_path: Path) -> None:
@@ -185,6 +191,9 @@ def test_gate_write_for_github_sync_conflict_is_epic_level_gate(tmp_path: Path) 
     assert fm["type"] == "plan_gate"
     assert fm["story_id"] is None
     assert fm["triggered_by"] == ["github_sync_conflict"]
+    gate_text = gate_path.read_text()
+    assert "## Context" in gate_text
+    assert "## Reviewer position" in gate_text
 
 
 def test_gate_write_appends_epic_jsonl_O5(tmp_path: Path) -> None:

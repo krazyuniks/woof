@@ -267,6 +267,48 @@ def test_wf_runtime_check_rejects_exhausted_core_quota(tmp_path: Path) -> None:
     assert (epic_dir / "gate.md").exists()
 
 
+def test_wf_existing_local_epic_requires_last_sync(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    epic_dir = project / ".woof" / "epics" / "E77"
+    epic_dir.mkdir(parents=True)
+    (epic_dir / "plan.json").write_text('{"epic_id":77,"goal":"x","stories":[]}\n')
+    bin_dir = tmp_path / "bin"
+    _make_gh_stub(
+        bin_dir,
+        {"number": 77, "title": "Existing", "body": "", "updated_at": "2026-01-01T00:00:00Z"},
+    )
+
+    proc = _run(project, "wf", "--epic", "77", env=_stub_env(bin_dir))
+
+    assert proc.returncode == 2
+    assert ".last-sync" in proc.stderr
+    assert "existing local epics must be initialised from GitHub" in proc.stderr
+
+
+def test_wf_existing_local_epic_verifies_issue_exists(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    epic_dir = project / ".woof" / "epics" / "E78"
+    epic_dir.mkdir(parents=True)
+    (epic_dir / ".last-sync").write_text(
+        json.dumps(
+            {
+                "issue_number": 78,
+                "updated_at": "2026-01-01T00:00:00Z",
+                "body_sha256": "0" * 64,
+                "body": "",
+            }
+        )
+        + "\n"
+    )
+    bin_dir = tmp_path / "bin"
+    _make_gh_stub(bin_dir, fail=True)
+
+    proc = _run(project, "wf", "--epic", "78", env=_stub_env(bin_dir))
+
+    assert proc.returncode == 2
+    assert "E78 not found" in proc.stderr
+
+
 def test_wf_new_creates_issue_and_initialises_current_epic(tmp_path: Path) -> None:
     project = _project(tmp_path)
     bin_dir = tmp_path / "bin"

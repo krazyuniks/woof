@@ -41,6 +41,9 @@ GateDecision = Literal[
     "split_story",
     "abandon_story",
     "abandon_epic",
+    "keep_local",
+    "accept_remote",
+    "hand_merge",
 ]
 
 

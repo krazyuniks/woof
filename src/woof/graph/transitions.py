@@ -117,6 +117,17 @@ def epic_event_exists(repo_root: Path, epic_id: int, **fields: object) -> bool:
     path = epic_dir(repo_root, epic_id) / "epic.jsonl"
     if not path.exists():
         return False
+    for event in iter_epic_events(repo_root, epic_id):
+        if all(event.get(key) == value for key, value in fields.items()):
+            return True
+    return False
+
+
+def iter_epic_events(repo_root: Path, epic_id: int) -> list[dict]:
+    path = epic_dir(repo_root, epic_id) / "epic.jsonl"
+    if not path.exists():
+        return []
+    events: list[dict] = []
     for line in path.read_text().splitlines():
         if not line.strip():
             continue
@@ -124,9 +135,9 @@ def epic_event_exists(repo_root: Path, epic_id: int, **fields: object) -> bool:
             event = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if all(event.get(key) == value for key, value in fields.items()):
-            return True
-    return False
+        if isinstance(event, dict):
+            events.append(event)
+    return events
 
 
 def append_epic_event_once(
@@ -139,21 +150,36 @@ def append_epic_event_once(
 def plan_gate_resolved(repo_root: Path, epic_id: int) -> bool:
     """Return whether the mandatory Stage-4 plan gate has been resolved."""
 
-    path = epic_dir(repo_root, epic_id) / "epic.jsonl"
-    if not path.exists():
-        return False
-    for line in path.read_text().splitlines():
-        if not line.strip():
-            continue
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
+    resolved = False
+    for event in iter_epic_events(repo_root, epic_id):
         if event.get("event") == "plan_gate_resolved":
-            return True
+            decision = event.get("decision")
+            resolved = decision in {None, "approve"}
         if event.get("event") == "gate_resolved" and event.get("gate_type") == "plan_gate":
-            return True
-    return False
+            triggered_by = event.get("triggered_by")
+            if not isinstance(triggered_by, list):
+                triggered_by = []
+            decision = event.get("decision")
+            if decision in {"revise_epic_contract", "revise_plan"}:
+                resolved = False
+            elif decision == "approve" and "github_sync_conflict" not in triggered_by:
+                resolved = True
+    return resolved
+
+
+def definition_revision_requested(repo_root: Path, epic_id: int) -> bool:
+    """Return whether a gate resolution has requested Stage-2 re-entry."""
+
+    requested = False
+    for event in iter_epic_events(repo_root, epic_id):
+        if (
+            event.get("event") == "gate_resolved"
+            and event.get("decision") == "revise_epic_contract"
+        ):
+            requested = True
+        elif event.get("event") == "definition_closed":
+            requested = False
+    return requested
 
 
 def _load_json(path: Path) -> dict:
@@ -223,7 +249,9 @@ def next_node(repo_root: Path, epic_id: int) -> tuple[NodeType | None, str | Non
     plan_path = directory / "plan.json"
     if not plan_path.exists():
         if (directory / "EPIC.md").exists():
-            if epic_event_exists(repo_root, epic_id, event="definition_closed"):
+            if epic_event_exists(
+                repo_root, epic_id, event="definition_closed"
+            ) and not definition_revision_requested(repo_root, epic_id):
                 return NodeType.BREAKDOWN_PLANNING, None
             return NodeType.EPIC_DEFINITION, None
         if discovery_synthesis_complete(repo_root, epic_id):
@@ -235,16 +263,6 @@ def next_node(repo_root: Path, epic_id: int) -> tuple[NodeType | None, str | Non
             f"(or pre-plan input {directory / 'spark.md'} / {directory / 'EPIC.md'})"
         )
 
-    critique_path = plan_critique_path(repo_root, epic_id)
-    if epic_event_exists(repo_root, epic_id, event="breakdown_planned"):
-        if not epic_event_exists(repo_root, epic_id, event="plan_critiqued"):
-            return NodeType.PLAN_CRITIQUE, None
-        if not plan_gate_resolved(repo_root, epic_id):
-            return NodeType.PLAN_GATE_OPEN, None
-
-    if critique_path.exists() and not plan_gate_resolved(repo_root, epic_id):
-        return NodeType.PLAN_GATE_OPEN, None
-
     plan = load_plan(repo_root, epic_id)
     resumable_story = _resumable_commit_story(repo_root, epic_id, plan)
     if resumable_story is not None:
@@ -254,6 +272,20 @@ def next_node(repo_root: Path, epic_id: int) -> tuple[NodeType | None, str | Non
         return None, None
 
     in_progress = next((story for story in plan.stories if story.status == "in_progress"), None)
+    critique_path = plan_critique_path(repo_root, epic_id)
+    if in_progress is None:
+        if (directory / "EPIC.md").exists() and not critique_path.exists():
+            return NodeType.PLAN_CRITIQUE, None
+
+        if epic_event_exists(repo_root, epic_id, event="breakdown_planned"):
+            if not epic_event_exists(repo_root, epic_id, event="plan_critiqued"):
+                return NodeType.PLAN_CRITIQUE, None
+            if not plan_gate_resolved(repo_root, epic_id):
+                return NodeType.PLAN_GATE_OPEN, None
+
+        if critique_path.exists() and not plan_gate_resolved(repo_root, epic_id):
+            return NodeType.PLAN_GATE_OPEN, None
+
     if in_progress is None:
         ready = next_ready_story(plan)
         if ready is None:

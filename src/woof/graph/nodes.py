@@ -24,6 +24,11 @@ from woof.graph.dispositions import (
 )
 from woof.graph.git import git, staged_paths
 from woof.graph.manifest import build_story_manifest, verify_staged_manifest
+from woof.graph.planning_contracts import (
+    validate_definition_open_questions,
+    validate_discovery_synthesis_contract,
+    validate_stage3_plan_contract,
+)
 from woof.graph.state import NodeInput, NodeOutput, NodeStatus, NodeType, Plan, ValidationSummary
 from woof.graph.transitions import (
     StageStateError,
@@ -391,6 +396,10 @@ def _csv(items: list[str]) -> str:
     return ", ".join(items) if items else "-"
 
 
+def _failure_message(failures: list[str]) -> str:
+    return "\n".join(failures)
+
+
 def _render_plan_markdown(plan: Plan) -> str:
     out = [
         f"# Plan E{plan.epic_id}\n\n",
@@ -549,6 +558,18 @@ def discovery_synthesis_node(inp: NodeInput) -> NodeOutput:
                 paths=paths,
             )
 
+    contract = validate_discovery_synthesis_contract(inp.repo_root, inp.epic_id)
+    if not contract.ok:
+        return _planning_halt(
+            inp,
+            stage=1,
+            message=_failure_message(contract.failures),
+            triggered_by=["schema_validation_failed"],
+            check_count=len(paths) + 2,
+            failed_check_count=len(contract.failures),
+            paths=paths,
+        )
+
     append_epic_event_once(
         inp.repo_root,
         inp.epic_id,
@@ -581,6 +602,22 @@ def epic_definition_node(inp: NodeInput) -> NodeOutput:
     directory = epic_dir(inp.repo_root, inp.epic_id)
     epic_path = directory / "EPIC.md"
     epic_relpath = _relpath(inp.repo_root, epic_path)
+
+    if discovery_synthesis_complete(inp.repo_root, inp.epic_id):
+        contract = validate_discovery_synthesis_contract(inp.repo_root, inp.epic_id)
+        if not contract.ok:
+            return _planning_halt(
+                inp,
+                stage=1,
+                message=_failure_message(contract.failures),
+                triggered_by=["schema_validation_failed"],
+                check_count=6,
+                failed_check_count=len(contract.failures),
+                paths=[
+                    _relpath(inp.repo_root, path)
+                    for path in discovery_synthesis_paths(inp.repo_root, inp.epic_id).values()
+                ],
+            )
 
     if not epic_path.exists():
         if not discovery_synthesis_complete(inp.repo_root, inp.epic_id):
@@ -633,6 +670,26 @@ def epic_definition_node(inp: NodeInput) -> NodeOutput:
             check_count=1,
             failed_check_count=1,
             paths=[epic_relpath],
+        )
+
+    open_question_failures = validate_definition_open_questions(
+        inp.repo_root, inp.epic_id, epic_path
+    )
+    if open_question_failures:
+        return _planning_halt(
+            inp,
+            stage=2,
+            message=_failure_message(open_question_failures),
+            triggered_by=["schema_validation_failed"],
+            check_count=2,
+            failed_check_count=len(open_question_failures),
+            paths=[
+                epic_relpath,
+                _relpath(
+                    inp.repo_root,
+                    discovery_synthesis_paths(inp.repo_root, inp.epic_id)["open_questions_path"],
+                ),
+            ],
         )
 
     append_epic_event(
@@ -735,6 +792,18 @@ def breakdown_planning_node(inp: NodeInput) -> NodeOutput:
             paths=paths,
         )
 
+    plan_contract_failures = validate_stage3_plan_contract(inp.repo_root, epic_path, plan_path)
+    if plan_contract_failures:
+        return _planning_halt(
+            inp,
+            stage=3,
+            message=_failure_message(plan_contract_failures),
+            triggered_by=["schema_validation_failed"],
+            check_count=2,
+            failed_check_count=len(plan_contract_failures),
+            paths=paths,
+        )
+
     plan = load_plan(inp.repo_root, inp.epic_id)
     plan_md_path.write_text(_render_plan_markdown(plan), encoding="utf-8")
     append_epic_event(
@@ -793,6 +862,20 @@ def plan_critique_node(inp: NodeInput) -> NodeOutput:
             triggered_by=["schema_validation_failed"],
             check_count=1,
             failed_check_count=1,
+            paths=[_relpath(inp.repo_root, plan_path)],
+        )
+
+    plan_contract_failures = validate_stage3_plan_contract(
+        inp.repo_root, directory / "EPIC.md", plan_path
+    )
+    if plan_contract_failures:
+        return _planning_halt(
+            inp,
+            stage=3,
+            message=_failure_message(plan_contract_failures),
+            triggered_by=["schema_validation_failed"],
+            check_count=2,
+            failed_check_count=len(plan_contract_failures),
             paths=[_relpath(inp.repo_root, plan_path)],
         )
 
@@ -945,6 +1028,20 @@ def plan_gate_open_node(inp: NodeInput) -> NodeOutput:
             triggered_by=["schema_validation_failed"],
             check_count=1,
             failed_check_count=1,
+            paths=[plan_relpath],
+        )
+
+    plan_contract_failures = validate_stage3_plan_contract(
+        inp.repo_root, directory / "EPIC.md", plan_path
+    )
+    if plan_contract_failures:
+        return _planning_halt(
+            inp,
+            stage=4,
+            message=_failure_message(plan_contract_failures),
+            triggered_by=["schema_validation_failed"],
+            check_count=2,
+            failed_check_count=len(plan_contract_failures),
             paths=[plan_relpath],
         )
 

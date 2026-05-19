@@ -126,7 +126,9 @@ def epic_project(tmp_path: Path) -> Path:
           - All outcomes verified by tests in diff.
           - Contract decisions validate via native tooling.
         open_questions:
-          - Should drafts be persisted server-side?
+          - id: OQ1
+            question: Should drafts be persisted server-side?
+            deferral_reason: Needs product policy.
     """)
     prose = "Enable users to publish comments on shootouts.\n\nFurther context follows.\n"
     (epic_dir / "EPIC.md").write_text(_epic_md(front, prose))
@@ -174,7 +176,7 @@ def test_render_full_body(epic_project: Path) -> None:
         "- Contract decisions validate via native tooling.\n"
         "\n"
         "## Open Questions\n\n"
-        "- Should drafts be persisted server-side?\n"
+        "- **OQ1** — Should drafts be persisted server-side? (Deferred: Needs product policy.)\n"
         "\n"
         "---\n\n"
         "<!-- woof — structured sections above are rewritten on Definition/plan changes. "

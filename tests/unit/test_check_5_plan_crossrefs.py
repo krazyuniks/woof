@@ -11,7 +11,10 @@ from typing import Any
 import pytest
 
 from woof.checks import CheckContext
-from woof.checks.runners.check_5_plan_crossrefs import check_5_plan_crossrefs_runner
+from woof.checks.runners.check_5_plan_crossrefs import (
+    check_5_plan_crossrefs_runner,
+    stage3_plan_contract_failures,
+)
 
 pytestmark = pytest.mark.host_only
 
@@ -176,6 +179,15 @@ def test_dependency_closure_fails(tmp_path: Path) -> None:
     assert "S2: depends_on references unknown story S999" in evidence
 
 
+def test_dependency_order_fails_when_dependency_appears_later(tmp_path: Path) -> None:
+    plan = deepcopy(_valid_plan())
+    plan["stories"] = [plan["stories"][1], plan["stories"][0]]
+
+    evidence = _failing_evidence(tmp_path, plan)
+
+    assert "S2: depends_on S1 appears after dependent story" in evidence
+
+
 def test_dependency_cycle_fails(tmp_path: Path) -> None:
     plan = deepcopy(_valid_plan())
     plan["stories"][0]["depends_on"] = ["S2"]
@@ -183,6 +195,15 @@ def test_dependency_cycle_fails(tmp_path: Path) -> None:
     evidence = _failing_evidence(tmp_path, plan)
 
     assert "dependency cycle detected: S1 -> S2 -> S1" in evidence
+
+
+def test_duplicate_story_pathspec_fails(tmp_path: Path) -> None:
+    plan = deepcopy(_valid_plan())
+    plan["stories"][1]["paths"] = ["src/S1.py"]
+
+    evidence = _failing_evidence(tmp_path, plan)
+
+    assert "pathspec 'src/S1.py' appears in multiple stories: ['S1', 'S2']" in evidence
 
 
 def test_status_coherence_fails(tmp_path: Path) -> None:
@@ -202,3 +223,15 @@ def test_current_story_pending_fails(tmp_path: Path) -> None:
     evidence = _failing_evidence(tmp_path, plan)
 
     assert "S2: current story is still pending during Stage-5 checks" in evidence
+
+
+def test_stage3_plan_contract_requires_pending_statuses() -> None:
+    plan = deepcopy(_valid_plan())
+
+    failures = stage3_plan_contract_failures(plan, _epic_front_matter())
+
+    assert "S1: Stage-3 plans must enter the plan gate with status=pending, got done" in failures
+    assert (
+        "S2: Stage-3 plans must enter the plan gate with status=pending, got in_progress"
+        in failures
+    )

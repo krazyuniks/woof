@@ -18,6 +18,7 @@ Read the declared synthesis directory and produce only `EPIC.md` at the declared
 - `observable_outcomes`
 - `contract_decisions`
 - `acceptance_criteria`
-- `open_questions` when unresolved discovery questions are deliberately carried forward
+- `open_questions` object entries for unresolved `OQ<n>` discovery questions deliberately carried forward, each with `id`, `question`, and `deferral_reason`
+- `resolved_open_questions` object entries for discovery questions resolved during Definition, each with `id` and `resolution`
 
 The prose body may add context for a human reader, but the front matter is the contract. Do not run `woof wf`, `woof dispatch`, checks, gates, commits, breakdown planning, or reviewer work. The graph validates the file and selects the next node.

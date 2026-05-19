@@ -45,11 +45,56 @@
     },
     "open_questions": {
       "type": "array",
-      "items": { "type": "string", "minLength": 1 },
-      "description": "Discovery-stage questions that survived into Definition unresolved. Should be empty when Definition closes; non-empty signals a Stage 2 incompletion."
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/open_question" },
+      "description": "Discovery-stage questions deliberately carried forward unresolved. Each item references an active OQ<n> from discovery/synthesis/OPEN_QUESTIONS.md and records why it remains deferred."
+    },
+    "resolved_open_questions": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/resolved_open_question" },
+      "description": "Discovery-stage questions resolved during Definition. Together with open_questions[], this must cover every active OQ<n> in discovery/synthesis/OPEN_QUESTIONS.md when that file exists."
     }
   },
   "$defs": {
+    "open_question": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "question", "deferral_reason"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^OQ[1-9]\\d*$"
+        },
+        "question": {
+          "type": "string",
+          "minLength": 1
+        },
+        "deferral_reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "resolved_open_question": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "resolution"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^OQ[1-9]\\d*$"
+        },
+        "question": {
+          "type": "string",
+          "minLength": 1
+        },
+        "resolution": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
     "observable_outcome": {
       "type": "object",
       "additionalProperties": false,

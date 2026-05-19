@@ -6,6 +6,7 @@ import shutil
 from pathlib import Path
 
 from woof.checks import CheckContext
+from woof.checks import contract_refs as contract_refs_module
 from woof.checks.runners.check_4_contract_refs import check_4_contract_refs_runner
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -135,3 +136,36 @@ def test_unknown_owned_contract_ref_blocks_story() -> None:
 
     assert outcome.ok is False
     assert "CD404 (missing)" in (outcome.evidence or "")
+
+
+def test_broken_openapi_ref_surfaces_artefact_path(tmp_path: Path) -> None:
+    epic_dir = _fixture_copy(tmp_path)
+    epic = epic_dir / "EPIC.md"
+    epic.write_text(
+        epic.read_text().replace(
+            "spec/openapi.yaml#/paths/~1api~1v1~1comments~1{id}/patch",
+            "spec/openapi.yaml#/paths/~1missing/post",
+        )
+    )
+
+    outcome = check_4_contract_refs_runner(
+        _ctx(epic_dir=epic_dir, repo_root=epic_dir, owned=["CD1"])
+    )
+
+    assert outcome.ok is False
+    assert "spec/openapi.yaml" in outcome.paths
+    assert outcome.paths[0].endswith("EPIC.md")
+
+
+def test_missing_ajv_surfaces_preflight_hint(tmp_path, monkeypatch) -> None:
+    epic_dir = _fixture_copy(tmp_path)
+    monkeypatch.setattr(contract_refs_module.shutil, "which", lambda name: None)
+
+    outcome = check_4_contract_refs_runner(
+        _ctx(epic_dir=epic_dir, repo_root=epic_dir, owned=["CD1"])
+    )
+
+    assert outcome.ok is False
+    assert outcome.severity == "blocker"
+    assert "woof preflight" in (outcome.summary or "")
+    assert "ajv-cli not found" in (outcome.evidence or "")

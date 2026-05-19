@@ -230,7 +230,7 @@ All gh invocations pass `--repo <scope>` explicitly (consumer's project rule).
 ## Acceptance Criteria
 
 - All observable_outcomes verified by tests in diff
-- Each contract decision's referenced artefact validates against its native tool (schemathesis / Pydantic / ajv-cli)
+- Each contract decision's referenced artefact resolves under its native tool (OpenAPI document parse plus JSON pointer; Pydantic BaseModel import; `ajv-cli` schema compile). Conformance testing remains a deferred enhancement.
 
 ---
 
@@ -294,7 +294,7 @@ contract_decisions:
 
 acceptance_criteria:
   - "All observable_outcomes verified by tests in diff"
-  - "Every contract_decision's referenced artefact validates against its native tool (schemathesis for OpenAPI, Pydantic for pydantic_ref, ajv-cli for json_schema_ref)"
+  - "Every contract_decision's referenced artefact resolves under its native tool (OpenAPI parse plus JSON pointer, Pydantic BaseModel import for pydantic_ref, ajv-cli compile for json_schema_ref). Conformance testing (schemathesis run, ajv validate-fixtures, Pydantic model validation against fixtures) is a deferred enhancement."
 ---
 ```
 
@@ -313,7 +313,7 @@ acceptance_criteria:
 | `contract_decisions[].json_schema_ref` | conditional | Path to a JSON Schema file. |
 | `contract_decisions[].notes` | optional | Free-form prose for rationale (not contract content). |
 
-**Why standard contract artefacts.** A contract decision is the domain-level promise: a route, data shape, user-visible string, or other surface the implementation must honour. The referenced artefact is the machine-checkable representation of that promise. Surfaces that already have standard representations are referenced by their native ref form rather than re-encoded inline: OpenAPI for HTTP, JSON Schema for portable data shapes, and `pydantic_ref` only when the owning project already uses a Pydantic model as the native data-shape artefact. Stage 5 Check 4 delegates verification to that artefact's native tooling (schemathesis, Pydantic itself, ajv-cli). Woof never reinvents validation. If a surface doesn't fit any of those three artefact types, it shouldn't be a contract decision — capture it as an `acceptance_criteria` prose statement instead.
+**Why standard contract artefacts.** A contract decision is the domain-level promise: a route, data shape, user-visible string, or other surface the implementation must honour. The referenced artefact is the machine-checkable representation of that promise. Surfaces that already have standard representations are referenced by their native ref form rather than re-encoded inline: OpenAPI for HTTP, JSON Schema for portable data shapes, and `pydantic_ref` only when the owning project already uses a Pydantic model as the native data-shape artefact. Stage 5 Check 4 currently verifies that the referenced artefact resolves under its native tooling: OpenAPI documents parse and the declared JSON pointer resolves to an object; Pydantic refs import and resolve to a `BaseModel` subclass; JSON Schema refs compile under `ajv-cli`. Implementation conformance against the artefact (schemathesis run, ajv validate-fixtures, Pydantic model validation against fixtures) is a deferred enhancement; quality-gate test commands declared in `.woof/quality-gates.toml` remain the active behavioural coverage. Woof never reinvents validation. If a surface doesn't fit any of those three artefact types, it shouldn't be a contract decision — capture it as an `acceptance_criteria` prose statement instead.
 
 **ID immutability.** Once Definition closes, outcome and CD IDs are append-only. Wording and evidence edits are free; ID removal requires explicit deprecation via gate-conversation revision. `/wf` validates EPIC.md edits — any removed ID surfaces every `satisfies[]` reference in `plan.json` and every test marker location, requiring an explicit propagation decision. Splits (`O2 → O2a + O2b`) are not supported; use `deprecate O2; add O5 (narrower scope replacing O2)` instead. Story-level rule: pre-commit, plan.json stories are freely revisable; post-commit, stories are immutable (new work goes into new stories appended to `plan.json`).
 
@@ -420,10 +420,10 @@ Registry completeness is part of Stage-5 verification. A registered runner that 
 
 | # | Class | Mechanism | Tooling |
 |---|---|---|---|
-| 1 | A | Each gate command in `.woof/quality-gates.toml` exits 0 within its declared timeout | shell |
+| 1 | A | Each blocking gate command in `.woof/quality-gates.toml` exits 0 within its declared timeout; advisory gates (`blocking = false`) record a minor finding on non-zero exit and do not fail the check | shell |
 | 2 | B | Every `outcome_id` in `satisfies[]` has an asserting test reachable in the diff (test-name / docstring / adjacent comment, per `.woof/test-markers.toml`) | jq + grep; helper |
 | 3 | C | `git diff --name-only --staged` ⊆ `story.paths[]` globs (matched via git-pathspec) | shell + git pathspec |
-| 4 | D | For every CD with `implements_contract_decisions` ownership in this story: the referenced artefact is present, parses, and the implementation conforms to it. Tooling: `schemathesis run` for OpenAPI; Pydantic import + model resolution for `pydantic_ref`; `ajv-cli` validate-self for `json_schema_ref` and validate-fixtures where provided. Runs against repo HEAD + staged. | external native validators |
+| 4 | D | For every CD with `implements_contract_decisions` ownership in this story: the referenced artefact is present and resolves under its native tooling. Current scope is reference resolution only: OpenAPI documents parse and the declared JSON pointer resolves to an object; `pydantic_ref` targets import and resolve to a `BaseModel` subclass; `json_schema_ref` targets compile under `ajv-cli`. Conformance testing (`schemathesis run`, `ajv` validate-fixtures, Pydantic model validation against fixtures) is a deferred enhancement; the runner surfaces the resolved artefact path on failure, and missing `ajv-cli` is a preflight failure rather than an in-band finding. | external native validators |
 | 5 | E | `plan.json` validates against `plan.schema.json`; cross-refs (`satisfies[]` ⊆ `observable_outcomes[].id`, both `*_contract_decisions[]` arrays ⊆ `contract_decisions[].id`, every CD owned by exactly one story, `depends_on[]` ⊆ `stories[].id`); status coherence | `ajv-cli` + jq + helper |
 | 6 | F | `critique/story-S<k>.md` exists; front-matter validates against `critique.schema.json`; top-level `severity` equals max severity over `findings[]`; `severity != blocker`; non-blocking critiques have `dispositions/story-S<k>.md` conforming to `disposition.schema.json` and covering each finding | `ajv-cli` + helper |
 | 7 | G | `git diff --staged` non-empty AND staged paths match `story.paths[]` AND `.woof/epics/E<N>/{plan.json,critique/story-S<k>.md,dispositions/story-S<k>.md,epic.jsonl}` are also staged AND `git status --porcelain` shows nothing unstaged outside scope. Honours `empty_diff` (see below). | shell |

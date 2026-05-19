@@ -2075,3 +2075,32 @@ def test_transaction_manifest_reports_missing_expected_index_paths(tmp_path: Pat
 
     assert result.ok is False
     assert result.missing_paths == [".woof/epics/E16/dispatch.jsonl"]
+
+
+def test_transaction_manifest_honours_recursive_pathspec(tmp_path: Path) -> None:
+    _init_git_repo(tmp_path)
+    directory = _write_plan(tmp_path, 23)
+    (directory / "dispatch.jsonl").write_text("{}\n")
+    critique_dir = directory / "critique"
+    critique_dir.mkdir()
+    (critique_dir / "story-S1.md").write_text(
+        "---\ntarget: story\ntarget_id: S1\nseverity: info\n"
+        "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
+        "findings: []\n---\n"
+    )
+    _write_disposition(directory, 23, "S1")
+    nested = tmp_path / "src" / "pkg" / "subpkg"
+    nested.mkdir(parents=True)
+    (nested / "deep.py").write_text("print('O1')\n")
+
+    story = StorySpec(
+        id="S1",
+        title="first",
+        paths=[":(glob)src/**/*.py"],
+        satisfies=["O1"],
+        status="in_progress",
+    )
+    manifest = build_story_manifest(tmp_path, 23, story)
+
+    assert "src/pkg/subpkg/deep.py" in manifest.story_paths
+    assert "src/pkg/subpkg/deep.py" in manifest.expected_paths

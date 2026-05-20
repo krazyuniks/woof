@@ -162,7 +162,7 @@ Woof is a tool checkout or installed package that runs against a separate consum
 `guitar-tone-shootout` is the first external consumer. Its responsibilities are:
 
 - Keep application source, development commands, Docker/runtime topology, and GitHub issue ownership in the GTS repository.
-- Declare project-specific Woof inputs under `.woof/`: role routes in `agents.toml`, infrastructure and GitHub scope in `prerequisites.toml`, quality gates in `quality-gates.toml`, and optional checker config such as `test-markers.toml` or `docs-paths.toml`.
+- Declare project-specific Woof inputs under `.woof/`: role routes in `agents.toml`, infrastructure and issue-tracker scope in `prerequisites.toml`, quality gates in `quality-gates.toml`, and optional checker config such as `test-markers.toml` or `docs-paths.toml`.
 - Route project verification through GTS commands such as `just check`, because Woof check runners execute declared commands from the consumer root.
 - Express host and server readiness as preflight declarations, not as Woof-specific scripts copied into GTS.
 - Use semantic public role routes. New or refreshed consumer config uses `primary` / `reviewer` with public `codex` / `claude` adapters; legacy `planner`, `story-executor`, `critiquer`, `cld`, and `cod` spellings are migration input only.
@@ -175,40 +175,44 @@ schema validation, checker or preflight enforcement, tests, and documentation;
 otherwise it stays in the consumer repository and is invoked through declared
 quality gates or prerequisites.
 
-### GitHub integration
+### Issue-tracker integration
 
-**Model.** Hybrid: gh owns the epic-level contract; filesystem owns runtime. Per `AGENTS.md`, one gh issue per epic; no child issues for stories.
+**Model.** Hybrid: the issue tracker owns the epic-level contract; the filesystem owns runtime. One tracker epic per Woof epic; no child issues for stories. The tracker is pluggable behind a `Tracker` protocol — see `docs/adr/003-issue-tracker-abstraction.md`.
 
 | Layer | Source of truth | Contents |
 |---|---|---|
-| gh issue body | gh | Intent prose, `observable_outcomes[]`, `contract_decisions[]`, `acceptance_criteria[]` |
+| tracker epic body | tracker | Intent prose, `observable_outcomes[]`, `contract_decisions[]`, `acceptance_criteria[]` |
 | `.woof/epics/E<N>/` | filesystem | Everything else: spark, discovery, plan.json, critiques, gates, jsonl logs, story progress |
 
-**Epic IDs.** Always the gh issue number. `E<N>` ≡ gh issue `#<N>`. No local-only epics; every epic has a gh issue. Issue numbers are assigned by gh on creation — the user does not pick them.
-
-**Network requirement.** Woof is always-online. gh CLI must be authenticated and the declared repo accessible; `woof preflight` verifies `gh api /repos/<org>/<repo>` returns 200. No offline mode; no silent fallback (per §1 principle #4).
-
-**Repo scope.** Declared once in `.woof/prerequisites.toml`:
+**Tracker selection.** Declared once in `.woof/prerequisites.toml`:
 
 ```toml
-[github]
-repo = "<org>/<repo>"
+[tracker]
+kind = "github"           # or "local"
+repo = "<org>/<repo>"     # required when kind = "github"
 ```
 
-All gh invocations pass `--repo <scope>` explicitly (consumer's project rule).
+Two adapters ship:
+
+- **`github`** — one GitHub issue per epic. `E<N>` ≡ gh issue `#<N>`; gh assigns the issue number on creation. Always-online: the `gh` CLI must be authenticated and the declared repo accessible. Push is conflict-detected.
+- **`local`** — filesystem-only. `.woof/epics/E<N>/` is the sole authority for an epic; there is no remote. Epic IDs are integers allocated locally as one greater than the highest existing `E<N>`. Push operations are no-ops because there is no second copy of the contract to keep in sync, so a sync conflict cannot arise. The `local` adapter lets any repository run Woof without a hosted tracker.
+
+**Epic IDs.** A tracker-assigned integer. For `github` it is the gh issue number; for `local` it is a locally allocated counter. The user does not pick it. With the `github` tracker every epic has a gh issue, and a `.woof/epics/E<N>/` directory without `.last-sync` issue authority is not a valid epic.
+
+**Network requirement.** The `github` tracker is always-online: `woof preflight` verifies `gh api /repos/<org>/<repo>` returns 200, and every `woof wf` invocation re-checks `gh api /rate_limit`. No offline mode; no silent fallback (per §1 principle #4). The `local` tracker needs no network.
 
 **Lifecycle — sync points.**
 
-| Event | Direction | Action |
-|---|---|---|
-| `woof wf --epic <N>` with no local dir | gh → fs | Fetch issue body; initialise `.woof/epics/E<N>/`; seed `spark.md` (title + prose); seed `EPIC.md` front-matter from structured sections if present |
-| `woof wf new "<spark>"` | fs → gh → fs | `gh issue create` with stub body; capture returned number `<N>`; mkdir `.woof/epics/E<N>/`; write `spark.md`; set `.woof/.current-epic = E<N>` |
-| Definition close (`EPIC.md` schema-valid) | fs → gh | Render `EPIC.md` front-matter to markdown per schema below; overwrite issue body |
-| Plan gate approved | fs → gh | Append "Plan summary" section listing story IDs + titles; update body |
-| Epic complete (all stories `done`) | fs → gh | Append closing summary; `gh issue close` |
-| `woof wf --epic <N>` where neither local nor gh has it | — | Fail loud: "E<N> not found. Use `woof wf new \"<spark>\"` to start a new epic — gh assigns the issue number." |
+| Event | Action |
+|---|---|
+| `woof wf --epic <N>` with no local dir | `github`: fetch the issue body; initialise `.woof/epics/E<N>/`; seed `spark.md` (title + prose) and `EPIC.md` front-matter from structured sections if present. `local`: fail loud — there is no remote to cold-start from. |
+| `woof wf new "<spark>"` | Create the tracker epic, capture the assigned number `<N>`, mkdir `.woof/epics/E<N>/`, write `spark.md`, set `.woof/.current-epic = E<N>`. |
+| Definition close (`EPIC.md` schema-valid) | `github`: render `EPIC.md` front-matter to markdown per the schema below and overwrite the issue body. `local`: no-op. |
+| Plan gate approved | `github`: append a "Plan Summary" section listing story IDs + titles and update the body. `local`: no-op. |
+| Epic complete (all stories `done`) | `github`: append the closing summary and `gh issue close`. `local`: no-op. |
+| `woof wf --epic <N>` where the epic exists nowhere | Fail loud: "E<N> not found. Use `woof wf new \"<spark>\"` to start a new epic." |
 
-**Push policy.** Local is authoritative on push, but push is conflict-detected. Each successful push records the gh issue's `updatedAt` timestamp and the SHA-256 of the rendered body in `.woof/epics/E<N>/.last-sync`. Before the next push, `gh api /repos/.../issues/<N>` is fetched: if the remote `updatedAt` differs from the recorded value, woof opens a `gate.md` with `triggered_by: ["github_sync_conflict"]` containing a three-way diff (last-pushed body, current remote body, current local render). Resolution is via gate conversation with one of the structured decisions `keep_local`, `accept_remote`, or `hand_merge`. `keep_local` and `hand_merge` update `.last-sync` to the current remote baseline so the next retry can push the operator-approved local render; `accept_remote` updates `.last-sync` and rewrites local `EPIC.md` from the managed GitHub issue body. No silent overwrite. Worktree-level handover convention still holds: an epic is active in exactly one worktree at a time; `.last-sync` is per-worktree.
+**Push policy (`github`).** Local is authoritative on push, but push is conflict-detected. Each successful push records the gh issue's `updatedAt` timestamp and the SHA-256 of the rendered body in `.woof/epics/E<N>/.last-sync`. Before the next push, `gh api /repos/.../issues/<N>` is fetched: if the remote `updatedAt` or body hash differs from the recorded value, woof opens a `gate.md` with `triggered_by: ["tracker_sync_conflict"]` containing a three-way diff (last-pushed body, current remote body, current local render). Resolution is via gate conversation with one of the structured decisions `keep_local`, `accept_remote`, or `hand_merge`. `keep_local` and `hand_merge` update `.last-sync` to the current remote baseline so the next retry can push the operator-approved local render; `accept_remote` updates `.last-sync` and rewrites local `EPIC.md` from the managed GitHub issue body. No silent overwrite. Worktree-level handover convention still holds: an epic is active in exactly one worktree at a time; `.last-sync` is per-worktree. The `local` tracker has no remote, so it never detects a conflict.
 
 **Body rendering schema.** Deterministic transform from `EPIC.md` front-matter to gh markdown body:
 
@@ -236,18 +240,18 @@ All gh invocations pass `--repo <scope>` explicitly (consumer's project rule).
 
 ---
 
-<!-- woof — structured sections above are rewritten on Definition/plan changes. Free-form prose above `## Observable Outcomes` is preserved on overwrite. Do not edit structured sections directly in gh. -->
+<!-- woof — structured sections above are rewritten on Definition/plan changes. Free-form prose above `## Observable Outcomes` is preserved on overwrite. Do not edit structured sections directly in the issue tracker. -->
 ```
 
 **Preservation rule.** Content above the first structured heading (`## Observable Outcomes`) is preserved on overwrite. Everything from `## Observable Outcomes` onward is woof-owned and rewritten wholesale. The trailing HTML comment is the sentinel marking woof-managed bodies.
 
-**Renderer.** The `woof render-epic` command reads `EPIC.md` and emits the markdown body.
+**Renderer.** The `woof render-epic` command reads `EPIC.md` and emits the markdown body; `--sync` pushes it through the configured tracker.
 
-**Push-sync failure.** Network failure or `gh api` rate limit during a scheduled push: `/wf` fails loud, exits non-zero. User retries `/wf` — skill detects local `EPIC.md` mtime newer than last successful push (stored in `.woof/epics/E<N>/.last-sync`) and re-pushes.
+**Push-sync failure (`github`).** Network failure or `gh api` rate limit during a scheduled push: `woof wf` fails loud, exits non-zero. The operator retries; the next push re-detects state from `.last-sync` and re-pushes.
 
-**Preflight runtime check.** Beyond the one-shot `woof preflight` check, every `/wf` invocation verifies gh reachability (`gh api /rate_limit`, ~200ms). Missing auth or unreachable API → fail loud; no silent degradation.
+**Preflight runtime check (`github`).** Beyond the one-shot `woof preflight` check, every `woof wf` invocation verifies gh reachability (`gh api /rate_limit`, ~200ms). Missing auth or unreachable API → fail loud; no silent degradation. The `local` tracker has no runtime reachability check.
 
-For existing local `.woof/epics/E<N>/` directories, `/wf` also fetches the GitHub issue and requires `.woof/epics/E<N>/.last-sync` to identify the same issue number before graph or gate mutation. A local directory without GitHub authority is not a valid epic.
+**Authority check.** With the `github` tracker, for an existing local `.woof/epics/E<N>/` directory `woof wf` fetches the GitHub issue and requires `.woof/epics/E<N>/.last-sync` to identify the same issue number before graph or gate mutation; a local directory without that GitHub authority is not a valid epic. The `local` tracker has no remote authority check: the epic directory is self-authoritative.
 
 ### Stage contracts
 
@@ -545,11 +549,11 @@ JSON Schema is the canonical contract format. Runtime code may use Pydantic, zod
 
 Do not mix the two casually. If a type crosses a durable JSON, CLI, LLM-node, or consumer-facing boundary, prefer Pydantic and keep the JSON Schema aligned. If a type is only an internal carrier between Python functions, a dataclass is acceptable and usually clearer. `pydantic_ref` in an epic contract decision is a special case: it means the consumer project has chosen a Pydantic model as the native machine-checkable artefact for that surface, not that Woof treats Pydantic as the domain contract itself.
 
-**Standalone, opinionated, portable.** Woof assumes `just`, Docker, GitHub, worktrees, and the `.woof/` convention. Does *not* assume an existing project — Stages 1–2 support blank-project starts. `guitar-tone-shootout` is Woof's first external consumer.
+**Standalone, opinionated, portable.** Woof assumes `just`, Docker, an issue tracker, worktrees, and the `.woof/` convention. Does *not* assume an existing project — Stages 1–2 support blank-project starts. The tracker is pluggable (ADR-003): the `local` adapter needs no hosted service. `guitar-tone-shootout` is Woof's first external consumer.
 
 ### Infrastructure prerequisites (hard-gated)
 
-§1 #4 made operational. `woof preflight` is the startup infrastructure check. It verifies the Woof installation, consumer `.woof/` files, role routes, public CLI availability, generated MCP config, GitHub access, quality-gate commands, language tooling, and project-specific host/server prerequisites. Missing prerequisite → exit non-zero with concrete install commands inline. No partial-mode fallback.
+§1 #4 made operational. `woof preflight` is the startup infrastructure check. It verifies the Woof installation, consumer `.woof/` files, role routes, public CLI availability, generated MCP config, issue-tracker reachability, quality-gate commands, language tooling, and project-specific host/server prerequisites. Missing prerequisite → exit non-zero with concrete install commands inline. No partial-mode fallback.
 
 **Two-tier configuration.**
 
@@ -566,8 +570,9 @@ gh = "2.0+"
 claude = "any"                            # Claude Code CLI
 codex = "any"                             # Codex CLI
 
-[github]
-repo = "<org>/<repo>"                     # required; verified via gh api at every /wf invocation
+[tracker]
+kind = "github"                           # github | local
+repo = "<org>/<repo>"                     # required when kind = "github"
 
 [indexing]
 ctags = "5.9+"
@@ -713,9 +718,9 @@ Required `.gitignore` entries (consumer adds at first setup):
 .woof/.preflight-*
 ```
 
-**Cross-worktree epic activity.** An epic is active in exactly one worktree at a time. `.woof/` is per-worktree by convention; cross-worktree handover happens via gh issue (the canonical contract), not by copying `.woof/`. No mechanical enforcement; document-level rule.
+**Cross-worktree epic activity.** An epic is active in exactly one worktree at a time. `.woof/` is per-worktree by convention; with the `github` tracker, cross-worktree handover happens via the tracker epic (the canonical contract), not by copying `.woof/`. No mechanical enforcement; document-level rule.
 
-**Config initialisation.** `woof init` scaffolds a fresh consumer setup: it writes `.woof/{prerequisites,agents,quality-gates,test-markers}.toml` with `<replace>` placeholders for project-specific values (GitHub repo, quality-gate command) and inserts a fenced `# >>> woof` block into the repository `.gitignore` containing the required runtime entries. `--with-docs-paths` additionally scaffolds `.woof/docs-paths.toml`. Re-running `woof init` is idempotent: existing TOMLs are preserved unless `--force` is passed, and the gitignore block is updated in place rather than duplicated. Preflight with no `.woof/prerequisites.toml` still emits a template with `<replace>` placeholders and exits non-zero so a stranger who lands in a `.woof/` directory with the file accidentally deleted gets the same starter content inline. `.woof/agents.toml` is required before graph execution because role routes are startup infrastructure; optional configs such as `test-markers.toml` keep built-in defaults when absent.
+**Config initialisation.** `woof init` scaffolds a fresh consumer setup: it writes `.woof/{prerequisites,agents,quality-gates,test-markers}.toml` with `<replace>` placeholders for project-specific values (issue-tracker repo, quality-gate command) and inserts a fenced `# >>> woof` block into the repository `.gitignore` containing the required runtime entries. `--with-docs-paths` additionally scaffolds `.woof/docs-paths.toml`. Re-running `woof init` is idempotent: existing TOMLs are preserved unless `--force` is passed, and the gitignore block is updated in place rather than duplicated. Preflight with no `.woof/prerequisites.toml` still emits a template with `<replace>` placeholders and exits non-zero so a stranger who lands in a `.woof/` directory with the file accidentally deleted gets the same starter content inline. `.woof/agents.toml` is required before graph execution because role routes are startup infrastructure; optional configs such as `test-markers.toml` keep built-in defaults when absent.
 
 ### Agent role configuration
 
@@ -787,15 +792,15 @@ The CLI is the operator surface. Prompt wrappers may call these commands, but th
 | Surface | Use |
 |---|---|
 | `woof wf --epic <N>` | Run the deterministic graph for the current epic. |
-| `woof wf new "<spark>"` | Create a GitHub issue-backed epic, initialise local state, and select it as `.woof/.current-epic`. |
+| `woof wf new "<spark>"` | Create a tracker-backed epic, initialise local state, and select it as `.woof/.current-epic`. |
 | `woof wf --epic <N> --resolve <decision>` | Resolve an open gate with a structured decision. |
-| `woof preflight` | Validate Woof assets, local prerequisites, role routes, generated MCP config, GitHub access, Claude/Codex credential markers, language tooling, host/server readiness, quality-gate command resolution, optional cartography script executability, and `.woof/` config schemas. |
+| `woof preflight` | Validate Woof assets, local prerequisites, role routes, generated MCP config, issue-tracker reachability, Claude/Codex credential markers, language tooling, host/server readiness, quality-gate command resolution, optional cartography script executability, and `.woof/` config schemas. |
 | `woof init` | Scaffold a fresh `.woof/` consumer config (`prerequisites.toml`, `agents.toml`, `quality-gates.toml`, `test-markers.toml`) and the required `.gitignore` block. |
 | `woof hooks install` | Install the Woof-managed post-commit hook block without overwriting user-managed hook content. |
 | `woof validate ...` | Validate JSON, TOML, JSONL, and front-matter artefacts against shipped schemas. |
 | `woof check stage-5 --epic <N> --story <S<k>>` | Run Stage-5 checks and emit structured results. |
 | `woof dispatch --role <role-name>` | Internal graph primitive for invoking configured producer/reviewer subprocesses and recording dispatch events. |
-| `woof render-epic` | Render `EPIC.md` structured front-matter to a managed GitHub issue body. |
+| `woof render-epic` | Render `EPIC.md` structured front-matter to the managed tracker issue body. |
 | `woof gate write` | Write a structured gate artefact. |
 
 `just` recipes in this repository are development conveniences. Consumer projects may wrap the CLI, but the graph remains the source of truth.

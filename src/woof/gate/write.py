@@ -193,7 +193,7 @@ def _gate_type_for_triggers(triggered_by: list[str]) -> str:
         return "plan_gate"
     if triggered_by == ["check_9_review_valve"]:
         return "review_gate"
-    if triggered_by == ["github_sync_conflict"]:
+    if triggered_by in (["tracker_sync_conflict"], ["github_sync_conflict"]):
         return "plan_gate"
     return "story_gate"
 
@@ -288,9 +288,9 @@ def _auto_position_for_trigger(trigger: str, exit_code: int | None) -> str:
             "Confirm whether earlier stories already realised this outcome. Approve if "
             "confirmed; revise story scope otherwise."
         )
-    elif trigger == "github_sync_conflict":
-        finding = "GitHub issue sync conflict detected."
-        primary = "Review the remote issue body, local render, and .last-sync before retrying."
+    elif trigger in {"tracker_sync_conflict", "github_sync_conflict"}:
+        finding = "Issue-tracker sync conflict detected."
+        primary = "Review the remote tracker body, local render, and .last-sync before retrying."
     elif trigger != "subprocess_crash":
         finding = context
         primary = "No accepted primary revision has been recorded after this trigger."

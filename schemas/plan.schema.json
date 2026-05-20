@@ -10,7 +10,7 @@
     "epic_id": {
       "type": "integer",
       "minimum": 1,
-      "description": "GitHub issue number. Mirrors EPIC.md.epic_id."
+      "description": "Tracker-assigned epic identifier. Mirrors EPIC.md.epic_id."
     },
     "goal": {
       "type": "string",

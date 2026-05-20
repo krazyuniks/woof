@@ -10,17 +10,6 @@ from pathlib import Path
 
 import yaml
 
-from woof.cli.github import (
-    GithubSyncError,
-    assert_github_runtime_reachable,
-    assert_local_epic_github_authority,
-    create_epic_from_spark,
-    has_github_sync_state,
-    initialise_epic_from_issue,
-    resolve_github_sync_conflict,
-    sync_epic_completion,
-    sync_plan_summary,
-)
 from woof.graph.lock import WorkflowLockError
 from woof.graph.runner import run_graph
 from woof.graph.state import GateDecision, NodeStatus, Plan, StorySpec
@@ -33,13 +22,17 @@ from woof.graph.transitions import (
     write_plan,
 )
 from woof.paths import find_project_root
+from woof.trackers import (
+    CONFLICT_DECISIONS,
+    CONFLICT_TRIGGERS,
+    Tracker,
+    TrackerError,
+    resolve_tracker,
+)
 
 
 def _now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-CONFLICT_DECISIONS = {"keep_local", "accept_remote", "hand_merge"}
 
 
 def _gate_front(gate_path: Path) -> dict:
@@ -106,30 +99,31 @@ def _apply_gate_resolution_effects(
     gate_type: str | None,
     story_id: str | None,
     triggered_by: list[str],
+    tracker: Tracker,
 ) -> list[str]:
     directory = epic_dir(repo_root, epic_id)
     changed: list[str] = []
 
-    if "github_sync_conflict" in triggered_by:
+    if any(trigger in CONFLICT_TRIGGERS for trigger in triggered_by):
         if decision not in CONFLICT_DECISIONS:
             raise StageStateError(
-                "github_sync_conflict gates require one of: "
+                "tracker_sync_conflict gates require one of: "
                 + ", ".join(sorted(CONFLICT_DECISIONS))
             )
-        result = resolve_github_sync_conflict(repo_root, epic_id, decision)
+        result = tracker.resolve_conflict(epic_id, decision)
         changed.append(_display_path(repo_root, result.last_sync_path))
         if result.epic_path is not None:
             changed.append(_display_path(repo_root, result.epic_path))
         return changed
 
     if decision in CONFLICT_DECISIONS:
-        raise StageStateError(f"{decision} is only valid for github_sync_conflict gates")
+        raise StageStateError(f"{decision} is only valid for tracker_sync_conflict gates")
 
     if gate_type == "plan_gate":
         if decision not in {"approve", "revise_epic_contract", "revise_plan", "abandon_epic"}:
             raise StageStateError(f"{decision} is not valid for plan_gate")
         if decision == "approve":
-            sync_plan_summary(repo_root, epic_id)
+            tracker.push_plan_summary(epic_id)
             return changed
         if decision in {"revise_plan", "revise_epic_contract"}:
             changed.extend(
@@ -208,7 +202,7 @@ def _apply_gate_resolution_effects(
     return changed
 
 
-def _resolve_gate(repo_root: Path, epic_id: int, decision: GateDecision) -> int:
+def _resolve_gate(repo_root: Path, epic_id: int, decision: GateDecision, tracker: Tracker) -> int:
     gate = epic_dir(repo_root, epic_id) / "gate.md"
     if not gate.exists():
         sys.stderr.write(f"woof wf: no open gate at {gate}\n")
@@ -230,9 +224,10 @@ def _resolve_gate(repo_root: Path, epic_id: int, decision: GateDecision) -> int:
             gate_type=gate_type,
             story_id=story_id,
             triggered_by=triggered_by,
+            tracker=tracker,
         )
-    except GithubSyncError as exc:
-        sys.stderr.write(f"woof wf: github sync failed: {exc}\n")
+    except TrackerError as exc:
+        sys.stderr.write(f"woof wf: tracker error: {exc}\n")
         return 2
     except StageStateError as exc:
         sys.stderr.write(f"woof wf: gate resolution failed: {exc}\n")
@@ -278,17 +273,23 @@ def cmd_wf(args: argparse.Namespace) -> int:
         sys.stderr.write(f"woof wf: {exc}\n")
         return 2
 
+    try:
+        tracker = resolve_tracker(repo_root)
+    except TrackerError as exc:
+        sys.stderr.write(f"woof wf: tracker not configured: {exc}\n")
+        return 2
+
     def check_runtime() -> bool:
         try:
-            assert_github_runtime_reachable(repo_root)
-        except GithubSyncError as exc:
-            sys.stderr.write(f"woof wf: github runtime check failed: {exc}\n")
+            tracker.assert_runtime_reachable()
+        except TrackerError as exc:
+            sys.stderr.write(f"woof wf: tracker not reachable: {exc}\n")
             return False
         return True
 
     if args.action == "new":
         if args.epic is not None:
-            sys.stderr.write("woof wf new: --epic is assigned by GitHub; omit --epic\n")
+            sys.stderr.write("woof wf new: --epic is assigned by the tracker; omit --epic\n")
             return 2
         if not args.spark:
             sys.stderr.write('woof wf new: spark is required, e.g. `woof wf new "..."`\n')
@@ -296,27 +297,27 @@ def cmd_wf(args: argparse.Namespace) -> int:
         if not check_runtime():
             return 2
         try:
-            result = create_epic_from_spark(repo_root, args.spark)
-        except GithubSyncError as exc:
-            sys.stderr.write(f"woof wf new: github sync failed: {exc}\n")
+            result = tracker.create_epic(args.spark)
+        except TrackerError as exc:
+            sys.stderr.write(f"woof wf new: tracker error: {exc}\n")
             return 2
         if args.format == "json":
+            paths = [str(result.spark_path)]
+            if result.last_sync_path.exists():
+                paths.append(str(result.last_sync_path))
+            paths.append(str(result.current_epic_path))
             payload = {
                 "epic_id": result.epic_id,
                 "status": "created",
-                "issue_url": result.issue_url,
+                "epic_ref": result.epic_ref,
                 "epic_dir": str(result.epic_dir),
                 "current_epic_path": str(result.current_epic_path),
-                "paths": [
-                    str(result.spark_path),
-                    str(result.last_sync_path),
-                    str(result.current_epic_path),
-                ],
+                "paths": paths,
             }
             sys.stdout.write(json.dumps(payload, sort_keys=True) + "\n")
         else:
             sys.stdout.write(
-                f"woof wf new: created E{result.epic_id} at {result.issue_url}; "
+                f"woof wf new: created E{result.epic_id} at {result.epic_ref}; "
                 f"initialised spark.md and .woof/.current-epic\n"
             )
         return 0
@@ -331,9 +332,9 @@ def cmd_wf(args: argparse.Namespace) -> int:
     directory = epic_dir(repo_root, args.epic)
     if not directory.exists():
         try:
-            result = initialise_epic_from_issue(repo_root, args.epic)
-        except GithubSyncError as exc:
-            sys.stderr.write(f"woof wf: github sync failed: {exc}\n")
+            result = tracker.fetch_epic(args.epic)
+        except TrackerError as exc:
+            sys.stderr.write(f"woof wf: tracker error: {exc}\n")
             return 2
         if args.format == "json":
             paths = [str(result.spark_path), str(result.last_sync_path)]
@@ -349,18 +350,18 @@ def cmd_wf(args: argparse.Namespace) -> int:
         else:
             epic_state = " and EPIC.md" if result.epic_path else ""
             sys.stdout.write(
-                f"woof wf: initialised E{args.epic} from GitHub issue with spark.md{epic_state}\n"
+                f"woof wf: initialised E{args.epic} from the tracker with spark.md{epic_state}\n"
             )
         return 0
 
     try:
-        assert_local_epic_github_authority(repo_root, args.epic)
-    except GithubSyncError as exc:
-        sys.stderr.write(f"woof wf: github sync failed: {exc}\n")
+        tracker.assert_epic_authority(args.epic)
+    except TrackerError as exc:
+        sys.stderr.write(f"woof wf: tracker error: {exc}\n")
         return 2
 
     if args.resolve:
-        return _resolve_gate(repo_root, args.epic, args.resolve)
+        return _resolve_gate(repo_root, args.epic, args.resolve, tracker)
 
     try:
         outputs = run_graph(repo_root, args.epic, once=args.once)
@@ -372,11 +373,11 @@ def cmd_wf(args: argparse.Namespace) -> int:
         return 2
     if any(
         output.status == NodeStatus.EPIC_COMPLETE for output in outputs
-    ) and has_github_sync_state(repo_root, args.epic):
+    ) and tracker.has_sync_state(args.epic):
         try:
-            sync_epic_completion(repo_root, args.epic)
-        except GithubSyncError as exc:
-            sys.stderr.write(f"woof wf: github sync failed: {exc}\n")
+            tracker.complete_epic(args.epic)
+        except TrackerError as exc:
+            sys.stderr.write(f"woof wf: tracker error: {exc}\n")
             return 2
         append_epic_event_once(
             repo_root,
@@ -406,10 +407,10 @@ def setup_wf_parser(sub: argparse._SubParsersAction) -> None:  # type: ignore[ty
         "action",
         nargs="?",
         choices=["new"],
-        help='optional action; use `new "<spark>"` to create a GitHub-backed epic',
+        help='optional action; use `new "<spark>"` to create a tracker-backed epic',
     )
     wf.add_argument("spark", nargs="?", help="spark text for `woof wf new`")
-    wf.add_argument("--epic", type=int, help="epic id (gh issue number)")
+    wf.add_argument("--epic", type=int, help="epic id (tracker-assigned epic identifier)")
     wf.add_argument("--once", action="store_true", help="run a single graph node and stop")
     wf.add_argument(
         "--resolve",

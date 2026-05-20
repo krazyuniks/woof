@@ -170,7 +170,7 @@ def test_gate_write_for_subprocess_crash_O5(tmp_path: Path) -> None:
     assert "## Primary position" in text
 
 
-def test_gate_write_for_github_sync_conflict_is_epic_level_gate(tmp_path: Path) -> None:
+def test_gate_write_for_tracker_sync_conflict_is_epic_level_gate(tmp_path: Path) -> None:
     epic_dir = _setup_epic_dir(tmp_path, 184)
 
     proc = _run(
@@ -179,7 +179,7 @@ def test_gate_write_for_github_sync_conflict_is_epic_level_gate(tmp_path: Path) 
         "--epic",
         "184",
         "--triggered-by",
-        "github_sync_conflict",
+        "tracker_sync_conflict",
         cwd=tmp_path,
     )
 
@@ -190,7 +190,7 @@ def test_gate_write_for_github_sync_conflict_is_epic_level_gate(tmp_path: Path) 
     fm = yaml.safe_load(gate_path.read_text()[4 : gate_path.read_text().find("\n---\n", 4)])
     assert fm["type"] == "plan_gate"
     assert fm["story_id"] is None
-    assert fm["triggered_by"] == ["github_sync_conflict"]
+    assert fm["triggered_by"] == ["tracker_sync_conflict"]
     gate_text = gate_path.read_text()
     assert "## Context" in gate_text
     assert "## Reviewer position" in gate_text

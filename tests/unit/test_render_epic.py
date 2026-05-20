@@ -96,7 +96,8 @@ def epic_project(tmp_path: Path) -> Path:
 
     (project / ".woof" / "prerequisites.toml").write_text(
         textwrap.dedent("""\
-        [github]
+        [tracker]
+        kind = "github"
         repo = "acme/widgets"
     """)
     )
@@ -181,7 +182,7 @@ def test_render_full_body(epic_project: Path) -> None:
         "---\n\n"
         "<!-- woof — structured sections above are rewritten on Definition/plan changes. "
         "Free-form prose above `## Observable Outcomes` is preserved on overwrite. "
-        "Do not edit structured sections directly in gh. -->\n"
+        "Do not edit structured sections directly in the issue tracker. -->\n"
     )
 
 
@@ -219,7 +220,9 @@ def test_invalid_front_matter(tmp_path: Path) -> None:
     project = tmp_path / "p"
     epic_dir = project / ".woof" / "epics" / "E1"
     epic_dir.mkdir(parents=True)
-    (project / ".woof" / "prerequisites.toml").write_text('[github]\nrepo = "x/y"\n')
+    (project / ".woof" / "prerequisites.toml").write_text(
+        '[tracker]\nkind = "github"\nrepo = "x/y"\n'
+    )
     # Missing required acceptance_criteria
     (epic_dir / "EPIC.md").write_text(
         _epic_md(
@@ -381,7 +384,7 @@ def test_sync_first_push_writes_last_sync(epic_project: Path, tmp_path: Path) ->
 
     jsonl = (epic_project / ".woof" / "epics" / "E42" / "epic.jsonl").read_text()
     events = [json.loads(ln) for ln in jsonl.splitlines() if ln.strip()]
-    assert any(e["event"] == "github_synced" for e in events)
+    assert any(e["event"] == "tracker_synced" for e in events)
 
 
 def test_wf_plan_gate_approval_syncs_plan_summary(epic_project: Path, tmp_path: Path) -> None:
@@ -462,7 +465,7 @@ def test_wf_epic_completion_syncs_closing_summary_and_closes_issue(
     events = [
         json.loads(line) for line in (epic_dir / "epic.jsonl").read_text().splitlines() if line
     ]
-    assert any(event["event"] == "github_synced" for event in events)
+    assert any(event["event"] == "tracker_synced" for event in events)
     assert any(event["event"] == "epic_completed" for event in events)
 
 
@@ -483,7 +486,7 @@ def test_sync_conflict_detected(epic_project: Path, tmp_path: Path) -> None:
     )
     proc = _run(epic_project, "render-epic", "--epic", "42", "--sync", env=_stub_env(bin_dir))
     assert proc.returncode == 3
-    assert "github_sync_conflict" in proc.stderr
+    assert "tracker_sync_conflict" in proc.stderr
     # No push happened — last_body marker absent
     assert not (bin_dir / "_last_body").exists()
     gate = epic_dir / "gate.md"
@@ -492,7 +495,7 @@ def test_sync_conflict_detected(epic_project: Path, tmp_path: Path) -> None:
     gate_front = yaml.safe_load(gate_text[4 : gate_text.find("\n---\n", 4)])
     assert gate_front["type"] == "plan_gate"
     assert gate_front["story_id"] is None
-    assert gate_front["triggered_by"] == ["github_sync_conflict"]
+    assert gate_front["triggered_by"] == ["tracker_sync_conflict"]
     assert "### Diff: last-pushed -> current remote" in gate_text
     assert "-<old>" in gate_text
     assert "+remote diverged" in gate_text
@@ -506,10 +509,10 @@ def test_sync_conflict_detected(epic_project: Path, tmp_path: Path) -> None:
         json.loads(ln) for ln in (epic_dir / "epic.jsonl").read_text().splitlines() if ln.strip()
     ]
     assert any(
-        e["event"] == "plan_gate_opened" and e["triggered_by"] == ["github_sync_conflict"]
+        e["event"] == "plan_gate_opened" and e["triggered_by"] == ["tracker_sync_conflict"]
         for e in events
     )
-    assert any(e["event"] == "github_sync_conflict" for e in events)
+    assert any(e["event"] == "tracker_sync_conflict" for e in events)
 
 
 def test_sync_conflict_detected_when_remote_body_hash_diverges(
@@ -552,11 +555,11 @@ def test_wf_plan_gate_approval_opens_sync_conflict_gate(epic_project: Path, tmp_
     proc = _run(epic_project, "wf", "--epic", "42", "--resolve", "approve", env=_stub_env(bin_dir))
 
     assert proc.returncode == 2
-    assert "github sync failed: github_sync_conflict" in proc.stderr
+    assert "tracker error: tracker_sync_conflict" in proc.stderr
     assert not (bin_dir / "_last_body").exists()
     gate_text = (epic_dir / "gate.md").read_text()
     gate_front = yaml.safe_load(gate_text[4 : gate_text.find("\n---\n", 4)])
-    assert gate_front["triggered_by"] == ["github_sync_conflict"]
+    assert gate_front["triggered_by"] == ["tracker_sync_conflict"]
     assert "### Diff: last-pushed -> current remote" in gate_text
     assert "### Diff: last-pushed -> current local render" in gate_text
 
@@ -571,7 +574,7 @@ def test_wf_resolve_sync_conflict_keep_local_updates_last_sync_baseline(
         "type: plan_gate\n"
         "stage: 4\n"
         "story_id: null\n"
-        "triggered_by: [github_sync_conflict]\n"
+        "triggered_by: [tracker_sync_conflict]\n"
         "timestamp: '2026-01-01T00:00:00Z'\n"
         "---\n"
         "## Context\n\nConflict.\n\n"
@@ -608,7 +611,7 @@ def test_wf_resolve_sync_conflict_keep_local_updates_last_sync_baseline(
     ]
     assert events[-1]["event"] == "gate_resolved"
     assert events[-1]["decision"] == "keep_local"
-    assert events[-1]["triggered_by"] == ["github_sync_conflict"]
+    assert events[-1]["triggered_by"] == ["tracker_sync_conflict"]
 
 
 def test_wf_resolve_sync_conflict_accept_remote_updates_epic_md(
@@ -621,7 +624,7 @@ def test_wf_resolve_sync_conflict_accept_remote_updates_epic_md(
         "type: plan_gate\n"
         "stage: 4\n"
         "story_id: null\n"
-        "triggered_by: [github_sync_conflict]\n"
+        "triggered_by: [tracker_sync_conflict]\n"
         "timestamp: '2026-01-01T00:00:00Z'\n"
         "---\n"
         "## Context\n\nConflict.\n\n"

@@ -32,7 +32,11 @@ codex = "any"
 ajv = "any"
 ajv-formats = "any"
 
-[github]
+# Issue tracker for epic-level contracts. kind = "github" keeps each epic in a
+# GitHub issue and needs `repo`; kind = "local" keeps every epic under .woof/
+# with no remote — delete the `repo` line and set kind = "local" for that.
+[tracker]
+kind = "github"
 repo = "<replace>/<replace>"
 
 # Uncomment when the project uses LSP-backed reviewer context.

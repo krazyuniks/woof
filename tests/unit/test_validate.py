@@ -572,6 +572,31 @@ def test_validate_jsonl_per_line(tmp_path: Path, run_woof) -> None:
     assert "valid (jsonl-events, 6 line(s))" in proc.stdout
 
 
+def test_validate_jsonl_accepts_tracker_and_legacy_sync_events(tmp_path: Path, run_woof) -> None:
+    """tracker_synced/tracker_sync_conflict validate; legacy github_* aliases too."""
+    path = tmp_path / "epic.jsonl"
+    lines = [
+        {"event": "tracker_synced", "at": "2026-05-20T10:00:00Z", "epic_id": 1},
+        {
+            "event": "tracker_sync_conflict",
+            "at": "2026-05-20T10:01:00Z",
+            "epic_id": 1,
+            "triggered_by": ["tracker_sync_conflict"],
+        },
+        {"event": "github_synced", "at": "2026-05-20T10:02:00Z", "epic_id": 1},
+        {
+            "event": "github_sync_conflict",
+            "at": "2026-05-20T10:03:00Z",
+            "epic_id": 1,
+            "triggered_by": ["github_sync_conflict"],
+        },
+    ]
+    path.write_text("\n".join(json.dumps(line) for line in lines) + "\n")
+    proc = run_woof("validate", str(path))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "valid (jsonl-events, 4 line(s))" in proc.stdout
+
+
 def test_validate_jsonl_bad_line_fails(tmp_path: Path, run_woof) -> None:
     path = tmp_path / "epic.jsonl"
     path.write_text(

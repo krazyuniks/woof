@@ -130,7 +130,8 @@ codex = "any"
 ajv = "any"
 ajv-formats = "any"
 
-[github]
+[tracker]
+kind = "github"
 repo = "example/project"
 
 [indexing.tree-sitter]
@@ -203,7 +204,8 @@ codex = "any"
 ajv = "any"
 ajv-formats = "any"
 
-[github]
+[tracker]
+kind = "github"
 repo = "example/project"
 """,
         agents=agents,
@@ -252,7 +254,8 @@ codex = "any"
 ajv = "any"
 ajv-formats = "any"
 
-[github]
+[tracker]
+kind = "github"
 repo = "example/project"
 """,
         agents="""\
@@ -307,7 +310,8 @@ codex = "any"
 ajv = "any"
 ajv-formats = "any"
 
-[github]
+[tracker]
+kind = "github"
 repo = "example/project"
 """,
         agents=None,
@@ -358,7 +362,8 @@ codex = "any"
 ajv = "any"
 ajv-formats = "any"
 
-[github]
+[tracker]
+kind = "github"
 repo = "example/project"
 
 [host]
@@ -424,7 +429,8 @@ codex = "any"
 ajv = "any"
 ajv-formats = "any"
 
-[github]
+[tracker]
+kind = "github"
 repo = "example/project"
 """,
     )
@@ -485,7 +491,8 @@ codex = "any"
 ajv = "any"
 ajv-formats = "any"
 
-[github]
+[tracker]
+kind = "github"
 repo = "example/project"
 
 [lsp]
@@ -532,7 +539,8 @@ codex = "any"
 ajv = "any"
 ajv-formats = "any"
 
-[github]
+[tracker]
+kind = "github"
 repo = "example/project"
 
 [lsp]
@@ -621,7 +629,8 @@ codex = "any"
 ajv = "any"
 ajv-formats = "any"
 
-[github]
+[tracker]
+kind = "github"
 repo = "example/project"
 """,
     )
@@ -687,7 +696,8 @@ codex = "any"
 ajv = "any"
 ajv-formats = "any"
 
-[github]
+[tracker]
+kind = "github"
 repo = "example/project"
 """,
     )
@@ -742,7 +752,8 @@ codex = "any"
 ajv = "any"
 ajv-formats = "any"
 
-[github]
+[tracker]
+kind = "github"
 repo = "example/project"
 """,
     )
@@ -800,7 +811,8 @@ codex = "any"
 ajv = "any"
 ajv-formats = "any"
 
-[github]
+[tracker]
+kind = "github"
 repo = "example/project"
 """,
     )
@@ -863,7 +875,8 @@ codex = "any"
 ajv = "any"
 ajv-formats = "any"
 
-[github]
+[tracker]
+kind = "github"
 repo = "example/project"
 """,
     )
@@ -921,7 +934,8 @@ codex = "any"
 ajv = "any"
 ajv-formats = "any"
 
-[github]
+[tracker]
+kind = "github"
 repo = "example/project"
 """,
     )

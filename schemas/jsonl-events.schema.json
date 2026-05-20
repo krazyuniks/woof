@@ -38,13 +38,15 @@
         "story_committed",
         "transaction_manifest_verified",
         "preflight_run",
+        "tracker_synced",
+        "tracker_sync_conflict",
         "github_synced",
         "github_sync_conflict",
         "wf_lock_stale_removed",
         "cartography_refreshed",
         "token_usage"
       ],
-      "description": "Event kind. Stage events (epic.jsonl): spark_created, current_epic_selected, discovery_*, definition_*, plan_*, breakdown_planned, story_*, *_gate_*, gate_resolved, epic_completed, executor_result_recorded, check_run, story_committed, transaction_manifest_verified. Dispatch events (dispatch.jsonl): subprocess_*. Operational events (either): preflight_run, github_synced, github_sync_conflict, wf_lock_stale_removed, cartography_refreshed, token_usage."
+      "description": "Event kind. Stage events (epic.jsonl): spark_created, current_epic_selected, discovery_*, definition_*, plan_*, breakdown_planned, story_*, *_gate_*, gate_resolved, epic_completed, executor_result_recorded, check_run, story_committed, transaction_manifest_verified. Dispatch events (dispatch.jsonl): subprocess_*. Operational events (either): preflight_run, tracker_synced, tracker_sync_conflict, wf_lock_stale_removed, cartography_refreshed, token_usage. The github_synced and github_sync_conflict values are retained as legacy aliases so epic.jsonl logs written before the ADR-003 issue-tracker abstraction still validate."
     },
     "at": {
       "type": "string",
@@ -54,7 +56,7 @@
     "epic_id": {
       "type": "integer",
       "minimum": 1,
-      "description": "Epic this event belongs to (gh issue number)."
+      "description": "Epic this event belongs to (tracker-assigned epic identifier)."
     },
     "story_id": {
       "type": "string",
@@ -148,7 +150,7 @@
         "accept_remote",
         "hand_merge"
       ],
-      "description": "Gate resolution decision. approve = proceed. revise_epic_contract = re-enter Stage 2. revise_plan = re-enter Stage 3. revise_story_scope = edit current story's paths or satisfies. split_story = replace one story with multiple. abandon_story = skip and continue. abandon_epic = mark incomplete + close gh issue with note. keep_local, accept_remote, and hand_merge resolve GitHub sync-conflict gates."
+      "description": "Gate resolution decision. approve = proceed. revise_epic_contract = re-enter Stage 2. revise_plan = re-enter Stage 3. revise_story_scope = edit current story's paths or satisfies. split_story = replace one story with multiple. abandon_story = skip and continue. abandon_epic = mark incomplete + close the tracker epic with a note. keep_local, accept_remote, and hand_merge resolve tracker sync-conflict gates."
     },
     "cc_session_id": {
       "type": "string",

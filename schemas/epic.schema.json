@@ -16,17 +16,17 @@
     "epic_id": {
       "type": "integer",
       "minimum": 1,
-      "description": "GitHub issue number. Same value as plan.json.epic_id."
+      "description": "Tracker-assigned epic identifier. Same value as plan.json.epic_id."
     },
     "title": {
       "type": "string",
       "minLength": 1,
-      "description": "Short epic title; mirrors gh issue title."
+      "description": "Short epic title; mirrors the tracker epic title."
     },
     "intent": {
       "type": "string",
       "minLength": 1,
-      "description": "Optional GitHub issue intent paragraph. When present, the Definition renderer uses this as the initial free-form prose on first push instead of deriving intent from the EPIC.md body."
+      "description": "Optional tracker epic intent paragraph. When present, the Definition renderer uses this as the initial free-form prose on first push instead of deriving intent from the EPIC.md body."
     },
     "observable_outcomes": {
       "type": "array",

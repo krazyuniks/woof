@@ -88,6 +88,41 @@ def test_init_with_docs_paths_scaffolds_optional_file(tmp_path: Path, run_woof) 
     assert "code_pattern" in docs_paths.read_text()
 
 
+def test_init_default_tracker_is_github(tmp_path: Path, run_woof) -> None:
+    proc = run_woof("init", "--project-root", str(tmp_path), env=_env())
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert "tracker: github" in proc.stdout
+
+    prereq = (tmp_path / ".woof" / "prerequisites.toml").read_text()
+    assert 'kind = "github"' in prereq
+    assert 'repo = "<replace>/<replace>"' in prereq
+    assert 'gh = "2.0+"' in prereq
+
+
+def test_init_tracker_local_scaffolds_local_tracker(tmp_path: Path, run_woof) -> None:
+    proc = run_woof("init", "--project-root", str(tmp_path), "--tracker", "local", env=_env())
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert "tracker: local" in proc.stdout
+
+    prereq = (tmp_path / ".woof" / "prerequisites.toml").read_text()
+    assert 'kind = "local"' in prereq
+    assert "repo =" not in prereq, "local tracker must not scaffold a repo line"
+    assert "gh = " not in prereq, "local tracker must not require the gh CLI"
+
+    # The local tracker block carries no placeholder, so the scaffold validates
+    # as-is — unlike the github tracker, whose `repo` needs a real value first.
+    validate = run_woof(
+        "validate",
+        "--schema",
+        "prerequisites",
+        str(tmp_path / ".woof" / "prerequisites.toml"),
+        env=_env(),
+    )
+    assert validate.returncode == 0, (
+        f"local prerequisites.toml did not validate: {validate.stderr + validate.stdout}"
+    )
+
+
 def test_init_preserves_existing_gitignore_content(tmp_path: Path, run_woof) -> None:
     gitignore = tmp_path / ".gitignore"
     gitignore.write_text("node_modules/\n.env\n")
@@ -162,6 +197,8 @@ def test_init_outputs_next_steps(tmp_path: Path, run_woof) -> None:
     assert "claude /login" in proc.stdout
     assert "codex login" in proc.stdout
     assert "woof preflight" in proc.stdout
+    assert "woof wf new" in proc.stdout, "next steps must reach the first epic"
+    assert "docs/consumers.md" in proc.stdout, "next steps must point at the walkthrough"
 
 
 def test_init_json_validate_quality_gates_placeholder_is_documented(

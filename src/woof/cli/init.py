@@ -22,8 +22,7 @@ PREREQUISITES_TEMPLATE = """\
 [infra]
 just = "1.0+"
 git = "2.30+"
-gh = "2.0+"
-
+{infra_gh}
 [commands]
 claude = "any"
 codex = "any"
@@ -32,17 +31,41 @@ codex = "any"
 ajv = "any"
 ajv-formats = "any"
 
-# Issue tracker for epic-level contracts. kind = "github" keeps each epic in a
-# GitHub issue and needs `repo`; kind = "local" keeps every epic under .woof/
-# with no remote — delete the `repo` line and set kind = "local" for that.
-[tracker]
-kind = "github"
-repo = "<replace>/<replace>"
+{tracker_block}
 
 # Uncomment when the project uses LSP-backed reviewer context.
 # [lsp]
 # languages = ["python"]
 """
+
+TRACKER_BLOCK_GITHUB = """\
+# Issue tracker for epic-level contracts. kind = "github" keeps each epic in a
+# GitHub issue and needs `repo`. Re-run `woof init --tracker local` to scaffold
+# the local-only variant for a repository with no hosted issue tracker.
+[tracker]
+kind = "github"
+repo = "<replace>/<replace>\""""
+
+TRACKER_BLOCK_LOCAL = """\
+# Issue tracker for epic-level contracts. kind = "local" keeps every epic under
+# .woof/epics/E<N>/ with no remote, so any repository can run Woof without a
+# hosted issue tracker. Re-run `woof init --tracker github` for a GitHub setup.
+[tracker]
+kind = "local\""""
+
+
+def _prerequisites_template(tracker_kind: str) -> str:
+    """Render prerequisites.toml for the chosen tracker.
+
+    The github tracker declares `gh` as required infra; the local tracker omits
+    it so a consumer with no hosted issue tracker is not forced to install it.
+    """
+    if tracker_kind == "local":
+        return PREREQUISITES_TEMPLATE.format(infra_gh="", tracker_block=TRACKER_BLOCK_LOCAL)
+    return PREREQUISITES_TEMPLATE.format(
+        infra_gh='gh = "2.0+"\n', tracker_block=TRACKER_BLOCK_GITHUB
+    )
+
 
 AGENTS_TEMPLATE = """\
 # Woof role routes. ADR-002: GPT-5.5 is the preferred primary route; Claude
@@ -161,6 +184,7 @@ class InitResult:
     project_root: Path
     files: list[FileAction]
     gitignore_changed: bool
+    tracker: str = "github"
 
     @property
     def changed(self) -> bool:
@@ -177,6 +201,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         project_root,
         force=args.force,
         with_docs_paths=args.with_docs_paths,
+        tracker=args.tracker,
     )
     _print_result(result)
     return 0
@@ -201,6 +226,12 @@ def setup_init_parser(subparsers: argparse._SubParsersAction) -> None:  # type: 
         action="store_true",
         help="also scaffold .woof/docs-paths.toml (Stage 5 Check 8 mappings)",
     )
+    init.add_argument(
+        "--tracker",
+        choices=["github", "local"],
+        default="github",
+        help="issue tracker to scaffold in prerequisites.toml (default: github)",
+    )
     init.set_defaults(func=cmd_init)
 
 
@@ -209,13 +240,14 @@ def run_init(
     *,
     force: bool = False,
     with_docs_paths: bool = False,
+    tracker: str = "github",
 ) -> InitResult:
     woof_dir = project_root / ".woof"
     woof_dir.mkdir(exist_ok=True)
 
     files: list[FileAction] = []
     targets: list[tuple[str, str]] = [
-        ("prerequisites.toml", PREREQUISITES_TEMPLATE),
+        ("prerequisites.toml", _prerequisites_template(tracker)),
         ("agents.toml", AGENTS_TEMPLATE),
         ("quality-gates.toml", QUALITY_GATES_TEMPLATE),
         ("test-markers.toml", TEST_MARKERS_TEMPLATE),
@@ -236,7 +268,12 @@ def run_init(
         )
 
     gitignore_changed = _update_gitignore(project_root)
-    return InitResult(project_root=project_root, files=files, gitignore_changed=gitignore_changed)
+    return InitResult(
+        project_root=project_root,
+        files=files,
+        gitignore_changed=gitignore_changed,
+        tracker=tracker,
+    )
 
 
 def _resolve_project_root(project_root: str | None) -> Path:
@@ -260,7 +297,7 @@ def _update_gitignore(project_root: Path) -> bool:
 
 
 def _print_result(result: InitResult) -> None:
-    print(f"woof init: {result.project_root}")
+    print(f"woof init: {result.project_root} (tracker: {result.tracker})")
     for action in result.files:
         suffix = f" ({action.reason})" if action.reason else ""
         print(f"  {action.action:<8} {action.relpath}{suffix}")
@@ -273,4 +310,7 @@ def _print_result(result: InitResult) -> None:
     print("  1. Replace every <replace> placeholder in .woof/*.toml.")
     print("  2. Authenticate the model CLIs once: `claude /login` and `codex login`.")
     print("  3. Run `woof preflight` and resolve any remaining failures.")
-    print("  4. Run `woof hooks install` to enable post-commit cartography.")
+    print("  4. Run `woof hooks install` to enable the post-commit cartography hook.")
+    print('  5. Start your first epic: `woof wf new "<spark>"`.')
+    print()
+    print("See docs/consumers.md for the full first-run walkthrough.")

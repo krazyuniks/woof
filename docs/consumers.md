@@ -4,25 +4,107 @@ Woof runs from its own checkout or installed package against a separate consumer
 
 `guitar-tone-shootout` is the first external consumer. In that role, GTS remains responsible for its own application source, `just` recipes, Docker topology, GitHub issue scope, quality gates, language choices, and project-specific host or server checks. Woof remains responsible for graph execution, schemas, role dispatch, check runners, gate writing, and transaction verification.
 
-## First-Run Bootstrap
+## First-Run Walkthrough
 
-From the consumer repository root:
+This walkthrough takes a new consumer from a clean machine to a running epic without reading the architecture document. It assumes you are integrating Woof into your own repository (the "consumer repository"); Woof itself is installed separately and is never copied in.
+
+### 1. Install Woof
+
+Woof is published as a Python package. Install it as a standalone tool:
+
+```bash
+uv tool install woof
+```
+
+Or into an existing environment:
+
+```bash
+pip install woof
+```
+
+Confirm the CLI is on `PATH`:
+
+```bash
+woof --help
+```
+
+### 2. Scaffold the consumer config
+
+From the root of the repository you want Woof to manage:
 
 ```bash
 woof init
 ```
 
-`woof init` scaffolds `.woof/prerequisites.toml`, `.woof/agents.toml`, `.woof/quality-gates.toml`, and `.woof/test-markers.toml` with explicit `<replace>` placeholders for project-specific values, and inserts a fenced `# >>> woof` block into the repository `.gitignore` containing the required runtime entries (`.woof/.current-epic`, `.woof/.preflight-*`, `.woof/epics/*/.wf.lock`, `.woof/epics/*/audit/raw/`, and the cartography artefacts). Pass `--with-docs-paths` to also scaffold `.woof/docs-paths.toml`. The command is idempotent; existing TOMLs are preserved unless `--force` is set, and the gitignore block is updated in place rather than duplicated.
+`woof init` creates `.woof/prerequisites.toml`, `.woof/agents.toml`, `.woof/quality-gates.toml`, and `.woof/test-markers.toml`, each with explicit `<replace>` placeholders, and inserts a fenced `# >>> woof` block into the repository `.gitignore` with the required runtime entries (`.woof/.current-epic`, `.woof/.preflight-*`, `.woof/epics/*/.wf.lock`, `.woof/epics/*/audit/raw/`, and the cartography artefacts). Pass `--with-docs-paths` to also scaffold `.woof/docs-paths.toml` (Stage 5 Check 8 mappings). `woof init` is idempotent: existing TOMLs are preserved unless `--force` is set, and the gitignore block is updated in place rather than duplicated.
 
-The scaffolded `[tracker]` table defaults to `kind = "github"`; set `kind = "local"` and remove the `repo` line to run Woof against a repository with no hosted issue tracker (see [ADR-003](adr/003-issue-tracker-abstraction.md)).
+Choose the issue tracker at scaffold time. The default scaffolds a GitHub-backed setup. For a repository with no hosted issue tracker, scaffold the local tracker instead:
 
-After `woof init`:
+```bash
+woof init --tracker local
+```
 
-1. Replace every `<replace>` placeholder in `.woof/*.toml`.
-2. Authenticate the model CLIs once: `claude /login` for the reviewer route and `codex login` for the primary route. `woof preflight` accepts either credential files (`~/.claude/.credentials.json`, `~/.codex/auth.json`) or the matching API-key environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`).
-3. Optionally provide `./scripts/refresh-cartography` if the project wants the post-commit hook to regenerate cartography artefacts. Cartography substance is consumer-owned because the artefacts depend on the project's language stack; the Woof hook block is a no-op when the script is absent.
-4. Run `woof preflight` and resolve any remaining failures.
-5. Run `woof hooks install` to enable the post-commit cartography hook block.
+The `github` tracker keeps each epic's contract in a GitHub issue (`E<N>` is issue `#<N>`) and declares the `gh` CLI as required infrastructure. The `local` tracker keeps every epic under `.woof/epics/E<N>/` with no remote and does not require `gh`. See [ADR-003](adr/003-issue-tracker-abstraction.md).
+
+### 3. Fill in the placeholders
+
+Open each scaffolded TOML and replace every `<replace>` value:
+
+- `prerequisites.toml` - for the `github` tracker, set `[tracker] repo` to `<owner>/<name>`; the `local` tracker has no `repo` line. Adjust the declared `[infra]`, `[commands]`, and `[validators]` versions to what the project actually requires.
+- `quality-gates.toml` - set `[gates.test] command` to the project's real verification command, for example `just test` or `pytest`.
+- `agents.toml` - the default routes follow [ADR-002](adr/002-graph-led-role-routing.md) (primary `codex`/`gpt-5.5`, reviewer `claude`/`claude-opus-4-7`); edit only if the project routes differ.
+- `test-markers.toml` - optional; the shipped Python and TypeScript defaults work unless the project uses a different test layout.
+
+An unedited `<replace>` string fails loud at `woof preflight` or first command resolution, so an un-filled bootstrap cannot run silently.
+
+### 4. Authenticate the model CLIs
+
+Woof dispatches to the public `claude` and `codex` CLIs. Authenticate each once:
+
+```bash
+claude /login
+codex login
+```
+
+`woof preflight` accepts either CLI-managed credential files (`~/.claude/.credentials.json` for the reviewer route, `~/.codex/auth.json` for the primary route) or the matching API-key environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`).
+
+### 5. Verify the setup
+
+```bash
+woof preflight
+```
+
+Preflight validates the public CLIs, role routes, generated MCP config, tracker reachability, credential markers, language tooling, quality-gate command resolution, and the `.woof/` config schemas. Resolve every reported failure before running the graph.
+
+### 6. Install the post-commit hook (optional)
+
+```bash
+woof hooks install
+```
+
+This adds an idempotent Woof-managed block to the repository `post-commit` hook. The block invokes `./scripts/refresh-cartography` when that script exists and is a no-op otherwise. Cartography substance is consumer-owned because the artefacts depend on the project's language stack; provide `./scripts/refresh-cartography` only if you want code-map artefacts regenerated on commit.
+
+### 7. Start the first epic
+
+```bash
+woof wf new "<spark>"
+```
+
+`woof wf new` creates a tracker-backed epic from the one-line spark, initialises `.woof/epics/E<N>/`, and selects it as the current epic. With the `github` tracker the epic id is the new GitHub issue number; with the `local` tracker it is the next integer allocated under `.woof/epics/`.
+
+### 8. Run the graph
+
+```bash
+woof wf --epic <N>
+```
+
+The deterministic graph advances the epic through discovery, definition, breakdown, execution, and Stage 5 verification. When the graph needs a human decision it writes a gate and stops; resolve it with a structured decision and re-run:
+
+```bash
+woof wf --epic <N> --resolve <decision>
+```
+
+See [`architecture.md`](architecture.md) for stage and gate semantics once you are past first run.
 
 ## Consumer-Owned Files
 

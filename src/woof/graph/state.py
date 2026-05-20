@@ -10,6 +10,9 @@ from pydantic import BaseModel, Field
 
 
 class NodeType(StrEnum):
+    DISCOVERY_RESEARCH = "discovery_research"
+    DISCOVERY_THINKING = "discovery_thinking"
+    DISCOVERY_BRAINSTORM = "discovery_brainstorm"
     DISCOVERY_SYNTHESIS = "discovery_synthesis"
     EPIC_DEFINITION = "epic_definition"
     BREAKDOWN_PLANNING = "breakdown_planning"

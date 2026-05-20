@@ -1,44 +1,51 @@
 ---
-description: Identify the single highest-leverage action
-argument-hint: [goal or leave blank for current context]
+type: discovery-playbook
+bucket: thinking
+name: one-thing
+summary: Identify the single highest-leverage action
 ---
 
-<objective>
-Apply "The One Thing" framework to $ARGUMENTS (or the current discussion if no arguments provided).
+# The One Thing
 
-Ask: "What's the ONE thing I can do such that by doing it everything else will be easier or unnecessary?"
-</objective>
+Apply the One Thing framework to the spark and the emerging direction. Ask:
+what is the one thing such that doing it makes everything else easier or
+unnecessary?
 
-<process>
-1. Clarify the ultimate goal or desired outcome
-2. List all possible actions that could contribute
-3. For each action, ask: "Does this make other things easier or unnecessary?"
-4. Identify the domino that knocks down others
-5. Define the specific next action for that one thing
-</process>
+## Process
 
-<output_format>
-**Goal:** [what you're trying to achieve]
+1. Clarify the ultimate goal or desired outcome.
+2. List the actions that could contribute to it.
+3. For each action, ask whether it makes other actions easier or unnecessary.
+4. Identify the domino that knocks down the others.
+5. Define the specific next action for that one thing.
 
-**Candidate Actions:**
-- Action 1: [downstream effect]
-- Action 2: [downstream effect]
-- Action 3: [downstream effect]
+## Output
 
-**The One Thing:**
-[The action that enables or eliminates the most other actions]
+Write the artefact as `one-thing.md` into the `.woof/epics/E<N>/discovery/thinking/` bucket directory declared in the
+graph-owned input. Use this shape:
 
-**Why This One:**
-By doing this, [specific things] become easier or unnecessary because...
+```
+## The One Thing: <goal>
 
-**Next Action:**
-[Specific, concrete first step to take right now]
-</output_format>
+### Goal
+<what is being achieved>
 
-<success_criteria>
-- Identifies genuine leverage point, not just important task
-- Shows causal chain (this enables that)
-- Reduces overwhelm to single focus
-- Next action is immediately actionable
-- Everything else can wait until this is done
-</success_criteria>
+### Candidate actions
+- <action>: <downstream effect>
+
+### The one thing
+<the action that enables or eliminates the most other actions>
+
+### Why this one
+<which things become easier or unnecessary, and why>
+
+### Next action
+<specific, concrete first step>
+```
+
+## Success criteria
+
+- Identifies a genuine leverage point, not just an important task.
+- Shows the causal chain: this enables that.
+- Reduces overwhelm to a single focus.
+- The next action is immediately actionable.

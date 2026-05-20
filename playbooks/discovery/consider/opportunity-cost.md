@@ -1,47 +1,55 @@
 ---
-description: Analyze what you give up by choosing this option
-argument-hint: [choice or leave blank for current context]
+type: discovery-playbook
+bucket: thinking
+name: opportunity-cost
+summary: Analyse what is given up by choosing this option
 ---
 
-<objective>
-Apply opportunity cost analysis to $ARGUMENTS (or the current discussion if no arguments provided).
+# Opportunity Cost
 
-Every yes is a no to something else. What's the true cost of this choice?
-</objective>
+Apply opportunity-cost analysis to a choice in the spark or the emerging
+direction. Every yes is a no to something else; surface the true cost of the
+choice.
 
-<process>
-1. State the choice being considered
-2. List what resources it consumes (time, money, energy, attention)
-3. Identify the best alternative use of those same resources
-4. Compare value of chosen option vs. best alternative
-5. Determine if the tradeoff is worth it
-</process>
+## Process
 
-<output_format>
-**Choice:** [what you're considering doing]
+1. State the choice being considered.
+2. List the resources it consumes: time, money, energy, attention.
+3. Identify the best alternative use of those same resources.
+4. Compare the value of the chosen option against the best alternative.
+5. Decide whether the tradeoff is worth it.
 
-**Resources Required:**
-- Time: [hours/days/weeks]
-- Money: [amount]
-- Energy/Attention: [cognitive load]
-- Other: [relationships, reputation, etc.]
+## Output
 
-**Best Alternative Uses:**
-- With that time, could instead: [alternative + value]
-- With that money, could instead: [alternative + value]
-- With that energy, could instead: [alternative + value]
+Write the artefact as `opportunity-cost.md` into the `.woof/epics/E<N>/discovery/thinking/` bucket directory declared
+in the graph-owned input. Use this shape:
 
-**True Cost:**
-Choosing this means NOT doing [best alternative], which would have provided [value].
+```
+## Opportunity Cost: <choice>
 
-**Verdict:**
-[Is the chosen option worth more than the best alternative?]
-</output_format>
+### Choice
+<what is being considered>
 
-<success_criteria>
-- Makes hidden costs explicit
-- Compares to best alternative, not just any alternative
-- Accounts for all resource types (not just money)
-- Reveals when "affordable" things are actually expensive
-- Enables genuine comparison of value
-</success_criteria>
+### Resources required
+- Time: <estimate>
+- Money: <estimate>
+- Energy and attention: <cognitive load>
+- Other: <relationships, reputation, etc.>
+
+### Best alternative uses
+- With that <resource>, could instead: <alternative and its value>
+
+### True cost
+<choosing this means not doing the best alternative, which would have provided
+what value>
+
+### Verdict
+<is the chosen option worth more than the best alternative?>
+```
+
+## Success criteria
+
+- Makes hidden costs explicit.
+- Compares against the best alternative, not just any alternative.
+- Accounts for all resource types, not only money.
+- Reveals when "affordable" things are actually expensive.

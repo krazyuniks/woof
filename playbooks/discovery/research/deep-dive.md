@@ -1,164 +1,69 @@
 ---
-description: Comprehensive investigation of a topic - thorough analysis with sources
-argument-hint: [topic or leave blank for current context]
+type: discovery-playbook
+bucket: research
+name: deep-dive
+summary: Comprehensive investigation of a topic - thorough analysis with sources
 ---
 
-<objective>
-Conduct a deep-dive investigation into $ARGUMENTS (or the current topic if no arguments provided).
+# Deep Dive
 
-Go beyond surface-level understanding. Synthesize multiple sources into comprehensive knowledge.
-</objective>
+Investigate one topic from the spark beyond surface level. Synthesise multiple
+sources into a coherent, comprehensive understanding.
 
-<intake_gate>
+## Process
 
-<context_analysis>
-First, analyze $ARGUMENTS to extract what's already provided:
-- The topic to investigate
-- Specific questions to answer
-- Depth required
-- How this knowledge will be used
+1. Define the scope and the key questions the investigation must answer.
+2. Gather information from multiple angles: how it works (mechanics), why it
+   exists (history, motivation), how it is used (patterns), where it fails
+   (limitations, edge cases), and what is next (trends).
+3. Synthesise the angles into one coherent understanding.
+4. Identify the unknowns that remain.
 
-Only ask about genuine gaps - don't re-ask what's already stated.
-</context_analysis>
+## Output
 
-<initial_questions>
-Use AskUserQuestion to ask 2-4 questions based on actual gaps:
+Write the artefact as `deep-dive.md` into the `.woof/epics/E<N>/discovery/research/` bucket directory declared in the
+graph-owned input. Use this shape:
 
-**If questions unclear:**
-- "What do you need to understand?" with options: How it works, When to use it, Why it exists, Limitations/gotchas, All of the above, Other
+```
+## Deep Dive: <topic>
 
-**If depth unclear:**
-- "How deep should I go?" with options: Overview (key points only), Solid understanding (main concepts), Comprehensive (thorough coverage), Other
+### Strategic summary
+<2-3 sentences: what this is, key insight, main implication for the epic>
 
-**If focus unclear:**
-- "Any specific angles?" with options: Practical application, Theoretical understanding, Comparison to alternatives, Historical context, Other
-
-**If application unclear:**
-- "How will this be used?" with options: Inform implementation, Make architecture decision, Evaluate feasibility, General knowledge, Other
-
-Skip questions where $ARGUMENTS already provides the answer.
-</initial_questions>
-
-<decision_gate>
-After receiving answers, use AskUserQuestion:
-
-Question: "Ready to start the deep dive, or would you like me to ask more questions?"
-
-Options:
-1. **Start research** - I have enough context
-2. **Ask more questions** - There are details to clarify
-3. **Let me add context** - I want to provide additional information
-
-If "Ask more questions" → generate 2-3 contextual follow-ups, then present decision gate again
-If "Let me add context" → receive input, then present decision gate again
-If "Start research" → proceed to research
-</decision_gate>
-
-</intake_gate>
-
-<process>
-After intake complete:
-
-1. Define the scope and key questions to answer
-2. Gather information from multiple angles:
-   - How it works (mechanics)
-   - Why it exists (history, motivation)
-   - How it's used (patterns, best practices)
-   - Where it fails (limitations, edge cases)
-   - What's next (trends, evolution)
-3. Synthesize into coherent understanding
-4. Identify remaining unknowns
-</process>
-
-<output_format>
-## Deep Dive: [Topic]
-
-### Strategic Summary
-[2-3 sentences: what this is, key insight, main implication for our work]
-
-### Key Questions
-- [Question this research answers]
-- [Question this research answers]
+### Key questions
+- <question this research answers>
 
 ### Overview
-[2-3 paragraph synthesis of what this is and why it matters]
+<short synthesis of what this is and why it matters>
 
-### How It Works
-[Detailed explanation of mechanics, architecture, or process]
+### How it works
+<mechanics, architecture, or process>
 
-### History & Context
-[Why it exists, what problem it solved, how it evolved]
+### History and context
+<why it exists, what problem it solved, how it evolved>
 
-### Patterns & Best Practices
-- [Pattern/practice 1]: [when and why]
-- [Pattern/practice 2]: [when and why]
-- [Pattern/practice 3]: [when and why]
+### Patterns and best practices
+- <pattern>: <when and why>
 
-### Limitations & Edge Cases
-- [Limitation]: [workaround or mitigation]
-- [Edge case]: [how to handle]
+### Limitations and edge cases
+- <limitation>: <workaround or mitigation>
 
-### Current State & Trends
-[Where things are heading, recent developments, community direction]
+### Current state and trends
+<where things are heading>
 
-### Key Takeaways
-1. [Most important insight]
-2. [Second most important insight]
-3. [Third most important insight]
+### Key takeaways
+1. <most important insight>
 
-### Remaining Unknowns
-- [ ] [Question that still needs answering]
-- [ ] [Question that still needs answering]
-
-### Implementation Context
-<claude_context>
-<application>
-- when_to_use: [situations where this applies]
-- when_not_to_use: [situations to avoid this]
-- prerequisites: [what must be true to use this]
-</application>
-<technical>
-- libraries: [relevant packages/tools]
-- patterns: [code patterns to follow]
-- gotchas: [common mistakes, edge cases]
-</technical>
-<integration>
-- works_with: [complementary technologies]
-- conflicts_with: [incompatible approaches]
-- alternatives: [other options to consider]
-</integration>
-</claude_context>
-
-**Next Action:** Apply this knowledge to implementation, research specific aspect deeper, or run /plan/project
+### Remaining unknowns
+- [ ] <question that still needs answering>
 
 ### Sources
-- [Source name]: [URL] - [date accessed]
-- [Source name]: [URL] - [date accessed]
-</output_format>
+- <source>: <url> - <date accessed>
+```
 
-<artifact_output>
-Save the research to a file:
+## Success criteria
 
-1. Create directory structure if it doesn't exist:
-   - `[current-working-directory]/artifacts/research/`
-
-2. Generate filename from topic:
-   - Get current date in YYYY-MM-DD format
-   - Slugify the topic (lowercase, hyphens for spaces)
-   - Format: `YYYY-MM-DD-[topic]-deep-dive.md`
-   - Example: `2025-01-15-kubernetes-networking-deep-dive.md`
-
-3. Write the complete research to the file
-
-4. Report to user: "Saved to `artifacts/research/[filename]`"
-</artifact_output>
-
-<success_criteria>
-- Answers the key questions thoroughly
-- Goes beyond surface-level (not just "what" but "why" and "when")
-- Identifies limitations honestly
-- Synthesizes into actionable understanding
-- Implementation context is specific enough for the primary route to apply
-- Clear about what's still unknown
-- Output saved to artifacts/research/ directory
-</success_criteria>
+- Answers the key questions thoroughly.
+- Goes past "what" to "why" and "when".
+- Identifies limitations honestly.
+- Is explicit about what remains unknown.

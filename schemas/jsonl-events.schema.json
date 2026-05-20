@@ -13,6 +13,7 @@
         "spark_created",
         "current_epic_selected",
         "discovery_started",
+        "discovery_bucket_explored",
         "discovery_synthesised",
         "definition_started",
         "definition_closed",
@@ -185,6 +186,11 @@
       "type": "string",
       "enum": ["plan_gate", "story_gate", "review_gate"]
     },
+    "bucket": {
+      "type": "string",
+      "enum": ["research", "thinking", "brainstorm"],
+      "description": "Stage-1 discovery producer bucket. Used by discovery_bucket_explored events."
+    },
     "triggered_by": {
       "type": "array",
       "items": { "type": "string" },
@@ -222,6 +228,15 @@
     }
   },
   "allOf": [
+    {
+      "if": {
+        "properties": { "event": { "const": "discovery_bucket_explored" } },
+        "required": ["event"]
+      },
+      "then": {
+        "required": ["epic_id", "bucket"]
+      }
+    },
     {
       "if": {
         "properties": { "event": { "const": "subprocess_spawned" } },

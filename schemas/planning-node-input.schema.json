@@ -30,6 +30,33 @@
   "allOf": [
     {
       "if": {
+        "properties": { "node_type": { "const": "discovery_research" } },
+        "required": ["node_type"]
+      },
+      "then": {
+        "properties": { "inputs": { "$ref": "#/$defs/discovery_bucket_input" } }
+      }
+    },
+    {
+      "if": {
+        "properties": { "node_type": { "const": "discovery_thinking" } },
+        "required": ["node_type"]
+      },
+      "then": {
+        "properties": { "inputs": { "$ref": "#/$defs/discovery_bucket_input" } }
+      }
+    },
+    {
+      "if": {
+        "properties": { "node_type": { "const": "discovery_brainstorm" } },
+        "required": ["node_type"]
+      },
+      "then": {
+        "properties": { "inputs": { "$ref": "#/$defs/discovery_bucket_input" } }
+      }
+    },
+    {
+      "if": {
         "properties": { "node_type": { "const": "discovery_synthesis" } },
         "required": ["node_type"]
       },
@@ -87,6 +114,9 @@
     "planning_node_type": {
       "type": "string",
       "enum": [
+        "discovery_research",
+        "discovery_thinking",
+        "discovery_brainstorm",
         "discovery_synthesis",
         "epic_definition",
         "breakdown_planning",
@@ -115,6 +145,18 @@
         "accept_remote",
         "hand_merge"
       ]
+    },
+    "discovery_bucket_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Input for a Stage-1 producer bucket node (research, thinking, brainstorm). The producer reads the spark plus any prior-bucket source artefacts and writes one or more Markdown artefacts into bucket_dir. Building-block playbook text is appended to the producer prompt, not referenced by path.",
+      "required": ["spark_path", "discovery_dir", "bucket_dir"],
+      "properties": {
+        "spark_path": { "$ref": "#/$defs/path" },
+        "discovery_dir": { "$ref": "#/$defs/path" },
+        "bucket_dir": { "$ref": "#/$defs/path" },
+        "source_paths": { "$ref": "#/$defs/path_list" }
+      }
     },
     "discovery_synthesis_input": {
       "type": "object",

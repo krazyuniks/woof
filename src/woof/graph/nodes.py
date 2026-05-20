@@ -36,6 +36,8 @@ from woof.graph.transitions import (
     StageStateError,
     append_epic_event,
     append_epic_event_once,
+    discovery_bucket_complete,
+    discovery_bucket_dir,
     discovery_synthesis_complete,
     discovery_synthesis_dir,
     discovery_synthesis_paths,
@@ -228,6 +230,99 @@ def _discovery_source_paths(repo_root: Path, epic_id: int) -> list[str]:
         for path in sorted(discovery_dir.rglob("*.md"))
         if not path.is_relative_to(synthesis_dir)
     ]
+
+
+_DISCOVERY_BUCKET_NODE_TYPE = {
+    "research": NodeType.DISCOVERY_RESEARCH,
+    "thinking": NodeType.DISCOVERY_THINKING,
+    "brainstorm": NodeType.DISCOVERY_BRAINSTORM,
+}
+_DISCOVERY_BUCKET_NEXT_NODE = {
+    "research": NodeType.DISCOVERY_THINKING,
+    "thinking": NodeType.DISCOVERY_BRAINSTORM,
+    "brainstorm": NodeType.DISCOVERY_SYNTHESIS,
+}
+# Building-block playbook directory bundled into each producer prompt. The
+# brainstorm bucket has no building blocks; its node prompt is self-contained.
+_DISCOVERY_BUCKET_PLAYBOOK_SUBDIR = {
+    "research": "research",
+    "thinking": "consider",
+    "brainstorm": None,
+}
+
+
+def _discovery_bucket_source_paths(repo_root: Path, epic_id: int, bucket: str) -> list[str]:
+    """Return prior-bucket discovery artefacts visible to a producer bucket node."""
+
+    discovery_dir = epic_dir(repo_root, epic_id) / "discovery"
+    if not discovery_dir.exists():
+        return []
+    synthesis_dir = discovery_synthesis_dir(repo_root, epic_id)
+    bucket_dir = discovery_bucket_dir(repo_root, epic_id, bucket)
+    return [
+        _relpath(repo_root, path)
+        for path in sorted(discovery_dir.rglob("*.md"))
+        if not path.is_relative_to(synthesis_dir) and not path.is_relative_to(bucket_dir)
+    ]
+
+
+def _discovery_bucket_payload(repo_root: Path, epic_id: int, bucket: str) -> dict:
+    directory = epic_dir(repo_root, epic_id)
+    payload = {
+        "node_type": _DISCOVERY_BUCKET_NODE_TYPE[bucket].value,
+        "epic_id": epic_id,
+        "repo_root": str(repo_root),
+        "epic_dir": _relpath(repo_root, directory),
+        "inputs": {
+            "spark_path": _relpath(repo_root, directory / "spark.md"),
+            "discovery_dir": _relpath(repo_root, directory / "discovery"),
+            "bucket_dir": _relpath(repo_root, discovery_bucket_dir(repo_root, epic_id, bucket)),
+        },
+    }
+    source_paths = _discovery_bucket_source_paths(repo_root, epic_id, bucket)
+    if source_paths:
+        payload["inputs"]["source_paths"] = source_paths
+    return payload
+
+
+def _discovery_bucket_artefacts(repo_root: Path, epic_id: int, bucket: str) -> list[str]:
+    directory = epic_dir(repo_root, epic_id)
+    source_paths = [
+        repo_root / path for path in _discovery_bucket_source_paths(repo_root, epic_id, bucket)
+    ]
+    return _existing_prompt_artefacts(repo_root, [directory / "spark.md", *source_paths])
+
+
+def _discovery_bucket_playbooks(bucket: str) -> str:
+    """Return the bundled building-block playbook text for a producer bucket.
+
+    The playbook text is embedded directly into the producer prompt so a
+    consumer without Woof's source checkout on the dispatch path still receives
+    the full Stage-1 technique set. The brainstorm bucket has no building
+    blocks and returns an empty string.
+    """
+
+    subdir = _DISCOVERY_BUCKET_PLAYBOOK_SUBDIR[bucket]
+    if subdir is None:
+        return ""
+    playbook_dir = tool_root() / "playbooks" / "discovery" / subdir
+    sections = [
+        f"## Building-block playbook: {path.stem}\n\n{path.read_text(encoding='utf-8').strip()}"
+        for path in sorted(playbook_dir.glob("*.md"))
+    ]
+    return "\n\n---\n\n".join(sections)
+
+
+def _discovery_bucket_prompt(repo_root: Path, epic_id: int, bucket: str) -> str:
+    payload = _discovery_bucket_payload(repo_root, epic_id, bucket)
+    prompt = _prompt_template(
+        tool_root() / "playbooks" / "discovery" / f"{bucket}.md",
+        {"planning_input_json": json.dumps(payload, indent=2, sort_keys=True)},
+    )
+    playbooks = _discovery_bucket_playbooks(bucket)
+    if playbooks:
+        prompt = f"{prompt}\n\n---\n\n# Building-block playbooks\n\n{playbooks}\n"
+    return prompt
 
 
 def _discovery_synthesis_payload(repo_root: Path, epic_id: int) -> dict:
@@ -558,6 +653,103 @@ def _run_dispatch(
         )
     finally:
         prompt_file.unlink(missing_ok=True)
+
+
+def _discovery_bucket_node(inp: NodeInput, bucket: str) -> NodeOutput:
+    """Run a Stage-1 producer bucket node (research, thinking, brainstorm)."""
+
+    if inp.story_id:
+        raise ValueError(f"discovery_{bucket} does not accept story_id")
+    directory = epic_dir(inp.repo_root, inp.epic_id)
+    spark_path = directory / "spark.md"
+    if not spark_path.is_file() or not spark_path.read_text(encoding="utf-8").strip():
+        return _planning_halt(
+            inp,
+            stage=1,
+            message=(
+                f"Required Stage-1 input missing or empty: {_relpath(inp.repo_root, spark_path)}"
+            ),
+            triggered_by=["incomplete_stage_state"],
+            check_count=1,
+            failed_check_count=1,
+        )
+
+    bucket_dir = discovery_bucket_dir(inp.repo_root, inp.epic_id, bucket)
+    bucket_relpath = _relpath(inp.repo_root, bucket_dir)
+    if not discovery_bucket_complete(inp.repo_root, inp.epic_id, bucket):
+        bucket_dir.mkdir(parents=True, exist_ok=True)
+        proc = _run_dispatch(
+            inp.repo_root,
+            role="primary",
+            epic_id=inp.epic_id,
+            story_id=None,
+            prompt=_discovery_bucket_prompt(inp.repo_root, inp.epic_id, bucket),
+            artefacts_loaded=_discovery_bucket_artefacts(inp.repo_root, inp.epic_id, bucket),
+        )
+        if proc.returncode != 0:
+            return _planning_halt(
+                inp,
+                stage=1,
+                message=proc.stderr.strip(),
+                triggered_by=["subprocess_crash"],
+                check_count=1,
+                failed_check_count=1,
+                paths=[bucket_relpath],
+            )
+        if not discovery_bucket_complete(inp.repo_root, inp.epic_id, bucket):
+            return _planning_halt(
+                inp,
+                stage=1,
+                message=f"Discovery {bucket} produced no artefacts under {bucket_relpath}",
+                triggered_by=["schema_validation_failed"],
+                check_count=1,
+                failed_check_count=1,
+                paths=[bucket_relpath],
+            )
+
+    paths = sorted(
+        _relpath(inp.repo_root, path)
+        for path in bucket_dir.glob("*.md")
+        if path.is_file() and path.read_text(encoding="utf-8").strip()
+    )
+    append_epic_event_once(
+        inp.repo_root,
+        inp.epic_id,
+        {
+            "event": "discovery_bucket_explored",
+            "at": _now(),
+            "epic_id": inp.epic_id,
+            "bucket": bucket,
+            "paths": paths,
+        },
+        event="discovery_bucket_explored",
+        bucket=bucket,
+    )
+    return NodeOutput(
+        node_type=inp.node_type,
+        status=NodeStatus.COMPLETED,
+        epic_id=inp.epic_id,
+        next_node=_DISCOVERY_BUCKET_NEXT_NODE[bucket],
+        validation_summary=_planning_validation(
+            ok=True,
+            stage=1,
+            check_count=len(paths) or 1,
+            failed_check_count=0,
+        ),
+        paths=paths,
+    )
+
+
+def discovery_research_node(inp: NodeInput) -> NodeOutput:
+    return _discovery_bucket_node(inp, "research")
+
+
+def discovery_thinking_node(inp: NodeInput) -> NodeOutput:
+    return _discovery_bucket_node(inp, "thinking")
+
+
+def discovery_brainstorm_node(inp: NodeInput) -> NodeOutput:
+    return _discovery_bucket_node(inp, "brainstorm")
 
 
 def discovery_synthesis_node(inp: NodeInput) -> NodeOutput:
@@ -1691,6 +1883,9 @@ def human_review_node(inp: NodeInput) -> NodeOutput:
 
 def default_registry() -> dict[NodeType, NodeHandler]:
     return {
+        NodeType.DISCOVERY_RESEARCH: discovery_research_node,
+        NodeType.DISCOVERY_THINKING: discovery_thinking_node,
+        NodeType.DISCOVERY_BRAINSTORM: discovery_brainstorm_node,
         NodeType.DISCOVERY_SYNTHESIS: discovery_synthesis_node,
         NodeType.EPIC_DEFINITION: epic_definition_node,
         NodeType.BREAKDOWN_PLANNING: breakdown_planning_node,

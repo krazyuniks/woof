@@ -1,45 +1,50 @@
 ---
-description: Solve problems backwards - what would guarantee failure?
-argument-hint: [goal or leave blank for current context]
+type: discovery-playbook
+bucket: thinking
+name: inversion
+summary: Solve problems backwards - what would guarantee failure?
 ---
 
-<objective>
-Apply inversion thinking to $ARGUMENTS (or the current discussion if no arguments provided).
+# Inversion
 
-Instead of asking "How do I succeed?", ask "What would guarantee failure?" then avoid those things.
-</objective>
+Apply inversion to the spark and the emerging direction. Instead of asking how
+to succeed, ask what would guarantee failure, then design to avoid those things.
 
-<process>
-1. State the goal or desired outcome
-2. Invert: "What would guarantee I fail at this?"
-3. List all failure modes (be thorough and honest)
-4. For each failure mode, identify the avoidance strategy
-5. Build success plan by systematically avoiding failure
-</process>
+## Process
 
-<output_format>
-**Goal:** [what success looks like]
+1. State the goal or desired outcome.
+2. Invert it: what would guarantee failure?
+3. List the failure modes thoroughly and honestly.
+4. For each failure mode, identify the avoidance strategy.
+5. Build the success plan by systematically avoiding failure.
 
-**Guaranteed Failure Modes:**
-1. [Way to fail]: Avoid by [specific action]
-2. [Way to fail]: Avoid by [specific action]
-3. [Way to fail]: Avoid by [specific action]
+## Output
 
-**Anti-Goals (Never Do):**
-- [Behavior to eliminate]
-- [Behavior to eliminate]
+Write the artefact as `inversion.md` into the `.woof/epics/E<N>/discovery/thinking/` bucket directory declared in the
+graph-owned input. Use this shape:
 
-**Success By Avoidance:**
-By simply not doing [X, Y, Z], success becomes much more likely because...
+```
+## Inversion: <goal>
 
-**Remaining Risk:**
-[What's left after avoiding obvious failures]
-</output_format>
+### Goal
+<what success looks like>
 
-<success_criteria>
-- Failure modes are specific and realistic
-- Avoidance strategies are actionable
-- Surfaces risks that optimistic planning misses
-- Creates clear "never do" boundaries
-- Shows path to success via negativa
-</success_criteria>
+### Guaranteed failure modes
+1. <way to fail>: avoid by <specific action>
+
+### Anti-goals (never do)
+- <behaviour to eliminate>
+
+### Success by avoidance
+<why not doing the failure modes makes success much more likely>
+
+### Remaining risk
+<what is left after avoiding the obvious failures>
+```
+
+## Success criteria
+
+- Failure modes are specific and realistic.
+- Avoidance strategies are actionable.
+- Surfaces risks that optimistic planning misses.
+- Creates clear never-do boundaries.

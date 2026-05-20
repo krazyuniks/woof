@@ -1,49 +1,55 @@
 ---
-description: Map strengths, weaknesses, opportunities, and threats
-argument-hint: [subject or leave blank for current context]
+type: discovery-playbook
+bucket: thinking
+name: swot
+summary: Map strengths, weaknesses, opportunities, and threats
 ---
 
-<objective>
-Apply SWOT analysis to $ARGUMENTS (or the current discussion if no arguments provided).
+# SWOT
 
-Map internal factors (strengths/weaknesses) and external factors (opportunities/threats) to inform strategy.
-</objective>
+Apply SWOT analysis to the spark and the emerging direction. Map internal
+factors (strengths and weaknesses) and external factors (opportunities and
+threats) to inform strategy.
 
-<process>
-1. Define the subject being analyzed (project, decision, position)
-2. Identify internal strengths (advantages you control)
-3. Identify internal weaknesses (disadvantages you control)
-4. Identify external opportunities (favorable conditions you don't control)
-5. Identify external threats (unfavorable conditions you don't control)
-6. Develop strategies that leverage strengths toward opportunities while mitigating weaknesses and threats
-</process>
+## Process
 
-<output_format>
-**Subject:** [what's being analyzed]
+1. Define the subject being analysed: project, decision, or position.
+2. Identify internal strengths: advantages within your control.
+3. Identify internal weaknesses: disadvantages within your control.
+4. Identify external opportunities: favourable conditions outside your control.
+5. Identify external threats: unfavourable conditions outside your control.
+6. Develop strategies that connect the quadrants.
 
-**Strengths (Internal +)**
-- [Strength]: How to leverage...
+## Output
 
-**Weaknesses (Internal -)**
-- [Weakness]: How to mitigate...
+Write the artefact as `swot.md` into the `.woof/epics/E<N>/discovery/thinking/` bucket directory declared in the
+graph-owned input. Use this shape:
 
-**Opportunities (External +)**
-- [Opportunity]: How to capture...
+```
+## SWOT: <subject>
 
-**Threats (External -)**
-- [Threat]: How to defend...
+### Strengths (internal, positive)
+- <strength>: how to leverage it
 
-**Strategic Moves:**
-- **SO Strategy:** Use [strength] to capture [opportunity]
-- **WO Strategy:** Address [weakness] to enable [opportunity]
-- **ST Strategy:** Use [strength] to counter [threat]
-- **WT Strategy:** Minimize [weakness] to avoid [threat]
-</output_format>
+### Weaknesses (internal, negative)
+- <weakness>: how to mitigate it
 
-<success_criteria>
-- Correctly categorizes internal vs. external factors
-- Factors are specific and actionable, not generic
-- Strategies connect multiple quadrants
-- Provides clear direction for action
-- Balances optimism with risk awareness
-</success_criteria>
+### Opportunities (external, positive)
+- <opportunity>: how to capture it
+
+### Threats (external, negative)
+- <threat>: how to defend against it
+
+### Strategic moves
+- Strength-opportunity: use <strength> to capture <opportunity>
+- Weakness-opportunity: address <weakness> to enable <opportunity>
+- Strength-threat: use <strength> to counter <threat>
+- Weakness-threat: minimise <weakness> to avoid <threat>
+```
+
+## Success criteria
+
+- Correctly categorises internal versus external factors.
+- Factors are specific and actionable, not generic.
+- Strategies connect multiple quadrants.
+- Balances optimism with risk awareness.

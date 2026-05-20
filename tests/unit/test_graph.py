@@ -99,6 +99,12 @@ def _write_discovery_synthesis(directory: Path) -> None:
     (synthesis / "OPEN_QUESTIONS.md").write_text("# Open Questions\n\nNo open questions.\n")
 
 
+def _write_discovery_bucket(directory: Path, bucket: str) -> None:
+    bucket_dir = directory / "discovery" / bucket
+    bucket_dir.mkdir(parents=True, exist_ok=True)
+    (bucket_dir / f"{bucket}.md").write_text(f"# {bucket}\n\nFilled discovery {bucket} artefact.\n")
+
+
 def _write_discovery_synthesis_with_open_question(directory: Path) -> None:
     _write_discovery_synthesis(directory)
     synthesis = directory / "discovery" / "synthesis"
@@ -617,7 +623,159 @@ def test_dispatch_helper_uses_role_route_without_provider_target(
 def test_pre_plan_transition_enters_discovery_when_spark_exists(tmp_path: Path) -> None:
     _write_spark(tmp_path, 21)
 
-    assert next_node(tmp_path, 21) == (NodeType.DISCOVERY_SYNTHESIS, None)
+    assert next_node(tmp_path, 21) == (NodeType.DISCOVERY_RESEARCH, None)
+
+
+def test_pre_plan_transition_walks_discovery_buckets_before_synthesis(tmp_path: Path) -> None:
+    directory = _write_spark(tmp_path, 210)
+
+    assert next_node(tmp_path, 210) == (NodeType.DISCOVERY_RESEARCH, None)
+    _write_discovery_bucket(directory, "research")
+    assert next_node(tmp_path, 210) == (NodeType.DISCOVERY_THINKING, None)
+    _write_discovery_bucket(directory, "thinking")
+    assert next_node(tmp_path, 210) == (NodeType.DISCOVERY_BRAINSTORM, None)
+    _write_discovery_bucket(directory, "brainstorm")
+    assert next_node(tmp_path, 210) == (NodeType.DISCOVERY_SYNTHESIS, None)
+
+
+def test_discovery_research_node_dispatches_primary_and_bundles_playbooks(
+    tmp_path: Path, monkeypatch
+) -> None:
+    directory = _write_spark(tmp_path, 220)
+    captured: dict[str, Any] = {}
+
+    def fake_dispatch(
+        repo_root: Path,
+        role: str,
+        epic_id: int,
+        story_id: str | None,
+        prompt: str,
+        artefacts_loaded: list[str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        captured["role"] = role
+        captured["prompt"] = prompt
+        captured["artefacts_loaded"] = artefacts_loaded
+        _write_discovery_bucket(directory, "research")
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setattr(nodes, "_run_dispatch", fake_dispatch)
+
+    output = nodes.discovery_research_node(
+        NodeInput(node_type=NodeType.DISCOVERY_RESEARCH, epic_id=220, repo_root=tmp_path)
+    )
+
+    assert captured["role"] == "primary"
+    assert '"node_type": "discovery_research"' in captured["prompt"]
+    assert "Building-block playbook: landscape" in captured["prompt"]
+    assert "AskUserQuestion" not in captured["prompt"]
+    assert captured["artefacts_loaded"] == [".woof/epics/E220/spark.md"]
+    assert output.status == NodeStatus.COMPLETED
+    assert output.next_node == NodeType.DISCOVERY_THINKING
+    assert output.validation_summary and output.validation_summary.stage == 1
+    assert output.paths == [".woof/epics/E220/discovery/research/research.md"]
+    _assert_planning_node_input_schema(
+        tmp_path, nodes._discovery_bucket_payload(tmp_path, 220, "research")
+    )
+    _assert_node_output_schema(tmp_path, json.loads(output.model_dump_json()))
+    events = [json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines()]
+    assert events[-1]["event"] == "discovery_bucket_explored"
+    assert events[-1]["bucket"] == "research"
+
+
+def test_discovery_thinking_node_passes_prior_bucket_artefacts(tmp_path: Path, monkeypatch) -> None:
+    directory = _write_spark(tmp_path, 224)
+    _write_discovery_bucket(directory, "research")
+    captured: dict[str, Any] = {}
+
+    def fake_dispatch(
+        repo_root: Path,
+        role: str,
+        epic_id: int,
+        story_id: str | None,
+        prompt: str,
+        artefacts_loaded: list[str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        captured["artefacts_loaded"] = artefacts_loaded
+        _write_discovery_bucket(directory, "thinking")
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setattr(nodes, "_run_dispatch", fake_dispatch)
+
+    output = nodes.discovery_thinking_node(
+        NodeInput(node_type=NodeType.DISCOVERY_THINKING, epic_id=224, repo_root=tmp_path)
+    )
+
+    assert captured["artefacts_loaded"] == [
+        ".woof/epics/E224/spark.md",
+        ".woof/epics/E224/discovery/research/research.md",
+    ]
+    assert output.status == NodeStatus.COMPLETED
+    assert output.next_node == NodeType.DISCOVERY_BRAINSTORM
+
+
+def test_discovery_bucket_node_skips_dispatch_when_already_populated(
+    tmp_path: Path, monkeypatch
+) -> None:
+    directory = _write_spark(tmp_path, 221)
+    _write_discovery_bucket(directory, "thinking")
+
+    def fail_dispatch(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise AssertionError("a populated discovery bucket should not dispatch")
+
+    monkeypatch.setattr(nodes, "_run_dispatch", fail_dispatch)
+
+    output = nodes.discovery_thinking_node(
+        NodeInput(node_type=NodeType.DISCOVERY_THINKING, epic_id=221, repo_root=tmp_path)
+    )
+
+    assert output.status == NodeStatus.COMPLETED
+    assert output.next_node == NodeType.DISCOVERY_BRAINSTORM
+
+
+def test_discovery_bucket_node_halts_when_no_artefacts_produced(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_spark(tmp_path, 222)
+
+    def empty_dispatch(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setattr(nodes, "_run_dispatch", empty_dispatch)
+
+    output = nodes.discovery_brainstorm_node(
+        NodeInput(node_type=NodeType.DISCOVERY_BRAINSTORM, epic_id=222, repo_root=tmp_path)
+    )
+
+    assert output.status == NodeStatus.HALTED
+    assert output.triggered_by == ["schema_validation_failed"]
+
+
+def test_discovery_brainstorm_node_bundles_no_building_blocks(tmp_path: Path, monkeypatch) -> None:
+    directory = _write_spark(tmp_path, 223)
+    captured: dict[str, Any] = {}
+
+    def fake_dispatch(
+        repo_root: Path,
+        role: str,
+        epic_id: int,
+        story_id: str | None,
+        prompt: str,
+        artefacts_loaded: list[str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        captured["prompt"] = prompt
+        _write_discovery_bucket(directory, "brainstorm")
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setattr(nodes, "_run_dispatch", fake_dispatch)
+
+    output = nodes.discovery_brainstorm_node(
+        NodeInput(node_type=NodeType.DISCOVERY_BRAINSTORM, epic_id=223, repo_root=tmp_path)
+    )
+
+    assert '"node_type": "discovery_brainstorm"' in captured["prompt"]
+    assert "Building-block playbook:" not in captured["prompt"]
+    assert output.status == NodeStatus.COMPLETED
+    assert output.next_node == NodeType.DISCOVERY_SYNTHESIS
 
 
 def test_discovery_synthesis_node_dispatches_primary_and_validates_outputs(
@@ -1049,7 +1207,16 @@ def test_graph_runs_discovery_definition_breakdown_and_opens_plan_gate(
         assert epic_id == 28
         assert story_id is None
         assert artefacts_loaded
-        if '"node_type": "discovery_synthesis"' in prompt:
+        if '"node_type": "discovery_research"' in prompt:
+            assert role == "primary"
+            _write_discovery_bucket(directory, "research")
+        elif '"node_type": "discovery_thinking"' in prompt:
+            assert role == "primary"
+            _write_discovery_bucket(directory, "thinking")
+        elif '"node_type": "discovery_brainstorm"' in prompt:
+            assert role == "primary"
+            _write_discovery_bucket(directory, "brainstorm")
+        elif '"node_type": "discovery_synthesis"' in prompt:
             assert role == "primary"
             _write_discovery_synthesis(directory)
         elif '"node_type": "epic_definition"' in prompt:
@@ -1070,6 +1237,9 @@ def test_graph_runs_discovery_definition_breakdown_and_opens_plan_gate(
     outputs = run_graph(tmp_path, 28)
 
     assert [output.node_type for output in outputs] == [
+        NodeType.DISCOVERY_RESEARCH,
+        NodeType.DISCOVERY_THINKING,
+        NodeType.DISCOVERY_BRAINSTORM,
         NodeType.DISCOVERY_SYNTHESIS,
         NodeType.EPIC_DEFINITION,
         NodeType.BREAKDOWN_PLANNING,

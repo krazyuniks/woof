@@ -121,6 +121,43 @@ def test_stage5_story_prompts_codify_producer_discipline() -> None:
     )
 
 
+DISCOVERY_BUILDING_BLOCK_DIRS = (
+    REPO_ROOT / "playbooks" / "discovery" / "research",
+    REPO_ROOT / "playbooks" / "discovery" / "consider",
+)
+NON_PORTABLE_PLAYBOOK_TOKENS = {
+    "interactive AskUserQuestion tool": "AskUserQuestion",
+    "slash-command argument placeholder": "$ARGUMENTS",
+    "interactive intake gate": "<intake_gate>",
+    "interactive decision gate": "<decision_gate>",
+    "Claude-Code slash-command frontmatter": "argument-hint:",
+    "non-portable artefact output path": "artifacts/research",
+}
+
+
+def test_discovery_building_block_playbooks_are_portable() -> None:
+    """Stage-1 building-block playbooks must be non-interactive and bucket-bound."""
+
+    failures: list[str] = []
+    for directory in DISCOVERY_BUILDING_BLOCK_DIRS:
+        playbooks = sorted(directory.glob("*.md"))
+        assert playbooks, f"no building-block playbooks under {directory}"
+        for path in playbooks:
+            text = path.read_text()
+            rel = path.relative_to(REPO_ROOT)
+            for label, token in NON_PORTABLE_PLAYBOOK_TOKENS.items():
+                if token in text:
+                    failures.append(f"{rel}: {label}: {token!r}")
+            if "type: discovery-playbook" not in text:
+                failures.append(f"{rel}: missing `type: discovery-playbook` frontmatter")
+            if "bucket:" not in text:
+                failures.append(f"{rel}: missing `bucket:` frontmatter")
+            if ".woof/epics/E<N>/discovery/" not in text:
+                failures.append(f"{rel}: must direct output into a .woof/epics discovery bucket")
+
+    assert not failures, "\n".join(failures)
+
+
 def test_stage3_plan_generation_rules_are_not_architecture_prose() -> None:
     text = ARCHITECTURE_DOC.read_text()
     forbidden = (

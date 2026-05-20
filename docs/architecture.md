@@ -12,10 +12,10 @@
 
 ## 0. Current implementation boundary
 
-The Woof repository currently implements the graph-owned path from Stage 1 Discovery synthesis through Stage 5 story execution:
+The Woof repository currently implements the graph-owned path from Stage 1 Discovery through Stage 5 story execution:
 
 - `woof wf --epic <N>` is the operator entry point for the deterministic Python graph.
-- Stage 1 Discovery synthesis dispatches the primary producer to create or validate `discovery/synthesis/{CONCEPT,PRINCIPLES,ARCHITECTURE,OPEN_QUESTIONS}.md`.
+- Stage 1 Discovery runs four graph producer nodes in order - research, thinking, and brainstorm bucket producers, then synthesis. The bucket nodes dispatch the primary producer to populate `discovery/{research,thinking,brainstorm}/`; synthesis dispatches the primary producer to create or validate `discovery/synthesis/{CONCEPT,PRINCIPLES,ARCHITECTURE,OPEN_QUESTIONS}.md`.
 - Stage 2 Definition dispatches the primary producer to create or validate schema-valid `EPIC.md`.
 - Stage 3 Breakdown dispatches the primary producer to create or validate schema-valid `plan.json`, renders deterministic `PLAN.md`, dispatches the reviewer to create schema-valid `critique/plan.md`, and Stage 4 opens the mandatory `plan_gate` before any story execution.
 - Stage-5 graph nodes dispatch the primary producer, dispatch the reviewer, run Stage-5 verification, open gates, and commit through a transaction manifest.
@@ -53,7 +53,7 @@ Six stages plus an autonomous driver. Autonomy gradient runs from fully human-in
 
 ### Stage 1 — Discovery (locks *direction*)
 
-Divergent, iterative, conversational. Embeds granular thinking phases (ideate → research → brainstorm → solutionise) inside a single stage boundary, producing a folder of artefacts synthesised into commitment documents at the end.
+Divergent, iterative, conversational. Embeds granular thinking phases (research → thinking → brainstorm → synthesis) inside a single stage boundary, producing a folder of artefacts synthesised into commitment documents at the end.
 
 Folder shape:
 
@@ -65,6 +65,8 @@ Folder shape:
   inputs/        # exogenous sources (KB vault refs, prior-epic refs)
   synthesis/     # CONCEPT.md, PRINCIPLES.md, ARCHITECTURE.md, OPEN_QUESTIONS.md
 ```
+
+The `research/`, `thinking/`, and `brainstorm/` buckets are each populated by a deterministic graph producer node (`discovery_research`, `discovery_thinking`, `discovery_brainstorm`) before `discovery_synthesis` runs. Each bucket node dispatches the primary producer with the bucket's building-block playbooks (`playbooks/discovery/research/`, `playbooks/discovery/consider/`) embedded directly in the prompt, so Stage 1 is portable to a consumer without Woof-author-local agent skills. `inputs/` is operator-supplied, not graph-produced.
 
 Discovery owns: philosophy, principles (epic-specific; inherits from tool-level, overrides recorded explicitly), architecture *concepts* at family-of-approaches level, technology-family choices, rejected alternatives, open questions deferred to Definition.
 

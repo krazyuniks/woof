@@ -1,42 +1,48 @@
 ---
-description: Break down to fundamentals and rebuild from base truths
-argument-hint: [problem or leave blank for current context]
+type: discovery-playbook
+bucket: thinking
+name: first-principles
+summary: Break down to fundamentals and rebuild from base truths
 ---
 
-<objective>
-Apply first principles thinking to $ARGUMENTS (or the current discussion if no arguments provided).
+# First Principles
 
-Strip away assumptions, conventions, and analogies to identify fundamental truths, then rebuild understanding from scratch.
-</objective>
+Apply first-principles thinking to the spark and the emerging direction. Strip
+away assumptions, conventions, and analogies, identify the fundamental truths,
+then rebuild understanding from those.
 
-<process>
-1. State the problem or belief being examined
-2. List all current assumptions (even "obvious" ones)
-3. Challenge each assumption: "Is this actually true? Why?"
-4. Identify base truths that cannot be reduced further
-5. Rebuild solution from only these fundamentals
-</process>
+## Process
 
-<output_format>
-**Current Assumptions:**
-- Assumption 1: [challenged: true/false/partially]
-- Assumption 2: [challenged: true/false/partially]
+1. State the belief or approach being examined.
+2. List every current assumption, including the "obvious" ones.
+3. Challenge each assumption: is it actually true, and why?
+4. Identify the base truths that cannot be reduced further.
+5. Rebuild the solution from only those fundamentals.
 
-**Fundamental Truths:**
-- Truth 1: [why this is irreducible]
-- Truth 2: [why this is irreducible]
+## Output
 
-**Rebuilt Understanding:**
-Starting from fundamentals, here's what we can conclude...
+Write the artefact as `first-principles.md` into the `.woof/epics/E<N>/discovery/thinking/` bucket directory declared
+in the graph-owned input. Use this shape:
 
-**New Possibilities:**
-Without legacy assumptions, these options emerge...
-</output_format>
+```
+## First Principles: <subject>
 
-<success_criteria>
-- Surfaces hidden assumptions
-- Distinguishes convention from necessity
-- Identifies irreducible base truths
-- Opens new solution paths not visible before
-- Avoids reasoning by analogy ("X worked for Y so...")
-</success_criteria>
+### Current assumptions
+- <assumption>: <challenged: true / false / partial>
+
+### Fundamental truths
+- <truth>: <why it is irreducible>
+
+### Rebuilt understanding
+<what follows when reasoning only from the fundamentals>
+
+### New possibilities
+<options that emerge once legacy assumptions are dropped>
+```
+
+## Success criteria
+
+- Surfaces hidden assumptions.
+- Distinguishes convention from necessity.
+- Identifies irreducible base truths.
+- Opens solution paths not visible before, without reasoning by analogy.

@@ -5,10 +5,29 @@ description = "Deterministic inner-loop SDLC orchestration for AI-assisted devel
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["sdlc", "orchestration", "ai-assisted-development", "cli", "workflow"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development",
+    "Topic :: Software Development :: Quality Assurance",
+    "Operating System :: POSIX",
+]
 dependencies = [
     "pydantic>=2.7",
     "pyyaml>=6.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/krazyuniks/woof"
+Repository = "https://github.com/krazyuniks/woof"
+Issues = "https://github.com/krazyuniks/woof/issues"
 
 [project.scripts]
 woof = "woof.cli.main:main"

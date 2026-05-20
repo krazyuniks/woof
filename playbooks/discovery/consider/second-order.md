@@ -1,48 +1,55 @@
 ---
-description: Think through consequences of consequences
-argument-hint: [action or leave blank for current context]
+type: discovery-playbook
+bucket: thinking
+name: second-order
+summary: Think through consequences of consequences
 ---
 
-<objective>
-Apply second-order thinking to $ARGUMENTS (or the current discussion if no arguments provided).
+# Second-Order Thinking
 
-Ask: "And then what?" First-order thinking stops at immediate effects. Second-order thinking follows the chain.
-</objective>
+Apply second-order thinking to the spark and the emerging direction. First-order
+thinking stops at immediate effects; second-order thinking keeps asking "and
+then what?" and follows the chain.
 
-<process>
-1. State the action or decision
-2. Identify first-order effects (immediate, obvious consequences)
-3. For each first-order effect, ask "And then what happens?"
-4. Continue to third-order if significant
-5. Identify delayed consequences that change the calculus
-6. Assess whether the action is still worth it after full chain analysis
-</process>
+## Process
 
-<output_format>
-**Action:** [what's being considered]
+1. State the action or decision.
+2. Identify the first-order effects: immediate, obvious consequences.
+3. For each first-order effect, ask "and then what happens?"
+4. Continue to third-order effects where they are significant.
+5. Identify delayed consequences that change the calculus.
+6. Assess whether the action is still worth it after the full chain.
 
-**First-Order Effects:** (Immediate)
-- [Effect 1]
-- [Effect 2]
+## Output
 
-**Second-Order Effects:** (And then what?)
-- [Effect 1] → leads to → [Consequence]
-- [Effect 2] → leads to → [Consequence]
+Write the artefact as `second-order.md` into the `.woof/epics/E<N>/discovery/thinking/` bucket directory declared in
+the graph-owned input. Use this shape:
 
-**Third-Order Effects:** (And then?)
-- [Key downstream consequences]
+```
+## Second-Order Thinking: <action>
 
-**Delayed Consequences:**
-[Effects that aren't obvious initially but matter long-term]
+### Action
+<what is being considered>
 
-**Revised Assessment:**
-After tracing the chain, this action [is/isn't] worth it because...
-</output_format>
+### First-order effects (immediate)
+- <effect>
 
-<success_criteria>
-- Traces causal chains beyond obvious effects
-- Identifies feedback loops and unintended consequences
-- Reveals delayed costs or benefits
-- Distinguishes actions that compound well from those that don't
-- Prevents "seemed like a good idea at the time" regret
-</success_criteria>
+### Second-order effects (and then what?)
+- <effect> leads to <consequence>
+
+### Third-order effects
+- <key downstream consequences>
+
+### Delayed consequences
+<effects that are not obvious initially but matter long-term>
+
+### Revised assessment
+<whether the action is still worth it after tracing the chain>
+```
+
+## Success criteria
+
+- Traces causal chains beyond the obvious effects.
+- Identifies feedback loops and unintended consequences.
+- Reveals delayed costs or benefits.
+- Distinguishes actions that compound well from those that do not.

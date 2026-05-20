@@ -1,45 +1,51 @@
 ---
-description: Apply Eisenhower matrix (urgent/important) to prioritize tasks or decisions
-argument-hint: [tasks or leave blank for current context]
+type: discovery-playbook
+bucket: thinking
+name: eisenhower-matrix
+summary: Apply the Eisenhower matrix (urgent / important) to prioritise
 ---
 
-<objective>
-Apply the Eisenhower matrix to $ARGUMENTS (or the current discussion if no arguments provided).
+# Eisenhower Matrix
 
-Categorize items by urgency and importance to clarify what to do now, schedule, delegate, or eliminate.
-</objective>
+Apply the Eisenhower matrix to the tasks or decisions raised by the spark and
+the emerging direction. Categorise items by urgency and importance to clarify
+what to do now, schedule, delegate, or drop.
 
-<process>
-1. List all tasks, decisions, or items in scope
-2. Evaluate each on two axes:
-   - Important: Contributes to long-term goals/values
-   - Urgent: Requires immediate attention, has deadline pressure
-3. Place each item in appropriate quadrant
-4. Provide specific action for each quadrant
-</process>
+## Process
 
-<output_format>
-**Q1: Do First** (Important + Urgent)
-- Item: [specific action, deadline if applicable]
+1. List the tasks, decisions, or items in scope.
+2. Evaluate each on two axes: important (contributes to long-term goals) and
+   urgent (needs immediate attention or has deadline pressure).
+3. Place each item in the appropriate quadrant.
+4. Give a specific action for each quadrant.
 
-**Q2: Schedule** (Important + Not Urgent)
-- Item: [when to do it, why it matters long-term]
+## Output
 
-**Q3: Delegate** (Not Important + Urgent)
-- Item: [who/what can handle it, or how to minimize time spent]
+Write the artefact as `eisenhower-matrix.md` into the `.woof/epics/E<N>/discovery/thinking/` bucket directory declared
+in the graph-owned input. Use this shape:
 
-**Q4: Eliminate** (Not Important + Not Urgent)
-- Item: [why it's noise, permission to drop it]
+```
+## Eisenhower Matrix: <scope>
 
-**Immediate Focus:**
-Single sentence on what to tackle right now.
-</output_format>
+### Q1 Do first (important, urgent)
+- <item>: <specific action, deadline if any>
 
-<success_criteria>
-- Every item clearly placed in one quadrant
-- Q1 items have specific next actions
-- Q2 items have scheduling recommendations
-- Q3 items have delegation or minimization strategies
-- Q4 items explicitly marked as droppable
-- Reduces overwhelm by creating clear action hierarchy
-</success_criteria>
+### Q2 Schedule (important, not urgent)
+- <item>: <when to do it, why it matters long-term>
+
+### Q3 Delegate (not important, urgent)
+- <item>: <who or what can handle it, or how to minimise time spent>
+
+### Q4 Eliminate (not important, not urgent)
+- <item>: <why it is noise, permission to drop it>
+
+### Immediate focus
+<one sentence on what to tackle right now>
+```
+
+## Success criteria
+
+- Every item is clearly placed in one quadrant.
+- Q1 items have specific next actions.
+- Q4 items are explicitly marked as droppable.
+- Reduces overwhelm by creating a clear action hierarchy.

@@ -1,45 +1,51 @@
 ---
-description: Improve by removing rather than adding
-argument-hint: [situation or leave blank for current context]
+type: discovery-playbook
+bucket: thinking
+name: via-negativa
+summary: Improve by removing rather than adding
 ---
 
-<objective>
-Apply via negativa to $ARGUMENTS (or the current discussion if no arguments provided).
+# Via Negativa
 
-Instead of asking "What should I add?", ask "What should I remove?" Subtraction often beats addition.
-</objective>
+Apply via negativa to the spark and the emerging direction. Instead of asking
+what to add, ask what to remove. Subtraction often beats addition.
 
-<process>
-1. State the current situation or goal
-2. List everything currently present (activities, features, commitments, beliefs)
-3. For each item, ask: "Does removing this improve the outcome?"
-4. Identify what to stop, eliminate, or say no to
-5. Describe the improved state after subtraction
-</process>
+## Process
 
-<output_format>
-**Current State:**
-[What exists now - activities, features, commitments]
+1. State the current situation or goal.
+2. List everything currently present: activities, features, commitments,
+   beliefs.
+3. For each item, ask whether removing it improves the outcome.
+4. Identify what to stop, eliminate, or say no to.
+5. Describe the improved state after subtraction.
 
-**Subtraction Candidates:**
-- [Item]: Remove because [reason] → Impact: [what improves]
-- [Item]: Remove because [reason] → Impact: [what improves]
-- [Item]: Remove because [reason] → Impact: [what improves]
+## Output
 
-**Keep (Passed the Test):**
-- [Item]: Keep because [genuine value]
+Write the artefact as `via-negativa.md` into the `.woof/epics/E<N>/discovery/thinking/` bucket directory declared in
+the graph-owned input. Use this shape:
 
-**After Subtraction:**
-[Description of leaner, better state]
+```
+## Via Negativa: <situation>
 
-**What to Say No To:**
-[Future additions to reject]
-</output_format>
+### Current state
+<what exists now>
 
-<success_criteria>
-- Identifies genuine bloat vs. essential elements
-- Removes without breaking core function
-- Creates space and simplicity
-- Reduces maintenance burden
-- Improves by doing less, not more
-</success_criteria>
+### Subtraction candidates
+- <item>: remove because <reason> - impact: <what improves>
+
+### Keep (passed the test)
+- <item>: keep because <genuine value>
+
+### After subtraction
+<description of the leaner, better state>
+
+### What to say no to
+<future additions to reject>
+```
+
+## Success criteria
+
+- Distinguishes genuine bloat from essential elements.
+- Removes without breaking core function.
+- Creates space and simplicity.
+- Improves by doing less, not more.

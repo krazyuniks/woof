@@ -8,12 +8,12 @@ Woof addresses the inner loop: the structured, auditable cycle of an individual 
 
 ## Status
 
-Pre-release. The internal architecture is implemented and dogfooded against `guitar-tone-shootout`. The release-closure audit is in its final workstream (RC-7); a separate Phase B is required before Woof is usable against arbitrary consumer repositories.
+Pre-release. The internal architecture is implemented and dogfooded against `guitar-tone-shootout`. Phase A of the release-closure audit is complete; Phase B (portability for arbitrary consumers) is in progress.
 
 The current architecture is graph-led. `woof wf --epic <N>` runs the deterministic graph; LLM prompts are producer or reviewer nodes, not workflow orchestrators. ADR-002 defines the current role policy: GPT-5.5 is the preferred primary producer route, Claude Opus 4.7 at `max` effort is the preferred reviewer route, and reviewer blockers open human gates rather than model-to-model debate loops.
 
-Known portability gaps before any-project use:
-- Stage 1 Discovery currently dispatches a synthesis-only producer node. The upstream `research/`, `thinking/`, `brainstorm/` substance assumes the dispatched session has Ryan-local Claude Code skill plugins installed. A stranger without that environment will get thin Stage 1 output. Tracked as Phase B RC-B1 (`docs/implementation-plan.md`).
+Portability for arbitrary consumers (Phase B):
+- Stage 1 Discovery (Phase B RC-B1) is portable. Graph producer nodes populate the `research/`, `thinking/`, and `brainstorm/` buckets before synthesis, and each bucket node embeds its building-block playbooks directly in the producer prompt. A consumer without Woof-author-local agent skills gets full Stage 1 output.
 - The issue tracker is coupled to GitHub at architecture-principle level. Linear, Jira, Plane, Forgejo, and local-file consumers cannot use Woof until an issue-tracker abstraction lands. Tracked as Phase B RC-B2.
 - `woof init` (Phase A RC-5) scaffolds the `.woof/` starter config (`prerequisites.toml`, `agents.toml`, `quality-gates.toml`, `test-markers.toml`) and patches the repo `.gitignore`. The cartography script (`./scripts/refresh-cartography`) remains consumer-owned; the Woof post-commit hook block is a no-op when the script is absent. Phase B RC-B3 layers a full first-run walkthrough on top once RC-B1/RC-B2 land.
 

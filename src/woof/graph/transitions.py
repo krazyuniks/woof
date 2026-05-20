@@ -47,6 +47,31 @@ def discovery_synthesis_complete(repo_root: Path, epic_id: int) -> bool:
     )
 
 
+DISCOVERY_BUCKETS = ("research", "thinking", "brainstorm")
+
+_DISCOVERY_BUCKET_NODES = (
+    ("research", NodeType.DISCOVERY_RESEARCH),
+    ("thinking", NodeType.DISCOVERY_THINKING),
+    ("brainstorm", NodeType.DISCOVERY_BRAINSTORM),
+)
+
+
+def discovery_bucket_dir(repo_root: Path, epic_id: int, bucket: str) -> Path:
+    return epic_dir(repo_root, epic_id) / "discovery" / bucket
+
+
+def discovery_bucket_complete(repo_root: Path, epic_id: int, bucket: str) -> bool:
+    """Return whether a Stage-1 producer bucket has at least one artefact."""
+
+    directory = discovery_bucket_dir(repo_root, epic_id, bucket)
+    if not directory.is_dir():
+        return False
+    return any(
+        path.is_file() and path.read_text(encoding="utf-8").strip()
+        for path in directory.glob("*.md")
+    )
+
+
 def plan_markdown_path(repo_root: Path, epic_id: int) -> Path:
     return epic_dir(repo_root, epic_id) / "PLAN.md"
 
@@ -257,6 +282,9 @@ def next_node(repo_root: Path, epic_id: int) -> tuple[NodeType | None, str | Non
         if discovery_synthesis_complete(repo_root, epic_id):
             return NodeType.EPIC_DEFINITION, None
         if (directory / "spark.md").exists():
+            for bucket, node in _DISCOVERY_BUCKET_NODES:
+                if not discovery_bucket_complete(repo_root, epic_id, bucket):
+                    return node, None
             return NodeType.DISCOVERY_SYNTHESIS, None
         raise StageStateError(
             f"required planning artefact missing: {directory / 'plan.json'} "

@@ -170,6 +170,29 @@ def _base_planning_output(
     [
         (
             _base_planning_input(
+                "discovery_research",
+                {
+                    "spark_path": ".woof/epics/E7/spark.md",
+                    "discovery_dir": ".woof/epics/E7/discovery",
+                    "bucket_dir": ".woof/epics/E7/discovery/research",
+                },
+            ),
+            "planning-node-input",
+        ),
+        (
+            _base_planning_input(
+                "discovery_thinking",
+                {
+                    "spark_path": ".woof/epics/E7/spark.md",
+                    "discovery_dir": ".woof/epics/E7/discovery",
+                    "bucket_dir": ".woof/epics/E7/discovery/thinking",
+                    "source_paths": [".woof/epics/E7/discovery/research/landscape.md"],
+                },
+            ),
+            "planning-node-input",
+        ),
+        (
+            _base_planning_input(
                 "discovery_synthesis",
                 {
                     "spark_path": ".woof/epics/E7/spark.md",
@@ -236,6 +259,24 @@ def _base_planning_output(
                 },
             ),
             "planning-node-input",
+        ),
+        (
+            _base_planning_output(
+                "discovery_research",
+                paths=[".woof/epics/E7/discovery/research/landscape.md"],
+                next_node="discovery_thinking",
+                stage=1,
+            ),
+            "planning-node-output",
+        ),
+        (
+            _base_planning_output(
+                "discovery_brainstorm",
+                paths=[".woof/epics/E7/discovery/brainstorm/options.md"],
+                next_node="discovery_synthesis",
+                stage=1,
+            ),
+            "planning-node-output",
         ),
         (
             _base_planning_output(

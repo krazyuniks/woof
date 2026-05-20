@@ -1,44 +1,48 @@
 ---
-description: Find simplest explanation that fits all the facts
-argument-hint: [situation or leave blank for current context]
+type: discovery-playbook
+bucket: thinking
+name: occams-razor
+summary: Find the simplest explanation that fits all the facts
 ---
 
-<objective>
-Apply Occam's Razor to $ARGUMENTS (or the current discussion if no arguments provided).
+# Occam's Razor
 
-Among competing explanations, prefer the one with fewest assumptions. Simplest ≠ easiest; simplest = fewest moving parts.
-</objective>
+Apply Occam's Razor to a situation in the spark or the emerging direction. Among
+competing explanations, prefer the one with the fewest assumptions. Simplest is
+not easiest; simplest means fewest moving parts.
 
-<process>
-1. List all possible explanations or approaches
-2. For each, count the assumptions required
-3. Identify which assumptions are actually supported by evidence
-4. Eliminate explanations requiring unsupported assumptions
-5. Select the simplest that still explains all observed facts
-</process>
+## Process
 
-<output_format>
-**Candidate Explanations:**
-1. [Explanation]: Requires assumptions [A, B, C]
-2. [Explanation]: Requires assumptions [D, E]
-3. [Explanation]: Requires assumptions [F]
+1. List the possible explanations or approaches.
+2. For each, count the assumptions it requires.
+3. Identify which assumptions are actually supported by evidence.
+4. Eliminate explanations that need unsupported assumptions.
+5. Select the simplest explanation that still fits all the observed facts.
 
-**Evidence Check:**
-- Assumption A: [supported/unsupported]
-- Assumption B: [supported/unsupported]
-...
+## Output
 
-**Simplest Valid Explanation:**
-[The one with fewest unsupported assumptions]
+Write the artefact as `occams-razor.md` into the `.woof/epics/E<N>/discovery/thinking/` bucket directory declared in
+the graph-owned input. Use this shape:
 
-**Why This Wins:**
-[What it explains without extra machinery]
-</output_format>
+```
+## Occam's Razor: <situation>
 
-<success_criteria>
-- Enumerates all plausible explanations
-- Makes assumptions explicit and countable
-- Distinguishes supported from unsupported assumptions
-- Doesn't oversimplify (must fit ALL facts)
-- Reduces complexity without losing explanatory power
-</success_criteria>
+### Candidate explanations
+1. <explanation>: requires assumptions <list>
+
+### Evidence check
+- <assumption>: <supported / unsupported>
+
+### Simplest valid explanation
+<the one with the fewest unsupported assumptions>
+
+### Why it wins
+<what it explains without extra machinery>
+```
+
+## Success criteria
+
+- Enumerates all plausible explanations.
+- Makes assumptions explicit and countable.
+- Distinguishes supported from unsupported assumptions.
+- Does not oversimplify; the chosen explanation must fit all the facts.

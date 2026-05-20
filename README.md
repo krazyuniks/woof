@@ -8,7 +8,7 @@ Woof addresses the inner loop: the structured, auditable cycle of an individual 
 
 ## Status
 
-Pre-release. The internal architecture is implemented and dogfooded against `guitar-tone-shootout`. Phase A of the release-closure audit is complete; Phase B (portability for arbitrary consumers) is in progress.
+Pre-release. The internal architecture is implemented and dogfooded against `guitar-tone-shootout`. Phase A of the release-closure audit and Phase B (portability for arbitrary consumers) are both complete; the release surface is documented and exercised by an end-to-end install smoke test (see [Publishing](#publishing)).
 
 The current architecture is graph-led. `woof wf --epic <N>` runs the deterministic graph; LLM prompts are producer or reviewer nodes, not workflow orchestrators. ADR-002 defines the current role policy: GPT-5.5 is the preferred primary producer route, Claude Opus 4.7 at `max` effort is the preferred reviewer route, and reviewer blockers open human gates rather than model-to-model debate loops.
 
@@ -65,6 +65,24 @@ uv venv /tmp/woof-smoke
 ```
 
 This is the release smoke path; consumer projects should `uv tool install woof` (or `pip install woof`) and invoke `woof` directly rather than calling `bin/woof` from the source checkout.
+
+## Publishing
+
+Woof is released to PyPI as the `woof` package. The maintainer release path is:
+
+```bash
+just check
+uv build
+uv publish
+```
+
+`uv build` writes a source distribution and a wheel to `dist/`. `uv publish` uploads both to PyPI, reading the API token from `UV_PUBLISH_TOKEN` (or `--token`). Publish a release candidate to TestPyPI first with `uv publish --publish-url https://test.pypi.org/legacy/`, then install it back with `uv tool install --index https://test.pypi.org/simple/ woof` before publishing to PyPI.
+
+`tests/integration/test_release_smoke.py` is the release-readiness evidence. It builds a wheel, installs it into an isolated virtual environment, runs `woof init --tracker local` in a throwaway consumer worktree, and confirms the Stage 1 Discovery producer nodes build fully self-contained dispatch prompts from the installed package - no Woof-author-local agent skills, wrappers, or host paths. It runs as part of `just check`; run it alone with:
+
+```bash
+uv run pytest tests/integration/test_release_smoke.py
+```
 
 ## Operator Usage
 

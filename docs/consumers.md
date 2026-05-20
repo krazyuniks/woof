@@ -14,6 +14,8 @@ woof init
 
 `woof init` scaffolds `.woof/prerequisites.toml`, `.woof/agents.toml`, `.woof/quality-gates.toml`, and `.woof/test-markers.toml` with explicit `<replace>` placeholders for project-specific values, and inserts a fenced `# >>> woof` block into the repository `.gitignore` containing the required runtime entries (`.woof/.current-epic`, `.woof/.preflight-*`, `.woof/epics/*/.wf.lock`, `.woof/epics/*/audit/raw/`, and the cartography artefacts). Pass `--with-docs-paths` to also scaffold `.woof/docs-paths.toml`. The command is idempotent; existing TOMLs are preserved unless `--force` is set, and the gitignore block is updated in place rather than duplicated.
 
+The scaffolded `[tracker]` table defaults to `kind = "github"`; set `kind = "local"` and remove the `repo` line to run Woof against a repository with no hosted issue tracker (see [ADR-003](adr/003-issue-tracker-abstraction.md)).
+
 After `woof init`:
 
 1. Replace every `<replace>` placeholder in `.woof/*.toml`.
@@ -29,7 +31,7 @@ Consumer checkouts may keep these files in their own `.woof/` directory:
 | File | Consumer responsibility |
 |---|---|
 | `.woof/agents.toml` | Declare semantic role routes, timeouts, review-valve cadence, audit policy, and optional Claude MCP servers. Use public `adapter = "codex"` or `adapter = "claude"` routes for dispatchable roles. |
-| `.woof/prerequisites.toml` | Declare required public CLIs, validators, GitHub repository, languages, indexing tools, and project-specific host or server readiness checks. |
+| `.woof/prerequisites.toml` | Declare required public CLIs, validators, the `[tracker]` issue tracker, languages, indexing tools, and project-specific host or server readiness checks. |
 | `.woof/quality-gates.toml` | Declare the project-owned verification commands that Stage 5 Check 1 runs from the consumer repository root. |
 | `.woof/test-markers.toml` | Optional. Override outcome-marker detection when the default language conventions are not enough. |
 | `.woof/docs-paths.toml` | Optional. Map code paths to documentation paths for Stage 5 Check 8. |
@@ -52,7 +54,7 @@ Current reusable policy surfaces are:
 | Outcome marker conventions | `.woof/test-markers.toml` | Stage 5 Check 2 scans staged test diffs using configured marker rules. |
 | Code-to-doc drift requirements | `.woof/docs-paths.toml` | Stage 5 Check 8 requires mapped docs changes in the same transaction. |
 | Public role routes, review cadence, and audit policy | `.woof/agents.toml` | Dispatch, review-valve, and audit code read the declared route and policy settings. |
-| Host, server, GitHub, language, and tool prerequisites | `.woof/prerequisites.toml` | `woof preflight` validates declared infrastructure before graph execution. |
+| Host, server, issue-tracker, language, and tool prerequisites | `.woof/prerequisites.toml` | `woof preflight` validates declared infrastructure before graph execution. |
 
 Do not hard-code GTS paths, servers, Docker service names, issue labels, no-mock
 rules, or framework-specific conventions into Woof. If a second consumer needs
@@ -79,7 +81,7 @@ Consumers reference those assets through the `woof` command. They should not ven
 For GTS, Woof integration should follow these rules:
 
 - Run `woof preflight` and `woof wf --epic <N>` from the GTS checkout, with the public `woof` command on `PATH` or invoked from an external Woof install.
-- Keep the GitHub scope in `.woof/prerequisites.toml` pointed at `krazyuniks/guitar-tone-shootout`.
+- Keep `[tracker]` in `.woof/prerequisites.toml` set to `kind = "github"` with `repo = "krazyuniks/guitar-tone-shootout"`.
 - Route GTS verification through the GTS `just` surface, for example a quality gate command such as `just check`.
 - Express project readiness through `.woof/prerequisites.toml` host and server checks instead of adding Woof-specific scripts to GTS.
 - Use public role routes in `.woof/agents.toml`: `primary` should resolve to the public `codex` adapter and `reviewer` should resolve to the public `claude` adapter unless a later ADR changes the policy.

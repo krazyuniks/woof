@@ -14,7 +14,7 @@ The current architecture is graph-led. `woof wf --epic <N>` runs the determinist
 
 Portability for arbitrary consumers (Phase B):
 - Stage 1 Discovery (Phase B RC-B1) is portable. Graph producer nodes populate the `research/`, `thinking/`, and `brainstorm/` buckets before synthesis, and each bucket node embeds its building-block playbooks directly in the producer prompt. A consumer without Woof-author-local agent skills gets full Stage 1 output.
-- The issue tracker is coupled to GitHub at architecture-principle level. Linear, Jira, Plane, Forgejo, and local-file consumers cannot use Woof until an issue-tracker abstraction lands. Tracked as Phase B RC-B2.
+- The issue tracker is pluggable behind a `Tracker` protocol (Phase B RC-B2, [ADR-003](docs/adr/003-issue-tracker-abstraction.md)). `.woof/prerequisites.toml` declares `[tracker]` with `kind = "github"` or `kind = "local"`: the `github` adapter keeps each epic in a GitHub issue, the `local` adapter keeps every epic under `.woof/` with no remote so any repository can run Woof without a hosted tracker. A Linear, Jira, Plane, or Forgejo adapter is a new file implementing the protocol.
 - `woof init` (Phase A RC-5) scaffolds the `.woof/` starter config (`prerequisites.toml`, `agents.toml`, `quality-gates.toml`, `test-markers.toml`) and patches the repo `.gitignore`. The cartography script (`./scripts/refresh-cartography`) remains consumer-owned; the Woof post-commit hook block is a no-op when the script is absent. Phase B RC-B3 layers a full first-run walkthrough on top once RC-B1/RC-B2 land.
 
 Current implementation status, remaining work, and the session continuation prompt live in [`docs/implementation-plan.md`](docs/implementation-plan.md).
@@ -25,6 +25,7 @@ Current implementation status, remaining work, and the session continuation prom
 - [`docs/research.md`](docs/research.md) - framework evaluation, E146 contract-fidelity case study, lessons.
 - [`docs/adr/001-orchestration-topology.md`](docs/adr/001-orchestration-topology.md) - accepted graph topology for execution.
 - [`docs/adr/002-graph-led-role-routing.md`](docs/adr/002-graph-led-role-routing.md) - accepted primary/reviewer role policy and model-routing pivot.
+- [`docs/adr/003-issue-tracker-abstraction.md`](docs/adr/003-issue-tracker-abstraction.md) - accepted issue-tracker abstraction and the `[tracker]` config boundary.
 - [`docs/consumers.md`](docs/consumers.md) - external consumer checkout boundary, including GTS.
 - [`docs/implementation-plan.md`](docs/implementation-plan.md) - implementation plan, roadmap, progress ledger, and continuation prompt.
 - [`examples/safety-model.md`](examples/safety-model.md) - concise examples of Woof's core safety behaviours.
@@ -79,7 +80,7 @@ Run the graph from a consumer checkout that has `.woof/` state:
 woof wf --epic <N>
 ```
 
-Start a new GitHub-backed epic by letting GitHub assign the issue number:
+Start a new tracker-backed epic; the configured tracker assigns the epic id:
 
 ```bash
 woof wf new "<spark>"
@@ -113,6 +114,7 @@ Consumer repositories keep project-specific declarations under `.woof/*.toml` an
 - `src/woof/graph/` - deterministic graph, JSON Schema-backed Pydantic boundary models, transition table, and transaction manifest verification.
 - `src/woof/checks/` - Stage-5 checker registry, runners, and internal check context/outcome records.
 - `src/woof/gate/` - gate-authoring helpers.
+- `src/woof/trackers/` - issue-tracker abstraction: the `Tracker` protocol, GitHub and local adapters, the resolver factory, and the `EPIC.md`-to-issue-body renderer.
 - `src/woof/lib/` - shared Python helpers.
 - `schemas/` - JSON schemas for runtime artefacts, graph node I/O, and transaction manifests.
 - `playbooks/` - prompt templates loaded into dispatched LLM contexts.

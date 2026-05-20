@@ -15,7 +15,9 @@ WOOF_BIN = REPO_ROOT / "bin" / "woof"
 def _project(tmp_path: Path) -> Path:
     project = tmp_path / "project"
     (project / ".woof").mkdir(parents=True)
-    (project / ".woof" / "prerequisites.toml").write_text('[github]\nrepo = "acme/widgets"\n')
+    (project / ".woof" / "prerequisites.toml").write_text(
+        '[tracker]\nkind = "github"\nrepo = "acme/widgets"\n'
+    )
     return project
 
 
@@ -166,7 +168,7 @@ def test_wf_cold_start_initialises_epic_from_structured_issue(tmp_path: Path) ->
     proc = _run(project, "wf", "--epic", "42", env=_stub_env(bin_dir))
 
     assert proc.returncode == 0, proc.stderr
-    assert "initialised E42 from GitHub issue with spark.md and EPIC.md" in proc.stdout
+    assert "initialised E42 from the tracker with spark.md and EPIC.md" in proc.stdout
     epic_dir = project / ".woof" / "epics" / "E42"
     assert (
         (epic_dir / "spark.md")
@@ -193,7 +195,7 @@ def test_wf_cold_start_initialises_epic_from_structured_issue(tmp_path: Path) ->
         {
             "id": "OQ1",
             "question": "Should drafts be persisted server-side?",
-            "deferral_reason": "carried forward from GitHub issue",
+            "deferral_reason": "carried forward from the tracker epic",
         }
     ]
     last_sync = json.loads((epic_dir / ".last-sync").read_text())
@@ -201,7 +203,7 @@ def test_wf_cold_start_initialises_epic_from_structured_issue(tmp_path: Path) ->
     assert last_sync["updated_at"] == "2026-01-02T12:34:56Z"
     assert len(last_sync["body_sha256"]) == 64
     events = [json.loads(line) for line in (epic_dir / "epic.jsonl").read_text().splitlines()]
-    assert [event["event"] for event in events] == ["spark_created", "github_synced"]
+    assert [event["event"] for event in events] == ["spark_created", "tracker_synced"]
 
 
 def test_wf_cold_start_without_structured_sections_seeds_only_spark(
@@ -253,7 +255,7 @@ def test_wf_runtime_check_fails_before_gate_mutation(tmp_path: Path) -> None:
     proc = _run(project, "wf", "--epic", "3", "--resolve", "approve", env=_stub_env(bin_dir))
 
     assert proc.returncode == 2
-    assert "github runtime check failed" in proc.stderr
+    assert "tracker not reachable" in proc.stderr
     assert "expired gh auth" in proc.stderr
     assert (epic_dir / "gate.md").exists()
     assert (epic_dir / "epic.jsonl").read_text() == ""
@@ -336,7 +338,7 @@ def test_wf_new_creates_issue_and_initialises_current_epic(tmp_path: Path) -> No
     payload = json.loads(proc.stdout)
     assert payload["status"] == "created"
     assert payload["epic_id"] == 88
-    assert payload["issue_url"] == "https://github.com/acme/widgets/issues/88"
+    assert payload["epic_ref"] == "https://github.com/acme/widgets/issues/88"
     assert (bin_dir / "_created_body").read_text() == "Make the inner loop easier to start.\n"
     assert (
         "--repo acme/widgets --title New keyboard flow --body-file -"
@@ -356,7 +358,7 @@ def test_wf_new_creates_issue_and_initialises_current_epic(tmp_path: Path) -> No
     events = [json.loads(line) for line in (epic_dir / "epic.jsonl").read_text().splitlines()]
     assert [event["event"] for event in events] == [
         "spark_created",
-        "github_synced",
+        "tracker_synced",
         "current_epic_selected",
     ]
 
@@ -389,5 +391,5 @@ def test_wf_new_rejects_caller_supplied_epic_id(tmp_path: Path) -> None:
     proc = _run(project, "wf", "new", "New keyboard flow", "--epic", "99")
 
     assert proc.returncode == 2
-    assert "--epic is assigned by GitHub" in proc.stderr
+    assert "--epic is assigned by the tracker" in proc.stderr
     assert not (project / ".woof" / ".current-epic").exists()

@@ -50,7 +50,7 @@ def test_init_is_idempotent(tmp_path: Path, run_woof) -> None:
     assert first.returncode == 0, first.stderr + first.stdout
 
     prereq_path = tmp_path / ".woof" / "prerequisites.toml"
-    prereq_path.write_text('# user-edited\n[github]\nrepo = "example/project"\n')
+    prereq_path.write_text('# user-edited\n[tracker]\nkind = "github"\nrepo = "example/project"\n')
     gitignore_before = (tmp_path / ".gitignore").read_text()
 
     second = run_woof("init", "--project-root", str(tmp_path), env=_env())

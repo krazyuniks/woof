@@ -49,10 +49,12 @@ def _write_plan(root: Path, epic_id: int = 1) -> Path:
     return directory
 
 
-def _write_github_prerequisites(root: Path) -> None:
+def _write_tracker_prerequisites(root: Path) -> None:
     woof_dir = root / ".woof"
     woof_dir.mkdir(exist_ok=True)
-    (woof_dir / "prerequisites.toml").write_text('[github]\nrepo = "acme/widgets"\n')
+    (woof_dir / "prerequisites.toml").write_text(
+        '[tracker]\nkind = "github"\nrepo = "acme/widgets"\n'
+    )
 
 
 def _make_gh_rate_limit_stub(bin_dir: Path) -> dict[str, str]:
@@ -548,7 +550,7 @@ def test_run_graph_removes_stale_workflow_lock_and_records_event(tmp_path: Path)
 
 
 def test_wf_reports_live_workflow_lock(tmp_path: Path) -> None:
-    _write_github_prerequisites(tmp_path)
+    _write_tracker_prerequisites(tmp_path)
     directory = _write_plan(tmp_path, 23)
     _write_last_sync(directory, 23)
     lock = directory / LOCK_FILENAME
@@ -1797,7 +1799,9 @@ def test_empty_diff_executor_result_opens_review_gate(tmp_path: Path) -> None:
 
 def test_wf_epic_reports_complete_epic_as_json(tmp_path: Path) -> None:
     (tmp_path / ".woof").mkdir(exist_ok=True)
-    (tmp_path / ".woof" / "prerequisites.toml").write_text('[github]\nrepo = "acme/widgets"\n')
+    (tmp_path / ".woof" / "prerequisites.toml").write_text(
+        '[tracker]\nkind = "github"\nrepo = "acme/widgets"\n'
+    )
     directory = _write_plan(tmp_path, 7)
     plan = json.loads((directory / "plan.json").read_text())
     plan["stories"][0]["status"] = "done"
@@ -1829,7 +1833,7 @@ def test_wf_epic_reports_complete_epic_as_json(tmp_path: Path) -> None:
 
 
 def test_wf_reports_missing_plan_as_structured_failure(tmp_path: Path) -> None:
-    _write_github_prerequisites(tmp_path)
+    _write_tracker_prerequisites(tmp_path)
     directory = tmp_path / ".woof" / "epics" / "E10"
     directory.mkdir(parents=True)
     _write_last_sync(directory, 10)
@@ -1844,7 +1848,7 @@ def test_wf_reports_missing_plan_as_structured_failure(tmp_path: Path) -> None:
 
 
 def test_wf_epic_halts_when_gate_is_open(tmp_path: Path) -> None:
-    _write_github_prerequisites(tmp_path)
+    _write_tracker_prerequisites(tmp_path)
     directory = _write_plan(tmp_path, 8)
     _write_last_sync(directory, 8)
     (directory / "gate.md").write_text("---\ntype: story_gate\n---\n")
@@ -1857,7 +1861,7 @@ def test_wf_epic_halts_when_gate_is_open(tmp_path: Path) -> None:
 
 
 def test_wf_gate_case_reports_stable_json_contract(tmp_path: Path) -> None:
-    _write_github_prerequisites(tmp_path)
+    _write_tracker_prerequisites(tmp_path)
     directory = _write_plan(tmp_path, 11)
     mark_story_status(tmp_path, 11, "S1", "in_progress")
     (directory / "executor_result.json").write_text(
@@ -1938,7 +1942,7 @@ def test_wf_gate_case_reports_stable_json_contract(tmp_path: Path) -> None:
 
 
 def test_wf_resolve_records_gate_decision_and_removes_gate(tmp_path: Path) -> None:
-    _write_github_prerequisites(tmp_path)
+    _write_tracker_prerequisites(tmp_path)
     directory = _write_plan(tmp_path, 9)
     _write_last_sync(directory, 9)
     gate = directory / "gate.md"
@@ -1958,7 +1962,7 @@ def test_wf_resolve_records_gate_decision_and_removes_gate(tmp_path: Path) -> No
 
 
 def test_wf_resolve_revise_plan_reenters_breakdown(tmp_path: Path) -> None:
-    _write_github_prerequisites(tmp_path)
+    _write_tracker_prerequisites(tmp_path)
     directory = _write_spark(tmp_path, 31)
     _write_minimal_epic(directory, 31)
     _write_stage3_plan(directory, 31)
@@ -2019,7 +2023,7 @@ def test_wf_resolve_revise_plan_reenters_breakdown(tmp_path: Path) -> None:
 
 
 def test_wf_resolve_approve_clears_stale_failed_check_result(tmp_path: Path) -> None:
-    _write_github_prerequisites(tmp_path)
+    _write_tracker_prerequisites(tmp_path)
     directory = _write_plan(tmp_path, 32)
     _write_last_sync(directory, 32)
     mark_story_status(tmp_path, 32, "S1", "in_progress")
@@ -2084,7 +2088,7 @@ def test_wf_resolve_approve_clears_stale_failed_check_result(tmp_path: Path) -> 
 
 
 def test_wf_resolve_split_story_clears_stale_failed_check_result(tmp_path: Path) -> None:
-    _write_github_prerequisites(tmp_path)
+    _write_tracker_prerequisites(tmp_path)
     directory = _write_plan(tmp_path, 33)
     _write_last_sync(directory, 33)
     mark_story_status(tmp_path, 33, "S1", "in_progress")
@@ -2133,7 +2137,7 @@ def test_wf_resolve_split_story_clears_stale_failed_check_result(tmp_path: Path)
 
 
 def test_wf_resolve_abandon_story_skips_to_next_ready_story(tmp_path: Path) -> None:
-    _write_github_prerequisites(tmp_path)
+    _write_tracker_prerequisites(tmp_path)
     directory = _write_plan(tmp_path, 34)
     _write_last_sync(directory, 34)
     plan = json.loads((directory / "plan.json").read_text())

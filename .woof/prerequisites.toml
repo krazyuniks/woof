@@ -16,5 +16,6 @@ ajv-formats = "any"
 [lsp]
 languages = ["python"]
 
-[github]
+[tracker]
+kind = "github"
 repo = "krazyuniks/woof"

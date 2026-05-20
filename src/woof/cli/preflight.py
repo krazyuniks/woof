@@ -29,13 +29,13 @@ from woof.cli.dispatcher import (
     build_argv,
     resolve_role_route,
 )
-from woof.cli.github import GITHUB_RATE_LIMIT_SAFETY_MARGIN, github_core_remaining
 from woof.cli.main import (
     SCHEMAS,
     load_payload,
     run_ajv,
 )
 from woof.paths import schema_dir, tool_root
+from woof.trackers.github import GITHUB_RATE_LIMIT_SAFETY_MARGIN, github_core_remaining
 
 CONFIG_SCHEMAS = {
     "prerequisites.toml": "prerequisites",
@@ -59,7 +59,8 @@ codex = "any"
 ajv = "any"
 ajv-formats = "any"
 
-[github]
+[tracker]
+kind = "github"
 repo = "<replace>/<replace>"
 """
 
@@ -219,7 +220,7 @@ def _run_floor_checks(repo_root: Path, prereq: dict[str, Any]) -> list[Preflight
 
 def _run_runtime_checks(repo_root: Path, prereq: dict[str, Any]) -> list[PreflightFinding]:
     findings: list[PreflightFinding] = []
-    findings.extend(_check_github(prereq))
+    findings.extend(_check_tracker(prereq))
     findings.extend(_check_adapter_auth_markers(repo_root))
     return findings
 
@@ -705,8 +706,21 @@ def _check_ajv_formats(prereq: dict[str, Any]) -> list[PreflightFinding]:
     ]
 
 
-def _check_github(prereq: dict[str, Any]) -> list[PreflightFinding]:
-    repo = (prereq.get("github") or {}).get("repo")
+def _check_tracker(prereq: dict[str, Any]) -> list[PreflightFinding]:
+    tracker = prereq.get("tracker") or {}
+    kind = tracker.get("kind")
+    if kind == "local":
+        return [
+            PreflightFinding(
+                id="tracker.kind",
+                label="Issue tracker",
+                ok=True,
+                detail="tracker kind 'local'; filesystem-only, no remote reachability checks",
+            )
+        ]
+    if kind != "github":
+        return []
+    repo = tracker.get("repo")
     if not repo:
         return []
     findings = [

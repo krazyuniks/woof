@@ -8,8 +8,8 @@ Subcommands:
     validate     Validate artefacts against woof JSON Schemas via ajv-cli.
     dispatch     Spawn a public CLI subprocess for a role declared in agents.toml.
     audit-bundle Copy referenced Claude transcripts into an epic audit folder.
-    render-epic  Render EPIC.md front-matter into the gh issue body; optionally
-                 sync to GitHub with conflict detection (.last-sync).
+    render-epic  Render EPIC.md front-matter into the tracker issue body;
+                 optionally sync to the tracker with conflict detection.
     check-cd     Verify each contract_decision's referenced artefact actually
                  exists and parses (Stage 5 Check 4 / E146 regression).
 
@@ -33,18 +33,14 @@ import yaml
 
 from woof.checks.contract_refs import ContractRefUsageError, validate_contract_refs
 from woof.cli.dispatcher import ADAPTERS, cmd_dispatch, find_woof_root
-from woof.cli.github import (
-    GithubSyncError,
-    render_epic_issue_body,
-    split_epic_front_matter,
-    sync_epic_definition,
-)
 from woof.lib.audit_bundle import (
     AuditBundleError,
     NonPortableTranscriptError,
     bundle_claude_transcripts,
 )
 from woof.paths import schema_dir
+from woof.trackers import TrackerError, resolve_tracker
+from woof.trackers.epic_body import render_epic_issue_body, split_epic_front_matter
 
 SCHEMA_DIR = schema_dir()
 
@@ -331,11 +327,12 @@ def cmd_render_epic(args: argparse.Namespace) -> int:
         return 0
 
     try:
-        result = sync_epic_definition(repo_root, args.epic, front, prose)
-    except GithubSyncError as exc:
+        tracker = resolve_tracker(repo_root)
+        result = tracker.push_epic_definition(args.epic, front, prose)
+    except TrackerError as exc:
         message = str(exc)
         sys.stderr.write(f"woof: {message}\n")
-        return 3 if "github_sync_conflict" in message else 2
+        return 3 if "tracker_sync_conflict" in message else 2
 
     body = result.body
     if args.output:

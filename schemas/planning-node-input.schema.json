@@ -13,7 +13,7 @@
     "epic_id": {
       "type": "integer",
       "minimum": 1,
-      "description": "GitHub issue number. Same value as E<N>."
+      "description": "Tracker-assigned epic identifier. Same value as E<N>."
     },
     "repo_root": {
       "type": "string",

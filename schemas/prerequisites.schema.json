@@ -5,7 +5,7 @@
   "description": "Project-side declaration at .woof/prerequisites.toml. Tells woof what infrastructure, public model CLIs, languages, and indexing tools the project depends on. The tool-side language registry (woof/languages/<lang>.toml) provides the install instructions per language. woof preflight verifies everything declared here. Two-tier caching: floor checks (binaries/versions/grammars/LSP plugins) cached 24h, hashed on this file plus referenced language registry tomls.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["infra", "commands", "validators", "github"],
+  "required": ["infra", "commands", "validators", "tracker"],
   "properties": {
     "infra": {
       "type": "object",
@@ -35,17 +35,32 @@
       },
       "description": "Required schema validators. ajv and ajv-formats are mandatory: woof validate uses ajv-cli for all internal artefact validation, three schemas (gate, critique, jsonl-events) use the format keyword which ajv-cli only enforces when ajv-formats is loaded via -c ajv-formats, and Stage 5 Check 4 calls `ajv compile` for every owned json_schema_ref. schemathesis is an optional declaration for consumer projects that drive their own OpenAPI conformance through a quality-gate command; Stage 5 Check 4 itself does not run schemathesis."
     },
-    "github": {
+    "tracker": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["repo"],
+      "required": ["kind"],
+      "description": "Issue-tracker declaration. Woof keeps the epic-level contract in the declared tracker and the per-epic runtime under .woof/epics/E<N>/. See ADR-003.",
       "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["github", "local"],
+          "description": "Issue-tracker adapter. 'github' keeps each epic's contract in a GitHub issue (one issue per epic, E<N> == issue #<N>, woof verifies reachability at every woof wf invocation). 'local' keeps the contract entirely under .woof/epics/E<N>/ with no remote, so any repository can run Woof without a hosted tracker."
+        },
         "repo": {
           "type": "string",
           "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
-          "description": "GitHub repository as <owner>/<name>. Verified via gh api at every /wf invocation."
+          "description": "GitHub repository as <owner>/<name>. Required when kind = 'github'; ignored for other kinds."
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "kind": { "const": "github" } },
+            "required": ["kind"]
+          },
+          "then": { "required": ["repo"] }
+        }
+      ]
     },
     "indexing": {
       "type": "object",

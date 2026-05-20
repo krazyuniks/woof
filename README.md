@@ -15,7 +15,7 @@ The current architecture is graph-led. `woof wf --epic <N>` runs the determinist
 Portability for arbitrary consumers (Phase B):
 - Stage 1 Discovery (Phase B RC-B1) is portable. Graph producer nodes populate the `research/`, `thinking/`, and `brainstorm/` buckets before synthesis, and each bucket node embeds its building-block playbooks directly in the producer prompt. A consumer without Woof-author-local agent skills gets full Stage 1 output.
 - The issue tracker is pluggable behind a `Tracker` protocol (Phase B RC-B2, [ADR-003](docs/adr/003-issue-tracker-abstraction.md)). `.woof/prerequisites.toml` declares `[tracker]` with `kind = "github"` or `kind = "local"`: the `github` adapter keeps each epic in a GitHub issue, the `local` adapter keeps every epic under `.woof/` with no remote so any repository can run Woof without a hosted tracker. A Linear, Jira, Plane, or Forgejo adapter is a new file implementing the protocol.
-- `woof init` (Phase A RC-5) scaffolds the `.woof/` starter config (`prerequisites.toml`, `agents.toml`, `quality-gates.toml`, `test-markers.toml`) and patches the repo `.gitignore`. The cartography script (`./scripts/refresh-cartography`) remains consumer-owned; the Woof post-commit hook block is a no-op when the script is absent. Phase B RC-B3 layers a full first-run walkthrough on top once RC-B1/RC-B2 land.
+- `woof init` scaffolds the `.woof/` starter config (`prerequisites.toml`, `agents.toml`, `quality-gates.toml`, `test-markers.toml`) and patches the repo `.gitignore`; `woof init --tracker local` scaffolds a setup for a repository with no hosted issue tracker. The cartography script (`./scripts/refresh-cartography`) remains consumer-owned; the Woof post-commit hook block is a no-op when the script is absent. The end-to-end first-run walkthrough in [`docs/consumers.md`](docs/consumers.md) takes a new consumer from `pip install woof` to a running epic (Phase B RC-B3).
 
 Current implementation status, remaining work, and the session continuation prompt live in [`docs/implementation-plan.md`](docs/implementation-plan.md).
 
@@ -68,6 +68,12 @@ This is the release smoke path; consumer projects should `uv tool install woof` 
 
 ## Operator Usage
 
+Install Woof as a standalone tool:
+
+```bash
+uv tool install woof
+```
+
 Initialise a fresh consumer checkout's `.woof/` config:
 
 ```bash
@@ -98,7 +104,7 @@ Check startup infrastructure before invoking the graph:
 woof preflight
 ```
 
-See [`docs/architecture.md`](docs/architecture.md) for stage and gate semantics and [`docs/consumers.md`](docs/consumers.md) for consumer checkout configuration.
+New consumers should follow the first-run walkthrough in [`docs/consumers.md`](docs/consumers.md); see [`docs/architecture.md`](docs/architecture.md) for stage and gate semantics.
 
 ## Consumer Checkouts
 

@@ -30,7 +30,7 @@ Current direction:
 
 - Keep bad-commit prevention first-class.
 - Treat failed or incomplete governance state as a gate, not as an ordinary traceback where a human can reasonably recover.
-- Commit messages should describe the actual work performed. The current hard-coded `feat(woof)` scope is a defect in a consumer-project tool, not an architectural principle.
+- Commit messages should describe the actual work performed. A hard-coded `feat(woof)` scope is a defect in a consumer-project tool, not an architectural principle.
 
 ### Runtime Action-Safety Guardrails
 
@@ -50,7 +50,7 @@ Current direction:
 
 The Stage 5 story executor is the producer node that turns the selected story into code changes. The important guidance currently lives in `.claude/commands/wf/execute-story.md`; it tells the producer how to read the epic/story material, follow red-green-refactor discipline, and write `executor_result.json`.
 
-The graph currently prompts the primary agent to invoke `/wf:execute-story`. That is a Claude Code slash command and is not portable to Codex or consumer repositories without Woof's `.claude/` directory. This is the same class of problem that the Stage 1 portability work corrected.
+The deep audit found that the graph prompted the primary agent to invoke `/wf:execute-story`. That is a Claude Code slash command and is not portable to Codex or consumer repositories without Woof's `.claude/` directory. This is the same class of problem that the Stage 1 portability work corrected.
 
 Decision:
 

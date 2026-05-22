@@ -27,6 +27,16 @@
       ],
       "description": "Optional multi-line commit body. Used by the driver when constructing the git commit message. Required for staged_for_verification outcome."
     },
+    "commit_subject": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "string",
+          "minLength": 1
+        }
+      ],
+      "description": "Optional one-line conventional commit subject authored by the story producer from the actual work performed. If absent, the driver falls back to a generic story-derived subject."
+    },
     "position": {
       "oneOf": [
         { "type": "null" },

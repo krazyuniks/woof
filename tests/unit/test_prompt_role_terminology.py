@@ -11,7 +11,7 @@ PROMPT_ROOTS = (
     REPO_ROOT / ".claude" / "commands",
 )
 PLANNING_BREAKDOWN_PROMPT = REPO_ROOT / "playbooks" / "planning" / "breakdown.md"
-EXECUTE_STORY_PROMPT = REPO_ROOT / ".claude" / "commands" / "wf" / "execute-story.md"
+EXECUTE_STORY_PROMPT = REPO_ROOT / "playbooks" / "execution" / "story.md"
 STORY_CRITIQUE_PROMPT = REPO_ROOT / "playbooks" / "critique" / "story.md"
 ARCHITECTURE_DOC = REPO_ROOT / "docs" / "architecture.md"
 FORBIDDEN_PATTERNS = {

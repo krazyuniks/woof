@@ -7,6 +7,7 @@ Token-parser helpers are exercised via fixtures of recorded harness output.
 from __future__ import annotations
 
 import json
+import shlex
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
@@ -99,8 +100,8 @@ def test_dry_run_reviewer_uses_raw_claude_argv(woof_project: Path) -> None:
         "claude-opus-4-7",
         "--effort",
         "max",
-        "do the thing\n",
     ]
+    assert payload["prompt_transport"] == "stdin"
     assert payload["epic"] == 42
     assert payload["story"] == "S3"
     assert payload["role"] == "reviewer"
@@ -142,8 +143,8 @@ def test_dry_run_primary_uses_raw_codex_argv(woof_project: Path) -> None:
         'model_reasoning_effort="xhigh"',
         "--max-turns",
         "20",
-        "critique this\n",
     ]
+    assert payload["prompt_transport"] == "stdin"
     assert payload["story"] is None
     assert payload["adapter"] == "codex"
     assert payload["harness"] == "codex"
@@ -166,7 +167,8 @@ def test_prompt_file_overrides_stdin(woof_project: Path, tmp_path: Path) -> None
     )
     assert proc.returncode == 0, proc.stderr
     payload = json.loads(proc.stdout)
-    assert payload["argv"][-1] == "from file"
+    assert payload["prompt_transport"] == "stdin"
+    assert "from file" not in payload["argv"]
 
 
 def test_dry_run_records_repo_relative_artefacts(woof_project: Path) -> None:
@@ -504,7 +506,6 @@ def test_build_argv_minimal_role() -> None:
         "-p",
         "--output-format",
         "json",
-        "hi",
     ]
 
     argv = mod.build_argv("codex", {"adapter": "codex"}, "hi")
@@ -518,7 +519,6 @@ def test_build_argv_minimal_role() -> None:
         "danger-full-access",
         "-a",
         "never",
-        "hi",
     ]
 
 
@@ -648,11 +648,14 @@ SCHEMA_JSONL_EVENTS = REPO_ROOT / "schemas" / "jsonl-events.schema.json"
 WOOF_VALIDATE = [str(WOOF_BIN), "validate", "--schema", "jsonl-events"]
 
 
-def _make_stub(bin_dir: Path, name: str, payload: str) -> None:
+def _make_stub(bin_dir: Path, name: str, payload: str, stdin_path: Path | None = None) -> None:
     """Write an executable shell script at ``bin_dir/name`` that prints ``payload``."""
     bin_dir.mkdir(parents=True, exist_ok=True)
     script = bin_dir / name
-    script.write_text(f"#!/bin/sh\ncat <<'__WOOF_PAYLOAD__'\n{payload}\n__WOOF_PAYLOAD__\n")
+    stdin_line = f"cat > {shlex.quote(str(stdin_path))}" if stdin_path else "cat >/dev/null"
+    script.write_text(
+        f"#!/bin/sh\n{stdin_line}\ncat <<'__WOOF_PAYLOAD__'\n{payload}\n__WOOF_PAYLOAD__\n"
+    )
     script.chmod(0o755)
 
 
@@ -671,7 +674,8 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
             },
         }
     )
-    _make_stub(bin_dir, "claude", claude_response)
+    stdin_path = tmp_path / "claude.stdin"
+    _make_stub(bin_dir, "claude", claude_response, stdin_path=stdin_path)
     epic_dir = woof_project / ".woof" / "epics" / "E7"
     epic_dir.mkdir(parents=True)
     (epic_dir / "EPIC.md").write_text("contract\n")
@@ -701,6 +705,7 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
         env=env,
     )
     assert proc.returncode == 0, proc.stderr
+    assert stdin_path.read_text() == "run the story\n"
 
     # Audit artefacts written
     audit_dir = woof_project / ".woof" / "epics" / "E7" / "audit"
@@ -741,9 +746,11 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
     assert events[1]["event"] == "subprocess_returned"
     assert events[0]["effort"] == "max"
     assert events[0]["mcp"] == []
-    assert events[0]["argv"][-1] == "<prompt>"
+    assert events[0]["argv"][-1] == "<prompt:stdin>"
+    assert events[0]["prompt_transport"] == "stdin"
     assert events[0]["artefacts_loaded"] == [".woof/epics/E7/EPIC.md"]
     assert events[1]["artefacts_loaded"] == [".woof/epics/E7/EPIC.md"]
+    assert events[1]["prompt_transport"] == "stdin"
     assert events[1]["tokens_in"] == 7
     assert events[1]["tokens_out"] == 11
     assert events[1]["cc_session_id"] == "00000000-0000-0000-0000-000000000001"
@@ -771,7 +778,8 @@ def test_end_to_end_codex_records_thread_and_audit_path(woof_project: Path, tmp_
             ),
         ]
     )
-    _make_stub(bin_dir, "codex", codex_stream)
+    stdin_path = tmp_path / "codex.stdin"
+    _make_stub(bin_dir, "codex", codex_stream, stdin_path=stdin_path)
     env = {
         "PATH": f"{bin_dir}:{__import__('os').environ['PATH']}",
         "HOME": __import__("os").environ.get("HOME", str(tmp_path)),
@@ -793,12 +801,14 @@ def test_end_to_end_codex_records_thread_and_audit_path(woof_project: Path, tmp_
         env=env,
     )
     assert proc.returncode == 0, proc.stderr
+    assert stdin_path.read_text() == "critique me\n"
 
     jsonl = woof_project / ".woof" / "epics" / "E9" / "dispatch.jsonl"
     events = [json.loads(ln) for ln in jsonl.read_text().splitlines() if ln.strip()]
     returned = events[1]
     assert returned["effort"] == "xhigh"
-    assert returned["argv"][-1] == "<prompt>"
+    assert returned["argv"][-1] == "<prompt:stdin>"
+    assert returned["prompt_transport"] == "stdin"
     assert returned["tokens_in"] == 50
     assert returned["tokens_out"] == 7  # 5 + 2 reasoning
     assert returned["cache_read_tokens"] == 10

@@ -63,14 +63,15 @@ timeout <minutes>m claude \
   -p --output-format json \
   --model claude-opus-4-7 \
   --effort max \
-  '<prompt>'
+  < prompt
 ```
 
 The generated MCP JSON is empty by default (`{"mcpServers":{}}`). When a role
 declares MCP servers, Woof resolves them from project-owned `.woof/` config or
 standard Claude settings paths using portable home-relative paths only. No
 generated command may refer to `/home/ryan`, `~/.dotfiles`, `cld`, or other local
-operator aliases.
+operator aliases. Prompt payloads are sent on stdin rather than as one argv
+element, so bundled playbook prompts do not hit per-argument size ceilings.
 
 For Codex subprocesses, Woof calls the public `codex` CLI directly and injects
 any project context it needs into the prompt or explicit input files. It must not

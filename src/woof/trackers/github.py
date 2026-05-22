@@ -47,6 +47,7 @@ from woof.trackers.epic_body import (
 )
 
 GITHUB_RATE_LIMIT_SAFETY_MARGIN = 100
+GITHUB_COMMAND_TIMEOUT_SECONDS = 20
 
 
 def github_core_remaining(output: str) -> int | None:
@@ -76,7 +77,7 @@ class GitHubTracker:
                 ["gh", "api", "/rate_limit"],
                 capture_output=True,
                 text=True,
-                timeout=20,
+                timeout=GITHUB_COMMAND_TIMEOUT_SECONDS,
             )
         except FileNotFoundError as exc:
             raise TrackerError("gh not found on PATH; run `gh auth login`") from exc
@@ -104,8 +105,21 @@ class GitHubTracker:
         title, body = seed_from_spark(spark)
         issue_url = self._create_issue(title=title, body=body)
         epic_id = _issue_number_from_url(issue_url)
-        issue = self._fetch_issue(epic_id)
-        result = self._initialise_epic_from_payload(epic_id, issue)
+        try:
+            issue = self._fetch_issue(epic_id)
+            result = self._initialise_epic_from_payload(epic_id, issue)
+        except TrackerError as exc:
+            try:
+                self._close_issue(epic_id)
+            except TrackerError as close_exc:
+                raise TrackerError(
+                    f"created {issue_url} but failed to initialise local E{epic_id}: {exc}. "
+                    f"Automatic cleanup failed: {close_exc}. Close the created issue manually."
+                ) from exc
+            raise TrackerError(
+                f"created {issue_url} but failed to initialise local E{epic_id}: {exc}. "
+                "Closed the newly created issue."
+            ) from exc
 
         current_epic_path = self.repo_root / ".woof" / ".current-epic"
         atomic_write_text(current_epic_path, f"E{epic_id}\n")
@@ -302,17 +316,37 @@ class GitHubTracker:
 
     # -- gh process helpers ----------------------------------------------
 
+    def _run_gh(
+        self,
+        args: list[str],
+        *,
+        input: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        try:
+            return subprocess.run(
+                ["gh", *args],
+                input=input,
+                capture_output=True,
+                text=True,
+                timeout=GITHUB_COMMAND_TIMEOUT_SECONDS,
+            )
+        except FileNotFoundError as exc:
+            raise TrackerError("gh not found on PATH; run `gh auth login`") from exc
+        except subprocess.TimeoutExpired as exc:
+            summary = " ".join(args[:3])
+            raise TrackerError(
+                f"gh {summary} timed out after {GITHUB_COMMAND_TIMEOUT_SECONDS}s; "
+                "check GitHub connectivity"
+            ) from exc
+
     def _fetch_issue(self, epic_id: int) -> dict[str, Any]:
-        proc = subprocess.run(
+        proc = self._run_gh(
             [
-                "gh",
                 "api",
                 f"/repos/{self.repo}/issues/{epic_id}",
                 "-H",
                 "Accept: application/vnd.github+json",
             ],
-            capture_output=True,
-            text=True,
         )
         if proc.returncode != 0:
             detail = (proc.stderr or proc.stdout).strip()
@@ -331,9 +365,8 @@ class GitHubTracker:
         return payload
 
     def _create_issue(self, *, title: str, body: str) -> str:
-        proc = subprocess.run(
+        proc = self._run_gh(
             [
-                "gh",
                 "issue",
                 "create",
                 "--repo",
@@ -344,8 +377,6 @@ class GitHubTracker:
                 "-",
             ],
             input=body,
-            capture_output=True,
-            text=True,
         )
         if proc.returncode != 0:
             detail = (proc.stderr or proc.stdout).strip()
@@ -362,9 +393,8 @@ class GitHubTracker:
             handle.write(body)
             body_path = Path(handle.name)
         try:
-            proc = subprocess.run(
+            proc = self._run_gh(
                 [
-                    "gh",
                     "issue",
                     "edit",
                     str(epic_id),
@@ -373,8 +403,6 @@ class GitHubTracker:
                     "--body-file",
                     str(body_path),
                 ],
-                capture_output=True,
-                text=True,
             )
         finally:
             body_path.unlink(missing_ok=True)
@@ -383,11 +411,7 @@ class GitHubTracker:
             raise TrackerError(f"gh issue edit {epic_id} --repo {self.repo} failed:\n{detail}")
 
     def _close_issue(self, epic_id: int) -> None:
-        proc = subprocess.run(
-            ["gh", "issue", "close", str(epic_id), "--repo", self.repo],
-            capture_output=True,
-            text=True,
-        )
+        proc = self._run_gh(["issue", "close", str(epic_id), "--repo", self.repo])
         if proc.returncode != 0:
             detail = (proc.stderr or proc.stdout).strip()
             raise TrackerError(f"gh issue close {epic_id} --repo {self.repo} failed:\n{detail}")

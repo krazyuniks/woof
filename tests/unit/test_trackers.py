@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+import woof.trackers.github as github_module
 from woof.trackers import (
     GitHubTracker,
     LocalTracker,
@@ -21,7 +22,7 @@ from woof.trackers.epic_body import (
     render_epic_issue_body,
     seed_from_spark,
 )
-from woof.trackers.github import github_core_remaining
+from woof.trackers.github import GITHUB_COMMAND_TIMEOUT_SECONDS, github_core_remaining
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WOOF_BIN = REPO_ROOT / "bin" / "woof"
@@ -193,6 +194,99 @@ def test_seed_from_spark_rejects_empty() -> None:
 def test_github_core_remaining_parses_rate_limit() -> None:
     assert github_core_remaining('{"resources":{"core":{"remaining":4321}}}') == 4321
     assert github_core_remaining("not json") is None
+
+
+def test_github_tracker_gh_helpers_use_timeouts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append((argv, kwargs))
+        assert argv[0] == "gh"
+        assert kwargs["timeout"] == GITHUB_COMMAND_TIMEOUT_SECONDS
+        assert kwargs["capture_output"] is True
+        assert kwargs["text"] is True
+        if argv[1:3] == ["api", "/repos/acme/widgets/issues/3"]:
+            return subprocess.CompletedProcess(
+                argv,
+                0,
+                json.dumps(
+                    {
+                        "number": 3,
+                        "title": "Issue",
+                        "body": "Body",
+                        "updated_at": "2026-01-01T00:00:00Z",
+                    }
+                ),
+                "",
+            )
+        if argv[1:3] == ["issue", "create"]:
+            assert kwargs["input"] == "Body\n"
+            return subprocess.CompletedProcess(
+                argv, 0, "https://github.com/acme/widgets/issues/3\n", ""
+            )
+        if argv[1:3] == ["issue", "edit"]:
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        if argv[1:3] == ["issue", "close"]:
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        raise AssertionError(f"unexpected gh argv: {argv}")
+
+    monkeypatch.setattr(github_module.subprocess, "run", fake_run)
+    tracker = GitHubTracker(tmp_path, "acme/widgets")
+
+    assert tracker._fetch_issue(3)["number"] == 3
+    assert tracker._create_issue(title="Title", body="Body\n").endswith("/issues/3")
+    tracker._edit_issue_body(3, "Updated body.\n")
+    tracker._close_issue(3)
+
+    assert [call[0][1:3] for call in calls] == [
+        ["api", "/repos/acme/widgets/issues/3"],
+        ["issue", "create"],
+        ["issue", "edit"],
+        ["issue", "close"],
+    ]
+
+
+def test_github_tracker_timeout_fails_loud(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def timeout_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+
+    monkeypatch.setattr(github_module.subprocess, "run", timeout_run)
+
+    with pytest.raises(TrackerError, match="timed out after 20s"):
+        GitHubTracker(tmp_path, "acme/widgets")._fetch_issue(3)
+
+
+def test_github_create_epic_closes_created_issue_when_local_initialisation_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / ".woof" / "epics" / "E88").mkdir(parents=True)
+    tracker = GitHubTracker(tmp_path, "acme/widgets")
+    closed: list[int] = []
+
+    monkeypatch.setattr(
+        tracker,
+        "_create_issue",
+        lambda *, title, body: "https://github.com/acme/widgets/issues/88",
+    )
+    monkeypatch.setattr(
+        tracker,
+        "_fetch_issue",
+        lambda epic_id: {
+            "number": epic_id,
+            "title": "New keyboard flow",
+            "body": "Body",
+            "updated_at": "2026-01-01T00:00:00Z",
+        },
+    )
+    monkeypatch.setattr(tracker, "_close_issue", lambda epic_id: closed.append(epic_id))
+
+    with pytest.raises(TrackerError, match="Closed the newly created issue"):
+        tracker.create_epic("New keyboard flow")
+
+    assert closed == [88]
+    assert not (tmp_path / ".woof" / ".current-epic").exists()
 
 
 # ---------------------------------------------------------------------------

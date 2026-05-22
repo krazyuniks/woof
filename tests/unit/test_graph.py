@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 import yaml
 
-from woof.graph import nodes
+from woof.graph import nodes, transitions
 from woof.graph.git import git_env
 from woof.graph.lock import LOCK_FILENAME, WorkflowLockError
 from woof.graph.manifest import build_story_manifest, verify_staged_manifest
@@ -546,6 +546,9 @@ def test_graph_runs_executor_then_critique_then_verification_then_commit(tmp_pat
     def commit(inp: NodeInput) -> NodeOutput:
         seen.append(inp.node_type)
         mark_story_status(inp.repo_root, inp.epic_id, inp.story_id or "", "done")
+        directory = epic_dir(inp.repo_root, inp.epic_id)
+        (directory / "executor_result.json").unlink(missing_ok=True)
+        (directory / "check-result.json").unlink(missing_ok=True)
         return NodeOutput(
             node_type=inp.node_type, status=NodeStatus.COMPLETED, epic_id=1, story_id=inp.story_id
         )
@@ -1617,6 +1620,29 @@ def test_graph_resumes_interrupted_commit_transaction(tmp_path: Path) -> None:
     assert subject.stdout.strip() == "feat: E1 S1 - first"
 
 
+def test_commit_resume_git_failure_preserves_resume_artefacts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    directory = _write_ready_commit_state(tmp_path, 1)
+
+    def fail_manifest(*_args: object, **_kwargs: object) -> object:
+        raise subprocess.CalledProcessError(
+            128,
+            ["git", "status"],
+            stderr="fatal: not a git repository",
+        )
+
+    monkeypatch.setattr(transitions, "build_story_manifest", fail_manifest)
+
+    with pytest.raises(StageStateError) as exc:
+        next_node(tmp_path, 1)
+
+    assert "could not inspect interrupted commit state" in str(exc.value)
+    assert "preserving executor_result.json and check-result.json" in str(exc.value)
+    assert (directory / "executor_result.json").exists()
+    assert (directory / "check-result.json").exists()
+
+
 def test_commit_uses_executor_commit_subject(tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     _write_ready_commit_state(
@@ -1858,7 +1884,7 @@ def test_successor_selection_respects_dependency_closure(tmp_path: Path) -> None
     assert next_node(tmp_path, 12) == (NodeType.EXECUTOR_DISPATCH, "S2")
 
 
-def test_successor_selection_fails_loud_when_dependencies_are_unsatisfied(
+def test_run_graph_opens_recoverable_gate_when_dependencies_are_unsatisfied(
     tmp_path: Path,
 ) -> None:
     directory = _write_plan(tmp_path, 13)
@@ -1866,12 +1892,38 @@ def test_successor_selection_fails_loud_when_dependencies_are_unsatisfied(
     plan["stories"][0]["depends_on"] = ["S99"]
     (directory / "plan.json").write_text(json.dumps(plan))
 
-    try:
-        next_node(tmp_path, 13)
-    except StageStateError as exc:
-        assert "no story has satisfied dependencies" in str(exc)
-    else:
-        raise AssertionError("expected StageStateError")
+    outputs = run_graph(tmp_path, 13)
+
+    assert outputs == [
+        NodeOutput(
+            node_type=NodeType.PLAN_GATE_OPEN,
+            status=NodeStatus.GATE_OPENED,
+            epic_id=13,
+            gate_path=".woof/epics/E13/gate.md",
+            triggered_by=["incomplete_stage_state"],
+            message="E13 has pending stories, but no story has satisfied dependencies",
+        )
+    ]
+    gate_fm = _read_gate_fm(directory / "gate.md")
+    assert gate_fm["type"] == "plan_gate"
+    assert gate_fm["story_id"] is None
+    assert gate_fm["triggered_by"] == ["incomplete_stage_state"]
+
+
+def test_run_graph_opens_recoverable_gate_for_malformed_plan_json(tmp_path: Path) -> None:
+    directory = _write_plan(tmp_path, 24)
+    (directory / "plan.json").write_text("{")
+
+    outputs = run_graph(tmp_path, 24)
+
+    assert outputs[0].node_type == NodeType.PLAN_GATE_OPEN
+    assert outputs[0].status == NodeStatus.GATE_OPENED
+    assert outputs[0].triggered_by == ["incomplete_stage_state"]
+    assert "required Stage-5 artefact is malformed" in outputs[0].message
+    gate_fm = _read_gate_fm(directory / "gate.md")
+    assert gate_fm["type"] == "plan_gate"
+    assert gate_fm["story_id"] is None
+    assert gate_fm["triggered_by"] == ["incomplete_stage_state"]
 
 
 def test_gate_reentry_halts_at_human_review_with_gate_path(tmp_path: Path) -> None:
@@ -1954,7 +2006,7 @@ def test_wf_epic_reports_complete_epic_as_json(tmp_path: Path) -> None:
     _assert_node_output_schema(tmp_path, lines[0])
 
 
-def test_wf_reports_missing_plan_as_structured_failure(tmp_path: Path) -> None:
+def test_wf_opens_gate_for_recoverable_missing_plan_state(tmp_path: Path) -> None:
     _write_tracker_prerequisites(tmp_path)
     directory = tmp_path / ".woof" / "epics" / "E10"
     directory.mkdir(parents=True)
@@ -1963,10 +2015,15 @@ def test_wf_reports_missing_plan_as_structured_failure(tmp_path: Path) -> None:
 
     proc = _run_woof(tmp_path, "wf", "--epic", "10", env=env)
 
-    assert proc.returncode == 2
-    assert "woof wf: incomplete_stage_state:" in proc.stderr
-    assert "required planning artefact missing" in proc.stderr
-    assert "spark.md" in proc.stderr
+    assert proc.returncode == 0, proc.stderr
+    assert (
+        "woof wf: plan_gate_open -> gate_opened: required planning artefact missing" in proc.stdout
+    )
+    assert "spark.md" in proc.stdout
+    gate_fm = _read_gate_fm(directory / "gate.md")
+    assert gate_fm["type"] == "plan_gate"
+    assert gate_fm["story_id"] is None
+    assert gate_fm["triggered_by"] == ["incomplete_stage_state"]
 
 
 def test_wf_epic_halts_when_gate_is_open(tmp_path: Path) -> None:

@@ -8,14 +8,11 @@ Woof addresses the inner loop: the structured, auditable cycle of an individual 
 
 ## Status
 
-Pre-release. The internal architecture is implemented and dogfooded against `guitar-tone-shootout`. Phase A of the release-closure audit and Phase B (portability for arbitrary consumers) are both complete; the release surface is documented and exercised by an end-to-end install smoke test (see [Publishing](#publishing)).
+Pre-release, under active course correction. The urgent target is reliable use in Ryan's own projects. Portfolio exemplar work comes next, and OSS/distribution polish is deferred until the core loop is trustworthy.
 
 The current architecture is graph-led. `woof wf --epic <N>` runs the deterministic graph; LLM prompts are producer or reviewer nodes, not workflow orchestrators. ADR-002 defines the current role policy: GPT-5.5 is the preferred primary producer route, Claude Opus 4.7 at `max` effort is the preferred reviewer route, and reviewer blockers open human gates rather than model-to-model debate loops.
 
-Portability for arbitrary consumers (Phase B):
-- Stage 1 Discovery (Phase B RC-B1) is portable. Graph producer nodes populate the `research/`, `thinking/`, and `brainstorm/` buckets before synthesis, and each bucket node embeds its building-block playbooks directly in the producer prompt. A consumer without Woof-author-local agent skills gets full Stage 1 output.
-- The issue tracker is pluggable behind a `Tracker` protocol (Phase B RC-B2, [ADR-003](docs/adr/003-issue-tracker-abstraction.md)). `.woof/prerequisites.toml` declares `[tracker]` with `kind = "github"` or `kind = "local"`: the `github` adapter keeps each epic in a GitHub issue, the `local` adapter keeps every epic under `.woof/` with no remote so any repository can run Woof without a hosted tracker. A Linear, Jira, Plane, or Forgejo adapter is a new file implementing the protocol.
-- `woof init` scaffolds the `.woof/` starter config (`prerequisites.toml`, `agents.toml`, `quality-gates.toml`, `test-markers.toml`) and patches the repo `.gitignore`; `woof init --tracker local` scaffolds a setup for a repository with no hosted issue tracker. The cartography script (`./scripts/refresh-cartography`) remains consumer-owned; the Woof post-commit hook block is a no-op when the script is absent. The end-to-end first-run walkthrough in [`docs/consumers.md`](docs/consumers.md) takes a new consumer from `pip install woof` to a running epic (Phase B RC-B3).
+The previous release-closure work delivered useful foundations: portable Stage 1 Discovery prompts, a tracker abstraction with `github` and `local` adapters, `woof init` scaffolding, and package smoke coverage. Those foundations stay. They do not mean arbitrary-consumer portability is complete: the deep audit found that Stage 5 still instructs the producer to invoke a Claude-only slash command. That gap is tracked in [`docs/course-correction-2026-05-21.md`](docs/course-correction-2026-05-21.md) and [`docs/implementation-plan.md`](docs/implementation-plan.md).
 
 Current implementation status, remaining work, and the session continuation prompt live in [`docs/implementation-plan.md`](docs/implementation-plan.md).
 
@@ -27,6 +24,7 @@ Current implementation status, remaining work, and the session continuation prom
 - [`docs/adr/002-graph-led-role-routing.md`](docs/adr/002-graph-led-role-routing.md) - accepted primary/reviewer role policy and model-routing pivot.
 - [`docs/adr/003-issue-tracker-abstraction.md`](docs/adr/003-issue-tracker-abstraction.md) - accepted issue-tracker abstraction and the `[tracker]` config boundary.
 - [`docs/consumers.md`](docs/consumers.md) - external consumer checkout boundary, including GTS.
+- [`docs/course-correction-2026-05-21.md`](docs/course-correction-2026-05-21.md) - current self-use-first correction, guardrail taxonomy, and active backlog.
 - [`docs/implementation-plan.md`](docs/implementation-plan.md) - implementation plan, roadmap, progress ledger, and continuation prompt.
 - [`examples/safety-model.md`](examples/safety-model.md) - concise examples of Woof's core safety behaviours.
 - [`examples/dogfood/`](examples/dogfood/) - selected artefacts from the first Woof dogfood epics.
@@ -47,9 +45,9 @@ just woof --help
 
 `uv.lock` is committed. Git hooks are installed with `just install-hooks`; pre-commit runs Ruff and Woof config schema validation, pre-push runs the unit suite, and `woof hooks install` adds the idempotent Woof-managed post-commit cartography block.
 
-## Installed Package Smoke
+## Packaging Smoke
 
-Woof is also distributed as a wheel; graph subprocesses re-enter through `python -m woof`, so the installed package must work without the source-checkout `bin/woof` wrapper or `uv`. The packaging smoke test (`tests/unit/test_packaging_install.py`) builds a wheel into a temporary directory, installs it into an isolated virtual environment, and verifies that:
+Woof keeps packaging smoke coverage so future distribution work does not rot while the project focuses on self-use. Graph subprocesses re-enter through `python -m woof`, so the package boundary must work without the source-checkout `bin/woof` wrapper. The packaging smoke test (`tests/unit/test_packaging_install.py`) builds a wheel into a temporary directory, installs it into an isolated virtual environment, and verifies that:
 
 - `python -m woof --help` exits 0 from the installed interpreter.
 - `tool_root()` resolves `schemas/`, `playbooks/`, and `languages/` from inside the installed package.
@@ -64,21 +62,9 @@ uv venv /tmp/woof-smoke
 /tmp/woof-smoke/bin/python -m woof --help
 ```
 
-This is the release smoke path; consumer projects should `uv tool install woof` (or `pip install woof`) and invoke `woof` directly rather than calling `bin/woof` from the source checkout.
+This is evidence for the future distribution path. It is not the active product priority during the current course correction.
 
-## Publishing
-
-Woof is released to PyPI as the `woof` package. The maintainer release path is:
-
-```bash
-just check
-uv build
-uv publish
-```
-
-`uv build` writes a source distribution and a wheel to `dist/`. `uv publish` uploads both to PyPI, reading the API token from `UV_PUBLISH_TOKEN` (or `--token`). Publish a release candidate to TestPyPI first with `uv publish --publish-url https://test.pypi.org/legacy/`, then install it back with `uv tool install --index https://test.pypi.org/simple/ woof` before publishing to PyPI.
-
-`tests/integration/test_release_smoke.py` is the release-readiness evidence. It builds a wheel, installs it into an isolated virtual environment, runs `woof init --tracker local` in a throwaway consumer worktree, and confirms the Stage 1 Discovery producer nodes build fully self-contained dispatch prompts from the installed package - no Woof-author-local agent skills, wrappers, or host paths. It runs as part of `just check`; run it alone with:
+`tests/integration/test_release_smoke.py` extends this with a consumer-facing check: it builds and installs the wheel, runs `woof init --tracker local` in a throwaway consumer worktree, and confirms the Stage 1 Discovery producer nodes build fully self-contained dispatch prompts from the installed package - no Woof-author-local agent skills, wrappers, or host paths. It runs as part of `just check`; run it alone with:
 
 ```bash
 uv run pytest tests/integration/test_release_smoke.py
@@ -86,43 +72,49 @@ uv run pytest tests/integration/test_release_smoke.py
 
 ## Operator Usage
 
-Install Woof as a standalone tool:
+During the current self-use phase, run Woof from this checkout:
 
 ```bash
-uv tool install woof
+just woof --help
+```
+
+When operating from another checkout on Ryan's current machine, set the source wrapper once:
+
+```bash
+export WOOF=/home/ryan/Work/woof/bin/woof
 ```
 
 Initialise a fresh consumer checkout's `.woof/` config:
 
 ```bash
-woof init
+$WOOF init
 ```
 
 Run the graph from a consumer checkout that has `.woof/` state:
 
 ```bash
-woof wf --epic <N>
+$WOOF wf --epic <N>
 ```
 
 Start a new tracker-backed epic; the configured tracker assigns the epic id:
 
 ```bash
-woof wf new "<spark>"
+$WOOF wf new "<spark>"
 ```
 
 Resolve an open gate with a structured decision:
 
 ```bash
-woof wf --epic <N> --resolve approve
+$WOOF wf --epic <N> --resolve approve
 ```
 
 Check startup infrastructure before invoking the graph:
 
 ```bash
-woof preflight
+$WOOF preflight
 ```
 
-New consumers should follow the first-run walkthrough in [`docs/consumers.md`](docs/consumers.md); see [`docs/architecture.md`](docs/architecture.md) for stage and gate semantics.
+Distribution-oriented install instructions are deferred; [`docs/consumers.md`](docs/consumers.md) is retained as future external-consumer guidance. See [`docs/architecture.md`](docs/architecture.md) for stage and gate semantics.
 
 ## Consumer Checkouts
 

@@ -3,7 +3,7 @@
 These tests prove that graph-owned subprocesses shell back into Woof through
 the active Python module entry point, not via the source-checkout
 ``bin/woof`` wrapper. The wheel-install case is exercised end-to-end so an
-isolated install of the published artefact remains executable.
+isolated install of the built artefact remains executable.
 """
 
 from __future__ import annotations

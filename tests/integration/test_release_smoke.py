@@ -35,7 +35,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 pytestmark = pytest.mark.host_only
 
 # Tokens that would prove a Stage 1 producer prompt depends on the Woof author's
-# local environment rather than the published package.
+# local environment rather than the installed package.
 FORBIDDEN_PROMPT_TOKENS = [
     "taches-cc-resources",
     "marketplaces",

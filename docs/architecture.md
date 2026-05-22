@@ -3,7 +3,7 @@
 > **Purpose:** Active architecture spec for **Woof** — an inner-loop SDLC tool for AI-assisted development. Principles, architecture, contracts, and operating model.
 > **Position:** Inner-loop counterpart to outer-loop / programme-level systems. Where outer-loop systems govern enterprise adoption across teams, providers, and lifecycle stages, Woof governs the developer's own AI-assisted work cycle: discovery → definition → breakdown → execution → gate, with schema-governed contracts and a JSONL audit trail per epic.
 > **Evidence base:** `docs/research.md`.
-> **Status:** Active. `guitar-tone-shootout` is Woof's first external consumer.
+> **Status:** Active course correction. The urgent priority is Ryan's own development use; portfolio exemplar work comes next; OSS/distribution polish is deferred. `guitar-tone-shootout` is Woof's first external consumer/dogfood target.
 > **Rule:** All design contract work lives here. Implementation sequencing and the live progress ledger live in `docs/implementation-plan.md`. `.woof/` is runtime-state only.
 
 > **ADR-001:** Stage-5 orchestration is graph-owned Python (`woof wf --epic <N>`). LLM prompts are producer nodes only.
@@ -12,13 +12,13 @@
 
 ## 0. Current implementation boundary
 
-The Woof repository currently implements the graph-owned path from Stage 1 Discovery through Stage 5 story execution:
+The Woof repository currently implements the graph-owned path from Stage 1 Discovery through Stage 5 story execution, with active correction work tracked in `docs/course-correction-2026-05-21.md` and `docs/implementation-plan.md`:
 
 - `woof wf --epic <N>` is the operator entry point for the deterministic Python graph.
 - Stage 1 Discovery runs four graph producer nodes in order - research, thinking, and brainstorm bucket producers, then synthesis. The bucket nodes dispatch the primary producer to populate `discovery/{research,thinking,brainstorm}/`; synthesis dispatches the primary producer to create or validate `discovery/synthesis/{CONCEPT,PRINCIPLES,ARCHITECTURE,OPEN_QUESTIONS}.md`.
 - Stage 2 Definition dispatches the primary producer to create or validate schema-valid `EPIC.md`.
 - Stage 3 Breakdown dispatches the primary producer to create or validate schema-valid `plan.json`, renders deterministic `PLAN.md`, dispatches the reviewer to create schema-valid `critique/plan.md`, and Stage 4 opens the mandatory `plan_gate` before any story execution.
-- Stage-5 graph nodes dispatch the primary producer, dispatch the reviewer, run Stage-5 verification, open gates, and commit through a transaction manifest.
+- Stage-5 graph nodes dispatch the primary producer, dispatch the reviewer, run Stage-5 verification, open gates, and commit through a transaction manifest. A known active gap remains: the Stage-5 producer prompt still points at a Claude slash command and must be moved to portable Woof-owned producer guidance.
 - `.claude/commands/wf*.md` and `playbooks/` prompts are wrappers or producer-node prompts. They do not own successor selection, critique dispatch, gate writing, or commits.
 - ADR-002 defines the current role-routing policy: the graph orchestrates; GPT-5.5 is the preferred primary producer route; Claude Opus 4.7 at `max` effort is the preferred reviewer route.
 - Implementation sequencing, workstream status, validation evidence, and the continuation prompt are tracked in `docs/implementation-plan.md`.
@@ -28,12 +28,22 @@ When this document conflicts with `docs/adr/001-orchestration-topology.md`, `doc
 ## 1. Principles
 
 1. **Epic contract is law.** User-facing observable outcomes are canonical. Implementation may bridge repo conventions; it must never replace the epic contract. (See `docs/research.md` §2.)
-2. **Gates are human conversations, opened with a Context block.** Validator or reviewer produces structured findings -> the graph surfaces each role's position -> user dialogue -> convergence. No auto-revision loops, no binary approval menus, no silent self-fixes. Context block: working doc, source inputs, stage, last decision.
+2. **Gates are human-accountable reviews, opened with a Context block.** Validator or reviewer produces structured findings -> the graph surfaces each role's position -> human decision -> deterministic state change. No auto-revision loops, no silent self-fixes. Context block: working doc, source inputs, stage, last decision.
 3. **Python owns orchestration where determinism matters.** The graph is code; LLMs and humans are typed nodes. Infrastructure is selected by contract fit, not by prompt convenience.
 4. **No silent degradation.** Required infrastructure must be present at invocation. Fail loud if missing; no fallbacks.
 5. **`.woof/` is runtime only.** Epic execution artefacts live at `.woof/epics/E<N>/`. System-design work does not live in `.woof/`.
 
 ---
+
+## 1.1. Guardrail taxonomy
+
+Woof has two first-class guardrail systems.
+
+**Commit-safety guardrails** protect the repository from bad committed output. They include staged-diff checks, story path discipline, outcome and contract reference checks, quality-gate command execution, reviewer blockers, gate creation, transaction manifests, and commit decisions.
+
+**Runtime action-safety guardrails** protect the host and working project while agents are running. They cover sandboxing, writable paths, shell permissions, network access, secrets exposure, browser/MCP access, and other external side effects.
+
+The current implementation is stronger on commit safety than runtime action safety. Dispatch adapters currently grant broad CLI permissions and rely mainly on graph verification before commit. Runtime action safety is therefore an explicit correction workstream, not an assumed property.
 
 ## 2. Architecture
 
@@ -95,7 +105,7 @@ E146 was a surface failure enabled by a direction vacuum — no principle had lo
 
 This makes the autonomy gradient (§2 Stages overview) concrete: humans review architectural commitments; automation handles mechanical execution.
 
-**Gate mechanism (Stages 4 and 6).** Both gates use the same operator surface: `woof wf --epic <N>` to surface the gate and `woof wf --epic <N> --resolve <decision>` to record the decision. Triggered by presence of `.woof/epics/E<N>/gate.md`. The graph reads `gate.md`, renders the pre-written Context block, surfaces findings and positions, drives human dialogue through the active operator session, then records the structured human decision. The graph resumes only after `gate.md` is gone.
+**Gate mechanism (Stages 4 and 6).** Both gates use the same operator surface: `woof wf --epic <N>` to surface the gate and `woof wf --epic <N> --resolve <decision>` to record the decision. Triggered by presence of `.woof/epics/E<N>/gate.md`. The current implementation renders the pre-written Context block, surfaces findings and positions, records the structured human decision, and resumes only after `gate.md` is gone. Richer conversational review UX is a future governance-depth layer; the current terminal/file surface is intentionally simple and auditable.
 
 `gate.md` schema (YAML front-matter + structured prose):
 
@@ -149,7 +159,7 @@ JSONL event logs (`epic.jsonl`, `dispatch.jsonl`) enable crash-resume and post-h
 
 - Each commit-bound audit file is run through a redaction filter that strips known secret patterns (env-var values from `env.local.sh`, JWT tokens, OAuth bearer tokens, AWS keys, `.gts-auth.json` token blobs, and configured project regexes). The filter is conservative — false positives leave a `[REDACTED:<reason>]` marker; false negatives are an audit failure.
 - Per-file size cap (default 256 KB). Output exceeding the cap is truncated to the cap with a `... [truncated, full output at .woof/epics/E<N>/audit/raw/<file>]` footer; the raw output stays in `.woof/epics/E<N>/audit/raw/` which is gitignored and excluded from transaction manifests.
-- Retention: audit files older than the epic's close timestamp + 90 days are eligible for archival via the configured archive command.
+- Retention/archive is not implemented yet. Until that workstream exists, Woof's implemented audit controls are redaction, capping, ignored raw overflow, and committed manifest exclusion.
 
 **Token usage logging.** Subprocess dispatch records token usage; the Python graph itself does not spend tokens. Every `subprocess_returned` event includes `tokens_in`, `tokens_out`, `cache_read_tokens`, `cache_write_tokens`, `duration_ms`, and `artefacts_loaded[]` when the adapter can determine them. `artefacts_loaded[]` contains explicit repo-relative artefact references that the graph or operator loaded into the dispatched prompt payload; absolute paths, home-relative paths, and parent traversal are rejected. No stage-transition `token_usage` emitter exists, because graph transitions are deterministic Python and do not consume tokens; the `token_usage` enum value in `schemas/jsonl-events.schema.json` is reserved for future driver modes that may run an LLM in the same process.
 
@@ -157,7 +167,7 @@ JSONL event logs (`epic.jsonl`, `dispatch.jsonl`) enable crash-resume and post-h
 
 ### Consumer checkout boundary
 
-Woof is a tool checkout or installed package that runs against a separate consumer repository. A consumer repository owns project policy declarations under `.woof/*.toml`; it does not vendor-copy Woof source, schemas, playbooks, tests, dogfood examples, or generated state from the Woof repository.
+Woof is a tool checkout, and later an installed package, that runs against a separate consumer repository. During the current course correction the source/self-use path is the priority; installed-package and external OSS onboarding polish are deferred until the core loop is reliable. A consumer repository owns project policy declarations under `.woof/*.toml`; it does not vendor-copy Woof source, schemas, playbooks, tests, dogfood examples, or generated state from the Woof repository.
 
 `guitar-tone-shootout` is the first external consumer. Its responsibilities are:
 
@@ -401,6 +411,12 @@ stories:
 `PLAN.md` is a deterministic render of `plan.json` — no authoring at this layer.
 
 The graph dispatches the primary route to produce `plan.json`, validates it against `schemas/plan.schema.json`, renders `PLAN.md`, dispatches the reviewer route with `playbooks/critique/plan.md`, and opens the mandatory plan gate. Producer prompts do not author `PLAN.md`, dispatch reviewers, write gates, select successors, or revise the epic contract.
+
+### Stage 5 producer prompt
+
+Stage 5 story-execution guidance must be Woof-owned and portable. The graph may dispatch Claude, Codex, or another future public adapter, so the producer prompt must contain the required story-execution instructions directly or load them from `playbooks/`. It must not instruct the producer to invoke a Claude-only slash command such as `/wf:execute-story`.
+
+`.claude/commands/wf/execute-story.md` can remain as a local convenience wrapper, but it is not a graph dependency and is not part of the consumer contract.
 
 ### Stage 5 deterministic gate checks
 

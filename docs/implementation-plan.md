@@ -8,7 +8,7 @@
 
 Woof has an implemented ADR-001 Stage-5 execution path. `woof wf --epic <N>` runs the deterministic Python graph for story selection, executor dispatch, critique dispatch, verification, gate opening, structured gate resolution, and commit transaction verification.
 
-ADR-002 is now accepted and implemented. Woof is graph-led, GPT-5.5 is the preferred primary producer route, Claude Opus 4.7 at `max` effort is the preferred reviewer route, and reviewer blockers open human gates rather than model-to-model debate loops. Stage-5 dispatch uses semantic `primary` / `reviewer` roles and public raw `claude` / `codex` adapters owned by Woof. Preflight is the startup infrastructure check. Workstream R is complete, so Stage 1-4 graph migration can continue.
+ADR-002 is now accepted and implemented. Woof is graph-led, GPT-5.5 is the preferred primary producer route, Claude Opus 4.7 at `max` effort is the preferred reviewer route, and reviewer blockers open human gates rather than model-to-model debate loops. Stage-5 dispatch uses semantic `primary` / `reviewer` roles and public raw `claude` / `codex` adapters owned by Woof. Preflight is the startup infrastructure check. This role-routing baseline remains the active route policy.
 
 Implemented surfaces:
 
@@ -19,7 +19,7 @@ Implemented surfaces:
 - All nine Stage-5 check runners are implemented and wired into the registry.
 - Dogfood evidence under `examples/dogfood/`.
 
-The historical sequenced rows below remain the implementation evidence ledger. The active backlog is now the Release-Closure Audit section. Future continuation turns select the first `Ready` release-closure workstream and complete a meaningful slice that closes multiple related gaps; they do not invent one tiny row at a time.
+The historical sequenced rows below remain the implementation evidence ledger. The active backlog is now the Course Correction section. Future continuation turns select the first `Ready` or `In progress` course-correction workstream and complete a meaningful slice that closes multiple related gaps; they do not invent one tiny row at a time.
 
 ## Operating Loop
 
@@ -28,14 +28,14 @@ Every implementation turn must use this loop.
 1. Read `AGENTS.md`, `README.md`, this file, and any architecture or schema file directly touched by the selected item.
 2. Run `git status --short --branch` before editing and preserve unrelated local changes.
 3. Run `just --list` when command usage for the turn is not already established.
-4. Select the first `Ready` release-closure workstream by order unless another workstream is explicitly marked `In progress` or a recorded blocker requires resequencing. Choose a workstream slice large enough to close multiple related child gaps before committing.
+4. Select the first `Ready` course-correction workstream by order unless another workstream is explicitly marked `In progress` or a recorded blocker requires resequencing. Choose a workstream slice large enough to close multiple related child gaps before committing.
 5. Restate the selected workstream slice, its observable outcomes, and the files or subsystems likely to change before editing.
 6. Update this ledger at the start of work: mark the workstream `In progress`, name the child gaps in scope, and record the planned validation.
 7. Implement code, schemas, tests, and docs together when behaviour or contracts move.
 8. Run targeted validation while developing when it gives faster feedback than the full gate.
 9. Run `just check` before handoff unless the item is docs-only or the ledger records an external blocker.
 10. Update this ledger before committing: mark the workstream or child gaps `Completed`, `Blocked`, or `Split`; record validation evidence; record the conventional commit message or short commit series to be used.
-11. Commit through normal hooks. Do not bypass pre-commit or pre-push hooks. A release-closure workstream may use multiple conventional commits when that makes review or rollback clearer.
+11. Commit through normal hooks. Do not bypass pre-commit or pre-push hooks. A workstream may use multiple conventional commits when that makes review or rollback clearer.
 12. Push normally. If hooks fail, fix the underlying issue or record the blocker in this ledger.
 13. Monitor GitHub CI for the pushed commit until it reaches a terminal state. If CI fails, inspect the failing job, fix the underlying issue, commit and push the fix, then monitor the new run. If CI cannot be made green in the session, record the blocker in this ledger.
 14. Final handoff must include the pushed commit hash, local validation result, GitHub CI result, and the full copy-pasteable `Next Continuation Prompt` block from this file. Do not summarise the prompt or provide only the next work-item ID.
@@ -47,6 +47,7 @@ Statuses:
 - `Ready`: scoped and available to pick up.
 - `In progress`: selected in the current working tree.
 - `Completed`: landed and pushed, with validation recorded.
+- `Completed (uncommitted)`: validation-complete local work that has not yet landed or pushed; must be committed before it is durable.
 - `Blocked`: cannot proceed without a named external prerequisite or design decision.
 - `Split`: replaced by narrower child items in this file.
 
@@ -358,7 +359,7 @@ Audit date: 2026-05-19.
 
 Purpose: close the gap between "release the current architecture as implemented" (Phases 0-18 plus RC-1..RC-7) and "any project, anyone's, anywhere can install Woof and use it against their own repo." Phase A closes the gap between architecture promises and current implementation. Phase B closes the gap between current architecture and a substrate usable by a stranger without Ryan-local agent skills or GitHub-only assumptions.
 
-Phase A (RC-1..RC-7) and Phase B (RC-B1..RC-B4) are both `Completed` as of 2026-05-20. Phase B work preserved ADR-001 and ADR-002 invariants and introduced ADR-003 (issue-tracker abstraction). Every sequenced workstream in this plan is now closed; there is no `Ready` workstream remaining.
+Phase A (RC-1..RC-7) and Phase B (RC-B1..RC-B5) are both historically validation-complete as of 2026-05-20. Phase B work preserved ADR-001 and ADR-002 invariants and introduced ADR-003 (issue-tracker abstraction). That closure statement is no longer the active planning state; the 2026-05-21 course correction below opened a new backlog. RC-B5, the deep audit report, and CC-001 were landed together in the course-correction commit because their documentation surfaces overlap.
 
 ### Phase B Hidden Gaps
 
@@ -377,6 +378,7 @@ Phase A (RC-1..RC-7) and Phase B (RC-B1..RC-B4) are both `Completed` as of 2026-
 | RC-B2: Issue-Tracker Abstraction | Completed | BHID-002 | ADR-003 records the issue-tracker boundary. `src/woof/cli/github.py` (1192 lines) was removed; the abstraction lives in a new `src/woof/trackers/` package: `base.py` (the `Tracker` protocol, `TrackerError`, frozen result records, the conflict trigger/decision constants, and shared filesystem/hash helpers), `epic_body.py` (tracker-agnostic `EPIC.md`<->managed-body rendering and parsing), `github.py` (`GitHubTracker`), `local.py` (`LocalTracker`), and `__init__.py` (the `resolve_tracker` factory). The `Tracker` protocol covers `assert_runtime_reachable`, `create_epic`, `fetch_epic`, `assert_epic_authority`, `has_sync_state`, `push_epic_definition`, `push_plan_summary`, `complete_epic`, and `resolve_conflict`; conflict detection is intrinsic to the push operations rather than a standalone `detect_conflict` method (a standalone form would double the per-push tracker fetch - the deviation from the original sketch is recorded in ADR-003, which also adds `create_epic`/`assert_epic_authority`). `wf.py`, `main.py`, `preflight.py`, `gate/write.py`, and `transitions.py` depend on the protocol. The `local` filesystem-only adapter ships as the second tracker: `.woof/epics/E<N>/` is self-authoritative, integer epic IDs are allocated as max-existing + 1, push operations are no-ops, and a sync conflict cannot arise. `prerequisites.toml` `[github]` became `[tracker]` with `kind = "github" \| "local"` (clean rename, no config alias - config is live, audit logs are not). `github_synced`/`github_sync_conflict` became `tracker_synced`/`tracker_sync_conflict` in code and as canonical schema enum values, with the legacy spellings retained as enum aliases and accepted by gate-resolution/transition code so pre-RC-B2 `epic.jsonl`/`gate.md` files still validate and resolve. `epic_id` descriptions in `epic`, `plan`, `planning-node-input`, and `jsonl-events`, plus `gate.schema.json` `triggered_by`, are tracker-neutral; integer IDs are retained until a string-ID adapter lands. Architecture, README, and `docs/consumers.md` replace the "Epic IDs. Always the gh issue number" principle with the pluggable-tracker model. | Focused validation passed: `uv run pytest tests/unit/test_trackers.py tests/unit/test_wf_github_sync.py tests/unit/test_render_epic.py tests/unit/test_gate_write.py tests/unit/test_graph.py tests/unit/test_preflight.py tests/unit/test_init.py tests/unit/test_validate.py` covers the factory, protocol conformance, the `local` adapter end-to-end (CLI `woof wf new` with a failing `gh` stub on PATH), GitHub adapter parity regression, and legacy enum-value validation. `git diff --check` passed. `just check` passed: Ruff lint, Ruff format check, and 319 tests. | `feat(trackers): introduce issue-tracker abstraction`; `docs(architecture): adopt issue-tracker abstraction` |
 | RC-B3: First-Run Consumer Onboarding | Completed | BHID-003 | `woof init` (delivered in RC-5) already scaffolds `.woof/{prerequisites,agents,quality-gates,test-markers}.toml` and the required `.gitignore` block; RC-B3 closes the remaining first-run gaps. `woof init` gains `--tracker {github,local}` (default `github`): the `github` scaffold keeps the GitHub-backed `[tracker]` table and declares `gh` as required `[infra]`, while `--tracker local` scaffolds the no-remote `local` tracker, omits `gh`, and drops the `repo` line so the `local` scaffold validates against `prerequisites.schema.json` as-is (the `github` scaffold keeps the intended `<replace>` repo placeholder that fails loud at preflight). The cartography decision stays as taken in RC-5/GAP-017: no default `scripts/refresh-cartography` ships, cartography is consumer-owned, and the post-commit hook block is a no-op when the script is absent. `woof init` next-steps output now reaches the first epic (`woof wf new`) and points at the walkthrough, and the result header records the scaffolded tracker. `docs/consumers.md` replaces the `woof init`-anchored bootstrap note with an end-to-end eight-step first-run walkthrough (install via `uv tool install woof` / `pip install woof`, scaffold, fill placeholders, authenticate, preflight, install hook, `woof wf new`, run the graph) so a stranger reaches a running epic without reading the architecture document. README and `docs/architecture.md` describe `--tracker` and link the walkthrough. | Focused validation passed: `uv run pytest tests/unit/test_init.py` (13 tests, including new `--tracker local` scaffold/schema-validation, default-`github` tracker, and next-steps-loop coverage). `woof validate --schema prerequisites` passes for the `local` scaffold and fails loud on the `github` `<replace>` placeholder by design. `git diff --check` passed. `just check` passed: Ruff lint, Ruff format check, and 321 tests. | `feat(init): bundle consumer onboarding` |
 | RC-B4: Phase B Release Evidence | Completed | — | `tests/integration/test_release_smoke.py` is the Phase B release-readiness evidence: it builds a wheel, installs it into an isolated virtual environment, runs `woof init --tracker local` in a throwaway consumer worktree, asserts the scaffold is shaped for a no-remote tracker (`kind = "local"`, no `gh` `[infra]`, no `[tracker]` `repo`) and validates against the wheel-bundled `prerequisites.schema.json`, then renders the Stage 1 `discovery_research`, `discovery_thinking`, `discovery_brainstorm`, and `discovery_synthesis` producer prompts from the installed package and asserts each embeds its full building-block playbook set (8 research, 12 consider) with no Woof-author-local skill, wrapper, or host-path token (`taches-cc-resources`, `~/.claude/plugins`, `agent-sync`, `AskUserQuestion`, `$ARGUMENTS`, host home paths). `pyproject.toml` gained PyPI release metadata: `keywords`, `classifiers`, `license-files`, and `[project.urls]` (Homepage/Repository/Issues). README adds a `Publishing` section documenting the `uv build` / `uv publish` path, the TestPyPI dry-run, and the release smoke test, and the Status line records Phase A and Phase B both complete. BHID-004 (`bin/woof` portability) was already closed under RC-6. No graph topology, schema contract, or ADR invariant changed. | Focused validation passed: `uv run pytest tests/integration/test_release_smoke.py` (1 test: wheel build, isolated venv install, `woof init --tracker local`, schema validation, Stage 1 prompt portability). `git diff --check` passed. `just check` passed: Ruff lint, Ruff format check, and 322 tests. | `feat(packaging): add pypi metadata and release smoke test`; `docs(release): record phase b portability evidence` |
+| RC-B5: PyPI Surface Correction | Completed | — | RC-B4 framed Woof's release surface around publishing to PyPI; that premise was wrong and is corrected here. Woof ships from its GitHub repository (`github.com/krazyuniks/woof`) as an AI-assisted development tool installed with `uv tool install git+https://github.com/krazyuniks/woof`; it is not a PyPI-published Python library and cannot be one - it requires the `claude` and `codex` CLIs, `just`, and a consumer project layout to operate, and is never imported as a library. The wheel-build and installed-package architecture from RC-6 (`python -m woof` re-entry, `tool_root()` asset resolution, hatchling force-include of `schemas`/`playbooks`/`languages`/`bin`) is correct and unchanged; only the PyPI publishing layer above it was removed. Corrections: the README `Publishing` section (`uv publish`, `UV_PUBLISH_TOKEN`, TestPyPI) was deleted and `test_release_smoke.py` folded into the `Installed Package Smoke` section; README and `docs/consumers.md` install commands changed from `uv tool install woof` / `pip install woof` to the `git+https` source; `pyproject.toml` `keywords` and `classifiers` (PyPI catalogue metadata) were removed, with `[build-system]`, the `[tool.hatch.build.targets.wheel]` force-include, `[project.urls]`, `[project.scripts]`, and `license`/`license-files` retained because they are needed for any wheel build including a `git+https` install; the `test_release_smoke.py` and `test_packaging_install.py` docstrings were de-PyPI'd. No graph topology, schema contract, or ADR invariant changed. | `git diff --check` passed. `just check` passed: Ruff lint, Ruff format check, and 322 tests. Landed with the course-correction commit. | `chore(course-correction): align woof around self-use backlog` |
 
 ### Phase B Sequencing And Estimates
 
@@ -396,7 +398,7 @@ After the original 2026-05-19 audit, Ryan stopped the prompt loop to assess velo
 **Descope outcome:**
 
 - **GAP-015 only.** Reclassified `missing` -> `docs-drift`, moved RC-4 -> RC-7. The Python graph does not itself spend tokens; subprocess dispatch already records actual token usage in `dispatch.jsonl`. The architecture line at `docs/architecture.md:152` describes a model-in-driver scenario that is not implemented and is not part of the accepted topology. Narrow the line, do not implement a stage-transition emitter.
-- All other gaps (GAP-011..014, GAP-016..020) stay. The "GTS-only, source checkout, defer the rest" descope path was eliminated when Ryan confirmed WOOF's target is "any project, anyone's, anywhere."
+- All other gaps (GAP-011..014, GAP-016..020) stay. The 2026-05-19 note that the "GTS-only, source checkout, defer the rest" path was eliminated is superseded by the 2026-05-21 course correction: Ryan's own-project use is urgent, portfolio exemplar work comes next, and OSS/distribution polish is deferred until the core loop is reliable.
 
 **RC-3 hidden gaps surfaced by second-pass code reading:**
 
@@ -428,6 +430,38 @@ After the original 2026-05-19 audit, Ryan stopped the prompt loop to assess velo
 
 These are the priority targets for the Deep Code Review session (see prompt block below).
 
+**Deep Code Review completed - 2026-05-20:** the read-only end-to-end audit of the eight files above is recorded at `docs/audit-2026-05-19-deep-code-review.md` (4371 LOC; 12 gaps - 1 high, 4 medium, 7 low; 10 refactors; 3 cross-cutting analyses; no finding overturns an ADR invariant).
+
+## Course Correction - 2026-05-21
+
+Ryan redirected the project around actual use value rather than release polish. The durable course-correction record is `docs/course-correction-2026-05-21.md`.
+
+### Decisions
+
+- Priority order is self-use in Ryan's own projects first, portfolio exemplar second, OSS/stranger-consumer distribution last.
+- Do not ask more PyPI, GitHub install, tagging, or packaging-distribution questions during this correction. Distribution work is deferred, although packaging smoke tests remain useful regression evidence.
+- Commit-safety guardrails and runtime action-safety guardrails are both first-class systems. Commit safety protects what gets committed; runtime action safety protects the host and working project while dispatched agents are running.
+- Stage 5 producer guidance must be portable Woof-owned prompt/playbook content. The graph must not depend on a Claude-only `/wf:execute-story` slash command.
+- Commit messages should describe the actual story/result/work. The current hard-coded `feat(woof)` scope is a defect to fix, not a policy question.
+- The current gate surface remains the file-and-command interface for self-use, but gate resolution needs transaction hardening and better operator reporting.
+- Audit redaction/capping exists; audit retention/archive is not implemented and should not be described as current behaviour.
+
+### Active Workstreams
+
+| Workstream | Status | Child gaps / sources | Closure outcomes | Validation expectations | Commit |
+|---|---|---|---|---|---|
+| CC-001: Documentation And Backlog Realignment | Completed | Ryan direction, RC-B5, deep audit, README/architecture/plan drift | Preserved both audit trails; added `docs/course-correction-2026-05-21.md`; aligned README, architecture, consumers guide, implementation plan, and continuation prompt around self-use-first priority and deferred distribution; recorded the guardrail taxonomy and Stage 5 portability direction. | `git diff --check` passed. `just check` passed: Ruff lint, Ruff format check, and 322 tests. | `chore(course-correction): align woof around self-use backlog` |
+| CC-002: Self-Use Stage 5 Portability | Ready | DRH-001, DRH-003, DRH-004, DRH-006, DRH-010 | Move Stage 5 producer guidance into portable Woof-owned prompt/playbook content; stop `_story_prompt` from invoking `/wf:execute-story`; pass dispatched prompts to Claude/Codex on stdin rather than as one argv element before growing Stage 5 prompt payloads; derive commit messages from actual story/result/work with a safe fallback; add a real-subprocess smoke using stub `claude`/`codex` executables on `PATH` that emit canned `executor_result.json`-shaped output. | Targeted Stage 5 graph/prompt tests, dispatcher stdin transport tests, real-subprocess stub smoke, and `just check`. | `fix(graph): make stage 5 producer prompt portable` |
+| CC-003: Graph Failure And Gate Transaction Hardening | Ready | Lead: DRH-002; DRH-005, DRH-008, DRH-009, DRH-012; additional gate-resolution atomicity hypothesis | First eliminate the silent lost-commit resume path by preserving resume artefacts and failing loud or opening a gate on git errors. Then turn malformed governance state into operator gates where recovery is possible, handle `write_gate` schema failures consistently with that policy, start by reading `src/woof/cli/commands/wf.py`'s `--resolve` path before changing gate-resolution atomicity, and harden tracker timeout/orphan edge cases without changing ADR invariants. | Targeted graph transition, gate writer, gate resolution, tracker, and crash-resume tests plus `just check`. | `fix(graph): harden failure recovery and gates` |
+| CC-004: Runtime Action-Safety Model | Blocked | Ryan runtime-permission policy decision, dispatch permission audit, architecture gap | Do not implement until Ryan decides the runtime-permission policy. Once unblocked, document and implement what dispatched agents may read, write, execute, access over the network, and expose through logs. Start pragmatic for Ryan self-use, but make the boundary explicit and testable. | Blocked. When unblocked: architecture update, config/schema tests, dispatcher tests, and `just check`. | `feat(dispatch): define runtime action safety policy` |
+| CC-005: Observability And Audit UX | Ready | Deep audit cross-cutting findings, audit retention drift | Add operator-facing status/timeline/gate/audit reporting; expose token/cost data where available; reconcile audit overflow and retention/archive behaviour with code. | CLI tests for new reporting surfaces plus `just check`. | `feat(cli): add workflow observability views` |
+| CC-006: Governance Depth | Ready | Release audit, Check 4 conformance note, gate UX note, DRH-007 deferred, REF-1..10 deferred | Strengthen contract-reference conformance beyond existence checks, improve reviewer evidence quality, and revisit gate UX after the core self-use loop is stable. DRH-007 and REF-1..10 are explicitly deferred low/refactor material, not lost audit findings. | Contract-check tests, reviewer fixture tests, docs, and `just check`. | `feat(checks): deepen contract governance` |
+| CC-007: Distribution And Release Polish | Blocked | Deferred by Ryan | Revisit install, packaging, GitHub/PyPI/tagging decisions, external consumer docs, and OSS onboarding only after self-use and portfolio readiness are established. | To be defined when unblocked. | Not selected |
+
+### Sequencing
+
+Start CC-002 next because Stage 5 portability directly blocks Ryan's preferred primary route and DRH-004 must be fixed before prompt payloads grow further. CC-003 should follow closely, with DRH-002 as the lead item because silent lost commits are the highest-consequence failure mode in the audit. CC-004 is blocked until Ryan makes the runtime-permission policy decision; skip it in the automatic continuation loop until then.
+
 ## Next Continuation Prompt
 
 ```text
@@ -438,29 +472,32 @@ Read first:
 2. README.md
 3. docs/implementation-plan.md
 4. docs/architecture.md
-5. docs/adr/001-orchestration-topology.md
-6. docs/adr/002-graph-led-role-routing.md
-7. docs/adr/003-issue-tracker-abstraction.md
+5. docs/course-correction-2026-05-21.md
+6. docs/audit-2026-05-19-deep-code-review.md
+7. docs/adr/001-orchestration-topology.md
+8. docs/adr/002-graph-led-role-routing.md
+9. docs/adr/003-issue-tracker-abstraction.md
 
 Status:
-Every sequenced workstream in docs/implementation-plan.md is complete. The historical phase ledger through Phase 18 `WFL-001`, the Phase A release-closure workstreams RC-1 through RC-7, and the Phase B portability workstreams RC-B1 through RC-B4 are all `Completed` as of 2026-05-20. All four Phase B hidden gaps are resolved: BHID-001 (Stage 1 producer skill bundling) under RC-B1, BHID-002 (issue-tracker abstraction) under RC-B2, BHID-003 (first-run consumer onboarding) under RC-B3, and BHID-004 (`bin/woof` portability) under RC-6. There is no `Ready` workstream to pick up. Do not invent a micro-row to keep a continuation loop running.
-
-RC-B4 closed on 2026-05-20. It added `tests/integration/test_release_smoke.py`, the Phase B release-readiness gate: it builds a wheel, installs it into an isolated virtual environment, runs `woof init --tracker local` in a throwaway consumer worktree, validates the scaffold against the wheel-bundled `prerequisites.schema.json`, and renders the Stage 1 producer prompts from the installed package to confirm each embeds its full building-block playbook set with no Woof-author-local skill, wrapper, or host-path token. `pyproject.toml` gained PyPI metadata (`keywords`, `classifiers`, `license-files`, `[project.urls]`) and README gained a `Publishing` section documenting the `uv build` / `uv publish` path.
+The project is under the 2026-05-21 course correction. Ryan's own development use is the urgent priority. Portfolio exemplar value comes after the core loop works. OSS/distribution polish is deferred.
 
 Goal:
-There is no queued implementation work. The next action depends on what Ryan wants:
+Start CC-002 from the course-correction backlog in docs/implementation-plan.md:
 
-- Publishing Woof to PyPI is a maintainer-run, credentialed step, not an agent task. The path is in README "Publishing": `just check`, `uv build`, `uv publish` with `UV_PUBLISH_TOKEN` set. `tests/integration/test_release_smoke.py` is the release-readiness gate and runs inside `just check`. An agent session must not run `uv publish`: it writes to an external package index and needs Ryan's PyPI token.
-- If new implementation work is wanted, it must come from a fresh audit, not an invented row. The "Deep Code Review Continuation Prompt" block below is a ready-to-run read-only audit of the eight load-bearing source files the second-pass audit did not read end-to-end; running it produces `docs/audit-2026-05-19-deep-code-review.md` and may surface new gaps that become new workstreams.
-- Otherwise, wait for an explicit task from Ryan before editing source.
+- Make Stage 5 producer guidance portable for the self-use path.
+- Include DRH-004 in the same workstream by moving dispatched Claude/Codex prompt payloads from one argv element to stdin.
+- Do not ask PyPI, GitHub install, tagging, or packaging-distribution questions. CC-007 is blocked until Ryan explicitly reopens distribution.
+- Do not start CC-004 until Ryan provides the runtime-permission policy decision.
 
 Preserve the accepted architecture in any future work: Woof stays graph-led (ADR-001); GPT-5.5 is the preferred primary producer route and Claude Opus 4.7 at `max` effort is the preferred reviewer route (ADR-002); reviewer blockers open human gates with no model-to-model debate loop; the issue tracker stays behind the `Tracker` protocol (ADR-003); and Woof must not depend on Woof-author-local wrappers (`cld`, `cod`), `agent-sync`, `~/.dotfiles`, or host-specific absolute paths.
 
 Start with:
-Confirm with Ryan whether the next session should (a) run the Deep Code Review audit recorded below, (b) take a specific new task, or (c) prepare the actual PyPI publish for Ryan to run. Do not start source edits until that is decided.
+Run `git status --short --branch`, preserve unrelated local changes, and select the first active course-correction workstream by order. For CC-002, inspect `.claude/commands/wf/execute-story.md`, `playbooks/`, `src/woof/graph/nodes.py`, `src/woof/cli/dispatcher.py`, and the Stage 5 tests before editing.
 ```
 
 ## Deep Code Review Continuation Prompt
+
+Retained for provenance only. This audit has already been run, and the report exists at `docs/audit-2026-05-19-deep-code-review.md`. Do not use this block as the next-session prompt.
 
 This prompt is for a one-off audit session that does NOT continue Phase A execution. It runs in a clean context window so the reviewer has full room to read load-bearing source files end-to-end and write findings without context pressure from prior session work. The intended invoker is Ryan in a fresh Claude Code session.
 
@@ -517,4 +554,3 @@ Finish by appending a one-line summary entry to `docs/implementation-plan.md`'s 
 
 After the report is written, do not start implementation work. Hand back to Ryan with the path to the report.
 ```
-

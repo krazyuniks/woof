@@ -1,25 +1,27 @@
 # Consumer Checkouts
 
+> Current status: deferred external-consumer guidance. The active project priority is Ryan's own development use from a source checkout. Keep this document aligned enough that it does not mislead, but do not treat distribution, packaging, or stranger-onboarding polish as the current workstream.
+
 Woof runs from its own checkout or installed package against a separate consumer repository. The consumer repository owns project-specific declarations under `.woof/`; it does not copy Woof source, schemas, playbooks, tests, or dogfood examples.
 
 `guitar-tone-shootout` is the first external consumer. In that role, GTS remains responsible for its own application source, `just` recipes, Docker topology, GitHub issue scope, quality gates, language choices, and project-specific host or server checks. Woof remains responsible for graph execution, schemas, role dispatch, check runners, gate writing, and transaction verification.
 
 ## First-Run Walkthrough
 
-This walkthrough takes a new consumer from a clean machine to a running epic without reading the architecture document. It assumes you are integrating Woof into your own repository (the "consumer repository"); Woof itself is installed separately and is never copied in.
+This walkthrough is retained for the later OSS/external-consumer phase. It takes a new consumer from a clean machine to a running epic without reading the architecture document. It assumes you are integrating Woof into your own repository (the "consumer repository"); Woof itself is installed separately and is never copied in.
 
 ### 1. Install Woof
 
-Woof is published as a Python package. Install it as a standalone tool:
+Future external consumers install Woof from its repository. Install the CLI as a standalone tool:
 
 ```bash
-uv tool install woof
+uv tool install git+https://github.com/krazyuniks/woof
 ```
 
 Or into an existing environment:
 
 ```bash
-pip install woof
+pip install git+https://github.com/krazyuniks/woof
 ```
 
 Confirm the CLI is on `PATH`:

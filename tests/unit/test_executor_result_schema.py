@@ -56,6 +56,7 @@ def test_staged_for_verification_valid() -> None:
             "epic_id": 182,
             "story_id": "S1",
             "outcome": "staged_for_verification",
+            "commit_subject": "feat: E182 S1 - bootstrap executor result",
             "commit_body": "Bootstrap: registry + check_6 + driver protocol",
             "position": None,
         }

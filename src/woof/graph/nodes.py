@@ -575,18 +575,10 @@ def _render_plan_markdown(plan: Plan) -> str:
 
 
 def _story_prompt(epic_id: int, story_id: str) -> str:
-    return f"""You are executing story {story_id} in epic E{epic_id}.
-
-Read:
-1. .woof/.current-epic
-2. .woof/epics/E{epic_id}/plan.json
-3. .woof/epics/E{epic_id}/EPIC.md
-4. CLAUDE.md / AGENTS.md if present
-
-Invoke /wf:execute-story with arguments "E{epic_id} {story_id}".
-Produce .woof/epics/E{epic_id}/executor_result.json and exit.
-Do not dispatch critique, verify, open gates, or commit.
-"""
+    return _prompt_template(
+        tool_root() / "playbooks" / "execution" / "story.md",
+        {"epic_id": str(epic_id), "story_id": story_id},
+    )
 
 
 def _story_context_artefacts(repo_root: Path, epic_id: int) -> list[str]:
@@ -1591,8 +1583,14 @@ def _executor_result(repo_root: Path, epic_id: int) -> dict:
     return json.loads(path.read_text())
 
 
-def _commit_message(epic_id: int, story_title: str, story_id: str) -> str:
-    return f"feat(woof): E{epic_id} {story_id} - {story_title}"
+def _commit_message(
+    epic_id: int, story_title: str, story_id: str, executor_result: dict | None = None
+) -> str:
+    if executor_result:
+        subject = str(executor_result.get("commit_subject") or "").strip()
+        if subject:
+            return " ".join(subject.splitlines())
+    return f"feat: E{epic_id} {story_id} - {story_title}"
 
 
 def commit_node(inp: NodeInput) -> NodeOutput:
@@ -1727,7 +1725,7 @@ def commit_node(inp: NodeInput) -> NodeOutput:
     )
     git(inp.repo_root, "add", "--", f".woof/epics/E{inp.epic_id}/epic.jsonl")
 
-    message = _commit_message(inp.epic_id, story.title, inp.story_id)
+    message = _commit_message(inp.epic_id, story.title, inp.story_id, result)
     body = result.get("commit_body")
     args = ["commit", "-m", message]
     if body:

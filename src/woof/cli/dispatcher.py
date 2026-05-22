@@ -256,7 +256,11 @@ def build_argv(
     *,
     mcp_servers: dict[str, Any] | None = None,
 ) -> list[str]:
-    """Construct a public claude/codex invocation argv from a role definition."""
+    """Construct a public claude/codex invocation argv from a role definition.
+
+    The prompt is intentionally not appended to argv. ``cmd_dispatch`` sends it
+    on stdin so large playbook-bundled prompts do not hit Linux MAX_ARG_STRLEN.
+    """
     flags = [str(flag) for flag in role.get("flags") or []]
     model = role.get("model")
     effort = _role_effort(adapter, role)
@@ -300,7 +304,6 @@ def build_argv(
         argv += flags
     else:
         raise DispatchConfigError(f"cannot dispatch adapter {adapter!r}")
-    argv.append(prompt)
     return argv
 
 
@@ -348,7 +351,7 @@ def normalise_artefacts_loaded(repo_root: Path, values: list[str] | None) -> lis
 
 def audit_argv(wrapped_argv: list[str]) -> list[str]:
     """Return argv suitable for durable audit events without duplicating the prompt."""
-    return [*wrapped_argv[:-1], "<prompt>"]
+    return [*wrapped_argv, "<prompt:stdin>"]
 
 
 def audit_file_stem(
@@ -501,6 +504,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         wrapped = ["timeout", f"{timeout_min}m", *argv]
         payload = {
             "argv": wrapped,
+            "prompt_transport": "stdin",
             "epic": args.epic,
             "story": args.story,
             "role": args.role,
@@ -532,7 +536,13 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     wrapped_argv = ["timeout", f"{timeout_min}m", *argv]
     event_argv = audit_argv(wrapped_argv)
 
-    proc = subprocess.Popen(wrapped_argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    proc = subprocess.Popen(
+        wrapped_argv,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
 
     spawned_event: dict = {
         "event": "subprocess_spawned",
@@ -544,6 +554,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         "pid": proc.pid,
         "mcp": mcp_names,
         "argv": event_argv,
+        "prompt_transport": "stdin",
         "artefacts_loaded": artefacts_loaded,
     }
     if route.config_role != args.role:
@@ -557,7 +568,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     append_jsonl(dispatch_jsonl, spawned_event)
 
     try:
-        stdout, stderr = proc.communicate()
+        stdout, stderr = proc.communicate(prompt)
     except KeyboardInterrupt:
         proc.terminate()
         stdout, stderr = proc.communicate()
@@ -615,6 +626,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         "duration_ms": duration_ms,
         "mcp": mcp_names,
         "argv": event_argv,
+        "prompt_transport": "stdin",
         "artefacts_loaded": artefacts_loaded,
     }
     if route.config_role != args.role:
@@ -646,6 +658,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         "mcp": mcp_names,
         "flags": route.config.get("flags") or [],
         "argv": event_argv,
+        "prompt_transport": "stdin",
         "artefacts_loaded": artefacts_loaded,
         "pid": proc.pid,
         "started_at": iso_utc(started_at),

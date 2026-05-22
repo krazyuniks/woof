@@ -109,7 +109,7 @@
       "type": "array",
       "items": { "type": "string" },
       "minItems": 1,
-      "description": "Resolved public command argv. Prompt payloads may be replaced with <prompt> in durable events."
+      "description": "Resolved public command argv. Prompt payloads sent through stdin are represented with <prompt:stdin> in durable events."
     },
     "pid": {
       "type": "integer",

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shlex
 import socket
 import subprocess
 from pathlib import Path
@@ -55,6 +56,93 @@ def _write_tracker_prerequisites(root: Path) -> None:
     (woof_dir / "prerequisites.toml").write_text(
         '[tracker]\nkind = "github"\nrepo = "acme/widgets"\n'
     )
+
+
+def test_story_prompt_is_portable_playbook_prompt() -> None:
+    prompt = nodes._story_prompt(7, "S3")
+
+    assert "/wf:execute-story" not in prompt
+    assert '"node_type": "executor_dispatch"' in prompt
+    assert '"epic_id": 7' in prompt
+    assert '"story_id": "S3"' in prompt
+    assert "Tracer-bullet red-green-refactor discipline" in prompt
+    assert "commit_subject" in prompt
+
+
+def test_executor_dispatch_uses_portable_prompt_with_stub_adapter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    directory = _write_plan(tmp_path, 1)
+    (tmp_path / ".woof" / ".current-epic").write_text("E1")
+    (tmp_path / ".woof" / "agents.toml").write_text(
+        """\
+[roles.primary]
+adapter = "claude"
+model = "claude-opus-4-7"
+effort = "max"
+
+[timeouts]
+default_minutes = 15
+"""
+    )
+    (directory / "EPIC.md").write_text(
+        "---\nepic_id: 1\n"
+        "observable_outcomes:\n"
+        "  - id: O1\n"
+        "    statement: Stub outcome\n"
+        "    verification: automated\n---\n"
+    )
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    stdin_capture = tmp_path / "executor.stdin"
+    script = bin_dir / "claude"
+    claude_response = json.dumps(
+        {
+            "type": "result",
+            "session_id": "00000000-0000-0000-0000-000000000002",
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+        }
+    )
+    script.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        f"cat > {shlex.quote(str(stdin_capture))}\n"
+        "mkdir -p src .woof/epics/E1\n"
+        "printf '%s\\n' 'print(\"O1\")' > src/app.py\n"
+        "cat > .woof/epics/E1/executor_result.json <<'JSON'\n"
+        "{\n"
+        '  "epic_id": 1,\n'
+        '  "story_id": "S1",\n'
+        '  "outcome": "staged_for_verification",\n'
+        '  "commit_subject": "feat: E1 S1 - run stub story",\n'
+        '  "commit_body": "Stub story executed.",\n'
+        '  "position": null\n'
+        "}\n"
+        "JSON\n"
+        f"printf '%s\\n' {shlex.quote(claude_response)}\n"
+    )
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+
+    output = nodes.executor_dispatch_node(
+        NodeInput(
+            node_type=NodeType.EXECUTOR_DISPATCH,
+            epic_id=1,
+            story_id="S1",
+            repo_root=tmp_path,
+        )
+    )
+
+    assert output.status == NodeStatus.COMPLETED
+    prompt = stdin_capture.read_text()
+    assert "/wf:execute-story" not in prompt
+    assert '"node_type": "executor_dispatch"' in prompt
+    assert "commit_subject" in prompt
+    result = json.loads((directory / "executor_result.json").read_text())
+    assert result["commit_subject"] == "feat: E1 S1 - run stub story"
+    events = [json.loads(line) for line in (directory / "dispatch.jsonl").read_text().splitlines()]
+    assert events[0]["prompt_transport"] == "stdin"
+    assert events[0]["argv"][-1] == "<prompt:stdin>"
 
 
 def _make_gh_rate_limit_stub(bin_dir: Path) -> dict[str, str]:
@@ -349,23 +437,24 @@ def _make_gh_completion_stub(bin_dir: Path) -> dict[str, str]:
     }
 
 
-def _write_ready_commit_state(root: Path, epic_id: int = 1) -> Path:
+def _write_ready_commit_state(
+    root: Path, epic_id: int = 1, commit_subject: str | None = None
+) -> Path:
     directory = _write_plan(root, epic_id)
     plan = json.loads((directory / "plan.json").read_text())
     plan["stories"][0]["status"] = "done"
     (directory / "plan.json").write_text(json.dumps(plan))
     (directory / "dispatch.jsonl").write_text("{}\n")
-    (directory / "executor_result.json").write_text(
-        json.dumps(
-            {
-                "epic_id": epic_id,
-                "story_id": "S1",
-                "outcome": "staged_for_verification",
-                "commit_body": "done",
-                "position": None,
-            }
-        )
-    )
+    executor_result = {
+        "epic_id": epic_id,
+        "story_id": "S1",
+        "outcome": "staged_for_verification",
+        "commit_body": "done",
+        "position": None,
+    }
+    if commit_subject:
+        executor_result["commit_subject"] = commit_subject
+    (directory / "executor_result.json").write_text(json.dumps(executor_result))
     (directory / "check-result.json").write_text(
         json.dumps(
             {
@@ -1516,6 +1605,39 @@ def test_graph_resumes_interrupted_commit_transaction(tmp_path: Path) -> None:
         text=True,
     )
     assert status.stdout == ""
+    subject = _git(
+        tmp_path,
+        "log",
+        "-1",
+        "--pretty=%s",
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert subject.stdout.strip() == "feat: E1 S1 - first"
+
+
+def test_commit_uses_executor_commit_subject(tmp_path: Path) -> None:
+    _init_git_repo(tmp_path)
+    _write_ready_commit_state(
+        tmp_path,
+        1,
+        commit_subject="fix: E1 S1 - repair consumer checkout bootstrap",
+    )
+
+    outputs = run_graph(tmp_path, 1)
+
+    assert outputs[-1].status == NodeStatus.EPIC_COMPLETE
+    subject = _git(
+        tmp_path,
+        "log",
+        "-1",
+        "--pretty=%s",
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert subject.stdout.strip() == "fix: E1 S1 - repair consumer checkout bootstrap"
 
 
 def test_commit_redacts_audit_before_staging_transaction(tmp_path: Path) -> None:

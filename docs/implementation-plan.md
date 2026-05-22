@@ -452,7 +452,7 @@ Ryan redirected the project around actual use value rather than release polish. 
 |---|---|---|---|---|---|
 | CC-001: Documentation And Backlog Realignment | Completed | Ryan direction, RC-B5, deep audit, README/architecture/plan drift | Preserved both audit trails; added `docs/course-correction-2026-05-21.md`; aligned README, architecture, consumers guide, implementation plan, and continuation prompt around self-use-first priority and deferred distribution; recorded the guardrail taxonomy and Stage 5 portability direction. | `git diff --check` passed. `just check` passed: Ruff lint, Ruff format check, and 322 tests. | `chore(course-correction): align woof around self-use backlog` |
 | CC-002: Self-Use Stage 5 Portability | Completed | DRH-001, DRH-003, DRH-004, DRH-006, DRH-010 | Stage 5 producer guidance now lives in `playbooks/execution/story.md`; `_story_prompt` loads that portable playbook and no longer invokes `/wf:execute-story`; `woof dispatch` sends prompt payloads to Claude/Codex on stdin and records `<prompt:stdin>` plus `prompt_transport`; `executor_result.json` accepts optional `commit_subject`, and commit construction uses it with a generic story-title fallback instead of hard-coded `feat(woof)`; a real-subprocess graph smoke uses a stub public CLI on `PATH` to emit `executor_result.json`-shaped output. | Focused validation passed: `uv run pytest tests/unit/test_dispatch.py tests/unit/test_graph.py tests/unit/test_prompt_role_terminology.py tests/unit/test_executor_result_schema.py` (96 tests). `git diff --check` passed. `just check` passed: Ruff lint, Ruff format check, and 325 tests. | `fix(graph): make stage 5 producer prompt portable` |
-| CC-003: Graph Failure And Gate Transaction Hardening | Ready | Lead: DRH-002; DRH-005, DRH-008, DRH-009, DRH-012; additional gate-resolution atomicity hypothesis | First eliminate the silent lost-commit resume path by preserving resume artefacts and failing loud or opening a gate on git errors. Then turn malformed governance state into operator gates where recovery is possible, handle `write_gate` schema failures consistently with that policy, start by reading `src/woof/cli/commands/wf.py`'s `--resolve` path before changing gate-resolution atomicity, and harden tracker timeout/orphan edge cases without changing ADR invariants. | Targeted graph transition, gate writer, gate resolution, tracker, and crash-resume tests plus `just check`. | `fix(graph): harden failure recovery and gates` |
+| CC-003: Graph Failure And Gate Transaction Hardening | Completed | Lead: DRH-002; DRH-005, DRH-008, DRH-009, DRH-012; additional gate-resolution atomicity hypothesis | Commit-resume git inspection failures now preserve `executor_result.json` and `check-result.json` and fail loud instead of silently discarding the resume path. Operator-recoverable malformed governance state such as missing/malformed `plan.json` and dependency dead ends now opens a plan-level `incomplete_stage_state` gate. Deterministic `write_gate` schema failures remain loud Woof bugs and roll back `gate.md` without appending a gate-opened event. The `woof wf --resolve` path was inspected and left behaviour-preserving: tracker/effect errors return before gate deletion, and destructive local effects are idempotent on retry. All GitHub `gh` subprocesses now have timeouts, and a just-created GitHub issue is closed if local epic initialisation fails, with manual cleanup details if closing also fails. | Focused validation passed: `uv run pytest tests/unit/test_graph.py tests/unit/test_gate_write.py tests/unit/test_trackers.py tests/unit/test_wf_github_sync.py tests/unit/test_render_epic.py` (110 tests). `just check` passed: Ruff lint, Ruff format check, and 331 tests. | `fix(graph): harden failure recovery and gates` |
 | CC-004: Runtime Action-Safety Model | Blocked | Ryan runtime-permission policy decision, dispatch permission audit, architecture gap | Do not implement until Ryan decides the runtime-permission policy. Once unblocked, document and implement what dispatched agents may read, write, execute, access over the network, and expose through logs. Start pragmatic for Ryan self-use, but make the boundary explicit and testable. | Blocked. When unblocked: architecture update, config/schema tests, dispatcher tests, and `just check`. | `feat(dispatch): define runtime action safety policy` |
 | CC-005: Observability And Audit UX | Ready | Deep audit cross-cutting findings, audit retention drift | Add operator-facing status/timeline/gate/audit reporting; expose token/cost data where available; reconcile audit overflow and retention/archive behaviour with code. | CLI tests for new reporting surfaces plus `just check`. | `feat(cli): add workflow observability views` |
 | CC-006: Governance Depth | Ready | Release audit, Check 4 conformance note, gate UX note, DRH-007 deferred, REF-1..10 deferred | Strengthen contract-reference conformance beyond existence checks, improve reviewer evidence quality, and revisit gate UX after the core self-use loop is stable. DRH-007 and REF-1..10 are explicitly deferred low/refactor material, not lost audit findings. | Contract-check tests, reviewer fixture tests, docs, and `just check`. | `feat(checks): deepen contract governance` |
@@ -460,7 +460,7 @@ Ryan redirected the project around actual use value rather than release polish. 
 
 ### Sequencing
 
-Start CC-003 next, with DRH-002 as the lead item because silent lost commits are the highest-consequence failure mode in the audit. CC-004 is blocked until Ryan makes the runtime-permission policy decision; skip it in the automatic continuation loop until then.
+Start CC-005 next. CC-004 is blocked until Ryan makes the runtime-permission policy decision; skip it in the automatic continuation loop until then.
 
 ## Next Continuation Prompt
 
@@ -479,22 +479,22 @@ Read first:
 9. docs/adr/003-issue-tracker-abstraction.md
 
 Status:
-The project is under the 2026-05-21 course correction. Ryan's own development use is the urgent priority. Portfolio exemplar value comes after the core loop works. OSS/distribution polish is deferred. CC-001 and CC-002 are complete; CC-003 is the next ready workstream.
+The project is under the 2026-05-21 course correction. Ryan's own development use is the urgent priority. Portfolio exemplar value comes after the core loop works. OSS/distribution polish is deferred. CC-001, CC-002, and CC-003 are complete. CC-004 is blocked until Ryan provides the runtime-permission policy decision; CC-005 is the next ready workstream.
 
 Goal:
-Start CC-003 from the course-correction backlog in docs/implementation-plan.md:
+Start CC-005 from the course-correction backlog in docs/implementation-plan.md:
 
-- Lead with DRH-002: eliminate the silent lost-commit resume path by preserving resume artefacts and failing loud or opening a gate on git errors.
-- Then cover DRH-005/DRH-008 consistently: malformed governance state and gate-writing schema failures should become recoverable gates where that is operator-recoverable, or loud Woof bugs where not.
-- Read `src/woof/cli/commands/wf.py`'s `--resolve` path before changing gate-resolution atomicity; the atomicity item is a hypothesis, not a located deep-audit bug.
-- Harden the tracker timeout/orphan edge cases in DRH-009 and DRH-012 without changing ADR invariants.
+- Add operator-facing workflow observability surfaces for status, timeline, gate, and audit inspection.
+- Expose token/cost data where current dispatch events provide it; do not invent usage data when adapters did not report it.
+- Reconcile audit overflow and retention/archive behaviour with implemented code: redaction and capping exist, ignored raw overflow exists, retention/archive is not current behaviour unless implemented in this workstream.
+- Keep the current file-and-command gate surface unless the workstream explicitly introduces a narrow reporting command.
 - Do not ask PyPI, GitHub install, tagging, or packaging-distribution questions. CC-007 is blocked until Ryan explicitly reopens distribution.
 - Do not start CC-004 until Ryan provides the runtime-permission policy decision.
 
 Preserve the accepted architecture in any future work: Woof stays graph-led (ADR-001); GPT-5.5 is the preferred primary producer route and Claude Opus 4.7 at `max` effort is the preferred reviewer route (ADR-002); reviewer blockers open human gates with no model-to-model debate loop; the issue tracker stays behind the `Tracker` protocol (ADR-003); and Woof must not depend on Woof-author-local wrappers (`cld`, `cod`), `agent-sync`, `~/.dotfiles`, or host-specific absolute paths.
 
 Start with:
-Run `git status --short --branch`, preserve unrelated local changes, and select the first active course-correction workstream by order. For CC-003, inspect `src/woof/graph/transitions.py`, `src/woof/graph/runner.py`, `src/woof/gate/write.py`, `src/woof/cli/commands/wf.py`, `src/woof/trackers/github.py`, and the related graph/gate/tracker tests before editing.
+Run `git status --short --branch`, preserve unrelated local changes, and select the first active course-correction workstream by order. For CC-005, inspect the existing CLI command structure, graph and dispatch event shapes, gate files, audit directory handling, and related CLI/graph/dispatch tests before editing. Update docs and tests with any new operator-facing reporting surface.
 ```
 
 ## Deep Code Review Continuation Prompt

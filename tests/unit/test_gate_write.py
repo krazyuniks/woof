@@ -16,6 +16,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from woof.gate import write as gate_write
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WOOF_BIN = REPO_ROOT / "bin" / "woof"
 GATE_SCHEMA = REPO_ROOT / "schemas" / "gate.schema.json"
@@ -218,3 +220,25 @@ def test_gate_write_appends_epic_jsonl_O5(tmp_path: Path) -> None:
     assert any(e["event"] == "story_gate_opened" for e in lines), (
         f"story_gate_opened not in epic.jsonl: {lines}"
     )
+
+
+def test_gate_write_schema_failure_is_loud_and_rolls_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    epic_dir = _setup_epic_dir(tmp_path, 185)
+    schema_path = tmp_path / "gate.schema.json"
+    schema_path.write_text("{}")
+
+    monkeypatch.setattr(gate_write, "_validate_gate", lambda *_args: (False, "invalid test gate"))
+
+    with pytest.raises(ValueError, match=r"gate\.md front-matter failed schema validation"):
+        gate_write.write_gate(
+            epic_dir=epic_dir,
+            story_id="S1",
+            triggered_by=["manual"],
+            position_text="Manual gate.",
+            schema_path=schema_path,
+        )
+
+    assert not (epic_dir / "gate.md").exists()
+    assert (epic_dir / "epic.jsonl").read_text() == ""

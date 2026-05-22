@@ -22,6 +22,19 @@ from woof.trackers.base import CONFLICT_TRIGGERS
 class StageStateError(RuntimeError):
     """Filesystem state cannot be mapped to a valid graph node."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        operator_recoverable: bool = False,
+        gate_type: str = "plan_gate",
+        story_id: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.operator_recoverable = operator_recoverable
+        self.gate_type = gate_type
+        self.story_id = story_id
+
 
 def epic_dir(repo_root: Path, epic_id: int) -> Path:
     return repo_root / ".woof" / "epics" / f"E{epic_id}"
@@ -90,9 +103,15 @@ def load_plan(repo_root: Path, epic_id: int) -> Plan:
     try:
         return Plan.model_validate_json(path.read_text())
     except FileNotFoundError as exc:
-        raise StageStateError(f"required Stage-5 artefact missing: {path}") from exc
+        raise StageStateError(
+            f"required Stage-5 artefact missing: {path}",
+            operator_recoverable=True,
+        ) from exc
     except ValueError as exc:
-        raise StageStateError(f"required Stage-5 artefact is malformed: {path}") from exc
+        raise StageStateError(
+            f"required Stage-5 artefact is malformed: {path}",
+            operator_recoverable=True,
+        ) from exc
 
 
 def write_plan(repo_root: Path, plan: Plan) -> None:
@@ -230,8 +249,19 @@ def _has_uncommitted_commit_work(repo_root: Path, epic_id: int, story: StorySpec
         manifest = build_story_manifest(repo_root, epic_id, story)
         changed = set(changed_paths(repo_root))
         staged = set(staged_paths(repo_root))
-    except (subprocess.CalledProcessError, ValueError):
-        return False
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or str(exc)).strip()
+        raise StageStateError(
+            "could not inspect interrupted commit state for "
+            f"E{epic_id} {story.id}; preserving executor_result.json and "
+            f"check-result.json. Git failed: {detail}"
+        ) from exc
+    except ValueError as exc:
+        raise StageStateError(
+            "could not inspect interrupted commit state for "
+            f"E{epic_id} {story.id}; preserving executor_result.json and "
+            f"check-result.json. {exc}"
+        ) from exc
     expected = set(manifest.expected_paths)
     return bool(staged or changed & expected)
 
@@ -291,7 +321,8 @@ def next_node(repo_root: Path, epic_id: int) -> tuple[NodeType | None, str | Non
             return NodeType.DISCOVERY_SYNTHESIS, None
         raise StageStateError(
             f"required planning artefact missing: {directory / 'plan.json'} "
-            f"(or pre-plan input {directory / 'spark.md'} / {directory / 'EPIC.md'})"
+            f"(or pre-plan input {directory / 'spark.md'} / {directory / 'EPIC.md'})",
+            operator_recoverable=True,
         )
 
     plan = load_plan(repo_root, epic_id)
@@ -321,7 +352,8 @@ def next_node(repo_root: Path, epic_id: int) -> tuple[NodeType | None, str | Non
         ready = next_ready_story(plan)
         if ready is None:
             raise StageStateError(
-                f"E{epic_id} has pending stories, but no story has satisfied dependencies"
+                f"E{epic_id} has pending stories, but no story has satisfied dependencies",
+                operator_recoverable=True,
             )
         return NodeType.EXECUTOR_DISPATCH, ready.id
 

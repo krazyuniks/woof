@@ -4,10 +4,55 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from woof.gate.write import write_gate
 from woof.graph.lock import epic_workflow_lock
 from woof.graph.nodes import NodeHandler, default_registry
 from woof.graph.state import NodeInput, NodeOutput, NodeStatus, NodeType
-from woof.graph.transitions import next_node
+from woof.graph.transitions import StageStateError, epic_dir, next_node
+from woof.paths import schema_dir
+
+
+def _gate_path(epic_id: int) -> str:
+    return f".woof/epics/E{epic_id}/gate.md"
+
+
+def _stage_state_gate_body(epic_id: int, message: str) -> str:
+    return (
+        "## Context\n\n"
+        f"Woof could not map E{epic_id} filesystem state to a valid next graph node.\n\n"
+        "## Findings\n\n"
+        f"- {message}\n\n"
+        "## Primary position\n\n"
+        "No producer output was accepted after this malformed governance state was detected. "
+        "Restore the required artefact or revise the plan state before resolving this gate.\n\n"
+        "## Reviewer position\n\n"
+        "The deterministic graph opened this gate because continuing would require guessing "
+        "the intended workflow state.\n"
+    )
+
+
+def _open_stage_state_gate(repo_root: Path, epic_id: int, exc: StageStateError) -> NodeOutput:
+    gate_type = exc.gate_type
+    story_id = exc.story_id
+    node_type = NodeType.PLAN_GATE_OPEN if gate_type == "plan_gate" else NodeType.GATE_OPEN
+    write_gate(
+        epic_dir=epic_dir(repo_root, epic_id),
+        story_id=story_id,
+        triggered_by=["incomplete_stage_state"],
+        position_text=_stage_state_gate_body(epic_id, str(exc)),
+        schema_path=schema_dir() / "gate.schema.json",
+        validate=True,
+        gate_type=gate_type,
+    )
+    return NodeOutput(
+        node_type=node_type,
+        status=NodeStatus.GATE_OPENED,
+        epic_id=epic_id,
+        story_id=story_id,
+        gate_path=_gate_path(epic_id),
+        triggered_by=["incomplete_stage_state"],
+        message=str(exc),
+    )
 
 
 def run_graph(
@@ -23,7 +68,13 @@ def run_graph(
         handlers: dict = registry or default_registry()
         outputs: list[NodeOutput] = []
         while True:
-            node_type, story_id = next_node(repo_root, epic_id)
+            try:
+                node_type, story_id = next_node(repo_root, epic_id)
+            except StageStateError as exc:
+                if exc.operator_recoverable:
+                    outputs.append(_open_stage_state_gate(repo_root, epic_id, exc))
+                    return outputs
+                raise
             if node_type is None:
                 outputs.append(
                     NodeOutput(

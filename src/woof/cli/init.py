@@ -71,6 +71,9 @@ AGENTS_TEMPLATE = """\
 # Woof role routes. ADR-002: GPT-5.5 is the preferred primary route; Claude
 # Opus 4.7 at `max` effort is the preferred reviewer route. Reviewer blockers
 # open human gates; do not add model-to-model debate loops.
+# Runtime model: trusted-local automation. Woof does not sandbox dispatched
+# agents, restrict writable paths, allow-list commands, block network access, or
+# add MCP restrictions; commit-safety checks and gates guard what lands.
 
 [roles.primary]
 adapter = "codex"

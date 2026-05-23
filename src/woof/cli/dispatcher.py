@@ -39,6 +39,12 @@ ROLE_CONFIG_FALLBACKS = {
 STORY_ID_RE = re.compile(r"^S[1-9]\d*$")
 AUDIT_COMPONENT_RE = re.compile(r"[^A-Za-z0-9_-]+")
 AGENTS_SCHEMA_PATH = schema_dir() / "agents.schema.json"
+TRUSTED_RUNTIME_MODE = "trusted-local"
+TRUSTED_RUNTIME_NOTE = (
+    "trusted-local runtime: Woof does not constrain dispatched agents at runtime; "
+    "commit safety is enforced through deterministic checks, reviewer critique, "
+    "human gates, transaction manifests, and commit decisions"
+)
 
 
 @dataclass(frozen=True)
@@ -51,6 +57,19 @@ class RoleRoute:
 
 class DispatchConfigError(ValueError):
     """Raised when a dispatch role exists but cannot be mapped to a public adapter."""
+
+
+def trusted_runtime_policy() -> dict[str, Any]:
+    """Return the operator-facing runtime policy summary for dispatch surfaces."""
+    return {
+        "mode": TRUSTED_RUNTIME_MODE,
+        "woof_runtime_constraints": [],
+        "cli_permission_mode": "broad public CLI permission flags",
+        "safety_boundary": (
+            "commit-safety checks, reviewer critique, human gates, transaction manifests, "
+            "and commit decisions"
+        ),
+    }
 
 
 def find_woof_root(start: Path) -> Path:
@@ -505,6 +524,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         payload = {
             "argv": wrapped,
             "prompt_transport": "stdin",
+            "runtime_policy": trusted_runtime_policy(),
             "epic": args.epic,
             "story": args.story,
             "role": args.role,
@@ -555,6 +575,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         "mcp": mcp_names,
         "argv": event_argv,
         "prompt_transport": "stdin",
+        "runtime_policy": trusted_runtime_policy(),
         "artefacts_loaded": artefacts_loaded,
     }
     if route.config_role != args.role:
@@ -627,6 +648,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         "mcp": mcp_names,
         "argv": event_argv,
         "prompt_transport": "stdin",
+        "runtime_policy": trusted_runtime_policy(),
         "artefacts_loaded": artefacts_loaded,
     }
     if route.config_role != args.role:
@@ -659,6 +681,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         "flags": route.config.get("flags") or [],
         "argv": event_argv,
         "prompt_transport": "stdin",
+        "runtime_policy": trusted_runtime_policy(),
         "artefacts_loaded": artefacts_loaded,
         "pid": proc.pid,
         "started_at": iso_utc(started_at),

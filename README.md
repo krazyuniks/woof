@@ -12,9 +12,9 @@ Pre-release, under active course correction. The urgent target is reliable use i
 
 The current architecture is graph-led. `woof wf --epic <N>` runs the deterministic graph; LLM prompts are producer or reviewer nodes, not workflow orchestrators. ADR-002 defines the current role policy: GPT-5.5 is the preferred primary producer route, Claude Opus 4.7 at `max` effort is the preferred reviewer route, and reviewer blockers open human gates rather than model-to-model debate loops.
 
-The previous release-closure work delivered useful foundations: portable Stage 1 Discovery prompts, a tracker abstraction with `github` and `local` adapters, `woof init` scaffolding, and package smoke coverage. Those foundations stay. They do not mean arbitrary-consumer portability is complete: the deep audit found that Stage 5 still instructs the producer to invoke a Claude-only slash command. That gap is tracked in [`docs/course-correction-2026-05-21.md`](docs/course-correction-2026-05-21.md) and [`docs/implementation-plan.md`](docs/implementation-plan.md).
+During the current self-use correction, dispatched agents run as trusted local automation. Woof does not sandbox them or restrict commands, writable paths, network access, or MCP access at runtime. `woof preflight` and `woof dispatch --dry-run` surface this mode; the safety boundary is the graph-owned commit path: checks, reviewer critique, gates, transaction manifests, and commit decisions before changes land.
 
-Current implementation status, remaining work, and the session continuation prompt live in [`docs/implementation-plan.md`](docs/implementation-plan.md).
+The previous release-closure work delivered useful foundations: portable Stage 1 Discovery prompts, a tracker abstraction with `github` and `local` adapters, `woof init` scaffolding, and package smoke coverage. The Stage 5 producer portability gap from the deep audit was closed under CC-002. Current implementation status, remaining work, and the session continuation prompt live in [`docs/implementation-plan.md`](docs/implementation-plan.md).
 
 ## Entry Map
 
@@ -121,6 +121,12 @@ Check startup infrastructure before invoking the graph:
 
 ```bash
 $WOOF preflight
+```
+
+Inspect the resolved dispatch route and trusted-local runtime policy without spawning an agent:
+
+```bash
+$WOOF dispatch --role primary --epic <N> --dry-run
 ```
 
 Distribution-oriented install instructions are deferred; [`docs/consumers.md`](docs/consumers.md) is retained as future external-consumer guidance. See [`docs/architecture.md`](docs/architecture.md) for stage and gate semantics.

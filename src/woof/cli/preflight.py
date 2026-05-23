@@ -22,6 +22,8 @@ from pathlib import Path
 from typing import Any
 
 from woof.cli.dispatcher import (
+    TRUSTED_RUNTIME_MODE,
+    TRUSTED_RUNTIME_NOTE,
     DispatchConfigError,
     _claude_mcp_config,
     _mcp_names,
@@ -506,11 +508,12 @@ def _check_dispatch_role_route(
             ok=not errors,
             detail=(
                 f"[roles.{route.config_role}] resolves adapter={route.adapter}, "
-                f"model={model}, effort={effort}"
+                f"model={model}, effort={effort}, runtime={TRUSTED_RUNTIME_MODE}"
                 if not errors
                 else "; ".join(errors)
             ),
-            required="explicit adapter, model, and effort",
+            required="explicit adapter, model, effort, and runtime-mode disclosure",
+            notes=[TRUSTED_RUNTIME_NOTE] if not errors else [],
         )
     ]
 
@@ -575,6 +578,10 @@ def _check_mcp_server_command(
 
 def _agents_template() -> str:
     return """Create .woof/agents.toml, for example:
+# Runtime model: trusted-local automation. Woof does not sandbox dispatched
+# agents, restrict writable paths, allow-list commands, block network access, or
+# add MCP restrictions; commit-safety checks and gates guard what lands.
+
 [roles.primary]
 adapter = "codex"
 model = "gpt-5.5"

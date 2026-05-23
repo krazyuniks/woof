@@ -43,7 +43,9 @@ Woof has two first-class guardrail systems.
 
 **Runtime action-safety guardrails** protect the host and working project while agents are running. They cover sandboxing, writable paths, shell permissions, network access, secrets exposure, browser/MCP access, and other external side effects.
 
-The current implementation is stronger on commit safety than runtime action safety. Dispatch adapters currently grant broad CLI permissions and rely mainly on graph verification before commit. Runtime action safety is therefore an explicit correction workstream, not an assumed property.
+Current correction model: trusted-local automation for Ryan self-use. Woof does not constrain dispatched agents at runtime: no Woof sandboxing, no command allow-list, no writable-path restriction, no network policy, and no MCP restriction layer is implemented in this correction. The public CLI adapters deliberately use broad permission modes (`claude --dangerously-skip-permissions`; `codex --dangerously-bypass-approvals-and-sandbox -s danger-full-access -a never`). This mode is surfaced in dispatch dry-run output, dispatch audit metadata, preflight route findings, and the `.woof/agents.toml` schema/template.
+
+The implemented safety boundary remains commit safety: deterministic checks, reviewer critique, human gates, transaction manifests, and commit decisions before changes land. Any future untrusted or public-consumer runtime restriction model needs a separate design and must not be implied by the current self-use path.
 
 ## 2. Architecture
 
@@ -163,7 +165,7 @@ JSONL event logs (`epic.jsonl`, `dispatch.jsonl`) enable crash-resume and post-h
 
 **Token usage logging.** Subprocess dispatch records token usage; the Python graph itself does not spend tokens. Every `subprocess_returned` event includes `tokens_in`, `tokens_out`, `cache_read_tokens`, `cache_write_tokens`, `duration_ms`, and `artefacts_loaded[]` when the adapter can determine them. `artefacts_loaded[]` contains explicit repo-relative artefact references that the graph or operator loaded into the dispatched prompt payload; absolute paths, home-relative paths, and parent traversal are rejected. `woof observe --epic <N> --view audit` and `--view timeline` aggregate token and cost fields only when those fields are present in dispatch events; they do not estimate missing usage or provider cost. No stage-transition `token_usage` emitter exists, because graph transitions are deterministic Python and do not consume tokens; the `token_usage` enum value in `schemas/jsonl-events.schema.json` is reserved for future driver modes that may run an LLM in the same process.
 
-**Dispatch adapter layer.** Subprocesses are spawned via graph-owned role dispatch, not via Ryan-local wrappers or shell aliases. ADR-002 migrates the internal primitive to `woof dispatch --role <role-name>` so the role route, not a provider target, selects the public CLI adapter. The adapter reads `.woof/agents.toml`, constructs the raw `claude` or `codex` invocation, generates any required MCP JSON, and emits dispatch events. This boundary stops CLI interface drift from breaking graph call sites.
+**Dispatch adapter layer.** Subprocesses are spawned via graph-owned role dispatch, not via Ryan-local wrappers or shell aliases. ADR-002 migrates the internal primitive to `woof dispatch --role <role-name>` so the role route, not a provider target, selects the public CLI adapter. The adapter reads `.woof/agents.toml`, constructs the raw `claude` or `codex` invocation, generates any required MCP JSON, and emits dispatch events. Dispatch dry-run output and dispatch events include `runtime_policy.mode = "trusted-local"` so operators and audit readers can see that Woof is not constraining runtime read/write/execute/network/MCP access. This boundary stops CLI interface drift from breaking graph call sites.
 
 ### Consumer checkout boundary
 
@@ -665,7 +667,7 @@ For each declared prereq, in order:
 2. Version meets floor (parse `<binary> --version`, semver compare)
 3. Per Tree-sitter grammar: parse `verify_snippet` with `verify_scope`; success = grammar working
 4. Per LSP plugin: `claude plugin list | grep <plugin>`
-5. Per role route: configured public adapter exists, configured model is explicit, configured effort is explicit, and the adapter can construct the required per-invocation effort flag plus any generated Claude MCP JSON.
+5. Per role route: configured public adapter exists, configured model is explicit, configured effort is explicit, the trusted-local runtime mode is disclosed, and the adapter can construct the required per-invocation effort flag plus any generated Claude MCP JSON.
 6. Per host/server prerequisite: declared platform matches and each configured readiness command or HTTP probe succeeds.
 
 ANY failure → exit non-zero with structured output (install commands + gotchas inline). The preflight output IS the per-language documentation — no separate setup docs maintained.
@@ -752,6 +754,10 @@ Roles in the Woof pipeline are configurable per-project via `.woof/agents.toml`.
 **Current config schema (`.woof/agents.toml`):**
 
 ```toml
+# Runtime model: trusted-local automation. Woof does not sandbox dispatched
+# agents, restrict writable paths, allow-list commands, block network access, or
+# add MCP restrictions; commit-safety checks and gates guard what lands.
+
 # adapter: claude | codex
 # model: adapter-specific ID, passed through to underlying CLI or inherited
 # effort: low | medium | high | xhigh | max; max is Claude-only
@@ -791,7 +797,7 @@ adapter = "in-session"
 - Woof passes `--strict-mcp-config --mcp-config '<json>'` to Claude and generates the JSON itself. Empty MCP means `{"mcpServers":{}}`.
 - Woof resolves selected MCP servers from project-owned `.woof/` config or standard Claude settings paths, using portable home-relative paths only.
 - Woof injects required project context into Codex prompts itself; it does not rely on Ryan's `cod` wrapper or `agent-sync`.
-- Woof runs public CLIs in trusted local automation mode; preflight verifies CLI availability and route settings before graph execution.
+- Woof runs public CLIs in trusted-local automation mode; preflight verifies CLI availability, route settings, and runtime-mode disclosure before graph execution.
 
 **Hard prereq.** `claude` and `codex` must be in `PATH`. Preflight verifies them. Absent → fail loud; there is no fallback to Ryan-local wrappers.
 

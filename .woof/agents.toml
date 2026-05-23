@@ -1,4 +1,7 @@
 # Woof self-hosting agent role configuration.
+# Runtime model: trusted-local automation. Woof does not sandbox dispatched
+# agents, restrict writable paths, allow-list commands, block network access, or
+# add MCP restrictions; commit-safety checks and gates guard what lands.
 
 [roles.orchestrator]
 adapter = "in-session"

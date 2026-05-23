@@ -419,6 +419,27 @@ def _plan_critique_artefacts(repo_root: Path, epic_id: int) -> list[str]:
     )
 
 
+def _story_critique_payload(repo_root: Path, epic_id: int, story_id: str) -> dict:
+    directory = epic_dir(repo_root, epic_id)
+    plan = load_plan(repo_root, epic_id)
+    story = story_by_id(plan, story_id)
+    return {
+        "node_type": NodeType.CRITIQUE_DISPATCH.value,
+        "epic_id": epic_id,
+        "story_id": story_id,
+        "repo_root": str(repo_root),
+        "epic_dir": _relpath(repo_root, directory),
+        "inputs": {
+            "epic_path": _relpath(repo_root, directory / "EPIC.md"),
+            "plan_path": _relpath(repo_root, directory / "plan.json"),
+            "critique_path": _relpath(repo_root, story_critique_path(directory, story_id)),
+            "staged_diff_command": "git diff --staged",
+            "staged_paths_command": "git diff --staged --name-only",
+            "story": story.model_dump(),
+        },
+    }
+
+
 def _plan_gate_open_payload(repo_root: Path, epic_id: int) -> dict:
     directory = epic_dir(repo_root, epic_id)
     return {
@@ -471,6 +492,18 @@ def _breakdown_planning_prompt(repo_root: Path, epic_id: int) -> str:
 def _plan_critique_prompt(repo_root: Path, epic_id: int) -> str:
     payload = _plan_critique_payload(repo_root, epic_id)
     template = (tool_root() / "playbooks" / "critique" / "plan.md").read_text(encoding="utf-8")
+    return (
+        "Graph-owned input:\n\n"
+        "```json\n"
+        f"{json.dumps(payload, indent=2, sort_keys=True)}\n"
+        "```\n\n"
+        f"{template}"
+    )
+
+
+def _story_critique_prompt(repo_root: Path, epic_id: int, story_id: str) -> str:
+    payload = _story_critique_payload(repo_root, epic_id, story_id)
+    template = (tool_root() / "playbooks" / "critique" / "story.md").read_text(encoding="utf-8")
     return (
         "Graph-owned input:\n\n"
         "```json\n"
@@ -1372,7 +1405,7 @@ def executor_dispatch_node(inp: NodeInput) -> NodeOutput:
 def critique_dispatch_node(inp: NodeInput) -> NodeOutput:
     if not inp.story_id:
         raise ValueError("critique_dispatch requires story_id")
-    prompt = (tool_root() / "playbooks" / "critique" / "story.md").read_text()
+    prompt = _story_critique_prompt(inp.repo_root, inp.epic_id, inp.story_id)
     proc = _run_dispatch(
         inp.repo_root,
         role="reviewer",

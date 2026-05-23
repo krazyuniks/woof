@@ -17,6 +17,8 @@ import yaml
 
 from woof.paths import schema_dir
 
+HTTP_METHODS = {"delete", "get", "head", "options", "patch", "post", "put", "trace"}
+
 
 @dataclass(frozen=True)
 class ContractRefFinding:
@@ -214,6 +216,14 @@ def _resolve_json_pointer(doc: object, pointer: str) -> object | None:
     return cur
 
 
+def _json_pointer_tokens(pointer: str) -> list[str] | None:
+    if pointer in ("", "/"):
+        return []
+    if not pointer.startswith("/"):
+        return None
+    return [raw.replace("~1", "/").replace("~0", "~") for raw in pointer.lstrip("/").split("/")]
+
+
 def _check_openapi_ref(repo_root: Path, ref: str) -> tuple[bool, str]:
     if "#" not in ref:
         return False, f"openapi_ref missing '#<json-pointer>' fragment: {ref!r}"
@@ -235,6 +245,26 @@ def _check_openapi_ref(repo_root: Path, ref: str) -> tuple[bool, str]:
         return False, f"json pointer '{pointer}' did not resolve in {file_part}"
     if not isinstance(target, dict):
         return False, f"json pointer '{pointer}' resolved to non-object {type(target).__name__}"
+    tokens = _json_pointer_tokens(pointer)
+    if tokens and tokens[0] == "paths":
+        if len(tokens) < 3:
+            return (
+                False,
+                f"openapi_ref under #/paths must point to an operation, not path item: {pointer}",
+            )
+        method = tokens[2].lower()
+        if method not in HTTP_METHODS:
+            return (
+                False,
+                f"openapi_ref under #/paths must end with an HTTP method, got {tokens[2]!r}",
+            )
+        responses = target.get("responses")
+        if not isinstance(responses, dict):
+            return False, f"openapi operation '{pointer}' is missing a responses object"
+        return (
+            True,
+            f"resolved OpenAPI {method.upper()} operation with {len(responses)} response(s)",
+        )
     return True, f"resolved to {type(target).__name__} with {len(target)} key(s)"
 
 
@@ -306,4 +336,50 @@ def _check_json_schema_ref(repo_root: Path, ref: str) -> tuple[bool, str]:
         msg = (proc.stdout + proc.stderr).strip().splitlines()
         first = msg[0] if msg else "(no output)"
         return False, f"ajv compile rejected schema: {first}"
-    return True, "ajv compile passed"
+    try:
+        schema_doc = json.loads(schema_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return False, f"json_schema failed to parse after compile: {exc}"
+    examples = schema_doc.get("examples") if isinstance(schema_doc, dict) else None
+    if examples is None:
+        return True, "ajv compile passed"
+    if not isinstance(examples, list):
+        return False, "json_schema top-level examples must be an array when present"
+    if not examples:
+        return True, "ajv compile passed"
+
+    for index, example in enumerate(examples):
+        ok, detail = _validate_json_schema_example(schema_path, example)
+        if not ok:
+            return False, f"json_schema examples[{index}] failed validation: {detail}"
+    return True, f"ajv compile passed; {len(examples)} top-level example(s) validated"
+
+
+def _validate_json_schema_example(schema_path: Path, example: object) -> tuple[bool, str]:
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+        json.dump(example, fh)
+        data_path = Path(fh.name)
+    try:
+        proc = subprocess.run(
+            [
+                "ajv",
+                "validate",
+                "--spec=draft2020",
+                "-c",
+                "ajv-formats",
+                "-s",
+                str(schema_path),
+                "-d",
+                str(data_path),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    finally:
+        data_path.unlink(missing_ok=True)
+
+    if proc.returncode == 0:
+        return True, "ok"
+    msg = (proc.stdout + proc.stderr).strip().splitlines()
+    return False, msg[0] if msg else "(no output)"

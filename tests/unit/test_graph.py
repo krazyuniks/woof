@@ -1434,7 +1434,10 @@ def test_critique_dispatch_failure_opens_reviewer_gate(tmp_path: Path, monkeypat
         assert role == "reviewer"
         assert epic_id == 1
         assert story_id == "S1"
-        assert prompt
+        assert "Graph-owned input:" in prompt
+        assert '"node_type": "critique_dispatch"' in prompt
+        assert '"story_id": "S1"' in prompt
+        assert '"staged_diff_command": "git diff --staged"' in prompt
         assert artefacts_loaded == [
             ".woof/epics/E1/plan.json",
             ".woof/epics/E1/EPIC.md",

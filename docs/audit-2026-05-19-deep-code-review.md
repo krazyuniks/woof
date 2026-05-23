@@ -410,7 +410,7 @@ Conforms to ADR-002. `build_argv` constructs the exact `claude` command shape
 documented in ADR-002 lines 58-67: `--dangerously-skip-permissions
 --strict-mcp-config --mcp-config <json> -p --output-format json --model ...
 --effort ...` (`dispatcher.py:264-279`). `_normalise_mcp_server` rejects the
-Ryan-local commands `cld`, `cod`, `agent-sync` and `/.dotfiles`-style host paths
+private local commands `cld`, `cod`, `agent-sync` and `/.dotfiles`-style host paths
 (`dispatcher.py:193-211`), matching ADR-002's portability rule. `EFFORTS`
 includes `max` and `CODEX_EFFORTS` excludes it (`dispatcher.py:27-28`), matching
 ADR-002 "max is Claude-only". Legacy `cld`/`cod`/`planner`/`story-executor`/

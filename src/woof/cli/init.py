@@ -155,6 +155,8 @@ GITIGNORE_ENTRIES = [
     ".woof/epics/*/gate.md",
     ".woof/epics/*/.wf.lock",
     ".woof/epics/*/.last-sync",
+    ".woof/epics/*/executor_result.json",
+    ".woof/epics/*/check-result.json",
     ".woof/epics/*/audit/raw/",
     ".woof/codebase/tags",
     ".woof/codebase/tree.txt",

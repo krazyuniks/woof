@@ -2,7 +2,7 @@
 
 The E146 fixture (``tests/fixtures/woof/e146/``) is the load-bearing regression:
 each contract_decision in the fixture EPIC.md must verify, and synthetic
-mutations of any reference must fail loudly. This is the "first dogfood test"
+mutations of any reference must fail loudly. This is the contract-fidelity test
 called out in Workflow.md §3 — without it, contract drift can re-enter the
 planner with no mechanical alarm.
 """

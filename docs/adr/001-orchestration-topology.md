@@ -10,16 +10,15 @@ Python graph.
 
 ## Context
 
-The existing implementation made the LLM the orchestrator: a skill body listing steps, dispatched as a `cld -p` or `codex exec` subprocess, with the LLM deciding which steps happen, dispatching its own subprocesses (e.g. codex for critique), and committing its own output. This produced two real failures during the E182 dogfood (visible in this repo's git history at commits `7bf2a12` and `b729860`):
+Woof's product goal is agentic multi-step software delivery. The workflow needs
+LLM judgement for generation and critique, but successor selection, gate
+creation, verification, transaction manifests, and commits must be
+deterministic.
 
-1. **Skipped second-LLM review.** The story executor's skill body listed a codex critique step. The executor judged it unnecessary and skipped it. The work committed without the second-LLM coverage that the architecture's safety model requires. Nothing in the pipeline detected the omission.
-2. **Incomplete commit transaction.** The new executor contract said to stage `.woof/epics/E<N>/audit/` as part of the commit transaction. The executor staged the code paths and forgot the audit files. No exception fired; the commit landed incomplete.
-
-Both failures share a structure: **an LLM with agency over orchestration silently skips steps, and no deterministic check fires until the omission causes a downstream failure.** The same class of bug had already grounded epic E181 a few days earlier (same repo, same root cause, different surface).
-
-This is not a bug in any one skill body's prose. It is a property of *who runs the graph*. When the LLM owns the graph, the LLM can rewrite it.
-
-The pre-woof workflow system (deleted on 2026-04-05; see GTS history) had the inverse topology: a Python orchestrator drove the graph, calling the LLM at specifically defined nodes for inference. That older system was retired for unrelated reasons (planning model immaturity). The orchestration topology, in retrospect, was right.
+If an LLM owns the workflow graph, it can skip or reorder safety steps while
+still producing plausible prose. The architecture therefore separates
+orchestration from inference: Python owns the graph, LLMs own typed producer or
+reviewer artefacts, and humans own explicit gate decisions.
 
 ## Decision
 
@@ -51,7 +50,8 @@ Concretely:
 
 **Negative:**
 
-- Implementation cost. The current codebase needs restructuring. The driver script (`scripts/wf-run` in the GTS-side checkout that produced this repo) becomes a graph node interpreter; the skill bodies (`.claude/commands/wf*.md`) shrink dramatically; the registry gains node-type entries beyond the existing check entries.
+- Implementation cost. The graph runtime, transition table, node registry,
+  prompt templates, and check registry must remain aligned.
 - Some operations that were previously a single skill invocation become multi-node graph traversals. Worth it.
 - Orchestrator skills (the current `wf` family) lose most of their reasoning content. They become thin wrappers around node invocations — or get removed entirely in favour of `just wf` driving the graph directly.
 
@@ -78,4 +78,4 @@ The current woof source code embeds the LLM-orchestrator topology in:
 - `checks/registry.py` — Stage-5 check registry; becomes the configuration data the `verification` node reads. Stays.
 - `playbooks/` — LLM prompt templates; become the input-data fixture for LLM nodes. Stays.
 - `.claude/commands/wf*.md` — orchestrator skills; **shrink dramatically**. The graph runs in Python; skills (if retained at all) become thin per-node prompts.
-- `scripts/wf-run` (lives in the consuming repo, GTS) — **deleted**. Its responsibilities migrate into the Python graph implementation here.
+- External driver scripts — **deleted**. Their responsibilities live in the Python graph implementation here.

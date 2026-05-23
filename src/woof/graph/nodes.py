@@ -1550,10 +1550,35 @@ def review_disposition_node(inp: NodeInput) -> NodeOutput:
     )
 
 
+def _stage_graph_owned_story_paths(repo_root: Path, epic_id: int, story_id: str) -> list[str]:
+    """Stage durable graph-owned files before Stage-5 commit-readiness checks.
+
+    The producer owns story paths. The graph owns `.woof` state, dispatch audit
+    files, critiques, dispositions, and JSONL events that must be in the same
+    transaction.
+    """
+
+    plan = load_plan(repo_root, epic_id)
+    story = story_by_id(plan, story_id)
+    manifest = build_story_manifest(repo_root, epic_id, story)
+    graph_paths = [path for path in manifest.expected_paths if path.startswith(".woof/")]
+    if graph_paths:
+        git(repo_root, "add", "--", *graph_paths)
+    return graph_paths
+
+
 def verification_node(inp: NodeInput) -> NodeOutput:
     if not inp.story_id:
         raise ValueError("verification requires story_id")
     result_path = epic_dir(inp.repo_root, inp.epic_id) / "check-result.json"
+    try:
+        _stage_graph_owned_story_paths(inp.repo_root, inp.epic_id, inp.story_id)
+    except (subprocess.CalledProcessError, StageStateError, ValueError) as exc:
+        return _write_position_gate(
+            inp,
+            trigger="incomplete_stage_state",
+            position=f"Graph-owned commit artefacts could not be staged: {exc}",
+        )
     proc = subprocess.run(
         [
             *_woof_subprocess_argv(),

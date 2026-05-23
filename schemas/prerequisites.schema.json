@@ -22,7 +22,7 @@
         "claude": { "$ref": "#/$defs/version_spec" },
         "codex": { "$ref": "#/$defs/version_spec" }
       },
-      "description": "Required public model CLIs used by woof dispatch. Woof must construct raw claude and codex invocations itself and must not require Ryan-local cld/cod wrappers or agent-sync."
+      "description": "Required public model CLIs used by woof dispatch. Woof must construct raw claude and codex invocations itself and must not require private cld/cod wrappers or external sync tools."
     },
     "validators": {
       "type": "object",

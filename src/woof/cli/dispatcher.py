@@ -226,7 +226,7 @@ def _normalise_mcp_server(name: str, server: dict[str, Any]) -> dict[str, Any]:
     command = str(server["command"])
     if command in {"cld", "cod", "agent-sync"}:
         raise DispatchConfigError(
-            f"MCP server {name!r} uses Ryan-local command {command!r}; use a public command"
+            f"MCP server {name!r} uses private/local command {command!r}; use a public command"
         )
     _validate_portable_mcp_value(command, context=f"{name}.command")
 

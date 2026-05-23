@@ -2,8 +2,6 @@
 
 > **Purpose:** Stable reference for Woof's design decisions. Updates when new evidence arrives, not during design iteration.
 > **Active architecture doc:** `docs/architecture.md`.
-> **Naming note:** "GTS" in this document refers to the predecessor workflow pipeline, not the current Guitar Tone Shootout consumer application.
-
 ---
 
 ## 1. Framework Evaluation (2026-03-26)
@@ -15,7 +13,7 @@ Four AI workflow frameworks compared across 15 capability areas. Local clones pr
 | **Superpowers** (obra, v5.0.6) | 16 prompt-only skills, zero runtime code. |
 | **taches-cc-resources** | Router-pattern skills + slash commands + meta-prompting system. |
 | **GSD** (get-shit-done) | 44 commands, 18 agents, 60+ CLI subcommands. File-based state. |
-| **GTS** (pre-deletion) | Python orchestrator, 13 shell hooks, JSONL state, multi-provider dispatch. |
+| **Predecessor workflow** (pre-deletion) | Python orchestrator, 13 shell hooks, JSONL state, multi-provider dispatch. |
 
 ### Capability Comparison — Summary
 
@@ -24,20 +22,20 @@ Four AI workflow frameworks compared across 15 capability areas. Local clones pr
 | 1 | Task Breakdown | GSD (wave parallelism, granularity config) | Superpowers (2-5 min tasks) |
 | 2 | Brainstorming | GSD (decision categorisation) + taches (thinking models) | Superpowers (hard gate) |
 | 3 | Research | taches (8 specialised types) | GSD (parallel researchers) |
-| 4 | Testing | **GTS** (no-mock enforcement, hook-enforced) | Superpowers (iron law TDD) |
-| 5 | Quality Gates | **GTS** (deterministic + adversarial) | GSD (3-level verification) |
+| 4 | Testing | **Predecessor workflow** (no-mock enforcement, hook-enforced) | Superpowers (iron law TDD) |
+| 5 | Quality Gates | **Predecessor workflow** (deterministic + adversarial) | GSD (3-level verification) |
 | 6 | Code Review | Superpowers (two-stage) | GSD (cross-AI review) |
 | 7 | Debugging | Superpowers (3-fix escalation) | GSD (persistent state) |
-| 8 | Conflict Resolution | GSD (CONTEXT.md fidelity) | **GTS** (failure classification) |
-| 9 | Session Management | GSD (structured pause/resume) | **GTS** (crash-resume) |
+| 8 | Conflict Resolution | GSD (CONTEXT.md fidelity) | **Predecessor workflow** (failure classification) |
+| 9 | Session Management | GSD (structured pause/resume) | **Predecessor workflow** (crash-resume) |
 | 10 | Context Management | GSD (thin orchestrator, visual bar) | taches (4-threshold) |
-| 11 | Commits/PRs | **GTS** (test-before-commit, auto-teardown) | GSD (PR branch filtering) |
+| 11 | Commits/PRs | **Predecessor workflow** (test-before-commit, auto-teardown) | GSD (PR branch filtering) |
 | 12 | Architecture Decisions | GSD (locked/deferred/discretion) | Superpowers (YAGNI) |
 | 13 | Agent Orchestration | GSD (16 agents, wave parallelism) | Superpowers (status protocol) |
-| 14 | Enforcement | **GTS** (13 hard-gate hooks) | Superpowers (iron law prompts) |
+| 14 | Enforcement | **Predecessor workflow** (13 hard-gate hooks) | Superpowers (iron law prompts) |
 | 15 | Extensibility | taches (5 meta-skills) | Superpowers (TDD for skills) |
 
-### GTS Strengths to Keep (7)
+### Predecessor Workflow Strengths to Keep (7)
 
 1. **Hard enforcement hooks** — 13 hooks that actually block bad behaviour
 2. **Deterministic validation** — Phase A 12 structural checks (referential integrity, truth coverage, journey coverage, scope coherence, dependency ordering, etc.)
@@ -47,7 +45,7 @@ Four AI workflow frameworks compared across 15 capability areas. Local clones pr
 6. **Real-service testing** — no mocks, hook-enforced
 7. **Auto-teardown on merge** — closes issue, tears down worktree
 
-### GTS Gaps to Fill (6, priority-ordered)
+### Predecessor Workflow Gaps to Fill (6, priority-ordered)
 
 1. **Brainstorming** — adopt thinking models (taches), decision categorisation (GSD), hard gate (Superpowers)
 2. **Context management** — adopt token threshold monitoring (taches/GSD), thin orchestrator budget (GSD)

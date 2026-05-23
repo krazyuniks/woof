@@ -112,7 +112,7 @@
         },
         "empty_diff": {
           "type": "boolean",
-          "description": "True iff this story completed without producing a diff because earlier stories' changes already realised its outcomes. Only meaningful when status=done. Per current operator policy, empty-diff completions during dogfood open a story_gate (triggered_by includes 'empty_diff_review') rather than auto-completing."
+          "description": "True iff this story completed without producing a diff because earlier stories' changes already realised its outcomes. Only meaningful when status=done. Per current operator policy, empty-diff completions open a story_gate (triggered_by includes 'empty_diff_review') rather than auto-completing."
         }
       },
       "allOf": [

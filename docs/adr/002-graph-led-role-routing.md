@@ -9,10 +9,8 @@ date: 2026-05-17
 ## Context
 
 ADR-001 moved orchestration authority out of LLM prompts and into the Python
-graph. The first extracted Woof implementation still carries the original
-provider-shaped role names and local wrapper assumptions: Claude plans and
-executes, Codex critiques, and dispatch shells through Ryan's private `cld` /
-`cod` convenience wrappers.
+graph. Woof needs semantic roles rather than provider-shaped role names or
+private wrapper assumptions.
 
 The model landscape has changed. The intended operating profile is now:
 
@@ -45,8 +43,8 @@ findings, the primary must record a disposition: accepted, rejected, or deferred
 with concise reasoning. Reviewer `blocker` findings open a human gate. There is
 no model-to-model debate loop and no automatic stalemate resolver.
 
-Woof must own the full public command construction. It must not require Ryan's
-private shell wrappers, dotfiles, aliases, or absolute paths. Role routes must
+Woof must own the full public command construction. It must not require private
+shell wrappers, dotfiles, aliases, or absolute paths. Role routes must
 record the resolved command, model, effort, flags, MCP set, timeout, and
 audit/session reference in dispatch events. Effort is part of the route contract.
 The reviewer route deliberately uses Claude `max` effort because the reviewer is
@@ -75,7 +73,7 @@ element, so bundled playbook prompts do not hit per-argument size ceilings.
 
 For Codex subprocesses, Woof calls the public `codex` CLI directly and injects
 any project context it needs into the prompt or explicit input files. It must not
-depend on Ryan's `cod` wrapper or on `agent-sync` side effects.
+depend on private wrappers or external sync side effects.
 
 `woof wf` remains the only workflow entry point. Human gates are resolved through
 `woof wf --epic <N> --resolve <decision>`. `woof dispatch` remains an internal

@@ -1,33 +1,49 @@
 # Woof
 
-Woof is an inner-loop SDLC tool for AI-assisted development. It governs the developer's own AI-assisted work cycle - discovery, definition, breakdown, execution, and gate - with schema-governed contracts and a per-epic JSONL audit trail.
+Woof is a Python CLI for agentic multi-step software delivery. It runs a
+deterministic workflow graph over a repository: discovery, definition,
+breakdown, review, gate, execution, verification, manifest-checked commit, and
+audit/resume.
 
-## Position
+## Product Goal
 
-Woof addresses the inner loop: the structured, auditable cycle of an individual developer or small team's AI-assisted work. Where outer-loop / programme-level systems such as [Chorus](https://github.com/krazyuniks/chorus) govern enterprise adoption across teams and providers, Woof governs the work cycle at the keyboard.
+Woof is built to move software work from a spark to a checked commit while
+keeping the workflow deterministic. Agents produce and review artefacts; Woof
+owns state transitions, gates, checks, transaction manifests, and commits.
 
 ## Status
 
-Pre-release, under active course correction. The urgent target is reliable use in Ryan's own projects. Portfolio exemplar work comes next, and OSS/distribution polish is deferred until the core loop is trustworthy.
+Pre-release. The active target is a complete, tested vertical workflow through
+the CLI. The technical finish backlog lives in
+[`docs/implementation-plan.md`](docs/implementation-plan.md).
 
-The current architecture is graph-led. `woof wf --epic <N>` runs the deterministic graph; LLM prompts are producer or reviewer nodes, not workflow orchestrators. ADR-002 defines the current role policy: GPT-5.5 is the preferred primary producer route, Claude Opus 4.7 at `max` effort is the preferred reviewer route, and reviewer blockers open human gates rather than model-to-model debate loops.
+The architecture is graph-led. `woof wf --epic <N>` runs the Python graph; LLM
+prompts are producer or reviewer nodes, not workflow orchestrators. ADR-002
+defines semantic role routing: `primary` produces, `reviewer` critiques, and
+reviewer blockers open human gates.
 
-During the current self-use correction, dispatched agents run as trusted local automation. Woof does not sandbox them or restrict commands, writable paths, network access, or MCP access at runtime. `woof preflight` and `woof dispatch --dry-run` surface this mode; the safety boundary is the graph-owned commit path: checks, reviewer critique, gates, transaction manifests, and commit decisions before changes land.
-
-The previous release-closure work delivered useful foundations: portable Stage 1 Discovery prompts, a tracker abstraction with `github` and `local` adapters, `woof init` scaffolding, and package smoke coverage. The Stage 5 producer portability gap from the deep audit was closed under CC-002. Current implementation status, remaining work, and the session continuation prompt live in [`docs/implementation-plan.md`](docs/implementation-plan.md).
+Dispatched agents run in trusted-local mode. Woof does not sandbox them or
+restrict commands, writable paths, network access, or MCP access at runtime.
+`woof preflight` and `woof dispatch --dry-run` report this mode. The safety
+boundary is before changes land: deterministic checks, reviewer critique, human
+gates, transaction manifests, and graph-owned commit decisions.
 
 ## Entry Map
 
-- [`docs/architecture.md`](docs/architecture.md) - principles, architecture, stages, gates, schemas.
-- [`docs/research.md`](docs/research.md) - framework evaluation, E146 contract-fidelity case study, lessons.
-- [`docs/adr/001-orchestration-topology.md`](docs/adr/001-orchestration-topology.md) - accepted graph topology for execution.
-- [`docs/adr/002-graph-led-role-routing.md`](docs/adr/002-graph-led-role-routing.md) - accepted primary/reviewer role policy and model-routing pivot.
-- [`docs/adr/003-issue-tracker-abstraction.md`](docs/adr/003-issue-tracker-abstraction.md) - accepted issue-tracker abstraction and the `[tracker]` config boundary.
-- [`docs/consumers.md`](docs/consumers.md) - external consumer checkout boundary, including GTS.
-- [`docs/course-correction-2026-05-21.md`](docs/course-correction-2026-05-21.md) - current self-use-first correction, guardrail taxonomy, and active backlog.
-- [`docs/implementation-plan.md`](docs/implementation-plan.md) - implementation plan, roadmap, progress ledger, and continuation prompt.
-- [`examples/safety-model.md`](examples/safety-model.md) - concise examples of Woof's core safety behaviours.
-- [`examples/dogfood/`](examples/dogfood/) - selected artefacts from the first Woof dogfood epics.
+- [`docs/implementation-plan.md`](docs/implementation-plan.md) - live technical
+  finish backlog and continuation prompt.
+- [`docs/architecture.md`](docs/architecture.md) - design contract, stages,
+  gates, schemas, and runtime boundaries.
+- [`docs/adr/001-orchestration-topology.md`](docs/adr/001-orchestration-topology.md)
+  - graph-led orchestration decision.
+- [`docs/adr/002-graph-led-role-routing.md`](docs/adr/002-graph-led-role-routing.md)
+  - primary/reviewer route policy.
+- [`docs/adr/003-issue-tracker-abstraction.md`](docs/adr/003-issue-tracker-abstraction.md)
+  - tracker protocol and configuration boundary.
+- [`docs/consumers.md`](docs/consumers.md) - consumer repository configuration
+  boundary.
+- [`examples/safety-model.md`](examples/safety-model.md) - concise examples of
+  Woof's core safety behaviours.
 
 ## Development
 
@@ -35,7 +51,9 @@ The previous release-closure work delivered useful foundations: portable Stage 1
 just bootstrap
 ```
 
-`just bootstrap` runs the first-time setup script, verifies host prerequisites, synchronises the locked `uv` environment, installs `prek` git hooks, and runs the local quality gate. After bootstrap, the regular inner loop is:
+`just bootstrap` verifies host prerequisites, synchronises the locked `uv`
+environment, installs git hooks, and runs the local quality gate. After
+bootstrap, the regular inner loop is:
 
 ```bash
 just check
@@ -43,116 +61,120 @@ just woof preflight
 just woof --help
 ```
 
-`uv.lock` is committed. Git hooks are installed with `just install-hooks`; pre-commit runs Ruff and Woof config schema validation, pre-push runs the unit suite, and `woof hooks install` adds the idempotent Woof-managed post-commit cartography block.
-
-## Packaging Smoke
-
-Woof keeps packaging smoke coverage so future distribution work does not rot while the project focuses on self-use. Graph subprocesses re-enter through `python -m woof`, so the package boundary must work without the source-checkout `bin/woof` wrapper. The packaging smoke test (`tests/unit/test_packaging_install.py`) builds a wheel into a temporary directory, installs it into an isolated virtual environment, and verifies that:
-
-- `python -m woof --help` exits 0 from the installed interpreter.
-- `tool_root()` resolves `schemas/`, `playbooks/`, and `languages/` from inside the installed package.
-- `_woof_subprocess_argv()` / `_woof_subprocess_env()` produce `[sys.executable, "-m", "woof", ...]` plus a `PYTHONPATH` that loads the installed `woof` package.
-
-The test runs as part of `just check` and `just test`. To reproduce manually:
-
-```bash
-uv build --wheel
-uv venv /tmp/woof-smoke
-/tmp/woof-smoke/bin/python -m pip install dist/woof-*.whl
-/tmp/woof-smoke/bin/python -m woof --help
-```
-
-This is evidence for the future distribution path. It is not the active product priority during the current course correction.
-
-`tests/integration/test_release_smoke.py` extends this with a consumer-facing check: it builds and installs the wheel, runs `woof init --tracker local` in a throwaway consumer worktree, and confirms the Stage 1 Discovery producer nodes build fully self-contained dispatch prompts from the installed package - no Woof-author-local agent skills, wrappers, or host paths. It runs as part of `just check`; run it alone with:
-
-```bash
-uv run pytest tests/integration/test_release_smoke.py
-```
+`uv.lock` is committed. Git hooks are installed with `just install-hooks`;
+pre-commit runs Ruff and Woof config schema validation, pre-push runs the unit
+suite, and `woof hooks install` adds the idempotent Woof-managed post-commit
+cartography block.
 
 ## Operator Usage
 
-During the current self-use phase, run Woof from this checkout:
+Run Woof from this checkout:
 
 ```bash
 just woof --help
 ```
 
-When operating from another checkout on Ryan's current machine, set the source wrapper once:
+Initialise a consumer repository's `.woof/` config:
 
 ```bash
-export WOOF=/home/ryan/Work/woof/bin/woof
+/path/to/woof/bin/woof init --tracker local
 ```
 
-Initialise a fresh consumer checkout's `.woof/` config:
+Start a new epic:
 
 ```bash
-$WOOF init
+/path/to/woof/bin/woof wf new "<spark>"
 ```
 
-Run the graph from a consumer checkout that has `.woof/` state:
+Run or resume the graph:
 
 ```bash
-$WOOF wf --epic <N>
+/path/to/woof/bin/woof wf --epic <N>
 ```
 
-Start a new tracker-backed epic; the configured tracker assigns the epic id:
+Approve an open plan gate:
 
 ```bash
-$WOOF wf new "<spark>"
-```
-
-Resolve an open gate with a structured decision:
-
-```bash
-$WOOF wf --epic <N> --resolve approve
+/path/to/woof/bin/woof wf --epic <N> --resolve approve
 ```
 
 Inspect workflow state without mutating the epic:
 
 ```bash
-$WOOF observe --epic <N> --view status
-$WOOF observe --epic <N> --view timeline
-$WOOF observe --epic <N> --view gate
-$WOOF observe --epic <N> --view audit
+/path/to/woof/bin/woof observe --epic <N> --view status
+/path/to/woof/bin/woof observe --epic <N> --view timeline
+/path/to/woof/bin/woof observe --epic <N> --view gate
+/path/to/woof/bin/woof observe --epic <N> --view audit
 ```
 
 Check startup infrastructure before invoking the graph:
 
 ```bash
-$WOOF preflight
+/path/to/woof/bin/woof preflight
 ```
 
-Inspect the resolved dispatch route and trusted-local runtime policy without spawning an agent:
+Inspect the resolved dispatch route and trusted-local runtime policy without
+spawning an agent:
 
 ```bash
-$WOOF dispatch --role primary --epic <N> --dry-run
+/path/to/woof/bin/woof dispatch --role primary --epic <N> --dry-run
 ```
 
-Distribution-oriented install instructions are deferred; [`docs/consumers.md`](docs/consumers.md) is retained as future external-consumer guidance. See [`docs/architecture.md`](docs/architecture.md) for stage and gate semantics.
+## Consumer Repositories
 
-## Consumer Checkouts
+Consumer repositories keep project-specific declarations under `.woof/*.toml`
+and run the external `woof` command from the consumer root. Woof owns the graph,
+schemas, dispatch adapters, check runners, playbooks, and gate-writing logic;
+those assets stay in the Woof checkout or package.
 
-Consumer repositories keep project-specific declarations under `.woof/*.toml` and run the external `woof` command from the consumer root. Woof owns the graph, schemas, dispatch adapters, check runners, playbooks, and gate-writing logic; those assets stay in the Woof checkout or package.
+Consumer-specific policy should be expressed as:
 
-`guitar-tone-shootout` is the first external consumer. Its Woof integration should define only consumer config such as `.woof/agents.toml`, `.woof/prerequisites.toml`, and `.woof/quality-gates.toml`; it must not vendor-copy Woof source, schemas, playbooks, tests, dogfood examples, or Ryan-local wrapper assumptions into the GTS repository. See [`docs/consumers.md`](docs/consumers.md).
+- quality-gate commands in `.woof/quality-gates.toml`;
+- startup checks in `.woof/prerequisites.toml`;
+- outcome marker rules in `.woof/test-markers.toml`;
+- role routes in `.woof/agents.toml`.
+
+Do not copy Woof source, schemas, playbooks, tests, generated epic state, or
+private host assumptions into a consumer repository.
+
+## Packaging Smoke
+
+The packaging smoke tests prove graph subprocesses can re-enter through
+`python -m woof` without the source-checkout `bin/woof` wrapper. They build a
+wheel, install it into an isolated virtual environment, and verify bundled
+assets such as `schemas/`, `playbooks/`, and `languages/`.
+
+Run the smoke checks through the normal gate:
+
+```bash
+just check
+```
+
+Run the installed-package smoke directly:
+
+```bash
+uv run pytest tests/integration/test_release_smoke.py
+```
 
 ## Source Map
 
-- `bin/woof` - source-checkout convenience wrapper (`uv run --script`); not used by graph subprocesses.
-- `src/woof/__main__.py` - module entry (`python -m woof`); the install-safe boundary for graph re-entry.
+- `bin/woof` - source-checkout convenience wrapper.
+- `src/woof/__main__.py` - module entry point for `python -m woof`.
 - `src/woof/cli/` - argparse-driven command implementations.
-- `src/woof/graph/` - deterministic graph, JSON Schema-backed Pydantic boundary models, transition table, and transaction manifest verification.
-- `src/woof/checks/` - Stage-5 checker registry, runners, and internal check context/outcome records.
+- `src/woof/graph/` - deterministic graph, transition table, node contracts,
+  and transaction manifest verification.
+- `src/woof/checks/` - Stage-5 checker registry and runners.
 - `src/woof/gate/` - gate-authoring helpers.
-- `src/woof/trackers/` - issue-tracker abstraction: the `Tracker` protocol, GitHub and local adapters, the resolver factory, and the `EPIC.md`-to-issue-body renderer.
+- `src/woof/trackers/` - `Tracker` protocol and adapter implementations.
 - `src/woof/lib/` - shared Python helpers.
-- `schemas/` - JSON schemas for runtime artefacts, graph node I/O, and transaction manifests.
+- `schemas/` - JSON schemas for runtime artefacts, graph node I/O, and
+  transaction manifests.
 - `playbooks/` - prompt templates loaded into dispatched LLM contexts.
 - `languages/` - per-language install, lint, and test registry files.
-- `.claude/commands/wf*.md` - thin wrappers and producer-node prompts; orchestration lives in Python.
 
-Data-modelling rule: Pydantic is used at schema and serialisation boundaries; dataclasses are acceptable for trusted in-process records that do not define external artefact shape. The detailed rule lives in [`docs/architecture.md`](docs/architecture.md#contract-implementation-model).
+Data-modelling rule: JSON Schema is the durable contract authority. Pydantic is
+used at schema and serialisation boundaries; dataclasses are acceptable for
+trusted in-process records.
 
 ## License
 

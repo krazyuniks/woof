@@ -1,18 +1,14 @@
 # Consumer Checkouts
 
-> Current status: deferred external-consumer guidance. The active project priority is Ryan's own development use from a source checkout. Keep this document aligned enough that it does not mislead, but do not treat distribution, packaging, or stranger-onboarding polish as the current workstream.
-
-Woof runs from its own checkout or installed package against a separate consumer repository. The consumer repository owns project-specific declarations under `.woof/`; it does not copy Woof source, schemas, playbooks, tests, or dogfood examples.
-
-`guitar-tone-shootout` is the first external consumer. In that role, GTS remains responsible for its own application source, `just` recipes, Docker topology, GitHub issue scope, quality gates, language choices, and project-specific host or server checks. Woof remains responsible for graph execution, schemas, role dispatch, check runners, gate writing, and transaction verification.
+Woof runs from its own checkout or installed package against a separate consumer repository. The consumer repository owns project-specific declarations under `.woof/`; it does not copy Woof source, schemas, playbooks, tests, examples, or generated state.
 
 ## First-Run Walkthrough
 
-This walkthrough is retained for the later OSS/external-consumer phase. It takes a new consumer from a clean machine to a running epic without reading the architecture document. It assumes you are integrating Woof into your own repository (the "consumer repository"); Woof itself is installed separately and is never copied in.
+This walkthrough takes a consumer repository from a clean setup to a running epic without reading the architecture document. Woof itself is installed or invoked separately and is never copied into the consumer repository.
 
 ### 1. Install Woof
 
-Future external consumers install Woof from its repository. Install the CLI as a standalone tool:
+Install the CLI as a standalone tool:
 
 ```bash
 uv tool install git+https://github.com/krazyuniks/woof
@@ -38,7 +34,7 @@ From the root of the repository you want Woof to manage:
 woof init
 ```
 
-`woof init` creates `.woof/prerequisites.toml`, `.woof/agents.toml`, `.woof/quality-gates.toml`, and `.woof/test-markers.toml`, each with explicit `<replace>` placeholders, and inserts a fenced `# >>> woof` block into the repository `.gitignore` with the required runtime entries (`.woof/.current-epic`, `.woof/.preflight-*`, `.woof/epics/*/.wf.lock`, `.woof/epics/*/audit/raw/`, and the cartography artefacts). Pass `--with-docs-paths` to also scaffold `.woof/docs-paths.toml` (Stage 5 Check 8 mappings). `woof init` is idempotent: existing TOMLs are preserved unless `--force` is set, and the gitignore block is updated in place rather than duplicated.
+`woof init` creates `.woof/prerequisites.toml`, `.woof/agents.toml`, `.woof/quality-gates.toml`, and `.woof/test-markers.toml`, each with explicit `<replace>` placeholders, and inserts a fenced `# >>> woof` block into the repository `.gitignore` with the required runtime entries (`.woof/.current-epic`, `.woof/.preflight-*`, `.woof/epics/*/.wf.lock`, `.woof/epics/*/executor_result.json`, `.woof/epics/*/check-result.json`, `.woof/epics/*/audit/raw/`, and the cartography artefacts). Pass `--with-docs-paths` to also scaffold `.woof/docs-paths.toml` (Stage 5 Check 8 mappings). `woof init` is idempotent: existing TOMLs are preserved unless `--force` is set, and the gitignore block is updated in place rather than duplicated.
 
 Choose the issue tracker at scaffold time. The default scaffolds a GitHub-backed setup. For a repository with no hosted issue tracker, scaffold the local tracker instead:
 
@@ -120,7 +116,7 @@ Consumer checkouts may keep these files in their own `.woof/` directory:
 | `.woof/test-markers.toml` | Optional. Override outcome-marker detection when the default language conventions are not enough. |
 | `.woof/docs-paths.toml` | Optional. Map code paths to documentation paths for Stage 5 Check 8. |
 
-Generated epic state belongs under `.woof/epics/E<N>/` only when Woof creates it for that consumer repository. Do not seed a consumer checkout by copying `.woof/epics/` content, audit output, locks, codebase maps, or dogfood examples from the Woof repository.
+Generated epic state belongs under `.woof/epics/E<N>/` only when Woof creates it for that consumer repository. Do not seed a consumer checkout by copying `.woof/epics/` content, audit output, locks, codebase maps, or examples from the Woof repository.
 
 ## Policy Generalisation
 
@@ -140,35 +136,23 @@ Current reusable policy surfaces are:
 | Public role routes, review cadence, and audit policy | `.woof/agents.toml` | Dispatch, review-valve, and audit code read the declared route and policy settings. |
 | Host, server, issue-tracker, language, and tool prerequisites | `.woof/prerequisites.toml` | `woof preflight` validates declared infrastructure before graph execution. |
 
-Do not hard-code GTS paths, servers, Docker service names, issue labels, no-mock
-rules, or framework-specific conventions into Woof. If a second consumer needs
-the same rule, first design the smallest portable config shape, add or extend
-the schema, implement the checker/preflight behaviour, and document the failure
-mode. Otherwise, call the consumer's existing command from
+Do not hard-code consumer-specific paths, servers, Docker service names, issue
+labels, test doctrine, or framework-specific conventions into Woof. If more than
+one consumer needs the same rule, first design the smallest portable config
+shape, add or extend the schema, implement the checker/preflight behaviour, and
+document the failure mode. Otherwise, call the consumer's existing command from
 `.woof/quality-gates.toml` and let that repository own the rule.
 
 ## Tool-Owned Assets
 
-These stay in Woof, not in GTS or another consumer repository:
+These stay in Woof, not in a consumer repository:
 
 - `src/woof/` graph, CLI, dispatch, check-runner, and gate code.
 - `schemas/` JSON Schema contracts.
 - `languages/` tool-side language registry files.
 - `playbooks/` producer and reviewer prompt templates.
-- `examples/dogfood/` curated Woof evidence.
 - Woof's own tests, hooks, and implementation ledger.
 
 Consumers reference those assets through the `woof` command. They should not vendor-copy them to make local workflow edits.
-
-## GTS Boundary
-
-For GTS, Woof integration should follow these rules:
-
-- Run `woof preflight` and `woof wf --epic <N>` from the GTS checkout, with the public `woof` command on `PATH` or invoked from an external Woof install.
-- Keep `[tracker]` in `.woof/prerequisites.toml` set to `kind = "github"` with `repo = "krazyuniks/guitar-tone-shootout"`.
-- Route GTS verification through the GTS `just` surface, for example a quality gate command such as `just check`.
-- Express project readiness through `.woof/prerequisites.toml` host and server checks instead of adding Woof-specific scripts to GTS.
-- Use public role routes in `.woof/agents.toml`: `primary` should resolve to the public `codex` adapter and `reviewer` should resolve to the public `claude` adapter unless a later ADR changes the policy.
-- Do not declare or depend on Ryan-local wrappers such as `cld`, `cod`, `agent-sync`, shell aliases, dotfiles, or host-specific absolute paths in executable config.
 
 Legacy route names such as `planner`, `story-executor`, and `critiquer`, and legacy harness values such as `cld` and `cod`, are accepted only as migration input by the schema and dispatcher. New or refreshed consumer config should use semantic roles and public adapters directly.

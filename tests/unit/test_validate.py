@@ -66,7 +66,7 @@ def test_shipped_schema_count() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Real-file validation (the bootstrapped GTS prerequisites)
+# Real-file validation (the bootstrapped project prerequisites)
 # ---------------------------------------------------------------------------
 
 

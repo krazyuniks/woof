@@ -13,6 +13,7 @@ import shlex
 from woof.checks import CheckContext, CheckOutcome
 from woof.graph.dispositions import story_disposition_relpath
 from woof.graph.git import staged_paths
+from woof.graph.manifest import durable_epic_paths
 from woof.graph.pathspec import PathspecEvaluationError, staged_paths_matching
 
 CHECK_ID = "check_3_scope"
@@ -106,11 +107,7 @@ def _is_allowed_woof_path(ctx: CheckContext, path: str) -> bool:
     }
     if path in allowed_exact:
         return True
-    audit_prefix = f"{epic_prefix}audit/"
-    if not path.startswith(audit_prefix):
-        return False
-    audit_relative = path[len(audit_prefix) :]
-    return "raw" not in audit_relative.split("/")
+    return path in set(durable_epic_paths(ctx.epic_dir, ctx.repo_root))
 
 
 def _pathspec_command(pathspecs: list[str]) -> str:

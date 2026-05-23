@@ -1,6 +1,6 @@
 # Dogfood Evidence
 
-These are selected public artefacts from Woof's first two dogfood epics while it was still incubated inside `guitar-tone-shootout`.
+These are selected public artefacts from Woof's first two internal acceptance epics.
 
 - `E181` demonstrates the audit redaction / size-cap epic that exposed the critique-blocker handling failure.
 - `E182` demonstrates the Stage-5 driver/checker epic that exposed the larger orchestration-topology flaw captured in ADR-001.
@@ -19,7 +19,7 @@ This folder keeps only reusable evidence:
 
 Raw `audit/` transcripts are intentionally omitted. They contain bulky harness command/output captures from the consumer repository and are not needed to understand the workflow evidence. Raw intake prompts, handoff prompts, and one-off operator instructions are also omitted because they are not stable examples of Woof behaviour.
 
-These examples pre-date ADR-002, so some preserved artefacts contain legacy provider-shaped role names, wrapper names, and harness fields. Treat those entries as historical compatibility evidence only; current prompts and docs use `primary` / `reviewer` role terminology.
+These examples pre-date ADR-002, so some preserved artefacts contain legacy provider-shaped role names, wrapper names, and harness fields. Treat those entries as compatibility evidence only; current prompts and docs use `primary` / `reviewer` role terminology.
 
 ## Retained examples
 

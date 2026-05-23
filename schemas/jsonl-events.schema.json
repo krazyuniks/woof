@@ -231,7 +231,7 @@
     "runtime_policy": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Runtime action-safety model declared for a dispatched subprocess. Current course-correction mode is trusted-local: Woof does not add runtime constraints and relies on commit-safety boundaries before changes land.",
+      "description": "Runtime action-safety model declared for a dispatched subprocess. Trusted-local mode means Woof does not add runtime constraints and relies on commit-safety boundaries before changes land.",
       "required": [
         "mode",
         "woof_runtime_constraints",

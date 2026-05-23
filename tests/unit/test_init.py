@@ -42,6 +42,8 @@ def test_init_creates_starter_config_and_gitignore_block(tmp_path: Path, run_woo
     gitignore = (tmp_path / ".gitignore").read_text()
     assert "# >>> woof" in gitignore
     assert ".woof/.current-epic" in gitignore
+    assert ".woof/epics/*/executor_result.json" in gitignore
+    assert ".woof/epics/*/check-result.json" in gitignore
     assert ".woof/.preflight-floor" in gitignore
     assert ".woof/codebase/tags" in gitignore
     assert "# <<< woof" in gitignore

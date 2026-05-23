@@ -16,7 +16,7 @@ STORY_CRITIQUE_PROMPT = REPO_ROOT / "playbooks" / "critique" / "story.md"
 ARCHITECTURE_DOC = REPO_ROOT / "docs" / "architecture.md"
 FORBIDDEN_PATTERNS = {
     "provider-specific prompt identity": re.compile(r"\b(?:Claude|Codex|claude|codex)\b"),
-    "Ryan-local wrapper spelling": re.compile(r"\b(?:cld|cod)\b"),
+    "private wrapper spelling": re.compile(r"\b(?:cld|cod)\b"),
     "legacy planner role": re.compile(r"\bplanner\b"),
     "legacy story-executor role": re.compile(r"\bstory-executor\b"),
     "legacy critiquer role": re.compile(r"\bcritiquer\b"),

@@ -40,12 +40,12 @@ acceptance_criteria:
 
 # Audit redaction + deterministic summary
 
-The first dogfood epic for woof. Task 2 (`woof dispatch`) shipped without
+An internal acceptance epic for woof. Task 2 (`woof dispatch`) shipped without
 the redaction filter and size cap that Workflow.md §"Audit redaction and
 retention" calls non-negotiable for committed audit files. Without it,
 codex prompt/output transcripts that land in the repo can leak the
 contents of `env.local.sh`, JWT bearer tokens captured during a flow,
-and any `.gts-auth.json` token blobs read by a tool the subprocess
+and any project token blobs read by a tool the subprocess
 invoked.
 
 The fix has three halves: **conservative redaction** of known secret

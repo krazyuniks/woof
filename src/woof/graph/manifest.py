@@ -25,6 +25,33 @@ def _audit_paths(epic_dir: Path, repo_root: Path) -> list[str]:
     )
 
 
+def durable_epic_paths(epic_dir: Path, repo_root: Path) -> list[str]:
+    """Return durable epic-state files that belong in a story transaction."""
+
+    if not epic_dir.is_dir():
+        return []
+    transient_names = {
+        ".wf.lock",
+        ".last-sync",
+        "gate.md",
+        "executor_result.json",
+        "check-result.json",
+    }
+    durable: list[str] = []
+    for path in sorted(epic_dir.rglob("*")):
+        if not path.is_file():
+            continue
+        relative_parts = path.relative_to(epic_dir).parts
+        if not relative_parts:
+            continue
+        if relative_parts[0] == "audit" and "raw" in relative_parts:
+            continue
+        if relative_parts[-1] in transient_names:
+            continue
+        durable.append(_rel(repo_root, path))
+    return durable
+
+
 def build_story_manifest(repo_root: Path, epic_id: int, story: StorySpec) -> TransactionManifest:
     """Compute the exact file set expected for a story commit."""
 
@@ -37,12 +64,13 @@ def build_story_manifest(repo_root: Path, epic_id: int, story: StorySpec) -> Tra
         story_disposition_relpath(epic_id, story.id),
     ]
     audit_paths = _audit_paths(epic_dir, repo_root)
+    durable_paths = durable_epic_paths(epic_dir, repo_root)
     candidate_paths = [path for path in changed_paths(repo_root) if not path.startswith(".woof/")]
     try:
         story_paths = filter_paths_matching(repo_root, candidate_paths, list(story.paths))
     except PathspecEvaluationError:
         story_paths = []
-    expected = sorted(set(required_paths + audit_paths + story_paths))
+    expected = sorted(set(required_paths + durable_paths + audit_paths + story_paths))
     return TransactionManifest(
         epic_id=epic_id,
         story_id=story.id,

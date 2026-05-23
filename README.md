@@ -108,6 +108,15 @@ Resolve an open gate with a structured decision:
 $WOOF wf --epic <N> --resolve approve
 ```
 
+Inspect workflow state without mutating the epic:
+
+```bash
+$WOOF observe --epic <N> --view status
+$WOOF observe --epic <N> --view timeline
+$WOOF observe --epic <N> --view gate
+$WOOF observe --epic <N> --view audit
+```
+
 Check startup infrastructure before invoking the graph:
 
 ```bash

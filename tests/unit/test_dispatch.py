@@ -16,6 +16,15 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WOOF_BIN = REPO_ROOT / "bin" / "woof"
+EXPECTED_TRUSTED_RUNTIME_POLICY = {
+    "mode": "trusted-local",
+    "woof_runtime_constraints": [],
+    "cli_permission_mode": "broad public CLI permission flags",
+    "safety_boundary": (
+        "commit-safety checks, reviewer critique, human gates, transaction manifests, "
+        "and commit decisions"
+    ),
+}
 
 
 pytestmark = pytest.mark.host_only
@@ -111,6 +120,7 @@ def test_dry_run_reviewer_uses_raw_claude_argv(woof_project: Path) -> None:
     assert payload["mcp"] == []
     assert payload["mcp_config"] == '{"mcpServers":{}}'
     assert payload["timeout_min"] == 15
+    assert payload["runtime_policy"] == EXPECTED_TRUSTED_RUNTIME_POLICY
 
 
 def test_dry_run_primary_uses_raw_codex_argv(woof_project: Path) -> None:
@@ -149,6 +159,7 @@ def test_dry_run_primary_uses_raw_codex_argv(woof_project: Path) -> None:
     assert payload["adapter"] == "codex"
     assert payload["harness"] == "codex"
     assert payload["effort"] == "xhigh"
+    assert payload["runtime_policy"] == EXPECTED_TRUSTED_RUNTIME_POLICY
 
 
 def test_prompt_file_overrides_stdin(woof_project: Path, tmp_path: Path) -> None:
@@ -723,6 +734,7 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
     assert meta["epic_id"] == 7
     assert meta["story_id"] == "S2"
     assert meta["artefacts_loaded"] == [".woof/epics/E7/EPIC.md"]
+    assert meta["runtime_policy"] == EXPECTED_TRUSTED_RUNTIME_POLICY
     assert meta["exit_code"] == 0
     assert meta["tokens"] == {
         "tokens_in": 7,
@@ -748,9 +760,11 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
     assert events[0]["mcp"] == []
     assert events[0]["argv"][-1] == "<prompt:stdin>"
     assert events[0]["prompt_transport"] == "stdin"
+    assert events[0]["runtime_policy"] == EXPECTED_TRUSTED_RUNTIME_POLICY
     assert events[0]["artefacts_loaded"] == [".woof/epics/E7/EPIC.md"]
     assert events[1]["artefacts_loaded"] == [".woof/epics/E7/EPIC.md"]
     assert events[1]["prompt_transport"] == "stdin"
+    assert events[1]["runtime_policy"] == EXPECTED_TRUSTED_RUNTIME_POLICY
     assert events[1]["tokens_in"] == 7
     assert events[1]["tokens_out"] == 11
     assert events[1]["cc_session_id"] == "00000000-0000-0000-0000-000000000001"
@@ -809,6 +823,7 @@ def test_end_to_end_codex_records_thread_and_audit_path(woof_project: Path, tmp_
     assert returned["effort"] == "xhigh"
     assert returned["argv"][-1] == "<prompt:stdin>"
     assert returned["prompt_transport"] == "stdin"
+    assert returned["runtime_policy"] == EXPECTED_TRUSTED_RUNTIME_POLICY
     assert returned["tokens_in"] == 50
     assert returned["tokens_out"] == 7  # 5 + 2 reasoning
     assert returned["cache_read_tokens"] == 10

@@ -172,6 +172,18 @@ timeout_seconds = 30
         "tree-sitter.python",
         "quality-gates.test",
     }
+    primary_route = next(
+        finding for finding in payload["findings"] if finding["id"] == "agents.primary.route"
+    )
+    assert "runtime=trusted-local" in primary_route["detail"]
+    assert primary_route["required"] == (
+        "explicit adapter, model, effort, and runtime-mode disclosure"
+    )
+    assert primary_route["notes"] == [
+        "trusted-local runtime: Woof does not constrain dispatched agents at runtime; "
+        "commit safety is enforced through deterministic checks, reviewer critique, "
+        "human gates, transaction manifests, and commit decisions"
+    ]
 
 
 def test_preflight_validates_named_mcp_route(tmp_path: Path, run_woof) -> None:

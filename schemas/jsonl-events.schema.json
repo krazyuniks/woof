@@ -227,6 +227,37 @@
       },
       "uniqueItems": true,
       "description": "Repo-relative artefact references explicitly loaded or embedded into the dispatched prompt. Useful for audit reconstruction and token-budget post-mortems."
+    },
+    "runtime_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Runtime action-safety model declared for a dispatched subprocess. Current course-correction mode is trusted-local: Woof does not add runtime constraints and relies on commit-safety boundaries before changes land.",
+      "required": [
+        "mode",
+        "woof_runtime_constraints",
+        "cli_permission_mode",
+        "safety_boundary"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["trusted-local"]
+        },
+        "woof_runtime_constraints": {
+          "type": "array",
+          "maxItems": 0,
+          "items": { "type": "string" },
+          "description": "Empty in trusted-local mode; Woof adds no sandbox, command allow-list, writable-path, network, or MCP runtime constraints."
+        },
+        "cli_permission_mode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "safety_boundary": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
     }
   },
   "allOf": [

@@ -36,6 +36,8 @@ def test_init_creates_starter_config_and_gitignore_block(tmp_path: Path, run_woo
 
     prereq = (woof_dir / "prerequisites.toml").read_text()
     assert "<replace>/<replace>" in prereq
+    agents = (woof_dir / "agents.toml").read_text()
+    assert "Runtime model: trusted-local automation" in agents
 
     gitignore = (tmp_path / ".gitignore").read_text()
     assert "# >>> woof" in gitignore

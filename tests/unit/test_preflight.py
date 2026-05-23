@@ -93,6 +93,105 @@ exit 2
     _write_exe(bin_dir / "codex", 'echo "codex stub"\n')
 
 
+def _write_current_epic_state(root: Path) -> None:
+    epic_dir = root / ".woof" / "epics" / "E5"
+    audit_dir = epic_dir / "audit"
+    audit_dir.mkdir(parents=True)
+    (root / ".woof" / ".current-epic").write_text("E5\n")
+    (epic_dir / "plan.json").write_text(
+        json.dumps(
+            {
+                "epic_id": 5,
+                "goal": "Expose operator state.",
+                "stories": [
+                    {
+                        "id": "S1",
+                        "title": "Report current state",
+                        "intent": "Make the current graph state visible.",
+                        "paths": ["src/woof/**/*.py"],
+                        "satisfies": ["O1"],
+                        "implements_contract_decisions": [],
+                        "uses_contract_decisions": [],
+                        "depends_on": [],
+                        "tests": {"count": 1, "types": ["unit"]},
+                        "status": "in_progress",
+                    }
+                ],
+            }
+        )
+        + "\n"
+    )
+    (epic_dir / "gate.md").write_text(
+        """---
+type: story_gate
+stage: 6
+story_id: S1
+triggered_by:
+  - check_1_quality_gates
+timestamp: '2026-05-23T10:02:00Z'
+---
+
+## Context
+
+Quality failed.
+"""
+    )
+    (epic_dir / "epic.jsonl").write_text(
+        json.dumps(
+            {
+                "event": "story_gate_opened",
+                "at": "2026-05-23T10:02:00Z",
+                "epic_id": 5,
+                "story_id": "S1",
+                "gate_type": "story_gate",
+                "triggered_by": ["check_1_quality_gates"],
+            }
+        )
+        + "\n"
+    )
+    (epic_dir / "dispatch.jsonl").write_text(
+        json.dumps(
+            {
+                "event": "subprocess_returned",
+                "at": "2026-05-23T10:01:00Z",
+                "epic_id": 5,
+                "story_id": "S1",
+                "role": "primary",
+                "adapter": "codex",
+                "model": "gpt-5.5",
+                "effort": "xhigh",
+                "exit_code": 0,
+                "codex_audit_path": ".woof/epics/E5/audit/codex-primary-run",
+            }
+        )
+        + "\n"
+    )
+    (epic_dir / "check-result.json").write_text(
+        json.dumps(
+            {
+                "ok": False,
+                "stage": 5,
+                "epic_id": 5,
+                "story_id": "S1",
+                "triggered_by": ["check_1_quality_gates"],
+                "checks": [
+                    {
+                        "id": "check_1_quality_gates",
+                        "ok": False,
+                        "severity": "blocker",
+                        "summary": "quality gate failed",
+                        "evidence": "just test exited 1",
+                        "paths": [],
+                        "command": "just test",
+                        "exit_code": 1,
+                    }
+                ],
+            }
+        )
+        + "\n"
+    )
+
+
 def test_preflight_passes_with_mocked_prerequisites(tmp_path: Path, run_woof) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -964,3 +1063,105 @@ repo = "example/project"
     assert proc.returncode == 0, proc.stderr + proc.stdout
     payload = json.loads(proc.stdout)
     assert all(f["id"] != "cartography.script" for f in payload["findings"])
+
+
+def test_preflight_json_reports_operator_state_for_current_epic(
+    tmp_path: Path,
+    run_woof,
+) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _stub_core_tools(bin_dir)
+    _write_project(
+        tmp_path,
+        prerequisites="""\
+[infra]
+just = "any"
+git = "any"
+
+[commands]
+claude = "any"
+codex = "any"
+
+[validators]
+ajv = "any"
+ajv-formats = "any"
+
+[tracker]
+kind = "local"
+""",
+    )
+    _write_current_epic_state(tmp_path)
+
+    proc = run_woof(
+        "preflight",
+        "--project-root",
+        str(tmp_path),
+        "--format",
+        "json",
+        env=_env_with_path(bin_dir),
+    )
+
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    payload = json.loads(proc.stdout)
+    state = payload["operator_state"]
+    assert state["current_epic"]["epic_id"] == 5
+    assert state["runtime_policy"]["mode"] == "trusted-local"
+    assert state["dispatch_routes"]["roles"]["primary"]["adapter"] == "codex"
+    assert state["epic"]["next"] == {
+        "node": "human_review",
+        "story_id": None,
+        "reason": "gate_open",
+    }
+    assert state["epic"]["next_action"]["command"] == "woof wf --epic 5 --resolve <decision>"
+    assert state["epic"]["gate"]["cause"] == "check_1_quality_gates"
+    assert state["epic"]["checks"]["failed_checks"][0]["summary"] == "quality gate failed"
+    assert state["epic"]["audit_pointers"]["latest_codex_audit_path"] == (
+        ".woof/epics/E5/audit/codex-primary-run"
+    )
+
+
+def test_preflight_text_reports_operator_state_for_current_epic(
+    tmp_path: Path,
+    run_woof,
+) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _stub_core_tools(bin_dir)
+    _write_project(
+        tmp_path,
+        prerequisites="""\
+[infra]
+just = "any"
+git = "any"
+
+[commands]
+claude = "any"
+codex = "any"
+
+[validators]
+ajv = "any"
+ajv-formats = "any"
+
+[tracker]
+kind = "local"
+""",
+    )
+    _write_current_epic_state(tmp_path)
+
+    proc = run_woof(
+        "preflight",
+        "--project-root",
+        str(tmp_path),
+        env=_env_with_path(bin_dir),
+    )
+
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert "Operator state:" in proc.stdout
+    assert "current_epic: E5 selected=true valid=true epic_dir_exists=true" in proc.stdout
+    assert "runtime_policy: trusted-local" in proc.stdout
+    assert "primary: adapter=codex model=gpt-5.5 effort=xhigh" in proc.stdout
+    assert "next_action: resolve_gate command=woof wf --epic 5 --resolve <decision>" in proc.stdout
+    assert "gate: open type=story_gate story=S1 cause=check_1_quality_gates" in proc.stdout
+    assert "checks: FAIL total=1 failed=1 triggered_by=check_1_quality_gates" in proc.stdout
+    assert "audit_pointers: epic_jsonl=.woof/epics/E5/epic.jsonl" in proc.stdout

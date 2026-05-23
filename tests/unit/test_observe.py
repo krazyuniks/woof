@@ -14,10 +14,25 @@ def _write_project(tmp_path: Path, *, with_usage: bool = True) -> Path:
     audit_dir = epic_dir / "audit"
     raw_dir = audit_dir / "raw"
     raw_dir.mkdir(parents=True)
+    (project / ".woof" / ".current-epic").write_text("E5\n")
     (project / ".woof" / "agents.toml").write_text(
         """\
 [audit]
 max_bytes = 180
+
+[timeouts]
+default_minutes = 12
+
+[roles.primary]
+adapter = "codex"
+model = "gpt-5.5"
+effort = "xhigh"
+
+[roles.reviewer]
+adapter = "claude"
+model = "claude-opus-4-7"
+effort = "max"
+mcp = []
 """
     )
     (epic_dir / "plan.json").write_text(
@@ -153,6 +168,40 @@ No separate reviewer position was available.
         )
         + "\n"
     )
+    (epic_dir / "check-result.json").write_text(
+        json.dumps(
+            {
+                "ok": False,
+                "stage": 5,
+                "epic_id": 5,
+                "story_id": "S1",
+                "triggered_by": ["check_1_quality_gates"],
+                "checks": [
+                    {
+                        "id": "check_1_quality_gates",
+                        "ok": False,
+                        "severity": "blocker",
+                        "summary": "lint failed",
+                        "evidence": "ruff exited 1",
+                        "paths": ["src/woof/cli/commands/observe.py"],
+                        "command": "just lint",
+                        "exit_code": 1,
+                    },
+                    {
+                        "id": "check_2_outcome_markers",
+                        "ok": True,
+                        "severity": None,
+                        "summary": "outcome markers present",
+                        "evidence": None,
+                        "paths": [],
+                        "command": None,
+                        "exit_code": None,
+                    },
+                ],
+            }
+        )
+        + "\n"
+    )
     (audit_dir / "codex-primary-run.prompt").write_text(
         "Bearer [REDACTED:bearer_token]\n"
         "... [truncated, full output at .woof/epics/E5/audit/raw/codex-primary-run.prompt]\n"
@@ -177,13 +226,59 @@ def test_observe_all_json_reports_status_gate_timeline_and_audit(tmp_path: Path)
 
     assert proc.returncode == 0, proc.stderr
     payload = json.loads(proc.stdout)
+    assert payload["current_epic"] == {
+        "path": ".woof/.current-epic",
+        "exists": True,
+        "value": "E5",
+        "epic_id": 5,
+        "epic_dir": ".woof/epics/E5",
+        "epic_dir_exists": True,
+        "selected": True,
+        "valid": True,
+    }
     assert payload["status"]["next"] == {
         "node": "human_review",
         "story_id": None,
         "reason": "gate_open",
     }
+    assert payload["status"]["next_action"] == {
+        "action": "resolve_gate",
+        "command": "woof wf --epic 5 --resolve <decision>",
+        "inspect_command": "woof observe --epic 5 --view gate",
+        "reason": "check_1_quality_gates",
+        "description": "Inspect the gate, then resolve it with a structured decision.",
+    }
+    assert payload["runtime_policy"]["mode"] == "trusted-local"
+    assert payload["dispatch_routes"]["roles"]["primary"] == {
+        "ok": True,
+        "role": "primary",
+        "config_role": "primary",
+        "adapter": "codex",
+        "model": "gpt-5.5",
+        "effort": "xhigh",
+        "mcp": [],
+        "flags": [],
+        "timeout_min": 12,
+        "prompt_transport": "stdin",
+        "runtime_policy": payload["runtime_policy"],
+        "errors": [],
+    }
     assert payload["gate"]["open"] is True
+    assert payload["gate"]["cause"] == "check_1_quality_gates"
     assert payload["gate"]["sections"]["Context"] == "Quality failed."
+    assert payload["checks"]["ok"] is False
+    assert payload["checks"]["failed"] == 1
+    assert payload["checks"]["failed_checks"][0]["id"] == "check_1_quality_gates"
+    assert payload["status"]["audit_pointers"] == {
+        "epic_jsonl": ".woof/epics/E5/epic.jsonl",
+        "dispatch_jsonl": ".woof/epics/E5/dispatch.jsonl",
+        "audit_dir": ".woof/epics/E5/audit",
+        "raw_overflow_dir": ".woof/epics/E5/audit/raw",
+        "latest_codex_audit_path": ".woof/epics/E5/audit/codex-primary-run",
+        "latest_claude_transcript_path": (
+            "~/.claude/projects/-tmp-project/00000000-0000-0000-0000-000000000001.jsonl"
+        ),
+    }
     assert [event["event"] for event in payload["timeline"]] == [
         "definition_closed",
         "subprocess_spawned",
@@ -246,3 +341,23 @@ def test_observe_audit_text_reports_raw_overflow_and_no_archive(tmp_path: Path) 
     assert "retention_archive: not implemented" in proc.stdout
     assert "tokens: unavailable" in proc.stdout
     assert "cost: unavailable" in proc.stdout
+
+
+def test_observe_status_text_reports_operator_state(tmp_path: Path) -> None:
+    project = _write_project(tmp_path, with_usage=False)
+
+    proc = _run_observe(project, "--view", "status")
+
+    assert proc.returncode == 0, proc.stderr
+    assert "current_epic: E5 selected=true valid=true epic_dir_exists=true" in proc.stdout
+    assert "runtime_policy: trusted-local" in proc.stdout
+    assert "next_action: resolve_gate command=woof wf --epic 5 --resolve <decision>" in proc.stdout
+    assert "gate: open type=story_gate story=S1 cause=check_1_quality_gates" in proc.stdout
+    assert "checks: FAIL stage=5 story=S1 total=2 failed=1" in proc.stdout
+    assert "FAIL check_1_quality_gates: lint failed" in proc.stdout
+    assert (
+        "audit_pointers: epic_jsonl=.woof/epics/E5/epic.jsonl "
+        "dispatch_jsonl=.woof/epics/E5/dispatch.jsonl "
+        "audit_dir=.woof/epics/E5/audit"
+    ) in proc.stdout
+    assert "primary: adapter=codex model=gpt-5.5 effort=xhigh" in proc.stdout

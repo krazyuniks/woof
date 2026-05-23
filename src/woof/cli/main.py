@@ -2,6 +2,7 @@
 
 Subcommands:
     wf           Run the deterministic orchestration graph.
+    observe      Inspect read-only workflow status, timeline, gate, and audit views.
     preflight    Validate local prerequisites for a Woof consumer checkout.
     init         Scaffold a fresh .woof/ consumer config and .gitignore block.
     hooks        Manage Woof-owned git hook blocks.
@@ -487,6 +488,7 @@ def main() -> int:
 
     from woof.cli.commands.check import setup_check_parser
     from woof.cli.commands.gate import setup_gate_parser
+    from woof.cli.commands.observe import setup_observe_parser
     from woof.cli.commands.wf import setup_wf_parser
     from woof.cli.hooks import setup_hooks_parser
     from woof.cli.init import setup_init_parser
@@ -515,6 +517,7 @@ def main() -> int:
 
     setup_hooks_parser(sub)
     setup_init_parser(sub)
+    setup_observe_parser(sub)
     setup_wf_parser(sub)
     setup_check_parser(sub)
     setup_gate_parser(sub)

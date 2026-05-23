@@ -107,11 +107,21 @@ Inspect workflow state without mutating the epic:
 /path/to/woof/bin/woof observe --epic <N> --view audit
 ```
 
+`observe --view status` reports the selected `.woof/.current-epic` marker,
+current graph node, next operator command, gate cause, Stage-5 check summary,
+resolved primary/reviewer routes, trusted-local runtime policy, and audit log
+pointers. `--format json` exposes the same fields for automation.
+
 Check startup infrastructure before invoking the graph:
 
 ```bash
 /path/to/woof/bin/woof preflight
 ```
+
+`preflight` prints prerequisite findings plus an operator-state section for the
+current epic when `.woof/.current-epic` is set. The JSON output includes the same
+`operator_state` object, including dispatch routes, runtime policy, next action,
+gate cause, check summary, and audit pointers.
 
 Inspect the resolved dispatch route and trusted-local runtime policy without
 spawning an agent:

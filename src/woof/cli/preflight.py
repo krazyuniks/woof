@@ -21,6 +21,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from woof.cli.commands.observe import build_operator_state_summary
 from woof.cli.dispatcher import (
     TRUSTED_RUNTIME_MODE,
     TRUSTED_RUNTIME_NOTE,
@@ -101,6 +102,7 @@ class PreflightFinding:
 class PreflightResult:
     repo_root: Path
     findings: list[PreflightFinding]
+    operator_state: dict[str, Any] = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
@@ -117,6 +119,7 @@ class PreflightResult:
             "total": len(self.findings),
             "failed": len(self.failed),
             "findings": [finding.as_dict() for finding in self.findings],
+            "operator_state": self.operator_state,
         }
 
 
@@ -131,10 +134,12 @@ def cmd_preflight(args: argparse.Namespace) -> int:
 
 
 def run_preflight(repo_root: Path, *, force: bool = False) -> PreflightResult:
+    operator_state = build_operator_state_summary(repo_root)
     prereq_path = repo_root / ".woof" / "prerequisites.toml"
     if not prereq_path.is_file():
         return PreflightResult(
             repo_root=repo_root,
+            operator_state=operator_state,
             findings=[
                 PreflightFinding(
                     id="config.prerequisites",
@@ -177,7 +182,7 @@ def run_preflight(repo_root: Path, *, force: bool = False) -> PreflightResult:
                 detail=prereq,
             )
         )
-    return PreflightResult(repo_root=repo_root, findings=findings)
+    return PreflightResult(repo_root=repo_root, findings=findings, operator_state=operator_state)
 
 
 def _resolve_repo_root(project_root: str | None) -> Path:
@@ -1348,6 +1353,92 @@ def _print_text_result(result: PreflightResult) -> None:
             for note in finding.notes:
                 print(f"    - {note}")
 
+    _print_operator_state(result.operator_state)
+
     if failed:
         print()
         print("Re-run `woof preflight` after installing.")
+
+
+def _print_operator_state(operator_state: dict[str, Any]) -> None:
+    print()
+    print("Operator state:")
+    current = operator_state.get("current_epic") or {}
+    if current.get("exists"):
+        selected = "true" if current.get("selected") else "false"
+        valid = "true" if current.get("valid") else "false"
+        exists = "true" if current.get("epic_dir_exists") else "false"
+        print(
+            f"  current_epic: {current.get('value') or '-'} "
+            f"selected={selected} valid={valid} epic_dir_exists={exists}"
+        )
+    else:
+        print(f"  current_epic: none path={current.get('path')}")
+
+    runtime_policy = operator_state.get("runtime_policy") or {}
+    print(f"  runtime_policy: {runtime_policy.get('mode') or 'unknown'}")
+    _print_operator_routes(operator_state.get("dispatch_routes") or {})
+
+    epic = operator_state.get("epic")
+    if not epic:
+        print("  epic_state: unavailable")
+        return
+    if not epic.get("exists", False):
+        print(f"  epic_state: unavailable error={epic.get('error')}")
+        return
+    next_step = epic.get("next") or {}
+    next_action = epic.get("next_action") or {}
+    print(
+        f"  next: {next_step.get('node') or '-'} "
+        f"story={next_step.get('story_id') or '-'} "
+        f"reason={next_step.get('reason') or '-'}"
+    )
+    print(
+        f"  next_action: {next_action.get('action') or '-'} "
+        f"command={next_action.get('command') or '-'} "
+        f"reason={next_action.get('reason') or '-'}"
+    )
+    gate = epic.get("gate") or {}
+    if gate.get("open"):
+        print(
+            f"  gate: open type={gate.get('type')} story={gate.get('story_id') or '-'} "
+            f"cause={gate.get('cause') or '-'}"
+        )
+    else:
+        print("  gate: closed")
+    checks = epic.get("checks") or {}
+    if checks.get("exists") and checks.get("valid"):
+        state = "OK" if checks.get("ok") else "FAIL"
+        print(
+            f"  checks: {state} total={checks.get('total')} failed={checks.get('failed')} "
+            f"triggered_by={','.join(checks.get('triggered_by') or []) or '-'}"
+        )
+    elif checks.get("exists"):
+        print(f"  checks: malformed path={checks.get('path')} error={checks.get('error')}")
+    else:
+        print(f"  checks: unavailable path={checks.get('path')}")
+    pointers = epic.get("audit_pointers") or {}
+    if pointers:
+        print(
+            f"  audit_pointers: epic_jsonl={pointers.get('epic_jsonl')} "
+            f"dispatch_jsonl={pointers.get('dispatch_jsonl')} "
+            f"audit_dir={pointers.get('audit_dir')}"
+        )
+
+
+def _print_operator_routes(routes: dict[str, Any]) -> None:
+    print(f"  dispatch_routes: {routes.get('path') or '-'}")
+    roles = routes.get("roles") or {}
+    for role_name in ("primary", "reviewer"):
+        route = roles.get(role_name) or {}
+        if route.get("ok"):
+            mcp = ",".join(route.get("mcp") or []) or "-"
+            print(
+                f"    {role_name}: adapter={route.get('adapter')} "
+                f"model={route.get('model')} effort={route.get('effort')} "
+                f"config_role={route.get('config_role')} mcp={mcp} "
+                f"timeout={route.get('timeout_min')}m"
+            )
+        else:
+            errors = "; ".join(str(error) for error in route.get("errors") or [])
+            print(f"    {role_name}: unavailable {errors}")

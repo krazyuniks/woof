@@ -12,6 +12,14 @@ from typing import Any
 
 import yaml
 
+from woof.cli.dispatcher import (
+    DispatchConfigError,
+    _mcp_names,
+    _role_effort,
+    build_argv,
+    resolve_role_route,
+    trusted_runtime_policy,
+)
 from woof.graph.dispositions import (
     critique_severity,
     read_markdown_front_matter,
@@ -98,16 +106,21 @@ def build_observe_report(repo_root: Path, epic_id: int) -> dict[str, Any]:
     if not directory.is_dir():
         raise ObserveError(f"{_display_path(repo_root, directory)} not found")
 
+    current_epic = _current_epic_summary(repo_root, selected_epic_id=epic_id)
     epic_records, epic_warnings = _read_jsonl(directory / "epic.jsonl", "epic")
     dispatch_records, dispatch_warnings = _read_jsonl(directory / "dispatch.jsonl", "dispatch")
     gate = _gate_summary(repo_root, directory)
     plan_summary, plan = _plan_summary(repo_root, directory)
     timeline = _timeline([*epic_records, *dispatch_records])
     dispatch_events = [record.payload for record in dispatch_records]
+    audit_pointers = _audit_pointers(repo_root, directory, dispatch_events)
     usage = _usage_summary(
         event for event in dispatch_events if event.get("event") == "subprocess_returned"
     )
-    audit = _audit_summary(repo_root, directory, dispatch_events, usage)
+    audit = _audit_summary(repo_root, directory, dispatch_events, usage, audit_pointers)
+    checks = _check_summary(repo_root, directory)
+    dispatch_routes = _dispatch_routes_summary(repo_root)
+    runtime_policy = trusted_runtime_policy()
     status = _status_summary(
         repo_root,
         epic_id,
@@ -117,17 +130,64 @@ def build_observe_report(repo_root: Path, epic_id: int) -> dict[str, Any]:
         gate=gate,
         timeline=timeline,
         usage=usage,
+        current_epic=current_epic,
+        checks=checks,
+        dispatch_routes=dispatch_routes,
+        runtime_policy=runtime_policy,
+        audit_pointers=audit_pointers,
     )
 
     return {
         "epic_id": epic_id,
         "epic_dir": _display_path(repo_root, directory),
+        "current_epic": current_epic,
         "status": status,
         "timeline": timeline,
         "gate": gate,
         "audit": audit,
+        "checks": checks,
+        "dispatch_routes": dispatch_routes,
+        "runtime_policy": runtime_policy,
         "warnings": [*epic_warnings, *dispatch_warnings],
     }
+
+
+def build_operator_state_summary(repo_root: Path) -> dict[str, Any]:
+    """Build the preflight operator-state summary without mutating workflow state."""
+
+    current_epic = _current_epic_summary(repo_root)
+    dispatch_routes = _dispatch_routes_summary(repo_root)
+    runtime_policy = trusted_runtime_policy()
+    selected = current_epic.get("epic_id")
+    summary: dict[str, Any] = {
+        "current_epic": current_epic,
+        "dispatch_routes": dispatch_routes,
+        "runtime_policy": runtime_policy,
+        "epic": None,
+    }
+    if isinstance(selected, int):
+        try:
+            report = build_observe_report(repo_root, selected)
+        except ObserveError as exc:
+            summary["epic"] = {
+                "epic_id": selected,
+                "exists": False,
+                "error": str(exc),
+            }
+        else:
+            summary["epic"] = {
+                "epic_id": selected,
+                "exists": True,
+                "epic_dir": report["epic_dir"],
+                "next": report["status"]["next"],
+                "next_action": report["status"]["next_action"],
+                "gate": report["status"]["gate"],
+                "checks": report["status"]["checks"],
+                "audit_pointers": report["status"]["audit_pointers"],
+                "latest_event": report["status"]["latest_event"],
+                "warnings": report["warnings"],
+            }
+    return summary
 
 
 def _select_view(report: dict[str, Any], view: str) -> dict[str, Any] | list[dict[str, Any]]:
@@ -146,20 +206,33 @@ def _status_summary(
     gate: dict[str, Any],
     timeline: list[dict[str, Any]],
     usage: dict[str, Any],
+    current_epic: dict[str, Any],
+    checks: dict[str, Any],
+    dispatch_routes: dict[str, Any],
+    runtime_policy: dict[str, Any],
+    audit_pointers: dict[str, Any],
 ) -> dict[str, Any]:
+    next_step = _derive_next_step(repo_root, epic_id, directory, plan, gate)
     return {
         "epic_id": epic_id,
         "epic_dir": _display_path(repo_root, directory),
-        "next": _derive_next_step(repo_root, epic_id, directory, plan, gate),
+        "current_epic": current_epic,
+        "next": next_step,
+        "next_action": _next_action(epic_id, next_step, gate),
         "gate": {
             "open": gate["open"],
             "type": gate.get("type"),
             "story_id": gate.get("story_id"),
             "triggered_by": gate.get("triggered_by", []),
+            "cause": _gate_cause(gate),
             "path": gate.get("path"),
         },
         "plan": plan_summary,
+        "checks": checks,
         "dispatch": _dispatch_counts(timeline),
+        "dispatch_routes": dispatch_routes,
+        "runtime_policy": runtime_policy,
+        "audit_pointers": audit_pointers,
         "usage": usage,
         "latest_event": timeline[-1] if timeline else None,
     }
@@ -266,6 +339,224 @@ def _derive_next_step(
     return {"node": "commit", "story_id": story_id}
 
 
+def _next_action(epic_id: int, next_step: dict[str, Any], gate: dict[str, Any]) -> dict[str, Any]:
+    if gate["open"]:
+        return {
+            "action": "resolve_gate",
+            "command": f"woof wf --epic {epic_id} --resolve <decision>",
+            "inspect_command": f"woof observe --epic {epic_id} --view gate",
+            "reason": _gate_cause(gate),
+            "description": "Inspect the gate, then resolve it with a structured decision.",
+        }
+    node = str(next_step.get("node") or "")
+    if node == "epic_complete":
+        return {
+            "action": "none",
+            "command": None,
+            "reason": "epic_complete",
+            "description": "No workflow action remains for this epic.",
+        }
+    return {
+        "action": "run_graph",
+        "command": f"woof wf --epic {epic_id}",
+        "reason": next_step.get("reason") or node,
+        "description": f"Run the graph to continue at {node}.",
+    }
+
+
+def _current_epic_summary(
+    repo_root: Path,
+    *,
+    selected_epic_id: int | None = None,
+) -> dict[str, Any]:
+    marker = repo_root / ".woof" / ".current-epic"
+    summary: dict[str, Any] = {
+        "path": _display_path(repo_root, marker),
+        "exists": marker.is_file(),
+        "value": None,
+        "epic_id": None,
+        "epic_dir": None,
+        "epic_dir_exists": False,
+        "selected": False,
+        "valid": False,
+    }
+    if not marker.is_file():
+        return summary
+    value = marker.read_text(encoding="utf-8").strip()
+    summary["value"] = value
+    if not value.startswith("E") or not value[1:].isdigit():
+        summary["error"] = "current epic marker must contain E<N>"
+        return summary
+    epic_id = int(value[1:])
+    epic_dir = repo_root / ".woof" / "epics" / value
+    summary.update(
+        {
+            "epic_id": epic_id,
+            "epic_dir": _display_path(repo_root, epic_dir),
+            "epic_dir_exists": epic_dir.is_dir(),
+            "selected": selected_epic_id == epic_id if selected_epic_id is not None else True,
+            "valid": True,
+        }
+    )
+    return summary
+
+
+def _dispatch_routes_summary(repo_root: Path) -> dict[str, Any]:
+    agents_path = repo_root / ".woof" / "agents.toml"
+    summary: dict[str, Any] = {
+        "path": _display_path(repo_root, agents_path),
+        "exists": agents_path.is_file(),
+        "roles": {},
+        "timeout_min": None,
+    }
+    if not agents_path.is_file():
+        summary["error"] = f"{_display_path(repo_root, agents_path)} not found"
+        for role_name in ("primary", "reviewer"):
+            summary["roles"][role_name] = {
+                "ok": False,
+                "role": role_name,
+                "errors": ["agents.toml not found"],
+            }
+        return summary
+
+    loaded = _load_toml(agents_path)
+    if not isinstance(loaded, dict):
+        summary["error"] = loaded
+        for role_name in ("primary", "reviewer"):
+            summary["roles"][role_name] = {"ok": False, "role": role_name, "errors": [loaded]}
+        return summary
+
+    timeout_min = 30
+    timeout_error: str | None = None
+    try:
+        timeout_min = int((loaded.get("timeouts") or {}).get("default_minutes", 30))
+    except (TypeError, ValueError):
+        timeout_error = "timeouts.default_minutes must be an integer"
+    summary["timeout_min"] = timeout_min
+    roles = loaded.get("roles") or {}
+    if not isinstance(roles, dict):
+        summary["error"] = "roles table is not an object"
+        for role_name in ("primary", "reviewer"):
+            summary["roles"][role_name] = {
+                "ok": False,
+                "role": role_name,
+                "errors": ["roles table is not an object"],
+            }
+        return summary
+    mcp_servers = loaded.get("mcp_servers") or {}
+    if not isinstance(mcp_servers, dict):
+        mcp_servers = {}
+    for role_name in ("primary", "reviewer"):
+        route_summary = _dispatch_route_summary(
+            role_name,
+            roles,
+            mcp_servers,
+            timeout_min,
+        )
+        if timeout_error:
+            route_summary["ok"] = False
+            route_summary["errors"].append(timeout_error)
+        summary["roles"][role_name] = route_summary
+    return summary
+
+
+def _dispatch_route_summary(
+    role_name: str,
+    roles: dict[str, Any],
+    mcp_servers: dict[str, Any],
+    timeout_min: int,
+) -> dict[str, Any]:
+    try:
+        route = resolve_role_route(roles, role_name)
+    except DispatchConfigError as exc:
+        return {"ok": False, "role": role_name, "errors": [str(exc)]}
+
+    errors: list[str] = []
+    effort: str | None = None
+    mcp_names: list[str] = []
+    if route.adapter == "in-session":
+        errors.append("dispatchable role resolves to in-session")
+    try:
+        effort = _role_effort(route.adapter, route.config)
+    except DispatchConfigError as exc:
+        errors.append(str(exc))
+    if effort is None:
+        errors.append("effort is not declared")
+    try:
+        mcp_names = _mcp_names(route.config)
+        build_argv(route.adapter, route.config, "observe route probe", mcp_servers=mcp_servers)
+    except DispatchConfigError as exc:
+        errors.append(str(exc))
+
+    model = route.config.get("model")
+    if not model:
+        errors.append("model is not declared")
+
+    return {
+        "ok": not errors,
+        "role": role_name,
+        "config_role": route.config_role,
+        "adapter": route.adapter,
+        "model": model,
+        "effort": effort,
+        "mcp": mcp_names,
+        "flags": route.config.get("flags") or [],
+        "timeout_min": timeout_min,
+        "prompt_transport": "stdin",
+        "runtime_policy": trusted_runtime_policy(),
+        "errors": errors,
+    }
+
+
+def _check_summary(repo_root: Path, directory: Path) -> dict[str, Any]:
+    path = directory / "check-result.json"
+    if not path.exists():
+        return {
+            "exists": False,
+            "valid": False,
+            "path": _display_path(repo_root, path),
+        }
+
+    payload, error = _load_json_object(path)
+    if payload is None:
+        return {
+            "exists": True,
+            "valid": False,
+            "path": _display_path(repo_root, path),
+            "error": error,
+        }
+
+    checks_raw = payload.get("checks") if isinstance(payload.get("checks"), list) else []
+    checks = [_check_entry_summary(check) for check in checks_raw if isinstance(check, dict)]
+    failed_checks = [check for check in checks if not check["ok"]]
+    return {
+        "exists": True,
+        "valid": True,
+        "path": _display_path(repo_root, path),
+        "ok": bool(payload.get("ok", False)),
+        "stage": payload.get("stage"),
+        "story_id": payload.get("story_id"),
+        "triggered_by": [str(item) for item in payload.get("triggered_by") or []],
+        "total": len(checks),
+        "failed": len(failed_checks),
+        "checks": checks,
+        "failed_checks": failed_checks,
+    }
+
+
+def _check_entry_summary(check: dict[str, Any]) -> dict[str, Any]:
+    item = {
+        "id": str(check.get("id") or ""),
+        "ok": bool(check.get("ok", False)),
+        "severity": check.get("severity"),
+        "summary": str(check.get("summary") or ""),
+    }
+    for key in ("evidence", "paths", "command", "exit_code"):
+        if check.get(key) is not None:
+            item[key] = check[key]
+    return item
+
+
 def _plan_summary(repo_root: Path, directory: Path) -> tuple[dict[str, Any], Plan | None]:
     path = directory / "plan.json"
     if not path.exists():
@@ -305,7 +596,7 @@ def _plan_summary(repo_root: Path, directory: Path) -> tuple[dict[str, Any], Pla
 def _gate_summary(repo_root: Path, directory: Path) -> dict[str, Any]:
     gate_path = directory / "gate.md"
     if not gate_path.exists():
-        return {"open": False, "path": _display_path(repo_root, gate_path)}
+        return {"open": False, "path": _display_path(repo_root, gate_path), "cause": "none"}
     text = gate_path.read_text(encoding="utf-8")
     front: dict[str, Any] = {}
     body = text
@@ -324,9 +615,17 @@ def _gate_summary(repo_root: Path, directory: Path) -> dict[str, Any]:
         "stage": front.get("stage"),
         "story_id": front.get("story_id"),
         "triggered_by": [str(item) for item in triggered_by],
+        "cause": ", ".join(str(item) for item in triggered_by) if triggered_by else "unspecified",
         "timestamp": front.get("timestamp"),
         "sections": _markdown_sections(body),
     }
+
+
+def _gate_cause(gate: dict[str, Any]) -> str:
+    if not gate.get("open"):
+        return "none"
+    triggered_by = gate.get("triggered_by") or []
+    return ", ".join(str(item) for item in triggered_by) if triggered_by else "unspecified"
 
 
 def _audit_summary(
@@ -334,6 +633,7 @@ def _audit_summary(
     directory: Path,
     dispatch_events: list[dict[str, Any]],
     usage: dict[str, Any],
+    audit_pointers: dict[str, Any],
 ) -> dict[str, Any]:
     audit_dir = directory / "audit"
     config, config_error = _audit_config(repo_root)
@@ -366,6 +666,7 @@ def _audit_summary(
             "mode": "not_implemented",
             "note": "Raw overflow remains local under audit/raw; Woof does not archive or expire it.",
         },
+        "pointers": audit_pointers,
         "files": files,
         "dispatch": {
             "spawned": sum(
@@ -380,6 +681,31 @@ def _audit_summary(
         "usage": usage,
     }
     return summary
+
+
+def _audit_pointers(
+    repo_root: Path,
+    directory: Path,
+    dispatch_events: list[dict[str, Any]],
+) -> dict[str, Any]:
+    latest_codex = _latest_event_field(dispatch_events, "codex_audit_path")
+    latest_claude = _latest_event_field(dispatch_events, "claude_transcript_path")
+    return {
+        "epic_jsonl": _display_path(repo_root, directory / "epic.jsonl"),
+        "dispatch_jsonl": _display_path(repo_root, directory / "dispatch.jsonl"),
+        "audit_dir": _display_path(repo_root, directory / "audit"),
+        "raw_overflow_dir": _display_path(repo_root, directory / "audit" / "raw"),
+        "latest_codex_audit_path": latest_codex,
+        "latest_claude_transcript_path": latest_claude,
+    }
+
+
+def _latest_event_field(events: list[dict[str, Any]], field: str) -> Any:
+    for event in reversed(events):
+        value = event.get(field)
+        if value:
+            return value
+    return None
 
 
 def _audit_config(repo_root: Path) -> tuple[AuditConfig, str | None]:
@@ -540,6 +866,28 @@ def _load_json(path: Path) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
+def _load_toml(path: Path) -> dict[str, Any] | str:
+    try:
+        with path.open("rb") as fh:
+            return tomllib.load(fh)
+    except FileNotFoundError:
+        return f"{_display_path(path.parent, path)} not found"
+    except tomllib.TOMLDecodeError as exc:
+        return f"{path}: TOML parse error: {exc}"
+
+
+def _load_json_object(path: Path) -> tuple[dict[str, Any] | None, str | None]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None, "file not found"
+    except json.JSONDecodeError as exc:
+        return None, f"invalid JSON: {exc}"
+    if not isinstance(payload, dict):
+        return None, "JSON root is not an object"
+    return payload, None
+
+
 def _number_fields(payload: dict[str, Any], fields: tuple[str, ...]) -> dict[str, int | float]:
     values: dict[str, int | float] = {}
     for field in fields:
@@ -597,15 +945,20 @@ def _print_status(status: dict[str, Any]) -> None:
     next_step = status["next"]
     print(f"E{status['epic_id']} status")
     print(f"epic_dir: {status['epic_dir']}")
+    _print_current_epic(status["current_epic"])
+    print(f"runtime_policy: {status['runtime_policy']['mode']}")
     story = f" story={next_step['story_id']}" if next_step.get("story_id") else ""
     reason = f" reason={next_step['reason']}" if next_step.get("reason") else ""
     print(f"next: {next_step['node']}{story}{reason}")
+    action = status["next_action"]
+    command = action.get("command") or "-"
+    print(f"next_action: {action['action']} command={command} reason={action.get('reason')}")
     gate = status["gate"]
     if gate["open"]:
         print(
             "gate: open "
             f"type={gate.get('type')} story={gate.get('story_id') or '-'} "
-            f"triggered_by={','.join(gate.get('triggered_by') or [])}"
+            f"cause={gate.get('cause')}"
         )
     else:
         print("gate: closed")
@@ -618,6 +971,9 @@ def _print_status(status: dict[str, Any]) -> None:
         )
     else:
         print(f"stories: unavailable plan_valid={plan['valid']}")
+    _print_check_summary(status["checks"])
+    _print_audit_pointers(status["audit_pointers"])
+    _print_dispatch_routes(status["dispatch_routes"])
     _print_usage(status["usage"])
 
 
@@ -640,6 +996,7 @@ def _print_gate(gate: dict[str, Any]) -> None:
 
 def _print_audit(audit: dict[str, Any]) -> None:
     print(f"audit_dir: {audit['audit_dir']}")
+    _print_audit_pointers(audit["pointers"])
     print(
         "files: "
         f"commit_bound={audit['commit_bound_file_count']} "
@@ -653,6 +1010,65 @@ def _print_audit(audit: dict[str, Any]) -> None:
     spawned = audit["dispatch"]["spawned"]
     killed = audit["dispatch"]["killed"]
     print(f"dispatch: spawned={spawned} returned={returned} killed={killed}")
+
+
+def _print_current_epic(current: dict[str, Any]) -> None:
+    if not current["exists"]:
+        print(f"current_epic: none path={current['path']}")
+        return
+    selected = "true" if current.get("selected") else "false"
+    valid = "true" if current.get("valid") else "false"
+    value = current.get("value") or "-"
+    exists = "true" if current.get("epic_dir_exists") else "false"
+    print(f"current_epic: {value} selected={selected} valid={valid} epic_dir_exists={exists}")
+
+
+def _print_check_summary(checks: dict[str, Any]) -> None:
+    if not checks["exists"]:
+        print(f"checks: unavailable path={checks['path']}")
+        return
+    if not checks["valid"]:
+        print(f"checks: malformed path={checks['path']} error={checks.get('error')}")
+        return
+    state = "OK" if checks["ok"] else "FAIL"
+    print(
+        "checks: "
+        f"{state} stage={checks.get('stage')} story={checks.get('story_id') or '-'} "
+        f"total={checks['total']} failed={checks['failed']} "
+        f"triggered_by={','.join(checks.get('triggered_by') or []) or '-'}"
+    )
+    for check in checks["failed_checks"]:
+        print(f"  FAIL {check['id']}: {check['summary']}")
+
+
+def _print_audit_pointers(pointers: dict[str, Any]) -> None:
+    print(
+        "audit_pointers: "
+        f"epic_jsonl={pointers['epic_jsonl']} "
+        f"dispatch_jsonl={pointers['dispatch_jsonl']} "
+        f"audit_dir={pointers['audit_dir']}"
+    )
+    if pointers.get("latest_codex_audit_path"):
+        print(f"latest_codex_audit_path: {pointers['latest_codex_audit_path']}")
+    if pointers.get("latest_claude_transcript_path"):
+        print(f"latest_claude_transcript_path: {pointers['latest_claude_transcript_path']}")
+
+
+def _print_dispatch_routes(routes: dict[str, Any]) -> None:
+    print(f"dispatch_routes: {routes['path']}")
+    for role_name in ("primary", "reviewer"):
+        route = (routes.get("roles") or {}).get(role_name) or {}
+        if route.get("ok"):
+            mcp = ",".join(route.get("mcp") or []) or "-"
+            print(
+                f"  {role_name}: adapter={route.get('adapter')} "
+                f"model={route.get('model')} effort={route.get('effort')} "
+                f"config_role={route.get('config_role')} mcp={mcp} "
+                f"timeout={route.get('timeout_min')}m"
+            )
+        else:
+            errors = "; ".join(str(error) for error in route.get("errors") or [])
+            print(f"  {role_name}: unavailable {errors}")
 
 
 def _print_timeline(events: list[dict[str, Any]]) -> None:

@@ -2,7 +2,9 @@
 
 Validates the contract-decision artefacts owned by the active story. The
 underlying reference checks are shared with ``woof check-cd`` so the E146
-regression fixture and the Stage-5 runner exercise the same contract boundary.
+regression fixture and the Stage-5 runner exercise the same contract boundary:
+native reference resolution plus bounded conformance checks where the artefact
+itself exposes them.
 """
 
 from __future__ import annotations

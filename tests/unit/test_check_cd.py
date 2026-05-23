@@ -124,6 +124,28 @@ def test_broken_openapi_ref_pointer_fails(fixture_copy: Path) -> None:
     assert "did not resolve" in cd1["detail"]
 
 
+def test_openapi_ref_to_path_item_fails(fixture_copy: Path) -> None:
+    """OpenAPI path refs must identify a concrete operation, not just a path item."""
+    epic = fixture_copy / "EPIC.md"
+    _localise_refs(epic)
+    _set_epic_field(
+        epic,
+        "spec/openapi.yaml#/paths/~1api~1v1~1comments~1{id}/patch",
+        "spec/openapi.yaml#/paths/~1api~1v1~1comments~1{id}",
+    )
+    proc = subprocess.run(
+        [str(WOOF_BIN), "check-cd", "--format", "json", str(epic)],
+        capture_output=True,
+        text=True,
+        cwd=fixture_copy,
+    )
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    payload = json.loads(proc.stdout)
+    cd1 = next(f for f in payload["findings"] if f["id"] == "CD1")
+    assert cd1["ok"] is False
+    assert "must point to an operation" in cd1["detail"]
+
+
 def test_broken_openapi_ref_file_missing_fails(fixture_copy: Path) -> None:
     """OpenAPI document that doesn't exist on disk must fail."""
     epic = fixture_copy / "EPIC.md"
@@ -224,6 +246,28 @@ def test_broken_json_schema_ref_invalid_schema_fails(fixture_copy: Path) -> None
     payload = json.loads(proc.stdout)
     cd3 = next(f for f in payload["findings"] if f["id"] == "CD3")
     assert cd3["ok"] is False
+
+
+def test_json_schema_ref_invalid_example_fails(fixture_copy: Path) -> None:
+    """Top-level JSON Schema examples are checked against the referenced schema."""
+    epic = fixture_copy / "EPIC.md"
+    _localise_refs(epic)
+    schema = fixture_copy / "schemas" / "audit-event.schema.json"
+    data = json.loads(schema.read_text())
+    data["examples"] = [{"event": "comment.edited", "at": "not-a-date"}]
+    schema.write_text(json.dumps(data))
+
+    proc = subprocess.run(
+        [str(WOOF_BIN), "check-cd", "--format", "json", str(epic)],
+        capture_output=True,
+        text=True,
+        cwd=fixture_copy,
+    )
+    assert proc.returncode == 1
+    payload = json.loads(proc.stdout)
+    cd3 = next(f for f in payload["findings"] if f["id"] == "CD3")
+    assert cd3["ok"] is False
+    assert "examples[0] failed validation" in cd3["detail"]
 
 
 # ---------------------------------------------------------------------------

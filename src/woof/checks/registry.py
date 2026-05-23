@@ -63,7 +63,7 @@ REGISTRY: dict[str, Check] = {
         id="check_4_contract_refs",
         stage=5,
         cost="expensive",
-        summary="woof check-cd verifies every CD's contract reference resolves",
+        summary="woof check-cd verifies owned CD refs resolve with bounded native conformance",
         runner=check_4_contract_refs_runner,
     ),
     "check_5_plan_crossrefs": Check(

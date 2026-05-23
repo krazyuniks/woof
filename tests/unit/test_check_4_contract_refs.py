@@ -157,6 +157,45 @@ def test_broken_openapi_ref_surfaces_artefact_path(tmp_path: Path) -> None:
     assert outcome.paths[0].endswith("EPIC.md")
 
 
+def test_openapi_path_item_ref_blocks_story(tmp_path: Path) -> None:
+    epic_dir = _fixture_copy(tmp_path)
+    epic = epic_dir / "EPIC.md"
+    epic.write_text(
+        epic.read_text().replace(
+            "spec/openapi.yaml#/paths/~1api~1v1~1comments~1{id}/patch",
+            "spec/openapi.yaml#/paths/~1api~1v1~1comments~1{id}",
+        )
+    )
+
+    outcome = check_4_contract_refs_runner(
+        _ctx(epic_dir=epic_dir, repo_root=epic_dir, owned=["CD1"])
+    )
+
+    assert outcome.ok is False
+    assert outcome.severity == "blocker"
+    assert "must point to an operation" in (outcome.evidence or "")
+
+
+def test_json_schema_invalid_example_blocks_story(tmp_path: Path) -> None:
+    epic_dir = _fixture_copy(tmp_path)
+    schema = epic_dir / "schemas" / "audit-event.schema.json"
+    text = schema.read_text()
+    schema.write_text(
+        text.replace(
+            '"actor": "user-1",',
+            '"actor": "",',
+        )
+    )
+
+    outcome = check_4_contract_refs_runner(
+        _ctx(epic_dir=epic_dir, repo_root=epic_dir, owned=["CD3"])
+    )
+
+    assert outcome.ok is False
+    assert outcome.severity == "blocker"
+    assert "examples[0] failed validation" in (outcome.evidence or "")
+
+
 def test_missing_ajv_surfaces_preflight_hint(tmp_path, monkeypatch) -> None:
     epic_dir = _fixture_copy(tmp_path)
     monkeypatch.setattr(contract_refs_module.shutil, "which", lambda name: None)

@@ -97,17 +97,17 @@ def check_6_critique_blocker_runner(ctx: CheckContext) -> CheckOutcome:
             )
 
     if top_sev == "blocker":
-        blocker_summaries = [
-            f.get("summary", "")
-            for f in findings
-            if isinstance(f, dict) and f.get("severity") == "blocker"
+        blocker_findings = [
+            finding
+            for finding in findings
+            if isinstance(finding, dict) and finding.get("severity") == "blocker"
         ]
         return CheckOutcome(
             id=CHECK_ID,
             ok=False,
             severity="blocker",
-            summary=f"critique severity is blocker ({len(blocker_summaries)} finding(s))",
-            evidence="; ".join(blocker_summaries) if blocker_summaries else None,
+            summary=f"critique severity is blocker ({len(blocker_findings)} finding(s))",
+            evidence=_format_findings(blocker_findings),
         )
 
     disposition = validate_story_disposition(ctx.epic_dir, ctx.epic_id, ctx.story_id)
@@ -126,3 +126,25 @@ def check_6_critique_blocker_runner(ctx: CheckContext) -> CheckOutcome:
         severity=top_sev,
         summary=f"critique severity={top_sev!r}; primary disposition recorded",
     )
+
+
+def _format_findings(findings: list[dict]) -> str | None:
+    if not findings:
+        return None
+    lines: list[str] = []
+    for finding in findings:
+        finding_id = str(finding.get("id") or "<unknown>")
+        category = finding.get("category")
+        category_text = f" [{category}]" if isinstance(category, str) and category else ""
+        summary = str(finding.get("summary") or "").strip()
+        evidence = str(finding.get("evidence") or "").strip()
+        suggestion = str(finding.get("suggestion") or "").strip()
+        line = (
+            f"{finding_id}{category_text}: {summary}" if summary else f"{finding_id}{category_text}"
+        )
+        if evidence:
+            line += f" Evidence: {evidence}"
+        if suggestion:
+            line += f" Suggestion: {suggestion}"
+        lines.append(line)
+    return "\n".join(lines)

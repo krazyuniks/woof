@@ -48,10 +48,15 @@ REQUIRED_STAGE5_EXECUTE_STORY_PROMPT_PHRASES = (
     "imagined-behaviour fingerprint",
 )
 REQUIRED_STAGE5_STORY_CRITIQUE_PROMPT_PHRASES = (
+    "Graph-owned input JSON",
+    "Evidence must be concrete",
     "Test-fingerprint fidelity",
     "Behaviour-anchored assertions",
     "Data-structure-anchored assertions",
     "`test-fingerprint` finding with `severity: minor`",
+    "category `marker_semantic_mismatch`",
+    "category `contract_implementation`",
+    "CD id/ref",
     "Check 9 periodic-review valve",
 )
 REQUIRED_STAGE5_ARCHITECTURE_PHRASES = (

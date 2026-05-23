@@ -41,6 +41,12 @@ Current state:
 - Dispatch currently grants broad CLI permissions to both Claude and Codex adapters.
 - The implemented safety boundary is mainly around what can be committed, not what an agent can read, write, execute, or exfiltrate during runtime.
 
+Decision added 2026-05-23:
+
+- For Ryan self-use, Woof-dispatched agents run as trusted local automation. Woof should not constrain runtime read, write, execute, network, or MCP access beyond the public CLI adapter modes already in use.
+- Runtime action safety work should document and surface this trusted-local mode honestly. It should not introduce a sandbox matrix, per-command allow-list, writable-path policy, or network policy during this correction.
+- The active safety boundary remains commit safety: deterministic checks, reviewer critique, human gates, transaction manifests, and commit decisions before changes land.
+
 Current direction:
 
 - Runtime action safety must become a documented, testable governance surface.
@@ -65,7 +71,8 @@ At architecture level, "Check 4" is the contract-reference guardrail. It verifie
 Current direction:
 
 - Keep existence/reference validation as a baseline.
-- Add deeper behavioural conformance only after the self-use path is reliable.
+- Add bounded native-artefact conformance where it is cheap and deterministic, such as ensuring OpenAPI path refs point at operations and JSON Schema top-level examples validate when present.
+- Leave broad behavioural conformance, such as generated HTTP traffic and project-specific fixture suites, until the self-use path is reliable.
 - Treat deeper conformance as a governance-depth workstream, not as branching logic Ryan needs to decide now.
 
 ## Gate Surface
@@ -115,7 +122,7 @@ Current direction:
 | CC-001 | Documentation and backlog realignment | Align architecture, README, implementation plan, continuation prompt, and audit provenance with the self-use-first correction. | Ryan direction, RC-B5, deep audit |
 | CC-002 | Self-use Stage 5 portability | Remove the `/wf:execute-story` graph dependency, make Stage 5 guidance portable, pass large dispatch prompts through stdin instead of one argv element, derive commit messages from actual work, and add a source/self-use real-subprocess smoke with stub `claude`/`codex` executables on `PATH`. | DRH-001, DRH-003, DRH-004, DRH-006, DRH-010 |
 | CC-003 | Graph failure and gate transaction hardening | Lead with the silent lost-commit resume bug, then convert malformed governance state into gates, handle gate-writing schema failures consistently, read and harden the `woof wf --resolve` gate-resolution path, and harden tracker edge cases. | DRH-002 lead, DRH-005, DRH-008, DRH-009, DRH-012, follow-up gate-resolution audit |
-| CC-004 | Runtime action-safety model | Define and implement the governance surface for what dispatched agents may read, write, execute, and access. Blocked until Ryan makes a runtime-permission policy decision. | Ryan direction, architecture gap |
+| CC-004 | Runtime action-safety model | Document and test the trusted-local runtime model: dispatched agents are not constrained by Woof at runtime, and safety is enforced at commit/gate boundaries. Do not add sandboxing, command allow-lists, writable-path restrictions, or network policy in this correction. | Ryan decision, architecture gap |
 | CC-005 | Observability and audit UX | Add operator-facing status, timeline, gate, cost/token, and audit reporting surfaces; reconcile retention/archive promises. | Deep audit, architecture gap |
 | CC-006 | Governance depth | Strengthen contract checks, reviewer evidence, and gate review ergonomics after the self-use path is stable. Keep DRH-007 and REF-1..10 recorded as deferred low/refactor material, not lost. | Release audit, deep audit |
 | CC-007 | Distribution and release polish | Return to install, packaging, tagging, PyPI/GitHub consumer docs, and external OSS onboarding after self-use and portfolio readiness. | Deferred by Ryan |
@@ -128,4 +135,4 @@ After CC-001, the next implementation target should be CC-002. Stage 5 portabili
 
 CC-003 should follow closely because failure recovery and gate consistency determine whether the tool can be trusted during real development.
 
-CC-004 is first-class, but it is blocked until Ryan makes a runtime-permission policy decision. Until then, documentation must be honest that current runtime permissions are broad; future sessions must not auto-start CC-004 from the continuation loop.
+CC-004 is now unblocked by Ryan's 2026-05-23 trusted-local decision. Ryan explicitly directed the next implementation turn to continue CC-006 first; after CC-006, CC-004 can be picked up as a small documentation and contract-surfacing workstream, not as a runtime sandboxing build.

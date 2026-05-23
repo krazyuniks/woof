@@ -73,7 +73,9 @@ harness: codex-gpt-5
 findings:
   - id: F1
     severity: blocker
+    category: test_quality
     summary: "apply_size_cap corrupts UTF-8 at byte boundaries"
+    evidence: "src/audit.py:42 slices before UTF-8 validation"
 ---
 Findings text here.
 """
@@ -123,6 +125,8 @@ def test_blocker_critique_fails_O7(tmp_path: Path) -> None:
     assert not outcome.ok
     assert outcome.severity == "blocker"
     assert "blocker" in outcome.summary.lower()
+    assert "F1 [test_quality]" in (outcome.evidence or "")
+    assert "src/audit.py:42" in (outcome.evidence or "")
     assert outcome.id == "check_6_critique_blocker"
 
 

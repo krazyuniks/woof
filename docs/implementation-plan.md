@@ -90,7 +90,7 @@ Woof is technically finished enough for regular use when these are true:
 | ID | Status | Work item | Observable outcome | Validation |
 |---|---|---|---|---|
 | TF-001 | Completed | End-to-end CLI workflow acceptance | A CLI-level integration test creates a throwaway consumer repository, runs `woof init --tracker local`, starts an epic, drives Stage 1-5 with public CLI-shaped `codex` and `claude` stubs, approves the plan gate, verifies the story commit, and asserts audit events. The implementation also stages graph-owned durable `.woof` files before commit-readiness checks, includes durable planning artefacts in story manifests, and ignores transient Stage-5 result files in `woof init` scaffolds. | Passed: `uv run pytest tests/integration/test_wf_acceptance.py -q`; `uv run pytest tests/unit/test_init.py tests/unit/test_graph.py tests/unit/test_check_3_scope.py tests/unit/test_check_7_commit_transaction.py tests/integration/test_wf_acceptance.py -q`; `just check` (339 tests) |
-| TF-002 | Ready | Gate and recovery acceptance | CLI tests cover subprocess crash gates, reviewer blocker gates, failed check gates, empty-diff gates, malformed-state gates, and interrupted commit resume. | Focused integration tests; `just check` |
+| TF-002 | Completed | Gate and recovery acceptance | CLI tests cover subprocess crash gates, reviewer blocker gates, failed check gates, empty-diff gates, malformed-state gates, and interrupted commit resume. The final story transaction now records `epic_completed` before the manifest-checked commit when that story completes the plan, so interrupted commit resume does not leave the durable audit log dirty after commit. | Passed: `uv run pytest tests/integration/test_wf_gate_recovery_acceptance.py -q`; `uv run pytest tests/integration/test_wf_acceptance.py tests/integration/test_wf_gate_recovery_acceptance.py tests/unit/test_graph.py -q`; `just check` (345 tests) |
 | TF-003 | Ready | Operator state surfaces | `woof observe` and `woof preflight` expose current epic state, next action, gate cause, dispatch route, runtime policy, audit pointers, and check summaries without requiring source inspection. | Unit and CLI integration tests for text and JSON output; `just check` |
 | TF-004 | Ready | Stage-5 check conformance matrix | Each Stage-5 check has success and failure fixtures that prove its real contract, including quality gates, outcome markers, scope, contract refs, plan crossrefs, critique blockers, transaction manifests, docs drift, and review valve behaviour. | Focused check-runner tests; `just check` |
 | TF-005 | Ready | Tracker contract matrix | The `local` and `github` adapters satisfy the same `Tracker` protocol behaviours for create, fetch, authority checks, conflict resolution, plan summary push, and epic completion. | Adapter contract tests with deterministic command stubs; `just check` |
@@ -99,16 +99,18 @@ Woof is technically finished enough for regular use when these are true:
 
 ## Current Item
 
-TF-002 is the next ready item. It should add CLI-level coverage for gate and
-recovery paths that the happy-path acceptance test does not exercise.
+TF-003 is the next ready item. It should harden operator state surfaces so
+`woof observe` and `woof preflight` expose current epic state, next action, gate
+cause, dispatch route, runtime policy, audit pointers, and check summaries
+without requiring source inspection.
 
 Planned files:
 
-- `tests/integration/test_wf_acceptance.py` or a sibling gate/recovery
-  integration test
-- `src/woof/graph/`
-- `src/woof/gate/`
-- `src/woof/checks/`
+- `src/woof/cli/commands/observe.py`
+- `src/woof/cli/preflight.py`
+- `tests/unit/test_observe.py`
+- `tests/unit/test_preflight.py`
+- CLI integration tests for text and JSON output
 - `docs/implementation-plan.md`
 
 ## Next Continuation Prompt

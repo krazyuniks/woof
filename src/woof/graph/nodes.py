@@ -1781,6 +1781,18 @@ def commit_node(inp: NodeInput) -> NodeOutput:
         event="transaction_manifest_verified",
         story_id=inp.story_id,
     )
+    completed_plan = load_plan(inp.repo_root, inp.epic_id)
+    if all(candidate.status == "done" for candidate in completed_plan.stories):
+        append_epic_event_once(
+            inp.repo_root,
+            inp.epic_id,
+            {
+                "event": "epic_completed",
+                "at": _now(),
+                "epic_id": inp.epic_id,
+            },
+            event="epic_completed",
+        )
     git(inp.repo_root, "add", "--", f".woof/epics/E{inp.epic_id}/epic.jsonl")
 
     message = _commit_message(inp.epic_id, story.title, inp.story_id, result)

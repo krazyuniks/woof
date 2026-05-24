@@ -28,6 +28,10 @@ architecture alignment, consumer setup guidance, ADR cleanup, package metadata,
 and validation evidence. This file records the release-readiness validation
 performed for REL-001.
 
+REL-002 covers release cut and distribution readiness: tagged GitHub-sourced
+install paths, package artefact contents, installed entry points, release notes,
+and tag-driven GitHub release automation.
+
 ## Definition Of Done
 
 The current public workflow is complete when these are true:
@@ -81,3 +85,34 @@ REL-001 documentation readiness validation, 2026-05-24:
 - Passed: `just lint`.
 - Passed: `just check` (392 tests).
 - Remaining release blockers: none known.
+
+## REL-002 Validation Evidence
+
+REL-002 release-cut validation, 2026-05-24:
+
+- Repository state before edits: `main` tracking `origin/main`, clean worktree,
+  no existing local tags, no remote tags, and no GitHub releases.
+- Version decision: kept `version = "0.1.0"` because this is the first public
+  release, and `pyproject.toml` and `uv.lock` already agree on `0.1.0`.
+- Install path: README and consumer guide now use the tagged GitHub source
+  install path `git+https://github.com/krazyuniks/woof@v0.1.0` for both `uv
+  tool install` and `pip install`.
+- Release record: `CHANGELOG.md` records the public `0.1.0` release.
+- Release automation: `.github/workflows/release.yml` builds the tagged package,
+  verifies both `woof --help` and `python -m woof --help` from the built wheel,
+  and publishes a GitHub release using only the repository `GITHUB_TOKEN`.
+- Package artefacts: `uv build` built `dist/woof-0.1.0.tar.gz` and
+  `dist/woof-0.1.0-py3-none-any.whl`.
+- Bundled assets: the wheel contains `schemas/`, `playbooks/`, and
+  `languages/`, excludes the source-checkout `bin/woof` wrapper, and contains
+  no `__pycache__` or `.pyc` files. The sdist contains the runtime assets and
+  keeps `bin/woof` as source checkout tooling, with no `__pycache__` or `.pyc`
+  files.
+- Passed: `uv build`.
+- Passed: `uv run pytest tests/unit/test_packaging_install.py -q` (5 tests).
+- Passed: `uv run pytest tests/integration/test_release_smoke.py -q` (1 test).
+- Passed: `just lint`.
+- Passed: `just check` (393 tests).
+- Remaining release blockers: none known locally. Tag creation and GitHub
+  release publication are intentionally after the commit CI for this change is
+  green.

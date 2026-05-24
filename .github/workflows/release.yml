@@ -1,0 +1,67 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to publish, for example v0.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  github-release:
+    name: GitHub Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve ref
+        id: release
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+            echo "ref=refs/tags/${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "ref=${GITHUB_REF}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.release.outputs.ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Build package
+        run: uv build
+
+      - name: Verify installed entry points
+        run: |
+          uv run --isolated --no-project --with ./dist/woof-*.whl woof --help
+          uv run --isolated --no-project --with ./dist/woof-*.whl python -m woof --help
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${{ steps.release.outputs.tag }}" >/dev/null 2>&1; then
+            gh release upload "${{ steps.release.outputs.tag }}" dist/* --clobber
+          else
+            gh release create "${{ steps.release.outputs.tag }}" dist/* --notes-file CHANGELOG.md --title "${{ steps.release.outputs.tag }}"
+          fi

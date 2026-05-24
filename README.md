@@ -21,21 +21,21 @@ The technical finish path is complete for the current public workflow:
 - The package build and installed-package workflow path are covered by smoke and
   acceptance tests.
 
-Distribution is currently from this GitHub repository. CI runs lint, tests, and
-package build on pushes to `main` and on pull requests.
+Distribution is currently from tagged releases in this GitHub repository. CI
+runs lint, tests, and package build on pushes to `main` and on pull requests.
 
 ## Install
 
-Install the CLI as a standalone tool:
+Install the current release as a standalone tool:
 
 ```bash
-uv tool install git+https://github.com/krazyuniks/woof
+uv tool install git+https://github.com/krazyuniks/woof@v0.1.0
 ```
 
 Or install it into an existing Python environment:
 
 ```bash
-pip install git+https://github.com/krazyuniks/woof
+pip install git+https://github.com/krazyuniks/woof@v0.1.0
 ```
 
 Confirm the command is available:
@@ -129,6 +129,7 @@ critique, human gates, transaction manifests, and graph-owned commit decisions.
   repository using either `local` or `github` tracking.
 - [`docs/implementation-plan.md`](docs/implementation-plan.md) - completion
   ledger and release-readiness validation evidence.
+- [`CHANGELOG.md`](CHANGELOG.md) - public release notes.
 - [`docs/adr/001-orchestration-topology.md`](docs/adr/001-orchestration-topology.md)
   - deterministic graph topology.
 - [`docs/adr/002-graph-led-role-routing.md`](docs/adr/002-graph-led-role-routing.md)

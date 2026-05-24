@@ -1,6 +1,8 @@
 # Consumer Checkouts
 
-Woof runs from its own checkout or installed package against a separate consumer repository. The consumer repository owns project-specific declarations under `.woof/`; it does not copy Woof source, schemas, playbooks, tests, examples, or generated state.
+Woof runs as the `woof` CLI against a consumer repository. The consumer
+repository owns project-specific declarations under `.woof/`; it does not copy
+Woof source, schemas, playbooks, tests, examples, or generated state.
 
 ## First-Run Walkthrough
 
@@ -28,19 +30,20 @@ woof --help
 
 ### 2. Scaffold the consumer config
 
-From the root of the repository you want Woof to manage:
-
-```bash
-woof init
-```
-
-`woof init` creates `.woof/prerequisites.toml`, `.woof/agents.toml`, `.woof/quality-gates.toml`, and `.woof/test-markers.toml`, each with explicit `<replace>` placeholders, and inserts a fenced `# >>> woof` block into the repository `.gitignore` with the required runtime entries (`.woof/.current-epic`, `.woof/.preflight-*`, `.woof/epics/*/.wf.lock`, `.woof/epics/*/executor_result.json`, `.woof/epics/*/check-result.json`, `.woof/epics/*/audit/raw/`, and the cartography artefacts). Pass `--with-docs-paths` to also scaffold `.woof/docs-paths.toml` (Stage 5 Check 8 mappings). `woof init` is idempotent: existing TOMLs are preserved unless `--force` is set, and the gitignore block is updated in place rather than duplicated.
-
-Choose the issue tracker at scaffold time. The default scaffolds a GitHub-backed setup. For a repository with no hosted issue tracker, scaffold the local tracker instead:
+From the root of the repository you want Woof to manage, choose the tracker mode.
+For a repository with no hosted issue tracker:
 
 ```bash
 woof init --tracker local
 ```
+
+For a GitHub-backed setup:
+
+```bash
+woof init --tracker github
+```
+
+`woof init` creates `.woof/prerequisites.toml`, `.woof/agents.toml`, `.woof/quality-gates.toml`, and `.woof/test-markers.toml`, each with explicit `<replace>` placeholders, and inserts a fenced `# >>> woof` block into the repository `.gitignore` with the required runtime entries (`.woof/.current-epic`, `.woof/.preflight-*`, `.woof/epics/*/.wf.lock`, `.woof/epics/*/executor_result.json`, `.woof/epics/*/check-result.json`, `.woof/epics/*/audit/raw/`, and the cartography artefacts). Pass `--with-docs-paths` to also scaffold `.woof/docs-paths.toml` (Stage 5 Check 8 mappings). `woof init` is idempotent: existing TOMLs are preserved unless `--force` is set, and the gitignore block is updated in place rather than duplicated.
 
 The `github` tracker keeps each epic's contract in a GitHub issue (`E<N>` is issue `#<N>`) and declares the `gh` CLI as required infrastructure. The `local` tracker keeps every epic under `.woof/epics/E<N>/` with no remote and does not require `gh`. See [ADR-003](adr/003-issue-tracker-abstraction.md).
 

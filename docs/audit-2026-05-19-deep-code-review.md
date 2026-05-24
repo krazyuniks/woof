@@ -1,4 +1,9 @@
-# Deep Code Review - 2026-05-19 (Eight Load-Bearing Source Files)
+# Archived Deep Code Review - 2026-05-19
+
+> **Archive status:** This file is retained as historical engineering evidence.
+> It is not current product guidance, not a release checklist, and not a live
+> backlog. Current behaviour is specified by `docs/architecture.md`, the ADRs,
+> schemas, source code, and tests.
 
 This is a read-only audit. No source file was modified. It reads end-to-end the
 eight load-bearing files the 2026-05-19 second-pass audit (see

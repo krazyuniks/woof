@@ -1,1 +1,1 @@
-# woof CLI package — importable command implementations.
+# woof CLI package - importable command implementations.

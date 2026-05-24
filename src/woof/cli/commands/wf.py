@@ -1,4 +1,4 @@
-"""`woof wf` — deterministic graph entry point."""
+"""`woof wf` - deterministic graph entry point."""
 
 from __future__ import annotations
 

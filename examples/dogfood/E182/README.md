@@ -1,5 +1,8 @@
 # E182 Dogfood Evidence
 
+> **Archive status:** This is retained as historical workflow evidence. It is
+> not current operator guidance.
+
 E182 converted the E181 failure into a Stage-5 safety epic: deterministic check runners, graph-owned gate writing, and driver-owned commit decisions.
 
 ## Retained artefacts

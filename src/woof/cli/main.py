@@ -1,4 +1,4 @@
-"""woof — workflow orchestrator CLI.
+"""woof - agentic software delivery graph CLI.
 
 Subcommands:
     wf           Run the deterministic orchestration graph.
@@ -11,8 +11,8 @@ Subcommands:
     audit-bundle Copy referenced Claude transcripts into an epic audit folder.
     render-epic  Render EPIC.md front-matter into the managed tracker body;
                  optionally sync to the tracker with conflict detection.
-    check-cd     Verify each contract_decision's referenced artefact actually
-                 exists and parses (Stage 5 Check 4 / E146 regression).
+    check-cd     Verify each contract_decision's referenced artefact exists
+                 and resolves under its native tooling (Stage 5 Check 4).
 
 Schemas live at ``schemas/*.schema.json`` (JSON Schema 2020-12).
 Auto-detection maps filename to schema; ``--schema`` overrides.
@@ -67,7 +67,7 @@ SCHEMAS: dict[str, str] = {
     "transaction-manifest": "transaction-manifest.schema.json",
 }
 
-# Filename → schema (basename match)
+# Filename -> schema (basename match)
 FILENAME_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^EPIC\.md$"), "epic"),
     (re.compile(r"^plan\.json$"), "plan"),
@@ -87,7 +87,7 @@ FILENAME_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^transaction-manifest\.json$"), "transaction-manifest"),
 ]
 
-# Path-suffix → schema (for files distinguished by parent dir)
+# Path-suffix -> schema (for files distinguished by parent dir)
 PATH_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"(^|/)critique/[^/]+\.md$"), "critique"),
     (re.compile(r"(^|/)dispositions/[^/]+\.md$"), "disposition"),
@@ -344,7 +344,7 @@ def cmd_render_epic(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
-# check-cd — Stage 5 Check 4 (contract-decision artefact verification)
+# check-cd - Stage 5 Check 4 (contract-decision artefact verification)
 # ---------------------------------------------------------------------------
 
 
@@ -392,7 +392,7 @@ def cmd_check_cd(args: argparse.Namespace) -> int:
             status = "OK  " if finding.ok else "FAIL"
             print(f"  {status} {finding.id:<6} ({finding.kind}) {finding.ref}")
             if not finding.ok or args.verbose:
-                print(f"         → {finding.detail}")
+                print(f"         -> {finding.detail}")
         print(f"{result.verified}/{result.total} verified")
 
     return 0 if result.verified == result.total else 1
@@ -404,7 +404,10 @@ def cmd_check_cd(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(prog="woof", description="workflow orchestrator CLI")
+    parser = argparse.ArgumentParser(
+        prog="woof",
+        description="agentic software delivery graph CLI",
+    )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     validate = sub.add_parser("validate", help="validate woof artefacts against schemas")

@@ -1,4 +1,4 @@
-"""woof check stage-5 — deterministic Stage-5 boundary check runner.
+"""woof check stage-5 - deterministic Stage-5 boundary check runner.
 
 Iterates the registry for stage=5, runs each runner against the current
 epic/story context, and emits a check-result conforming to
@@ -74,7 +74,7 @@ def _self_test(registry: dict, stage_ids: list[str]) -> int:
         except NotImplementedError:
             failures.append(f"{check_id}: runner raises NotImplementedError (not implemented)")
         except Exception:
-            pass  # raised for a real reason — runner IS implemented
+            pass  # raised for a real reason - runner IS implemented
 
     if failures:
         for msg in failures:

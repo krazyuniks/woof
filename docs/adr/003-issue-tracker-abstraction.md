@@ -8,132 +8,92 @@ date: 2026-05-20
 
 ## Context
 
-ADR-001 made the Python graph the orchestrator. ADR-002 made model roles
-semantic rather than provider-owned. Both decisions removed a hard-coded
-provider from a layer that should not name one.
-
-The issue tracker was still hard-coded. GitHub coupling sat at
-architecture-principle level:
-
-- `docs/architecture.md` stated "Epic IDs. Always the gh issue number.
-  `E<N>` == gh issue `#<N>`. No local-only epics; every epic has a gh issue."
-- `src/woof/cli/github.py` was imported directly by `wf`, `render-epic`, and
-  `preflight`.
-- `schemas/prerequisites.schema.json` required a `[github]` table.
-- `schemas/jsonl-events.schema.json` carried `github_synced` and
-  `github_sync_conflict` as first-class event kinds; `schemas/gate.schema.json`
-  carried `github_sync_conflict` in `triggered_by`.
-- Five schemas described `epic_id` as a GitHub issue number.
-
-Woof's stated target is "any project, anyone's, anywhere." A consumer using
-Linear, Jira, Plane, Forgejo, or no hosted tracker at all could not run Woof.
-This is Phase B gap BHID-002.
+Woof keeps the epic-level contract in an issue tracker and the runtime workflow
+state in `.woof/epics/E<N>/`. Requiring every consumer to use GitHub would make
+the graph less portable than the rest of the architecture. A repository with no
+hosted tracker must still be able to run Woof.
 
 ## Decision
 
-Woof depends on an issue-tracker **protocol**, not on a provider. A `Tracker`
-adapter owns every interaction with the external system; the graph, CLI, and
-gate code depend only on the protocol.
+Woof depends on a `Tracker` protocol, not on a specific provider. The graph,
+CLI, and gate code depend on the protocol; provider-specific behaviour stays in
+adapter implementations.
 
-### Package
+`src/woof/trackers/` owns the abstraction:
 
-`src/woof/trackers/` holds the abstraction:
-
-- `base.py` - the `Tracker` protocol, `TrackerError`, the frozen result
-  records, the conflict trigger/decision constants, and shared filesystem and
-  hashing helpers.
+- `base.py` - `Tracker`, `TrackerError`, result records, conflict constants,
+  and shared filesystem/hash helpers.
 - `epic_body.py` - tracker-agnostic transforms between `EPIC.md` front-matter
-  and the managed issue body (rendering and cold-start parsing).
-- `github.py` - `GitHubTracker`, the GitHub-issue adapter (the prior
-  `cli/github.py` behaviour).
-- `local.py` - `LocalTracker`, a filesystem-only adapter.
+  and the managed tracker body.
+- `github.py` - GitHub issue adapter.
+- `local.py` - filesystem-only adapter.
 - `__init__.py` - `resolve_tracker(repo_root)`, the factory that reads
   `[tracker]` from `.woof/prerequisites.toml`.
 
-### Protocol
+The protocol covers:
 
-`Tracker` covers `assert_runtime_reachable`, `create_epic`, `fetch_epic`,
-`assert_epic_authority`, `has_sync_state`, `push_epic_definition`,
-`push_plan_summary`, `complete_epic`, and `resolve_conflict`.
+- `assert_runtime_reachable`;
+- `create_epic`;
+- `fetch_epic`;
+- `assert_epic_authority`;
+- `has_sync_state`;
+- `push_epic_definition`;
+- `push_plan_summary`;
+- `complete_epic`;
+- `resolve_conflict`.
 
-Conflict detection is intrinsic to the push operations: a push that finds the
-tracker has diverged from the `.last-sync` baseline writes a
-`tracker_sync_conflict` gate and raises `TrackerError`. `resolve_conflict`
-applies the structured operator decision (`keep_local`, `accept_remote`,
-`hand_merge`).
-
-This is a deliberate refinement of the original RC-B2 sketch, which listed a
-standalone `detect_conflict` protocol method. A standalone form would have to
-re-fetch the tracker remote that the push already fetched, doubling network
-calls per push under a rate limit. `create_epic` and `assert_epic_authority`
-are likewise not in the sketch but are required by `woof wf new` and the
-GAP-005 local-epic authority check.
-
-### Configuration
-
-`.woof/prerequisites.toml` `[github]` becomes `[tracker]`:
+Configuration lives in `.woof/prerequisites.toml`:
 
 ```toml
 [tracker]
-kind = "github"          # or "local"
+kind = "github"          # github | local
 repo = "<owner>/<name>"  # required when kind = "github"
 ```
 
-### Adapters
+## Adapters
 
 Two adapters ship:
 
-- `github` - the existing behaviour. One GitHub issue per epic, `E<N>` is the
-  issue number, push is conflict-detected against `.last-sync`.
-- `local` - filesystem-only. `.woof/epics/E<N>/` is the sole authority for an
-  epic. Epic IDs are integers allocated locally as one more than the highest
-  existing `E<N>` directory. Push operations write no remote state and no
-  `.last-sync` because there is no second copy of the contract to keep in sync;
-  a sync conflict can never arise, so a `local` epic never opens a
-  `tracker_sync_conflict` gate. Lifecycle push methods still load local
-  `EPIC.md` and `plan.json`, render the shared managed body shape, and reject
-  epic completion until every planned story is `done`.
+- `github`: one GitHub issue per epic. `E<N>` is the GitHub issue number. Push
+  is conflict-detected against `.woof/epics/E<N>/.last-sync`, and every graph
+  invocation verifies runtime reachability.
+- `local`: filesystem-only. `.woof/epics/E<N>/` is the authority for an epic.
+  Epic IDs are locally allocated integers. There is no remote, no `.last-sync`,
+  and no sync-conflict gate.
 
-### Epic identifiers
+Lifecycle push methods on both adapters render the same managed body shape from
+local `EPIC.md` and `plan.json`. The `local` adapter still rejects epic
+completion until every planned story is `done`.
 
-The "Epic IDs. Always the gh issue number" principle is withdrawn. An epic ID
-is a **tracker-assigned integer**: for `github` it is the issue number; for
-`local` it is a locally allocated counter. Epic IDs remain integers in all
-schemas. String identifiers (Jira, Linear, Plane) are deferred until a real
-string-ID adapter lands; that work must widen five schemas' `epic_id` type.
+## Epic Identifiers
 
-### Event and gate renames
+An epic ID is a tracker-assigned integer. For `github`, it is the GitHub issue
+number. For `local`, it is the next integer allocated under `.woof/epics/`.
 
-`github_synced` and `github_sync_conflict` become `tracker_synced` and
-`tracker_sync_conflict` in code and as the canonical schema enum values. The
-legacy spellings are retained as schema enum aliases, and gate-resolution and
-transition code accept both, so `epic.jsonl` logs and in-flight `gate.md`
-files written before this ADR still validate and resolve.
+String epic IDs are not supported by the current schemas. A string-ID tracker
+requires a schema change across the epic, plan, planning-node input, node input,
+and node output contracts.
 
-The `[github]` config table, by contrast, is a clean rename with no alias.
-Audit logs are append-only and immutable, so they must keep validating;
-configuration is live and edited, so a clean rename is correct.
+## Conflict Handling
+
+Hosted trackers use conflict-detected push. A push that finds remote divergence
+writes a `tracker_sync_conflict` gate and raises `TrackerError`. The operator
+resolves the gate with one of:
+
+- `keep_local`;
+- `accept_remote`;
+- `hand_merge`.
+
+The legacy event names `github_synced` and `github_sync_conflict` remain schema
+aliases so old audit logs keep validating. New events use
+`tracker_synced` and `tracker_sync_conflict`.
 
 ## Consequences
 
 - Any repository can run Woof with `kind = "local"` and no hosted tracker.
-- A third-party adapter (Linear, Jira, Plane, Forgejo) is a new file
-  implementing the `Tracker` protocol plus a `kind` enum value. No graph,
-  CLI, or gate change is required.
-- ADR-001 and ADR-002 invariants are unchanged: Woof stays graph-led, role
-  routing stays semantic, reviewer blockers still open human gates.
-- String epic IDs remain unsupported until a follow-up widens the `epic_id`
-  type across `epic`, `plan`, `planning-node-input`, `node-input`, and
-  `node-output` schemas.
-- `local` epics have no remote authority check and no conflict detection by
-  design; the local epic directory is self-authoritative.
-
-## Alternatives considered
-
-- **Keep GitHub hard-coded, ship GitHub-only.** Rejected: it permanently
-  excludes every consumer not on GitHub and contradicts the stated target.
-- **A standalone `detect_conflict` protocol method.** Rejected: it doubles the
-  tracker fetch per push. Conflict detection stays intrinsic to push.
-- **String epic IDs in this workstream.** Deferred: it widens five schemas and
-  needs a real string-ID adapter to exercise the change. Integer IDs are
-  retained until then.
+- A new hosted tracker is a new adapter plus a new `[tracker].kind` value.
+- Graph topology, role routing, reviewer blocker handling, gate resolution, and
+  transaction manifests are unchanged by tracker choice.
+- GitHub-specific behaviour stays in `GitHubTracker`.
+- Local epics have no remote authority check by design; the local epic directory
+  is self-authoritative.

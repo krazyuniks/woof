@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.5 - 2026-05-24
+
+- Preserved successful Stage 5 check results when resolving commit-transaction
+  gates so interrupted story commits can resume instead of re-entering
+  verification or completing without a commit.
+
 ## 0.1.4 - 2026-05-24
 
 - Fixed story transaction manifests so later stories do not require already

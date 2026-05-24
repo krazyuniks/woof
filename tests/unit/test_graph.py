@@ -2218,6 +2218,75 @@ def test_wf_resolve_reviewer_blocker_approval_requeues_critique(tmp_path: Path) 
     assert ".woof/epics/E33/dispositions/story-S1.md" in story_event["paths"]
 
 
+def test_wf_resolve_commit_transaction_gate_preserves_ok_check_result(
+    tmp_path: Path,
+) -> None:
+    _init_git_repo(tmp_path)
+    (tmp_path / ".woof").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".woof" / "prerequisites.toml").write_text('[tracker]\nkind = "local"\n')
+    directory = _write_plan(tmp_path, 34)
+    mark_story_status(tmp_path, 34, "S1", "done")
+    (directory / "executor_result.json").write_text(
+        json.dumps(
+            {
+                "epic_id": 34,
+                "story_id": "S1",
+                "outcome": "staged_for_verification",
+                "commit_subject": "feat: test",
+                "commit_body": "body",
+                "position": None,
+            }
+        )
+    )
+    (directory / "check-result.json").write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "stage": 5,
+                "epic_id": 34,
+                "story_id": "S1",
+                "triggered_by": [],
+                "checks": [],
+            }
+        )
+    )
+    critique_path = directory / "critique" / "story-S1.md"
+    critique_path.parent.mkdir()
+    critique_path.write_text(
+        "---\n"
+        "target: story\n"
+        "target_id: S1\n"
+        "severity: info\n"
+        "timestamp: '2026-01-01T00:00:00Z'\n"
+        "harness: test-reviewer\n"
+        "findings: []\n"
+        "---\n"
+    )
+    _write_disposition(directory, 34)
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "app.py").write_text("print('O1')\n")
+    gate = directory / "gate.md"
+    gate.write_text(
+        "---\n"
+        "type: story_gate\n"
+        "story_id: S1\n"
+        "triggered_by:\n"
+        "  - check_7_commit_transaction\n"
+        "---\n"
+        "Operator fixed the staged transaction.\n"
+    )
+
+    proc = _run_woof(tmp_path, "wf", "--epic", "34", "--resolve", "approve")
+
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == "woof wf: gate resolved decision=approve\n"
+    assert not gate.exists()
+    assert (directory / "check-result.json").exists()
+    assert (directory / "executor_result.json").exists()
+    assert next_node(tmp_path, 34) == (NodeType.COMMIT, "S1")
+
+
 def test_wf_resolve_revise_plan_reenters_breakdown(tmp_path: Path) -> None:
     _write_tracker_prerequisites(tmp_path)
     directory = _write_spark(tmp_path, 31)

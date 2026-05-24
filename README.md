@@ -68,43 +68,47 @@ cartography block.
 
 ## Operator Usage
 
-Run Woof from this checkout:
+Consumer operators run the installed `woof` command from the consumer repository
+root. When developing Woof itself from this checkout, `just woof --help` wraps
+the same CLI.
 
 ```bash
-just woof --help
+woof --help
 ```
 
 Initialise a consumer repository's `.woof/` config:
 
 ```bash
-/path/to/woof/bin/woof init --tracker local
+woof init --tracker local
 ```
 
 Start a new epic:
 
 ```bash
-/path/to/woof/bin/woof wf new "<spark>"
+woof wf new "<spark>"
 ```
+
+`wf new` prints the assigned `E<N>` and the next graph command.
 
 Run or resume the graph:
 
 ```bash
-/path/to/woof/bin/woof wf --epic <N>
+woof wf --epic <N>
 ```
 
 Approve an open plan gate:
 
 ```bash
-/path/to/woof/bin/woof wf --epic <N> --resolve approve
+woof wf --epic <N> --resolve approve
 ```
 
 Inspect workflow state without mutating the epic:
 
 ```bash
-/path/to/woof/bin/woof observe --epic <N> --view status
-/path/to/woof/bin/woof observe --epic <N> --view timeline
-/path/to/woof/bin/woof observe --epic <N> --view gate
-/path/to/woof/bin/woof observe --epic <N> --view audit
+woof observe --epic <N> --view status
+woof observe --epic <N> --view timeline
+woof observe --epic <N> --view gate
+woof observe --epic <N> --view audit
 ```
 
 `observe --view status` reports the selected `.woof/.current-epic` marker,
@@ -115,7 +119,7 @@ pointers. `--format json` exposes the same fields for automation.
 Check startup infrastructure before invoking the graph:
 
 ```bash
-/path/to/woof/bin/woof preflight
+woof preflight
 ```
 
 `preflight` prints prerequisite findings plus an operator-state section for the
@@ -127,7 +131,7 @@ Inspect the resolved dispatch route and trusted-local runtime policy without
 spawning an agent:
 
 ```bash
-/path/to/woof/bin/woof dispatch --role primary --epic <N> --dry-run
+woof dispatch --role primary --epic <N> --dry-run
 ```
 
 ## Consumer Repositories

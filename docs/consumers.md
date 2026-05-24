@@ -88,7 +88,7 @@ This adds an idempotent Woof-managed block to the repository `post-commit` hook.
 woof wf new "<spark>"
 ```
 
-`woof wf new` creates a tracker-backed epic from the one-line spark, initialises `.woof/epics/E<N>/`, and selects it as the current epic. With the `github` tracker the epic id is the new GitHub issue number; with the `local` tracker it is the next integer allocated under `.woof/epics/`.
+`woof wf new` creates a tracker-backed epic from the one-line spark, initialises `.woof/epics/E<N>/`, selects it as the current epic, and prints the next `woof wf --epic <N>` command. With the `github` tracker the epic id is the new GitHub issue number; with the `local` tracker it is the next integer allocated under `.woof/epics/`.
 
 ### 8. Run the graph
 
@@ -100,6 +100,7 @@ The deterministic graph advances the epic through discovery, definition, breakdo
 
 ```bash
 woof wf --epic <N> --resolve <decision>
+woof wf --epic <N>
 ```
 
 See [`architecture.md`](architecture.md) for stage and gate semantics once you are past first run.

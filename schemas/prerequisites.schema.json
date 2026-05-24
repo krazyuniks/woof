@@ -12,7 +12,7 @@
       "additionalProperties": {
         "$ref": "#/$defs/version_spec"
       },
-      "description": "Required infrastructure binaries. Keys are binary names (docker, just, git, gh, ...); values are version specifications. Floor checks verify presence and minimum version."
+      "description": "Required infrastructure binaries for this consumer repository. Keys are binary names (git, just, docker, gh, ...); values are version specifications. Floor checks verify presence and minimum version. Declare gh only for hosted trackers or project commands that need it."
     },
     "commands": {
       "type": "object",
@@ -44,7 +44,7 @@
         "kind": {
           "type": "string",
           "enum": ["github", "local"],
-          "description": "Issue-tracker adapter. 'github' keeps each epic's contract in a GitHub issue (one issue per epic, E<N> == issue #<N>, woof verifies reachability at every woof wf invocation). 'local' keeps the contract entirely under .woof/epics/E<N>/ with no remote, so any repository can run Woof without a hosted tracker."
+          "description": "Issue-tracker adapter. 'github' keeps each epic's contract in a GitHub issue (one issue per epic, E<N> equals the GitHub issue number, woof verifies reachability at every woof wf invocation). 'local' keeps the contract entirely under .woof/epics/E<N>/ with no remote, so any repository can run Woof without a hosted tracker."
         },
         "repo": {
           "type": "string",

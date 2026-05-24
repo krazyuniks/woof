@@ -28,7 +28,11 @@
         "human_review"
       ]
     },
-    "epic_id": { "type": "integer", "minimum": 1 },
+    "epic_id": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Tracker-assigned epic identifier. Same value as E<N>."
+    },
     "story_id": {
       "oneOf": [
         { "type": "string", "pattern": "^S[1-9]\\d*$" },

@@ -9,7 +9,7 @@ Subcommands:
     validate     Validate artefacts against woof JSON Schemas via ajv-cli.
     dispatch     Spawn a public CLI subprocess for a role declared in agents.toml.
     audit-bundle Copy referenced Claude transcripts into an epic audit folder.
-    render-epic  Render EPIC.md front-matter into the tracker issue body;
+    render-epic  Render EPIC.md front-matter into the managed tracker body;
                  optionally sync to the tracker with conflict detection.
     check-cd     Verify each contract_decision's referenced artefact actually
                  exists and parses (Stage 5 Check 4 / E146 regression).
@@ -427,7 +427,12 @@ def main() -> int:
         help="deprecated adapter target; role routes now resolve this from .woof/agents.toml",
     )
     dispatch.add_argument("--role", required=True, help="role name from .woof/agents.toml")
-    dispatch.add_argument("--epic", type=int, required=True, help="epic id (gh issue number)")
+    dispatch.add_argument(
+        "--epic",
+        type=int,
+        required=True,
+        help="tracker-assigned epic id",
+    )
     dispatch.add_argument("--story", help="story id (e.g. S1); optional")
     dispatch.add_argument(
         "--prompt-file",
@@ -457,14 +462,17 @@ def main() -> int:
 
     render = sub.add_parser(
         "render-epic",
-        help="render EPIC.md front-matter into the gh issue body",
+        help="render EPIC.md front-matter into the managed tracker body",
+        description="render EPIC.md front-matter into the managed tracker body",
     )
-    render.add_argument("--epic", type=int, required=True, help="epic id (gh issue number)")
+    render.add_argument("--epic", type=int, required=True, help="tracker-assigned epic id")
     render.add_argument("--output", help="write rendered body to PATH instead of stdout")
     render.add_argument(
         "--sync",
         action="store_true",
-        help="fetch remote, conflict-check against .last-sync, push if clean, update .last-sync",
+        help=(
+            "push through the configured tracker; hosted trackers conflict-check against .last-sync"
+        ),
     )
     render.set_defaults(func=cmd_render_epic)
 

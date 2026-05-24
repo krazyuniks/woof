@@ -164,7 +164,7 @@ JSONL event logs (`epic.jsonl`, `dispatch.jsonl`) enable crash-resume and post-h
 
 **Mandatory gate write.** After Stage 3 plan generation completes, `gate.md` MUST be written before `/wf` returns control to the user. There is no valid filesystem state where `plan.json` + `critique/plan.md` exist without either an open `gate.md` or a `gate_resolved` event with `gate_type=plan_gate` in `epic.jsonl`. Reconstitution detects the illegal state and synthesises the plan_gate that should have been opened.
 
-**Audit-trail reconstruction.** Every dispatched subprocess records its role route and adapter session ID in `dispatch.jsonl` (`{event: "subprocess_spawned", role, story_id, adapter, model, effort, prompt_transport, cc_session_id|codex_audit_path, at}`). Claude subprocess transcripts live in Claude Code's standard per-project location under `~/.claude/projects/<project-slug>/`; woof references portable home-relative paths rather than host-specific absolute paths. Codex output is tee'd to `.woof/epics/E<N>/audit/codex-<role>-<timestamp>-p<pid>[-<n>].{prompt,output,stderr,meta}` because Codex CLI does not persist sessions in a standard location. Dispatch audit stems are path-safe, and the prompt file is atomically reserved before spawning so concurrent same-role dispatches cannot overwrite each other. Prompt payloads are sent to the public CLI on stdin and represented in audited argv as `<prompt:stdin>`, so large playbook-bundled prompts do not hit per-argv-string limits. `just wf-audit-bundle <E<N>>` (recipe) bundles referenced Claude transcripts into `.woof/epics/E<N>/audit/claude-code/` for archival or hand-off; default mode is reference-only. `woof observe --epic <N> --view status` and `--view audit` surface the `epic.jsonl`, `dispatch.jsonl`, audit directory, raw-overflow directory, and latest Codex/Claude audit references so an operator does not need to inspect source code or remember the path conventions.
+**Audit-trail reconstruction.** Every dispatched subprocess records its role route and adapter session ID in `dispatch.jsonl` (`{event: "subprocess_spawned", role, story_id, adapter, model, effort, prompt_transport, cc_session_id|codex_audit_path, at}`). Claude subprocess transcripts live in Claude Code's standard per-project location under `~/.claude/projects/<project-slug>/`; woof references portable home-relative paths rather than host-specific absolute paths. Codex output is tee'd to `.woof/epics/E<N>/audit/codex-<role>-<timestamp>-p<pid>[-<n>].{prompt,output,stderr,meta}` because Codex CLI does not persist sessions in a standard location. Dispatch audit stems are path-safe, and the prompt file is atomically reserved before spawning so concurrent same-role dispatches cannot overwrite each other. Prompt payloads are sent to the public CLI on stdin and represented in audited argv as `<prompt:stdin>`, so large playbook-bundled prompts do not hit per-argv-string limits. `woof audit-bundle <E<N>>` bundles referenced Claude transcripts into `.woof/epics/E<N>/audit/claude-code/` for archival or hand-off; default mode is reference-only. `woof observe --epic <N> --view status` and `--view audit` surface the `epic.jsonl`, `dispatch.jsonl`, audit directory, raw-overflow directory, and latest Codex/Claude audit references so an operator does not need to inspect source code or remember the path conventions.
 
 **Audit redaction and retention.** Commit-bound files under `.woof/epics/E<N>/audit/` can leak secrets, internal API output, or private issue text. Before the graph-owned commit transaction computes its manifest:
 
@@ -178,10 +178,11 @@ JSONL event logs (`epic.jsonl`, `dispatch.jsonl`) enable crash-resume and post-h
 
 ### Consumer checkout boundary
 
-Woof is a tool checkout, and later an installed package, that runs against a
-separate consumer repository. A consumer repository owns project policy
-declarations under `.woof/*.toml`; it does not vendor-copy Woof source, schemas,
-playbooks, tests, examples, or generated state from the Woof repository.
+Woof is a CLI tool, run from either an installed package or this source
+checkout, against a separate consumer repository. A consumer repository owns
+project policy declarations under `.woof/*.toml`; it does not vendor-copy Woof
+source, schemas, playbooks, tests, examples, or generated state from the Woof
+repository.
 
 Consumer responsibilities:
 
@@ -233,7 +234,7 @@ Two adapters ship:
 - **`github`** — one GitHub issue per epic. `E<N>` ≡ gh issue `#<N>`; gh assigns the issue number on creation. Always-online: the `gh` CLI must be authenticated and the declared repo accessible. Push is conflict-detected.
 - **`local`** — filesystem-only. `.woof/epics/E<N>/` is the sole authority for an epic; there is no remote. Epic IDs are integers allocated locally as one greater than the highest existing `E<N>`. Push operations write no remote state and no `.last-sync` because there is no second copy of the contract to keep in sync, so a sync conflict cannot arise. Lifecycle push methods still load local `EPIC.md` and `plan.json`, render the same managed body shape as hosted trackers, and reject epic completion until every planned story is `done`. The `local` adapter lets any repository run Woof without a hosted tracker.
 
-**Epic IDs.** A tracker-assigned integer. For `github` it is the gh issue number; for `local` it is a locally allocated counter. The user does not pick it. With the `github` tracker every epic has a gh issue, and a `.woof/epics/E<N>/` directory without `.last-sync` issue authority is not a valid epic.
+**Epic IDs.** A tracker-assigned integer. For `github` it is the GitHub issue number; for `local` it is a locally allocated counter. The user does not pick it. With the `github` tracker every epic has a GitHub issue, and a `.woof/epics/E<N>/` directory without `.last-sync` issue authority is not a valid epic.
 
 **Network requirement.** The `github` tracker is always-online: `woof preflight` verifies `gh api /repos/<org>/<repo>` returns 200, and every `woof wf` invocation re-checks `gh api /rate_limit`. No offline mode; no silent fallback (per §1 principle #4). The `local` tracker needs no network.
 
@@ -250,7 +251,7 @@ Two adapters ship:
 
 **Push policy (`github`).** Local is authoritative on push, but push is conflict-detected. Each successful push records the gh issue's `updatedAt` timestamp and the SHA-256 of the rendered body in `.woof/epics/E<N>/.last-sync`. Before the next push, `gh api /repos/.../issues/<N>` is fetched: if the remote `updatedAt` or body hash differs from the recorded value, woof opens a `gate.md` with `triggered_by: ["tracker_sync_conflict"]` containing a three-way diff (last-pushed body, current remote body, current local render). Resolution is via gate conversation with one of the structured decisions `keep_local`, `accept_remote`, or `hand_merge`. `keep_local` and `hand_merge` update `.last-sync` to the current remote baseline so the next retry can push the operator-approved local render; `accept_remote` updates `.last-sync` and rewrites local `EPIC.md` from the managed GitHub issue body. No silent overwrite. Worktree-level handover convention still holds: an epic is active in exactly one worktree at a time; `.last-sync` is per-worktree. The `local` tracker has no remote, so it never detects a conflict.
 
-**Body rendering schema.** Deterministic transform from `EPIC.md` front-matter to gh markdown body:
+**Body rendering schema.** Deterministic transform from `EPIC.md` front-matter to the managed tracker body:
 
 ```markdown
 <intent paragraph — from EPIC.md front-matter `intent` field, or first paragraph of body>
@@ -602,11 +603,11 @@ JSON Schema is the canonical contract format. Runtime code may use Pydantic, zod
 **Python data model boundary.** Woof uses two Python data-modelling styles intentionally:
 
 - **Pydantic** is used at schema and serialisation boundaries: graph node input/output, `plan.json`, transaction manifests, and any durable JSON artefact where Woof parses external data into Python or emits Python state back to JSON. Pydantic models are the Python runtime representation of those boundary shapes; the matching JSON Schema remains the portable contract artefact.
-- **Dataclasses** are used for trusted in-process records: check runner context/outcomes, preflight findings, GitHub sync return values, audit summaries, and small helper result objects. These objects are already constructed by Woof code from normalised inputs, do not define external artefact shape, and should not imply additional Pydantic coercion or schema authority.
+- **Dataclasses** are used for trusted in-process records: check runner context/outcomes, preflight findings, tracker sync return values, audit summaries, and small helper result objects. These objects are already constructed by Woof code from normalised inputs, do not define external artefact shape, and should not imply additional Pydantic coercion or schema authority.
 
 Do not mix the two casually. If a type crosses a durable JSON, CLI, LLM-node, or consumer-facing boundary, prefer Pydantic and keep the JSON Schema aligned. If a type is only an internal carrier between Python functions, a dataclass is acceptable and usually clearer. `pydantic_ref` in an epic contract decision is a special case: it means the consumer project has chosen a Pydantic model as the native machine-checkable artefact for that surface, not that Woof treats Pydantic as the domain contract itself.
 
-**Standalone, opinionated, portable.** Woof assumes `just`, Docker, an issue tracker, worktrees, and the `.woof/` convention. Does *not* assume an existing project — Stages 1–2 support blank-project starts. The tracker is pluggable (ADR-003): the `local` adapter needs no hosted service.
+**Standalone, opinionated, portable.** Woof assumes a Git worktree, the `.woof/` convention, its bundled schemas/playbooks/language registries, and the public CLIs declared by the consumer config. Project tools such as `just`, Docker, servers, language runtimes, or `gh` are prerequisites only when the consumer declares them. Woof does not assume an existing application; Stages 1-2 support blank-project starts. The tracker is pluggable (ADR-003): the `local` adapter needs no hosted service.
 
 ### Infrastructure prerequisites (hard-gated)
 
@@ -618,10 +619,10 @@ Do not mix the two casually. If a type crosses a durable JSON, CLI, LLM-node, or
 
 ```toml
 [infra]
-docker = "20.10+"
-just = "1.0+"
 git = "2.30+"
-gh = "2.0+"
+just = "1.0+"                            # only when project commands use just
+docker = "20.10+"                         # only when the project needs Docker
+gh = "2.0+"                               # only when tracker.kind = "github"
 
 [commands]                                # public dispatch CLIs
 claude = "any"                            # Claude Code CLI
@@ -779,7 +780,7 @@ Required `.gitignore` entries (consumer adds at first setup):
 
 **Cross-worktree epic activity.** An epic is active in exactly one worktree at a time. `.woof/` is per-worktree by convention; with the `github` tracker, cross-worktree handover happens via the tracker epic (the canonical contract), not by copying `.woof/`. No mechanical enforcement; document-level rule.
 
-**Config initialisation.** `woof init` scaffolds a fresh consumer setup: it writes `.woof/{prerequisites,agents,quality-gates,test-markers}.toml` with `<replace>` placeholders for project-specific values (issue-tracker repo, quality-gate command) and inserts a fenced `# >>> woof` block into the repository `.gitignore` containing the required runtime entries. `--tracker github` (the default) scaffolds a GitHub-backed `[tracker]` table and declares `gh` as required infra; `--tracker local` scaffolds the no-remote `local` tracker and omits `gh` so a consumer without a hosted issue tracker is not forced to install it. `--with-docs-paths` additionally scaffolds `.woof/docs-paths.toml`. Re-running `woof init` is idempotent: existing TOMLs are preserved unless `--force` is passed, and the gitignore block is updated in place rather than duplicated. Preflight with no `.woof/prerequisites.toml` still emits a template with `<replace>` placeholders and exits non-zero so a stranger who lands in a `.woof/` directory with the file accidentally deleted gets the same starter content inline. `.woof/agents.toml` is required before graph execution because role routes are startup infrastructure; optional configs such as `test-markers.toml` keep built-in defaults when absent. The end-to-end first-run walkthrough — install, `woof init`, placeholder fill-in, authentication, preflight, hook install, and the first `woof wf new` — lives in `docs/consumers.md`.
+**Config initialisation.** `woof init` scaffolds a fresh consumer setup: it writes `.woof/{prerequisites,agents,quality-gates,test-markers}.toml` with `<replace>` placeholders for project-specific values (issue-tracker repo, quality-gate command) and inserts a fenced `# >>> woof` block into the repository `.gitignore` containing the required runtime entries. `--tracker github` (the default) scaffolds a GitHub-backed `[tracker]` table and declares `gh` as required infra; `--tracker local` scaffolds the no-remote `local` tracker and omits `gh` so a consumer without a hosted issue tracker is not forced to install it. `--with-docs-paths` additionally scaffolds `.woof/docs-paths.toml`. Re-running `woof init` is idempotent: existing TOMLs are preserved unless `--force` is passed, and the gitignore block is updated in place rather than duplicated. Preflight with no `.woof/prerequisites.toml` still emits a template with `<replace>` placeholders and exits non-zero so a stranger who lands in a `.woof/` directory with the file accidentally deleted gets the same starter content inline. `.woof/agents.toml` is required before graph execution because role routes are startup infrastructure; optional configs such as `test-markers.toml` keep built-in defaults when absent. The end-to-end first-run walkthrough — install, `woof init`, placeholder fill-in, authentication, preflight, hook install, `woof wf new`, and the printed `woof wf --epic <N>` command — lives in `docs/consumers.md`.
 
 ### Agent role configuration
 
@@ -864,7 +865,7 @@ The CLI is the operator surface. Prompt wrappers may call these commands, but th
 | `woof validate ...` | Validate JSON, TOML, JSONL, and front-matter artefacts against shipped schemas. |
 | `woof check stage-5 --epic <N> --story <S<k>>` | Run Stage-5 checks and emit structured results. |
 | `woof dispatch --role <role-name>` | Internal graph primitive for invoking configured producer/reviewer subprocesses and recording dispatch events. |
-| `woof render-epic` | Render `EPIC.md` structured front-matter to the managed tracker issue body. |
+| `woof render-epic` | Render `EPIC.md` structured front-matter to the managed tracker body; `--sync` pushes through the configured tracker. |
 | `woof gate write` | Write a structured gate artefact. |
 
 `just` recipes in this repository are development conveniences. Consumer projects may wrap the CLI, but the graph remains the source of truth.

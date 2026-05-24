@@ -312,6 +312,7 @@ def cmd_wf(args: argparse.Namespace) -> int:
                 "epic_ref": result.epic_ref,
                 "epic_dir": str(result.epic_dir),
                 "current_epic_path": str(result.current_epic_path),
+                "next_command": f"woof wf --epic {result.epic_id}",
                 "paths": paths,
             }
             sys.stdout.write(json.dumps(payload, sort_keys=True) + "\n")
@@ -319,6 +320,7 @@ def cmd_wf(args: argparse.Namespace) -> int:
             sys.stdout.write(
                 f"woof wf new: created E{result.epic_id} at {result.epic_ref}; "
                 f"initialised spark.md and .woof/.current-epic\n"
+                f"Next: woof wf --epic {result.epic_id}\n"
             )
         return 0
 
@@ -344,6 +346,7 @@ def cmd_wf(args: argparse.Namespace) -> int:
                 "epic_id": args.epic,
                 "status": "initialised",
                 "epic_dir": str(result.epic_dir),
+                "next_command": f"woof wf --epic {args.epic}",
                 "paths": paths,
             }
             sys.stdout.write(json.dumps(payload, sort_keys=True) + "\n")
@@ -351,6 +354,7 @@ def cmd_wf(args: argparse.Namespace) -> int:
             epic_state = " and EPIC.md" if result.epic_path else ""
             sys.stdout.write(
                 f"woof wf: initialised E{args.epic} from the tracker with spark.md{epic_state}\n"
+                f"Next: woof wf --epic {args.epic}\n"
             )
         return 0
 

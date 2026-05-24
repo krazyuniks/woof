@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://woof.dev/schemas/gate.schema.json",
   "title": "woof gate front-matter",
-  "description": "YAML front-matter of .woof/epics/E<N>/gate.md. Validates the structured header only; the prose sections (## Context, ## Findings, ## Primary position, ## Reviewer position) are unconstrained markdown. The gate.md represents an OPEN gate; resolution is recorded as a jsonl event with a decision drawn from the taxonomy in jsonl-events.schema.json (gate_resolved.decision). triggered_by[] enum values are registry-derived check IDs plus driver-level triggers; the enum is snapshot-tested against the registry in tests/unit/woof/test_check_stage_5_subcommand.py.",
+  "description": "YAML front-matter of .woof/epics/E<N>/gate.md. Validates the structured header only; the prose sections (## Context, ## Findings, ## Primary position, ## Reviewer position) are unconstrained markdown. The gate.md represents an OPEN gate; resolution is recorded as a jsonl event with a decision drawn from the taxonomy in jsonl-events.schema.json (gate_resolved.decision). triggered_by[] enum values are registry-derived check IDs plus graph-level triggers; the enum is snapshot-tested against the registry in tests/unit/test_check_stage_5_subcommand.py.",
   "type": "object",
   "additionalProperties": false,
   "required": ["type", "stage", "story_id", "triggered_by", "timestamp"],
@@ -56,7 +56,7 @@
           "manual"
         ]
       },
-      "description": "Reasons the gate opened. plan_review fires automatically at Stage 4. check_1_quality_gates..check_9_review_valve map to Stage-5 registry check IDs (canonical names; these replace the legacy check_1_quality_gate etc.). empty_diff_review opens when a story finishes with no diff. Driver-level: subprocess_crash (executor process exited non-zero), subprocess_aborted (SIGTERM/timeout), executor_aborted (executor wrote outcome=aborted_with_position), reviewer_unreachable (reviewer route exited before producing critique), incomplete_stage_state (required Stage-5 handoff artefact is missing or malformed). schema_validation_failed when Stage 3 self-validation exhausts the 2-attempt cap. tracker_sync_conflict when an issue-tracker push detects remote changes (github_sync_conflict retained as a legacy alias). manual for human-opened gates."
+      "description": "Reasons the gate opened. plan_review fires automatically at Stage 4. check_1_quality_gates..check_9_review_valve map to Stage-5 registry check IDs (canonical names; these replace the legacy check_1_quality_gate etc.). empty_diff_review opens when a story finishes with no diff. Graph-level: subprocess_crash (producer process exited non-zero), subprocess_aborted (SIGTERM/timeout), executor_aborted (producer wrote outcome=aborted_with_position), reviewer_unreachable (reviewer route exited before producing critique), incomplete_stage_state (required Stage-5 handoff artefact is missing or malformed). schema_validation_failed when Stage 3 self-validation exhausts the 2-attempt cap. tracker_sync_conflict when an issue-tracker push detects remote changes (github_sync_conflict retained as a legacy alias). manual for human-opened gates."
     },
     "timestamp": {
       "type": "string",

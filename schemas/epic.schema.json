@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://woof.dev/schemas/epic.schema.json",
   "title": "woof EPIC.md front-matter",
-  "description": "YAML front-matter of .woof/epics/E<N>/EPIC.md. Captures Definition-stage commitments: observable outcomes (user-facing acceptance) and contract decisions (technical contracts realising those outcomes). Free-form prose may follow the front-matter; only the structured header is validated. After Definition closes, outcome IDs and contract-decision IDs are append-only; ID removal requires gate-driven deprecation. Contract decisions reference standard contract artefacts (OpenAPI documents, Pydantic models, JSON Schema files); woof verifies via the artefact's native tooling (schemathesis, Pydantic, ajv-cli) rather than reinventing validation.",
+  "description": "YAML front-matter of .woof/epics/E<N>/EPIC.md. Captures Definition-stage commitments: observable outcomes (user-facing acceptance) and contract decisions (technical contracts realising those outcomes). Free-form prose may follow the front-matter; only the structured header is validated. After Definition closes, outcome IDs and contract-decision IDs are append-only; ID removal requires gate-driven deprecation. Contract decisions reference standard contract artefacts (OpenAPI documents, Pydantic models, JSON Schema files); Stage 5 Check 4 verifies that those references resolve under their native tooling before commit.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -146,17 +146,17 @@
         "openapi_ref": {
           "type": "string",
           "minLength": 1,
-          "description": "JSON-Pointer-style reference into a project OpenAPI document. Example: 'spec/openapi.yaml#/paths/~1api~1v1~1comments/post'. Stage 5 Check 4 verifies conformance via schemathesis or equivalent."
+          "description": "JSON-Pointer-style reference into a project OpenAPI document. Example: 'spec/openapi.yaml#/paths/~1api~1v1~1comments/post'. Stage 5 Check 4 parses the document, resolves the pointer, and requires #/paths refs to point at operation-shaped objects with responses."
         },
         "pydantic_ref": {
           "type": "string",
           "minLength": 1,
-          "description": "Module-and-class reference to a Pydantic model. Example: 'webapp/schemas/comment.py:CommentCreate'. Stage 5 Check 4 imports the module and verifies the model class exists."
+          "description": "Module-and-class reference to a Pydantic model. Example: 'webapp/schemas/comment.py:CommentCreate'. Stage 5 Check 4 imports the target and verifies it is a pydantic.BaseModel subclass."
         },
         "json_schema_ref": {
           "type": "string",
           "minLength": 1,
-          "description": "Path to a JSON Schema file. Example: 'schemas/audit-event.schema.json'. Stage 5 Check 4 validates the schema is shipped at the declared path."
+          "description": "Path to a JSON Schema file. Example: 'schemas/audit-event.schema.json'. Stage 5 Check 4 compiles the schema with ajv-cli and validates top-level examples[] when present."
         },
         "notes": {
           "type": "string",

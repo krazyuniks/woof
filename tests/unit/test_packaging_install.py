@@ -11,6 +11,8 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import tarfile
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -22,6 +24,46 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 pytestmark = pytest.mark.host_only
+
+
+def test_built_artifacts_contain_only_release_assets(tmp_path: Path) -> None:
+    """Wheel ships runtime assets; sdist also keeps the source checkout wrapper."""
+
+    import shutil
+
+    if shutil.which("uv") is None:
+        pytest.skip("uv required for package artifact smoke")
+
+    dist_dir = tmp_path / "dist"
+    build = subprocess.run(
+        ["uv", "build", "-o", str(dist_dir), str(REPO_ROOT)],
+        capture_output=True,
+        text=True,
+    )
+    assert build.returncode == 0, build.stdout + build.stderr
+
+    wheel = next(dist_dir.glob("woof-*.whl"))
+    sdist = next(dist_dir.glob("woof-*.tar.gz"))
+
+    with zipfile.ZipFile(wheel) as archive:
+        wheel_names = set(archive.namelist())
+    assert "schemas/agents.schema.json" in wheel_names
+    assert "playbooks/critique/story.md" in wheel_names
+    assert "languages/python.toml" in wheel_names
+    assert "bin/woof" not in wheel_names
+    assert not any("__pycache__" in name or name.endswith(".pyc") for name in wheel_names)
+
+    with tarfile.open(sdist, "r:gz") as archive:
+        sdist_names = set(archive.getnames())
+
+    def has_sdist_path(suffix: str) -> bool:
+        return any(name.endswith(f"/{suffix}") for name in sdist_names)
+
+    assert has_sdist_path("schemas/agents.schema.json")
+    assert has_sdist_path("playbooks/critique/story.md")
+    assert has_sdist_path("languages/python.toml")
+    assert has_sdist_path("bin/woof")
+    assert not any("__pycache__" in name or name.endswith(".pyc") for name in sdist_names)
 
 
 def test_graph_subprocess_argv_uses_active_python_module() -> None:
@@ -116,6 +158,25 @@ def test_installed_wheel_runs_graph_subprocess_entry(tmp_path: Path) -> None:
     )
     assert help_proc.returncode == 0, help_proc.stdout + help_proc.stderr
     assert "usage:" in (help_proc.stdout + help_proc.stderr).lower()
+
+    console_proc = subprocess.run(
+        [
+            "uv",
+            "run",
+            "--isolated",
+            "--no-project",
+            "--with",
+            str(wheel),
+            "woof",
+            "--help",
+        ],
+        cwd=tmp_path,
+        env=isolated_env,
+        capture_output=True,
+        text=True,
+    )
+    assert console_proc.returncode == 0, console_proc.stdout + console_proc.stderr
+    assert "usage:" in (console_proc.stdout + console_proc.stderr).lower()
 
     probe_script = (
         "from woof.paths import schema_dir, tool_root\n"

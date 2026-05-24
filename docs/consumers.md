@@ -10,16 +10,16 @@ This walkthrough takes a consumer repository from a clean setup to a running epi
 
 ### 1. Install Woof
 
-Install the CLI as a standalone tool:
+Install the current release as a standalone tool:
 
 ```bash
-uv tool install git+https://github.com/krazyuniks/woof
+uv tool install git+https://github.com/krazyuniks/woof@v0.1.0
 ```
 
 Or into an existing environment:
 
 ```bash
-pip install git+https://github.com/krazyuniks/woof
+pip install git+https://github.com/krazyuniks/woof@v0.1.0
 ```
 
 Confirm the CLI is on `PATH`:

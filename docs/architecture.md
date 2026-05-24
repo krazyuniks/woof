@@ -375,7 +375,7 @@ acceptance_criteria:
 | Definition (`EPIC.md.observable_outcomes`) | Structured with `id` | IDs assigned |
 | Breakdown (`plan.json.stories[].satisfies[]`) | `[O1, O2, ...]` per story | References Definition IDs |
 | Test (in source) | Name / docstring / adjacent comment includes outcome ID | E.g., `def test_publish_comment_O1():` |
-| Stage 5 Check 2 | Regex grep over diff | Verifies tests cover `satisfies[]` |
+| Stage 5 Check 2 | Regex grep over diff | Verifies automated tests cover `satisfies[]`; skips stories that declare only manual/documentation verification with `tests.count = 0` |
 
 ID is the spine. Lose it and traceability collapses.
 
@@ -478,7 +478,7 @@ Registry completeness is part of Stage-5 verification. A registered runner that 
 | # | Class | Mechanism | Tooling |
 |---|---|---|---|
 | 1 | A | Each blocking gate command in `.woof/quality-gates.toml` exits 0 within its declared timeout; advisory gates (`blocking = false`) record a minor finding on non-zero exit and do not fail the check | shell |
-| 2 | B | Every `outcome_id` in `satisfies[]` has an asserting test reachable in the diff (test-name / docstring / adjacent comment, per `.woof/test-markers.toml`) | jq + grep; helper |
+| 2 | B | For stories that declare automated test work, every `outcome_id` in `satisfies[]` has an asserting test reachable in the diff (test-name / docstring / adjacent comment, per `.woof/test-markers.toml`). Stories that declare only documentation/manual verification with `tests.count = 0` skip this check and rely on reviewer critique plus docs-drift checks. | jq + grep; helper |
 | 3 | C | `git diff --name-only --staged` subset of `story.paths[]` globs (matched via git-pathspec) | shell + git pathspec |
 | 4 | D | For every CD with `implements_contract_decisions` ownership in this story: the referenced artefact is present and resolves under its native tooling. OpenAPI documents parse, declared JSON pointers resolve, and refs under `#/paths` must point to operation-shaped objects with `responses`; `pydantic_ref` targets import and resolve to a `BaseModel` subclass; `json_schema_ref` targets compile under `ajv-cli`, and top-level `examples[]` validate when present. Behavioural conformance belongs in declared quality-gate commands; the runner surfaces the resolved artefact path on failure, and missing `ajv-cli` is a preflight failure rather than an in-band finding. | external native validators |
 | 5 | E | `plan.json` validates against `plan.schema.json`; cross-refs (`satisfies[]` subset of `observable_outcomes[].id`, both `*_contract_decisions[]` arrays subset of `contract_decisions[].id`, every CD owned by exactly one story, `depends_on[]` subset of `stories[].id`); status coherence | `ajv-cli` + jq + helper |

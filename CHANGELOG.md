@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.3 - 2026-05-24
+
+- Allowed documentation/manual stories with no automated test work to skip
+  Stage 5 outcome-marker enforcement instead of requiring fake test markers.
+
 ## 0.1.2 - 2026-05-24
 
 - Fixed reviewer-blocker gate approval so corrected story work re-enters

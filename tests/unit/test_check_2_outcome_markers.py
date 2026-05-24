@@ -43,7 +43,12 @@ def _stage(root: Path, rel_path: str, content: str) -> None:
     subprocess.run(["git", "add", "--", rel_path], cwd=root, check=True)
 
 
-def _make_ctx(root: Path, satisfies: list[Any], story_id: str = "S1") -> object:
+def _make_ctx(
+    root: Path,
+    satisfies: list[Any],
+    story_id: str = "S1",
+    tests: dict[str, Any] | None = None,
+) -> object:
     from woof.checks import CheckContext
 
     return CheckContext(
@@ -64,7 +69,7 @@ def _make_ctx(root: Path, satisfies: list[Any], story_id: str = "S1") -> object:
                     "implements_contract_decisions": [],
                     "uses_contract_decisions": [],
                     "depends_on": [],
-                    "tests": {"count": 1, "types": ["unit"]},
+                    "tests": tests or {"count": 1, "types": ["unit"]},
                     "status": "in_progress",
                 }
             ],
@@ -128,6 +133,39 @@ def test_publish_comment_O1():
     assert outcome.severity == "blocker"
     assert "O2" in outcome.summary
     assert "O1" in (outcome.evidence or "")
+
+
+def test_documentation_story_without_automated_tests_skips_marker_requirement(
+    tmp_path: Path,
+) -> None:
+    import sys
+
+    sys.path.insert(0, str(REPO_ROOT))
+    from woof.checks.runners.check_2_outcome_markers import check_2_outcome_markers_runner
+
+    _init_repo(tmp_path)
+    _write_marker_config(tmp_path)
+    _stage(
+        tmp_path,
+        "README.md",
+        """\
+# First-run path
+
+Documented manual outcome coverage.
+""",
+    )
+
+    outcome = check_2_outcome_markers_runner(
+        _make_ctx(
+            tmp_path,
+            ["O1", "O2"],
+            tests={"count": 0, "types": ["documentation", "manual"]},
+        )
+    )
+
+    assert outcome.ok
+    assert outcome.severity == "info"
+    assert "no automated test work" in outcome.summary
 
 
 def test_markers_in_non_test_staged_files_do_not_count(tmp_path: Path) -> None:

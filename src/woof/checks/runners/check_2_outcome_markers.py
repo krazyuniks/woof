@@ -18,6 +18,7 @@ from typing import Any
 from woof.checks import CheckContext, CheckOutcome
 
 CHECK_ID = "check_2_outcome_markers"
+_MANUAL_TEST_TYPES = {"documentation", "manual"}
 
 _DEFAULT_MARKER_CONFIG: dict[str, Any] = {
     "languages": {
@@ -63,6 +64,17 @@ def check_2_outcome_markers_runner(ctx: CheckContext) -> CheckOutcome:
             ok=False,
             severity="blocker",
             summary=f"story {ctx.story_id} has malformed satisfies[]",
+        )
+
+    if not _requires_automated_test_markers(story):
+        return CheckOutcome(
+            id=CHECK_ID,
+            ok=True,
+            severity="info",
+            summary=(
+                f"story {ctx.story_id} declares no automated test work; "
+                "outcome marker check skipped"
+            ),
         )
 
     required = list(dict.fromkeys(satisfies))
@@ -136,6 +148,23 @@ def _story_for_id(plan: dict[str, Any], story_id: str) -> dict[str, Any] | None:
         if isinstance(story, dict) and story.get("id") == story_id:
             return story
     return None
+
+
+def _requires_automated_test_markers(story: dict[str, Any]) -> bool:
+    tests = story.get("tests")
+    if not isinstance(tests, dict):
+        return True
+
+    count = tests.get("count")
+    if type(count) is int and count <= 0:
+        return False
+
+    types = tests.get("types")
+    return not (
+        isinstance(types, list)
+        and types
+        and all(isinstance(item, str) and item.lower() in _MANUAL_TEST_TYPES for item in types)
+    )
 
 
 def _load_marker_config(repo_root: Path) -> list[_LanguageMarkers] | CheckOutcome:

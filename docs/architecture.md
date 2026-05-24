@@ -118,7 +118,7 @@ Definition captures those commitments through `observable_outcomes[]`,
 
 This makes the autonomy gradient (Section 2 Stages overview) concrete: humans review architectural commitments; automation handles mechanical execution.
 
-**Gate mechanism (Stages 4 and 6).** Both gates use the same operator surface: `woof wf --epic <N>` to surface the gate and `woof wf --epic <N> --resolve <decision>` to record the decision. Triggered by presence of `.woof/epics/E<N>/gate.md`. The implementation renders the pre-written Context block, surfaces findings and positions, records the structured human decision, and resumes only after `gate.md` is gone. `woof observe --epic <N> --view gate` is a read-only inspection command for the same file-and-command gate surface; it does not resolve, revise, or resume the workflow.
+**Gate mechanism (Stages 4 and 6).** Both gates use the same operator surface: `woof wf --epic <N>` to surface the gate and `woof wf --epic <N> --resolve <decision>` to record the decision. Triggered by presence of `.woof/epics/E<N>/gate.md`. The implementation renders the pre-written Context block, surfaces findings and positions, records the structured human decision, and resumes only after `gate.md` is gone. Approving a reviewer-blocker story gate clears the stale blocker critique, any stale disposition, and the failed check result while preserving the staged story work and executor result; the next graph run re-dispatches reviewer critique against the corrected staged diff. `woof observe --epic <N> --view gate` is a read-only inspection command for the same file-and-command gate surface; it does not resolve, revise, or resume the workflow.
 
 `gate.md` schema (YAML front-matter plus structured prose):
 
@@ -492,7 +492,7 @@ Registry completeness is part of Stage-5 verification. A registered runner that 
 1. The Python graph reads `plan.json` and selects the next dependency-ready `pending` story.
 2. `executor_dispatch` marks the story `in_progress` and dispatches the `primary` producer prompt. The producer writes `executor_result.json` only.
 3. `critique_dispatch` dispatches the `reviewer` and expects `critique/story-S<k>.md`.
-4. `review_disposition` opens a story gate immediately for reviewer `blocker` severity; for `info` or `minor`, it dispatches the `primary` to write `dispositions/story-S<k>.md`.
+4. `review_disposition` opens a story gate immediately for reviewer `blocker` severity; for `info` or `minor`, it dispatches the `primary` to write `dispositions/story-S<k>.md`. If a human approves a corrected blocker gate, the stale blocker critique is invalidated and reviewer critique is re-run before verification.
 5. `verification` runs `woof check stage-5 --epic <N> --story <S<k>> --format json` and writes `check-result.json`.
 6. `gate_open` writes `gate.md` if the primary result, subprocess result, verifier result, or an incomplete Stage-5 handoff state requires human review.
 7. `commit` computes the transaction manifest, stages the exact expected file set, verifies the index, appends graph events, records `epic_completed` before the final story commit when that story completes the plan, commits with `executor_result.commit_subject` when supplied, and removes transient `executor_result.json` / `check-result.json`.

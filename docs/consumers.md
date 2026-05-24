@@ -13,13 +13,13 @@ This walkthrough takes a consumer repository from a clean setup to a running epi
 Install the current release as a standalone tool:
 
 ```bash
-uv tool install git+https://github.com/krazyuniks/woof@v0.1.1
+uv tool install git+https://github.com/krazyuniks/woof@v0.1.2
 ```
 
 Or into an existing environment:
 
 ```bash
-pip install git+https://github.com/krazyuniks/woof@v0.1.1
+pip install git+https://github.com/krazyuniks/woof@v0.1.2
 ```
 
 Confirm the CLI is on `PATH`:

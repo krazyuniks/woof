@@ -10,6 +10,14 @@ from pathlib import Path
 
 import yaml
 
+from woof.graph.dispositions import (
+    NON_BLOCKING_SEVERITIES,
+    FrontMatterError,
+    critique_severity,
+    read_markdown_front_matter,
+    story_critique_path,
+    story_disposition_path,
+)
 from woof.graph.lock import WorkflowLockError
 from woof.graph.runner import run_graph
 from woof.graph.state import GateDecision, NodeStatus, Plan, StorySpec
@@ -72,6 +80,14 @@ def _remove_paths(repo_root: Path, *paths: Path) -> list[str]:
             path.unlink()
             removed.append(_display_path(repo_root, path))
     return removed
+
+
+def _story_critique_requires_requeue(critique_path: Path) -> bool:
+    try:
+        front = read_markdown_front_matter(critique_path).front
+    except (FileNotFoundError, FrontMatterError):
+        return True
+    return critique_severity(front) not in NON_BLOCKING_SEVERITIES
 
 
 def _update_story(repo_root: Path, epic_id: int, story_id: str, **updates: object) -> None:
@@ -151,10 +167,25 @@ def _apply_gate_resolution_effects(
         executor_result = directory / "executor_result.json"
         if decision == "approve":
             changed.extend(_remove_paths(repo_root, check_result))
+            if story_id and "check_6_critique_blocker" in triggered_by:
+                critique_path = story_critique_path(directory, story_id)
+                if _story_critique_requires_requeue(critique_path):
+                    changed.extend(
+                        _remove_paths(
+                            repo_root,
+                            critique_path,
+                            story_disposition_path(directory, story_id),
+                        )
+                    )
             if story_id and "empty_diff_review" in triggered_by:
                 _update_story(repo_root, epic_id, story_id, status="done", empty_diff=True)
                 changed.append(_display_path(repo_root, directory / "plan.json"))
-                changed.extend(_remove_paths(repo_root, executor_result))
+                changed.extend(
+                    _remove_paths(
+                        repo_root,
+                        executor_result,
+                    )
+                )
                 append_epic_event_once(
                     repo_root,
                     epic_id,

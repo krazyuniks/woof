@@ -2143,6 +2143,81 @@ def test_wf_resolve_records_gate_decision_and_removes_gate(tmp_path: Path) -> No
     assert events[-1]["decision"] == "approve"
 
 
+def test_wf_resolve_reviewer_blocker_approval_requeues_critique(tmp_path: Path) -> None:
+    (tmp_path / ".woof").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".woof" / "prerequisites.toml").write_text('[tracker]\nkind = "local"\n')
+    directory = _write_plan(tmp_path, 33)
+    mark_story_status(tmp_path, 33, "S1", "in_progress")
+    (directory / "executor_result.json").write_text(
+        json.dumps(
+            {
+                "epic_id": 33,
+                "story_id": "S1",
+                "outcome": "staged_for_verification",
+                "commit_subject": "feat: test",
+                "commit_body": "body",
+                "position": None,
+            }
+        )
+    )
+    (directory / "check-result.json").write_text(
+        json.dumps(
+            {
+                "ok": False,
+                "stage": 5,
+                "epic_id": 33,
+                "story_id": "S1",
+                "triggered_by": ["check_6_critique_blocker"],
+                "checks": [],
+            }
+        )
+    )
+    critique_path = directory / "critique" / "story-S1.md"
+    critique_path.parent.mkdir()
+    critique_path.write_text(
+        "---\n"
+        "target: story\n"
+        "target_id: S1\n"
+        "severity: blocker\n"
+        "timestamp: '2026-01-01T00:00:00Z'\n"
+        "harness: test-reviewer\n"
+        "findings:\n"
+        "  - id: F1\n"
+        "    severity: blocker\n"
+        "    summary: stale staged diff\n"
+        "---\n"
+    )
+    disposition_path = _write_disposition(directory, 33)
+    gate = directory / "gate.md"
+    gate.write_text(
+        "---\n"
+        "type: story_gate\n"
+        "story_id: S1\n"
+        "triggered_by:\n"
+        "  - check_6_critique_blocker\n"
+        "---\n"
+        "Operator fixed the staged diff.\n"
+    )
+
+    proc = _run_woof(tmp_path, "wf", "--epic", "33", "--resolve", "approve")
+
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == "woof wf: gate resolved decision=approve\n"
+    assert not gate.exists()
+    assert not (directory / "check-result.json").exists()
+    assert not critique_path.exists()
+    assert not disposition_path.exists()
+    assert (directory / "executor_result.json").exists()
+    assert next_node(tmp_path, 33) == (NodeType.CRITIQUE_DISPATCH, "S1")
+    events = [json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines()]
+    story_event = next(event for event in events if event["event"] == "story_gate_resolved")
+    assert story_event["decision"] == "approve"
+    assert story_event["triggered_by"] == ["check_6_critique_blocker"]
+    assert ".woof/epics/E33/check-result.json" in story_event["paths"]
+    assert ".woof/epics/E33/critique/story-S1.md" in story_event["paths"]
+    assert ".woof/epics/E33/dispositions/story-S1.md" in story_event["paths"]
+
+
 def test_wf_resolve_revise_plan_reenters_breakdown(tmp_path: Path) -> None:
     _write_tracker_prerequisites(tmp_path)
     directory = _write_spark(tmp_path, 31)

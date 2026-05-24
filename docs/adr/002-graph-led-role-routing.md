@@ -29,7 +29,9 @@ Roles are semantic:
 The graph continues after reviewer `info` or `minor` findings. For `minor`
 findings, the primary records a disposition: accepted, rejected, or deferred
 with concise reasoning. Reviewer `blocker` findings open a human gate. There is
-no model-to-model debate loop.
+no model-to-model debate loop. If the human fixes the story output and approves
+the gate, the graph invalidates the stale blocker critique and re-runs reviewer
+critique against the corrected staged diff before verification.
 
 Woof owns public command construction. Role routes are declared in
 `.woof/agents.toml`; dispatch records the resolved command, adapter, model,

@@ -46,7 +46,7 @@ agents at runtime: no Woof sandboxing, no command allow-list, no writable-path
 restriction, no network policy, and no MCP restriction layer. The public CLI
 adapters deliberately use broad permission modes (`claude
 --dangerously-skip-permissions`; `codex
---dangerously-bypass-approvals-and-sandbox -s danger-full-access -a never`).
+--dangerously-bypass-approvals-and-sandbox -s danger-full-access`).
 This mode is surfaced in dispatch dry-run output, dispatch audit metadata,
 preflight route findings, and the `.woof/agents.toml` schema/template.
 

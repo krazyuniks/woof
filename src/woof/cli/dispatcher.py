@@ -313,8 +313,6 @@ def build_argv(
             "--dangerously-bypass-approvals-and-sandbox",
             "-s",
             "danger-full-access",
-            "-a",
-            "never",
         ]
         if model:
             argv += ["--model", str(model)]

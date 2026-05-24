@@ -145,8 +145,6 @@ def test_dry_run_primary_uses_raw_codex_argv(woof_project: Path) -> None:
         "--dangerously-bypass-approvals-and-sandbox",
         "-s",
         "danger-full-access",
-        "-a",
-        "never",
         "--model",
         "gpt-5.5",
         "-c",
@@ -528,8 +526,6 @@ def test_build_argv_minimal_role() -> None:
         "--dangerously-bypass-approvals-and-sandbox",
         "-s",
         "danger-full-access",
-        "-a",
-        "never",
     ]
 
 

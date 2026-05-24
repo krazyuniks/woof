@@ -59,7 +59,6 @@ timeout <minutes>m codex exec \
   --skip-git-repo-check \
   --dangerously-bypass-approvals-and-sandbox \
   -s danger-full-access \
-  -a never \
   --model <model> \
   -c model_reasoning_effort="<effort>" \
   < prompt

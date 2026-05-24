@@ -8,21 +8,9 @@ date: 2026-05-17
 
 ## Context
 
-ADR-001 moved orchestration authority out of LLM prompts and into the Python
-graph. Woof needs semantic roles rather than provider-shaped role names or
+ADR-001 places orchestration authority in the Python graph. Woof therefore
+needs semantic roles instead of provider-shaped role names, shell aliases, or
 private wrapper assumptions.
-
-The model landscape has changed. The intended operating profile is now:
-
-- GPT-5.5 as the primary producer for planning, design, coding, and artefact
-  generation.
-- Claude Opus 4.7 as the reviewer, checker, and second-opinion model, run with
-  explicit `max` effort.
-
-Hard-coding either provider as "the orchestrator" would reintroduce the same
-failure class ADR-001 removed. It would also conflict with Woof's "one way to do
-anything" rule: workflow startup, graph execution, model dispatch, human gates,
-and gate resolution must all go through one operator surface.
 
 ## Decision
 
@@ -30,25 +18,24 @@ Woof remains graph-led. Neither Codex nor Claude drives the workflow. The Python
 graph is the orchestrator; model invocations are typed producer or reviewer
 nodes; humans resolve gates.
 
-Roles are semantic, not provider-owned:
+Roles are semantic:
 
-| Role | Responsibility | Current preferred route |
+| Role | Responsibility | Default scaffolded route |
 |---|---|---|
-| `primary` | Produce plans, design artefacts, story diffs, dispositions, and other graph-declared outputs. | `codex` CLI + `gpt-5.5` + `xhigh` reasoning |
-| `reviewer` | Critique plans and story outputs; classify findings as `info`, `minor`, or `blocker`. | `claude` CLI + `claude-opus-4-7` + `max` effort |
+| `primary` | Produce discovery artefacts, definitions, plans, story diffs, dispositions, and other graph-declared outputs. | `codex` CLI, `gpt-5.5`, `xhigh` reasoning |
+| `reviewer` | Critique plans and story outputs; classify findings as `info`, `minor`, or `blocker`. | `claude` CLI, `claude-opus-4-7`, `max` effort |
 | `gate-resolver` | Surface open gates and record structured human decisions. | In-session human/operator |
 
 The graph continues after reviewer `info` or `minor` findings. For `minor`
-findings, the primary must record a disposition: accepted, rejected, or deferred
+findings, the primary records a disposition: accepted, rejected, or deferred
 with concise reasoning. Reviewer `blocker` findings open a human gate. There is
-no model-to-model debate loop and no automatic stalemate resolver.
+no model-to-model debate loop.
 
-Woof must own the full public command construction. It must not require private
-shell wrappers, dotfiles, aliases, or absolute paths. Role routes must
-record the resolved command, model, effort, flags, MCP set, timeout, and
-audit/session reference in dispatch events. Effort is part of the route contract.
-The reviewer route deliberately uses Claude `max` effort because the reviewer is
-the explicit second-opinion path.
+Woof owns public command construction. Role routes are declared in
+`.woof/agents.toml`; dispatch records the resolved command, adapter, model,
+effort, flags, MCP set, timeout, runtime policy, and audit/session reference.
+Commands must not require private shell wrappers, dotfiles, aliases, host
+absolute paths, or external sync side effects.
 
 For Claude Code subprocesses, Woof builds the raw command itself, including MCP
 isolation:
@@ -59,42 +46,38 @@ timeout <minutes>m claude \
   --strict-mcp-config \
   --mcp-config '<generated {"mcpServers": {...}} JSON>' \
   -p --output-format json \
-  --model claude-opus-4-7 \
-  --effort max \
+  --model <model> \
+  --effort <effort> \
   < prompt
 ```
 
-The generated MCP JSON is empty by default (`{"mcpServers":{}}`). When a role
-declares MCP servers, Woof resolves them from project-owned `.woof/` config or
-standard Claude settings paths using portable home-relative paths only. No
-generated command may refer to `/home/ryan`, `~/.dotfiles`, `cld`, or other local
-operator aliases. Prompt payloads are sent on stdin rather than as one argv
-element, so bundled playbook prompts do not hit per-argument size ceilings.
+For Codex subprocesses, Woof calls the public `codex` CLI directly:
 
-For Codex subprocesses, Woof calls the public `codex` CLI directly and injects
-any project context it needs into the prompt or explicit input files. It must not
-depend on private wrappers or external sync side effects.
+```text
+timeout <minutes>m codex exec \
+  --json \
+  --skip-git-repo-check \
+  --dangerously-bypass-approvals-and-sandbox \
+  -s danger-full-access \
+  -a never \
+  --model <model> \
+  -c model_reasoning_effort="<effort>" \
+  < prompt
+```
 
-`woof wf` remains the only workflow entry point. Human gates are resolved through
-`woof wf --epic <N> --resolve <decision>`. `woof dispatch` remains an internal
-node primitive and should dispatch by role, not by a provider target chosen at
-the operator surface.
+Prompt payloads are sent on stdin so bundled playbook prompts do not hit argv
+size limits. `woof dispatch --role <role-name>` is the internal graph primitive;
+the role route selects the adapter.
 
 ## Consequences
 
-- Stage 1-4 graph migration must wait until the role-routing pivot is complete;
-  otherwise the new planning nodes will encode obsolete Claude/Codex
-  assumptions.
-- `.woof/agents.toml` needs an effort-aware role schema and migration path from
-  the legacy `planner`, `story-executor`, and `critiquer` names.
-- Preflight becomes the startup infrastructure check for Woof itself, the
-  consumer `.woof/` files, public CLIs, generated MCP config, GitHub access,
-  configured quality gates, and project-specific host/server prerequisites.
-- Prompts and documentation must use primary/reviewer terminology. Provider names
-  may appear in the default route examples, not in orchestration semantics.
-- Dispatch audit paths and any generated transcript references must use portable
-  locations such as `~/.claude/projects/<project-slug>/...` or repo-relative
-  `.woof/epics/E<N>/audit/...`; never host-specific absolute paths.
-- The old safety rule still holds: a reviewer can force human attention only by
-  producing a schema-valid `severity: blocker`; a non-blocking review may inform
-  the primary but cannot trap the workflow in an agent disagreement loop.
+- Documentation, prompts, schemas, and CLI output use `primary` and `reviewer`
+  terminology for workflow semantics.
+- Provider names appear in route examples and audit details, not as
+  orchestration concepts.
+- Preflight validates public CLI availability, configured model/effort, MCP JSON
+  construction, trusted-local runtime disclosure, credentials, tracker access,
+  quality-gate commands, and configured host/server prerequisites.
+- Dispatch audit references use portable home-relative or repo-relative paths.
+- Legacy route names (`planner`, `story-executor`, `critiquer`) and legacy
+  harness values (`cld`, `cod`) are accepted only as migration input.

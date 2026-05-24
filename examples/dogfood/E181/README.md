@@ -1,5 +1,8 @@
 # E181 Dogfood Evidence
 
+> **Archive status:** This is retained as historical workflow evidence. It is
+> not current operator guidance.
+
 E181 covered audit redaction and deterministic audit summaries for `woof dispatch`. The useful evidence is not the original operator prompt; it is the contract, plan, critiques, and event trail that show how the workflow behaved.
 
 ## Retained artefacts

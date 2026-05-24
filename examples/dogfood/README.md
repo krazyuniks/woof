@@ -1,5 +1,10 @@
 # Dogfood Evidence
 
+> **Archive status:** These artefacts are retained as historical workflow
+> evidence. They are not current operator guidance. Use `README.md`,
+> `docs/architecture.md`, and `docs/consumers.md` for the current public
+> workflow.
+
 These are selected public artefacts from Woof's first two internal acceptance epics.
 
 - `E181` demonstrates the audit redaction / size-cap epic that exposed the critique-blocker handling failure.

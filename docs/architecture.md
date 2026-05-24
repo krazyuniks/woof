@@ -1,15 +1,14 @@
-# Woof
+# Woof Architecture
 
-> **Purpose:** Active architecture spec for **Woof**, a Python CLI for agentic multi-step software delivery. Principles, architecture, contracts, and operating model live here.
+> **Purpose:** Current architecture spec for **Woof**, a Python CLI for agentic multi-step software delivery.
 > **Position:** Woof governs the software-delivery loop at repository level: discovery -> definition -> breakdown -> review -> gate -> execution -> verification -> manifest-checked commit, with schema-governed contracts and a JSONL audit trail per epic.
-> **Status:** Pre-release. The active target is a complete, tested vertical workflow through the CLI. Implementation sequencing and the live technical finish backlog live in `docs/implementation-plan.md`.
-> **Rule:** All design contract work lives here. `.woof/` is runtime state only.
+> **Rule:** Design contracts live here and in the ADRs. `.woof/` in a consumer repository is runtime state and project policy.
 
-> **ADR-001:** Stage-5 orchestration is graph-owned Python (`woof wf --epic <N>`). LLM prompts are producer nodes only.
+> **ADR-001:** Orchestration is graph-owned Python (`woof wf --epic <N>`). LLM prompts are producer or reviewer nodes only.
 
 ---
 
-## 0. Current implementation boundary
+## 0. Implementation boundary
 
 Woof implements the graph-owned path from Stage 1 Discovery through Stage 5 story execution:
 
@@ -18,9 +17,9 @@ Woof implements the graph-owned path from Stage 1 Discovery through Stage 5 stor
 - Stage 2 Definition dispatches the primary producer to create or validate schema-valid `EPIC.md`.
 - Stage 3 Breakdown dispatches the primary producer to create or validate schema-valid `plan.json`, renders deterministic `PLAN.md`, dispatches the reviewer to create schema-valid `critique/plan.md`, and Stage 4 opens the mandatory `plan_gate` before any story execution.
 - Stage-5 graph nodes dispatch the primary producer with `playbooks/execution/story.md`, dispatch the reviewer, run Stage-5 verification, open gates, and commit through a transaction manifest.
-- `.claude/commands/wf*.md` and `playbooks/` prompts are wrappers or producer-node prompts. They do not own successor selection, critique dispatch, gate writing, or commits.
-- ADR-002 defines the current role-routing policy: the graph orchestrates; GPT-5.5 is the preferred primary producer route; Claude Opus 4.7 at `max` effort is the preferred reviewer route.
-- Implementation sequencing, workstream status, validation evidence, and the continuation prompt are tracked in `docs/implementation-plan.md`.
+- `playbooks/` prompts are producer or reviewer node prompts. They do not own successor selection, critique dispatch, gate writing, or commits.
+- Local prompt wrappers, when present, are development conveniences and are not part of the consumer contract.
+- ADR-002 defines the role-routing policy: the graph orchestrates; the default scaffolded primary route uses Codex; the default scaffolded reviewer route uses Claude with explicit effort.
 
 When this document conflicts with `docs/adr/001-orchestration-topology.md`, `docs/adr/002-graph-led-role-routing.md`, or the current source under `src/woof/`, source and accepted ADRs win.
 
@@ -53,28 +52,28 @@ preflight route findings, and the `.woof/agents.toml` schema/template.
 
 The implemented safety boundary is commit safety: deterministic checks,
 reviewer critique, human gates, transaction manifests, and commit decisions
-before changes land. Any future untrusted runtime restriction model needs a
-separate architecture decision.
+before changes land. Any untrusted runtime restriction model requires a
+separate architecture decision before implementation.
 
 ## 2. Architecture
 
 ### Stages
 
-Six stages plus an autonomous driver. Autonomy gradient runs from fully human-in-the-loop (Stage 1) to agent-driven with conditional human gates (Stages 5–6).
+Six stages plus an autonomous driver. Autonomy gradient runs from fully human-in-the-loop (Stage 1) to agent-driven with conditional human gates (Stages 5-6).
 
-| # | Stage | Nature | Input → Output |
+| # | Stage | Nature | Input -> Output |
 |---|---|---|---|
-| 1 | **Discovery** | Human + AI, iterative, divergent | Vague spark → `discovery/` folder, synthesised into `CONCEPT.md`, `PRINCIPLES.md`, `ARCHITECTURE.md`, `OPEN_QUESTIONS.md` |
-| 2 | **Definition** | Human + AI, convergent | `discovery/synthesis/` → `EPIC.md` |
-| 3 | **Breakdown** | AI-led, human-gated | `EPIC.md` → `plan.json` + `PLAN.md` + `critique/plan.md` |
-| 4 | **Plan gate** | Human conversation | Stage-3 artefacts → approved/revised plan |
-| 5 | **Story execution** | Agent-driven, batch-capable | `plan.json` → diff + tests + `critique/story-S<k>.md` + commit-or-gate |
-| 6 | **Story gate** | Human conversation | Triggered by `gate.md` → resolution |
-| — | **Autonomous driver** | Shell loop | Iterates Stage 5 until `gate.md` halts |
+| 1 | **Discovery** | Human + AI, iterative, divergent | Vague spark -> `discovery/` folder, synthesised into `CONCEPT.md`, `PRINCIPLES.md`, `ARCHITECTURE.md`, `OPEN_QUESTIONS.md` |
+| 2 | **Definition** | Human + AI, convergent | `discovery/synthesis/` -> `EPIC.md` |
+| 3 | **Breakdown** | AI-led, human-gated | `EPIC.md` -> `plan.json` + `PLAN.md` + `critique/plan.md` |
+| 4 | **Plan gate** | Human conversation | Stage-3 artefacts -> approved/revised plan |
+| 5 | **Story execution** | Agent-driven, batch-capable | `plan.json` -> diff + tests + `critique/story-S<k>.md` + commit-or-gate |
+| 6 | **Story gate** | Human conversation | Triggered by `gate.md` -> resolution |
+| - | **Autonomous driver** | Shell loop | Iterates Stage 5 until `gate.md` halts |
 
-### Stage 1 — Discovery (locks *direction*)
+### Stage 1 - Discovery (locks *direction*)
 
-Divergent, iterative, conversational. Embeds granular thinking phases (research → thinking → brainstorm → synthesis) inside a single stage boundary, producing a folder of artefacts synthesised into commitment documents at the end.
+Divergent, iterative, conversational. Embeds granular thinking phases (research -> thinking -> brainstorm -> synthesis) inside a single stage boundary, producing a folder of artefacts synthesised into commitment documents at the end.
 
 Folder shape:
 
@@ -91,34 +90,37 @@ The `research/`, `thinking/`, and `brainstorm/` buckets are each populated by a 
 
 Discovery owns: philosophy, principles (epic-specific; inherits from tool-level, overrides recorded explicitly), architecture *concepts* at family-of-approaches level, technology-family choices, rejected alternatives, open questions deferred to Definition.
 
-### Stage 2 — Definition (locks *surface*)
+### Stage 2 - Definition (locks *surface*)
 
 Convergent. Takes Discovery synthesis, resolves open questions, produces `EPIC.md`.
 
-Definition owns: observable outcomes (user-facing verifiable truths), contract decisions (routes, schemas, data shapes, user-visible strings), acceptance criteria — everything external consumers or users depend on.
+Definition owns: observable outcomes (user-facing verifiable truths), contract decisions (routes, schemas, data shapes, user-visible strings), acceptance criteria - everything external consumers or users depend on.
 
-### The seam
+### Discovery and Definition boundary
 
-> **Discovery locks direction. Definition locks surface.**
+Discovery locks direction. Definition locks surface.
 
-Direction is *reversible with pain* (swapping CRDT for OT rewrites the data layer); surface is *locked by external contract* (shipping `PATCH /api/v1/comments/{id}` binds consumers). Direction mistakes surface during implementation; surface mistakes surface during integration.
+Direction is reversible with cost: changing a technology family or data model
+changes the implementation shape. Surface is contract-bound: once Definition
+records a route, schema, user-visible string, or other observable outcome,
+stories must implement that surface or explicitly revise it through a gate.
+Definition captures those commitments through `observable_outcomes[]`,
+`contract_decisions[]`, and `acceptance_criteria[]` in `EPIC.md`.
 
-E146 was a surface failure enabled by a direction vacuum — no principle had locked "epic contract is law" as the tie-breaker. The fix requires both ends: direction-lock in Discovery (the principle), surface-lock in Definition (contract-decision table in `EPIC.md`).
-
-### Stages 3–6 — Breakdown, gates, Story execution
+### Stages 3-6 - Breakdown, gates, Story execution
 
 **Gate asymmetry.** Plan gate (Stage 4) and Story gate (Stage 6) trigger differently:
 
 | Stage | Gate behaviour | Why |
 |---|---|---|
-| 4 Plan gate | **Always opens** — even if the reviewer returns `severity: info` | Plans are architectural commitments; Class-2 errors at plan time cascade into N stories of rework. Mandatory review is cheap insurance. |
-| 6 Story gate | **Conditional** — opens only when a deterministic Stage-5 check fails, a subprocess or incomplete-state trigger fires, or critique returns `severity: blocker` | Stories are mechanical execution. Background autonomy depends on this asymmetry. |
+| 4 Plan gate | **Always opens** - even if the reviewer returns `severity: info` | Plans are architectural commitments; Class-2 errors at plan time cascade into N stories of rework. Mandatory review is cheap insurance. |
+| 6 Story gate | **Conditional** - opens only when a deterministic Stage-5 check fails, a subprocess or incomplete-state trigger fires, or critique returns `severity: blocker` | Stories are mechanical execution. Background autonomy depends on this asymmetry. |
 
-This makes the autonomy gradient (§2 Stages overview) concrete: humans review architectural commitments; automation handles mechanical execution.
+This makes the autonomy gradient (Section 2 Stages overview) concrete: humans review architectural commitments; automation handles mechanical execution.
 
-**Gate mechanism (Stages 4 and 6).** Both gates use the same operator surface: `woof wf --epic <N>` to surface the gate and `woof wf --epic <N> --resolve <decision>` to record the decision. Triggered by presence of `.woof/epics/E<N>/gate.md`. The current implementation renders the pre-written Context block, surfaces findings and positions, records the structured human decision, and resumes only after `gate.md` is gone. `woof observe --epic <N> --view gate` is a read-only inspection command for the same file-and-command gate surface; it does not resolve, revise, or resume the workflow. Richer conversational review UX is a future governance-depth layer; the current terminal/file surface is intentionally simple and auditable.
+**Gate mechanism (Stages 4 and 6).** Both gates use the same operator surface: `woof wf --epic <N>` to surface the gate and `woof wf --epic <N> --resolve <decision>` to record the decision. Triggered by presence of `.woof/epics/E<N>/gate.md`. The implementation renders the pre-written Context block, surfaces findings and positions, records the structured human decision, and resumes only after `gate.md` is gone. `woof observe --epic <N> --view gate` is a read-only inspection command for the same file-and-command gate surface; it does not resolve, revise, or resume the workflow.
 
-`gate.md` schema (YAML front-matter + structured prose):
+`gate.md` schema (YAML front-matter plus structured prose):
 
 ```yaml
 ---
@@ -135,7 +137,7 @@ timestamp: <ISO 8601>
 ## Reviewer position
 ```
 
-**Autonomous driver.** External shell loops can repeatedly invoke `woof wf --epic <N>` until `.woof/epics/E<N>/gate.md` exists. They parse nothing from `gate.md` — existence check only. Decouples driver mechanics from gate semantics.
+**Autonomous driver.** External shell loops can repeatedly invoke `woof wf --epic <N>` until `.woof/epics/E<N>/gate.md` exists. They parse nothing from `gate.md` - existence check only. Decouples driver mechanics from gate semantics.
 
 ### Core loop (within a stage)
 
@@ -149,8 +151,8 @@ timestamp: <ISO 8601>
 
 Two complementary advisory layers, both surfaced via conversational gates (principle #2):
 
-- **Structural validation** — deterministic checks against typed artefact schemas (JSON Schema). Fast, mechanical. Produces structured findings.
-- **Cross-AI critique** — multi-provider critique. The reviewer writes the critique document at `.woof/epics/E<N>/critique/<artefact>.md`. The primary model records the disposition for non-blocking findings; blocker findings open a human gate.
+- **Structural validation** - deterministic checks against typed artefact schemas (JSON Schema). Fast, mechanical. Produces structured findings.
+- **Cross-AI critique** - multi-provider critique. The reviewer writes the critique document at `.woof/epics/E<N>/critique/<artefact>.md`. The primary model records the disposition for non-blocking findings; blocker findings open a human gate.
 
 Neither auto-rejects. Neither runs in a loop. Both produce findings and positions for the human to engage with when a gate opens.
 
@@ -168,18 +170,19 @@ JSONL event logs (`epic.jsonl`, `dispatch.jsonl`) enable crash-resume and post-h
 
 **Audit redaction and retention.** Commit-bound files under `.woof/epics/E<N>/audit/` can leak secrets, internal API output, or private issue text. Before the graph-owned commit transaction computes its manifest:
 
-- Each commit-bound audit file is run through a redaction filter that strips known secret patterns (env-var values from `env.local.sh`, JWT tokens, OAuth bearer tokens, AWS keys, and configured project regexes). The filter is conservative — false positives leave a `[REDACTED:<reason>]` marker; false negatives are an audit failure.
+- Each commit-bound audit file is run through a redaction filter that strips known secret patterns (env-var values from `env.local.sh`, JWT tokens, OAuth bearer tokens, AWS keys, and configured project regexes). The filter is conservative - false positives leave a `[REDACTED:<reason>]` marker; false negatives are an audit failure.
 - Per-file size cap (default 256 KB). Output exceeding the cap is truncated to the cap with a `... [truncated, full output at .woof/epics/E<N>/audit/raw/<file>]` footer; the raw output stays in `.woof/epics/E<N>/audit/raw/` which is gitignored and excluded from transaction manifests.
-- Retention/archive is not implemented yet. Until that workstream exists, Woof's implemented audit controls are redaction, capping, ignored raw overflow, and committed manifest exclusion. `woof observe --epic <N> --view audit` reports raw-overflow file counts and explicitly reports retention/archive as not implemented rather than implying an archive policy.
+- Woof provides redaction, capping, ignored raw overflow, and committed manifest
+  exclusion. It does not provide a retention or archive policy; `woof observe
+  --epic <N> --view audit` reports that boundary explicitly.
 
-**Token usage logging.** Subprocess dispatch records token usage; the Python graph itself does not spend tokens. Every `subprocess_returned` event includes `tokens_in`, `tokens_out`, `cache_read_tokens`, `cache_write_tokens`, `duration_ms`, and `artefacts_loaded[]` when the adapter can determine them. `artefacts_loaded[]` contains explicit repo-relative artefact references that the graph or operator loaded into the dispatched prompt payload; absolute paths, home-relative paths, and parent traversal are rejected. `woof observe --epic <N> --view audit` and `--view timeline` aggregate token and cost fields only when those fields are present in dispatch events; they do not estimate missing usage or provider cost. No stage-transition `token_usage` emitter exists, because graph transitions are deterministic Python and do not consume tokens; the `token_usage` enum value in `schemas/jsonl-events.schema.json` is reserved for future driver modes that may run an LLM in the same process.
+**Token usage logging.** Subprocess dispatch records token usage; the Python graph itself does not spend tokens. Every `subprocess_returned` event includes `tokens_in`, `tokens_out`, `cache_read_tokens`, `cache_write_tokens`, `duration_ms`, and `artefacts_loaded[]` when the adapter can determine them. `artefacts_loaded[]` contains explicit repo-relative artefact references that the graph or operator loaded into the dispatched prompt payload; absolute paths, home-relative paths, and parent traversal are rejected. `woof observe --epic <N> --view audit` and `--view timeline` aggregate token and cost fields only when those fields are present in dispatch events; they do not estimate missing usage or provider cost. Graph transitions are deterministic Python and do not consume tokens.
 
-**Dispatch adapter layer.** Subprocesses are spawned via graph-owned role dispatch, not via private wrappers or shell aliases. ADR-002 migrates the internal primitive to `woof dispatch --role <role-name>` so the role route, not a provider target, selects the public CLI adapter. The adapter reads `.woof/agents.toml`, constructs the raw `claude` or `codex` invocation, generates any required MCP JSON, and emits dispatch events. Dispatch dry-run output, dispatch events, `woof preflight`, and `woof observe --view status` include `runtime_policy.mode = "trusted-local"` plus the resolved primary/reviewer adapter, model, effort, MCP set, and timeout so operators and audit readers can see that Woof is not constraining runtime read/write/execute/network/MCP access. This boundary stops CLI interface drift from breaking graph call sites.
+**Dispatch adapter layer.** Subprocesses are spawned via graph-owned role dispatch, not via private wrappers or shell aliases. The internal primitive is `woof dispatch --role <role-name>`; the role route, not a provider target, selects the public CLI adapter. The adapter reads `.woof/agents.toml`, constructs the raw `claude` or `codex` invocation, generates any required MCP JSON, and emits dispatch events. Dispatch dry-run output, dispatch events, `woof preflight`, and `woof observe --view status` include `runtime_policy.mode = "trusted-local"` plus the resolved primary/reviewer adapter, model, effort, MCP set, and timeout so operators and audit readers can see that Woof is not constraining runtime read/write/execute/network/MCP access. This boundary stops CLI interface drift from breaking graph call sites.
 
 ### Consumer checkout boundary
 
-Woof is a CLI tool, run from either an installed package or this source
-checkout, against a separate consumer repository. A consumer repository owns
+Woof is a CLI tool run against a consumer repository. A consumer repository owns
 project policy declarations under `.woof/*.toml`; it does not vendor-copy Woof
 source, schemas, playbooks, tests, examples, or generated state from the Woof
 repository.
@@ -214,7 +217,7 @@ quality gates or prerequisites.
 
 ### Issue-tracker integration
 
-**Model.** Hybrid: the issue tracker owns the epic-level contract; the filesystem owns runtime. One tracker epic per Woof epic; no child issues for stories. The tracker is pluggable behind a `Tracker` protocol — see `docs/adr/003-issue-tracker-abstraction.md`.
+**Model.** Hybrid: the issue tracker owns the epic-level contract; the filesystem owns runtime. One tracker epic per Woof epic; no child issues for stories. The tracker is pluggable behind a `Tracker` protocol - see `docs/adr/003-issue-tracker-abstraction.md`.
 
 | Layer | Source of truth | Contents |
 |---|---|---|
@@ -231,18 +234,18 @@ repo = "<org>/<repo>"     # required when kind = "github"
 
 Two adapters ship:
 
-- **`github`** — one GitHub issue per epic. `E<N>` ≡ gh issue `#<N>`; gh assigns the issue number on creation. Always-online: the `gh` CLI must be authenticated and the declared repo accessible. Push is conflict-detected.
-- **`local`** — filesystem-only. `.woof/epics/E<N>/` is the sole authority for an epic; there is no remote. Epic IDs are integers allocated locally as one greater than the highest existing `E<N>`. Push operations write no remote state and no `.last-sync` because there is no second copy of the contract to keep in sync, so a sync conflict cannot arise. Lifecycle push methods still load local `EPIC.md` and `plan.json`, render the same managed body shape as hosted trackers, and reject epic completion until every planned story is `done`. The `local` adapter lets any repository run Woof without a hosted tracker.
+- **`github`** - one GitHub issue per epic. `E<N>` is GitHub issue `#<N>`; gh assigns the issue number on creation. Always-online: the `gh` CLI must be authenticated and the declared repo accessible. Push is conflict-detected.
+- **`local`** - filesystem-only. `.woof/epics/E<N>/` is the sole authority for an epic; there is no remote. Epic IDs are integers allocated locally as one greater than the highest existing `E<N>`. Push operations write no remote state and no `.last-sync` because there is no second copy of the contract to keep in sync, so a sync conflict cannot arise. Lifecycle push methods still load local `EPIC.md` and `plan.json`, render the same managed body shape as hosted trackers, and reject epic completion until every planned story is `done`. The `local` adapter lets any repository run Woof without a hosted tracker.
 
 **Epic IDs.** A tracker-assigned integer. For `github` it is the GitHub issue number; for `local` it is a locally allocated counter. The user does not pick it. With the `github` tracker every epic has a GitHub issue, and a `.woof/epics/E<N>/` directory without `.last-sync` issue authority is not a valid epic.
 
-**Network requirement.** The `github` tracker is always-online: `woof preflight` verifies `gh api /repos/<org>/<repo>` returns 200, and every `woof wf` invocation re-checks `gh api /rate_limit`. No offline mode; no silent fallback (per §1 principle #4). The `local` tracker needs no network.
+**Network requirement.** The `github` tracker is always-online: `woof preflight` verifies `gh api /repos/<org>/<repo>` returns 200, and every `woof wf` invocation re-checks `gh api /rate_limit`. No offline mode; no silent fallback (per Section 1 principle #4). The `local` tracker needs no network.
 
-**Lifecycle — sync points.**
+**Lifecycle - sync points.**
 
 | Event | Action |
 |---|---|
-| `woof wf --epic <N>` with no local dir | `github`: fetch the issue body; initialise `.woof/epics/E<N>/`; seed `spark.md` (title + prose) and `EPIC.md` front-matter from structured sections if present. `local`: fail loud — there is no remote to cold-start from. |
+| `woof wf --epic <N>` with no local dir | `github`: fetch the issue body; initialise `.woof/epics/E<N>/`; seed `spark.md` (title + prose) and `EPIC.md` front-matter from structured sections if present. `local`: fail loud - there is no remote to cold-start from. |
 | `woof wf new "<spark>"` | Create the tracker epic, capture the assigned number `<N>`, mkdir `.woof/epics/E<N>/`, write `spark.md`, set `.woof/.current-epic = E<N>`. |
 | Definition close (`EPIC.md` schema-valid) | `github`: render `EPIC.md` front-matter to markdown per the schema below and overwrite the issue body. `local`: no-op. |
 | Plan gate approved | `github`: append a "Plan Summary" section listing story IDs + titles and update the body. `local`: no-op. |
@@ -254,14 +257,14 @@ Two adapters ship:
 **Body rendering schema.** Deterministic transform from `EPIC.md` front-matter to the managed tracker body:
 
 ```markdown
-<intent paragraph — from EPIC.md front-matter `intent` field, or first paragraph of body>
+<intent paragraph - from EPIC.md front-matter `intent` field, or first paragraph of body>
 
 ## Observable Outcomes
 
-- **O1** — <statement>
+- **O1** - <statement>
   - Evidence: <evidence[0]>; <evidence[1]>
   - Verification: <verification>
-- **O2** — <statement>
+- **O2** - <statement>
   ...
 
 ## Contract Decisions
@@ -273,11 +276,15 @@ Two adapters ship:
 ## Acceptance Criteria
 
 - All observable_outcomes verified by tests in diff
-- Each contract decision's referenced artefact resolves under its native tool (OpenAPI document parse plus operation-shaped JSON pointer where the ref targets `#/paths`; Pydantic BaseModel import; `ajv-cli` schema compile plus top-level `examples[]` validation when present). Broader conformance testing remains a deferred enhancement.
+- Each contract decision's referenced artefact resolves under its native tool
+  (OpenAPI document parse plus operation-shaped JSON pointer where the ref
+  targets `#/paths`; Pydantic BaseModel import; `ajv-cli` schema compile plus
+  top-level `examples[]` validation when present). Behavioural conformance
+  belongs in the consumer's declared quality gates.
 
 ---
 
-<!-- woof — structured sections above are rewritten on Definition/plan changes. Free-form prose above `## Observable Outcomes` is preserved on overwrite. Do not edit structured sections directly in the issue tracker. -->
+<!-- woof - structured sections above are rewritten on Definition/plan changes. Free-form prose above `## Observable Outcomes` is preserved on overwrite. Do not edit structured sections directly in the issue tracker. -->
 ```
 
 **Preservation rule.** Content above the first structured heading (`## Observable Outcomes`) is preserved on overwrite. Everything from `## Observable Outcomes` onward is woof-owned and rewritten wholesale. The trailing HTML comment is the sentinel marking woof-managed bodies.
@@ -286,21 +293,21 @@ Two adapters ship:
 
 **Push-sync failure (`github`).** Network failure or `gh api` rate limit during a scheduled push: `woof wf` fails loud, exits non-zero. The operator retries; the next push re-detects state from `.last-sync` and re-pushes.
 
-**Preflight runtime check (`github`).** Beyond the one-shot `woof preflight` check, every `woof wf` invocation verifies gh reachability (`gh api /rate_limit`, ~200ms). Missing auth or unreachable API → fail loud; no silent degradation. The `local` tracker has no runtime reachability check.
+**Preflight runtime check (`github`).** Beyond the one-shot `woof preflight` check, every `woof wf` invocation verifies gh reachability (`gh api /rate_limit`, ~200ms). Missing auth or unreachable API -> fail loud; no silent degradation. The `local` tracker has no runtime reachability check.
 
 **Authority check.** With the `github` tracker, for an existing local `.woof/epics/E<N>/` directory `woof wf` fetches the GitHub issue and requires `.woof/epics/E<N>/.last-sync` to identify the same issue number before graph or gate mutation; a local directory without that GitHub authority is not a valid epic. The `local` tracker has no remote authority check: the epic directory is self-authoritative.
 
 ### Stage contracts
 
-Each stage has a typed interface — defined inputs, defined outputs, invariants enforced at the boundary. Contracts are expressed as JSON Schema files (language-neutral) co-located with the tool; validation at boundaries catches stage-interface errors before they cascade.
+Each stage has a typed interface - defined inputs, defined outputs, invariants enforced at the boundary. Contracts are expressed as JSON Schema files (language-neutral) co-located with the tool; validation at boundaries catches stage-interface errors before they cascade.
 
 | Stage | Input | Output | Boundary invariants |
 |---|---|---|---|
 | 1 Discovery | `spark.md`, tool-level `PHILOSOPHY.md`, `PRINCIPLES.md` | `discovery/synthesis/{CONCEPT,PRINCIPLES,ARCHITECTURE,OPEN_QUESTIONS}.md` | `CONCEPT.md` has non-empty `## Problem Framing`; every active `OPEN_QUESTIONS.md` entry uses an `OQ<n>` heading plus deferral reason |
 | 2 Definition | `discovery/synthesis/*` | `EPIC.md` with front-matter `observable_outcomes[]`, `contract_decisions[]`, `acceptance_criteria[]` | Every active discovery `OQ<n>` is represented in `resolved_open_questions[]` or carried in `open_questions[]`; every `contract_decision` references a native contract artefact |
-| 3 Breakdown | `EPIC.md` | `plan.json`, `PLAN.md`, `critique/plan.md` | Every `observable_outcome.id` referenced by ≥1 story; every `contract_decision.id` referenced; duplicate pathspec overlap rejected; dependency order topologically sorted; all story statuses `pending` before the plan gate |
+| 3 Breakdown | `EPIC.md` | `plan.json`, `PLAN.md`, `critique/plan.md` | Every `observable_outcome.id` referenced by >=1 story; every `contract_decision.id` referenced; duplicate pathspec overlap rejected; dependency order topologically sorted; all story statuses `pending` before the plan gate |
 | 4 Plan gate | `gate.md` + Stage-3 artefacts | Revised artefacts + `gate.md` deleted, OR session terminated | Resolution action recorded in `epic.jsonl` |
-| 5 Story execution | `plan.json` + `story_id` | git commit (code + `.woof` state in one transaction) + updated `plan.json` + `critique/story-S<k>.md` + `dispositions/story-S<k>.md`, OR `gate.md` | 9 deterministic checks (see "Stage 5 deterministic gate checks" below); diff ⊆ `story.paths[]` |
+| 5 Story execution | `plan.json` + `story_id` | git commit (code + `.woof` state in one transaction) + updated `plan.json` + `critique/story-S<k>.md` + `dispositions/story-S<k>.md`, OR `gate.md` | 9 deterministic checks (see "Stage 5 deterministic gate checks" below); diff subset of `story.paths[]` |
 | 6 Story gate | `gate.md` + story artefacts | Revision + `gate.md` deleted, OR session terminated | Same as Stage 4 |
 
 Invariants are **mechanically checkable, fail loud, no agent judgement**. Validation failure produces a `gate.md` rather than a silent proceed. Woof-owned structural contract artefacts are JSON Schema. Runtime models such as Pydantic or zod may mirror those artefacts in implementation code, but they do not become a second source of truth for Woof-owned schemas.
@@ -333,11 +340,11 @@ contract_decisions:
     related_outcomes: [O1, O2]
     title: "Comment publishing route"
     openapi_ref: "spec/openapi.yaml#/paths/~1api~1v1~1shootouts~1{id}~1comments/post"
-    notes: "Replaces the legacy /api/shootouts/{id}/comments/{id} route. If a transition adapter is needed, declare both paths in spec/openapi.yaml — the contract is whatever the OpenAPI doc says."
+    notes: "Replaces the legacy /api/shootouts/{id}/comments/{id} route. If a transition adapter is needed, declare both paths in spec/openapi.yaml - the contract is whatever the OpenAPI doc says."
 
 acceptance_criteria:
   - "All observable_outcomes verified by tests in diff"
-  - "Every contract_decision's referenced artefact resolves under its native tool (OpenAPI parse plus operation-shaped JSON pointer for path operations, Pydantic BaseModel import for pydantic_ref, ajv-cli compile plus top-level examples[] validation for json_schema_ref). Broader conformance testing (schemathesis run, external fixture suites, Pydantic model validation against declared fixtures) is a deferred enhancement."
+  - "Every contract_decision's referenced artefact resolves under its native tool (OpenAPI parse plus operation-shaped JSON pointer for path operations, Pydantic BaseModel import for pydantic_ref, ajv-cli compile plus top-level examples[] validation for json_schema_ref). Behavioural conformance is covered by the consumer's declared quality gates."
 ---
 ```
 
@@ -356,9 +363,9 @@ acceptance_criteria:
 | `contract_decisions[].json_schema_ref` | conditional | Path to a JSON Schema file. |
 | `contract_decisions[].notes` | optional | Free-form prose for rationale (not contract content). |
 
-**Why standard contract artefacts.** A contract decision is the domain-level promise: a route, data shape, user-visible string, or other surface the implementation must honour. The referenced artefact is the machine-checkable representation of that promise. Surfaces that already have standard representations are referenced by their native ref form rather than re-encoded inline: OpenAPI for HTTP, JSON Schema for portable data shapes, and `pydantic_ref` only when the owning project already uses a Pydantic model as the native data-shape artefact. Stage 5 Check 4 currently verifies that the referenced artefact resolves under its native tooling: OpenAPI documents parse, the declared JSON pointer resolves to an object, and `#/paths/<path>/<method>` refs resolve to operation-shaped objects with a `responses` object; Pydantic refs import and resolve to a `BaseModel` subclass; JSON Schema refs compile under `ajv-cli`, and top-level `examples[]` are validated against the schema when present. Broader implementation conformance against the artefact (schemathesis run, external fixture suites, Pydantic model validation against declared fixtures) is a deferred enhancement; quality-gate test commands declared in `.woof/quality-gates.toml` remain the active behavioural coverage. Woof never reinvents validation. If a surface doesn't fit any of those three artefact types, it shouldn't be a contract decision — capture it as an `acceptance_criteria` prose statement instead.
+**Why standard contract artefacts.** A contract decision is the domain-level promise: a route, data shape, user-visible string, or other surface the implementation must honour. The referenced artefact is the machine-checkable representation of that promise. Surfaces that already have standard representations are referenced by their native ref form rather than re-encoded inline: OpenAPI for HTTP, JSON Schema for portable data shapes, and `pydantic_ref` only when the owning project already uses a Pydantic model as the native data-shape artefact. Stage 5 Check 4 verifies that the referenced artefact resolves under its native tooling: OpenAPI documents parse, the declared JSON pointer resolves to an object, and `#/paths/<path>/<method>` refs resolve to operation-shaped objects with a `responses` object; Pydantic refs import and resolve to a `BaseModel` subclass; JSON Schema refs compile under `ajv-cli`, and top-level `examples[]` are validated against the schema when present. Behavioural conformance against the artefact stays in the consumer's quality-gate commands declared in `.woof/quality-gates.toml`. Woof never reinvents validation. If a surface does not fit any of those three artefact types, capture it as an `acceptance_criteria` prose statement instead.
 
-**ID immutability.** Once Definition closes, outcome and CD IDs are append-only. Wording and evidence edits are free; ID removal requires explicit deprecation via gate-conversation revision. `/wf` validates EPIC.md edits — any removed ID surfaces every `satisfies[]` reference in `plan.json` and every test marker location, requiring an explicit propagation decision. Splits (`O2 → O2a + O2b`) are not supported; use `deprecate O2; add O5 (narrower scope replacing O2)` instead. Story-level rule: pre-commit, plan.json stories are freely revisable; post-commit, stories are immutable (new work goes into new stories appended to `plan.json`).
+**ID immutability.** Once Definition closes, outcome and CD IDs are append-only. Wording and evidence edits are free; ID removal requires explicit deprecation via gate-conversation revision. `/wf` validates EPIC.md edits - any removed ID surfaces every `satisfies[]` reference in `plan.json` and every test marker location, requiring an explicit propagation decision. Splits (`O2 -> O2a + O2b`) are not supported; use `deprecate O2; add O5 (narrower scope replacing O2)` instead. Story-level rule: pre-commit, plan.json stories are freely revisable; post-commit, stories are immutable (new work goes into new stories appended to `plan.json`).
 
 **Traceability chain:**
 
@@ -372,13 +379,13 @@ acceptance_criteria:
 
 ID is the spine. Lose it and traceability collapses.
 
-**Test→outcome marker convention** (any one suffices):
+**Test->outcome marker convention** (any one suffices):
 
 1. In test name: `def test_publish_comment_returns_201_O1():`
 2. In docstring (first line): `"""outcomes: [O1, O2]"""`
-3. In adjacent comment (≤`context_lines` above test definition): `# outcomes: [O1]`
+3. In adjacent comment (within `context_lines` above test definition): `# outcomes: [O1]`
 
-Generic across languages — Stage 5 Check 2 is a regex grep, not a parse. Authors pick whichever fits the language idiom.
+Generic across languages - Stage 5 Check 2 is a regex grep, not a parse. Authors pick whichever fits the language idiom.
 
 **Marker regex precision.** Alphanumeric-boundary anchored to prevent substring false-positives while still allowing idiomatic separators such as `_O1` in test names:
 
@@ -405,9 +412,9 @@ comment_prefix = "//"
 context_lines = 3
 ```
 
-Default config ships with woof for python + typescript; consumers extend for rust, go, etc. Reviewer critique provides the semantic safety net — verifies each marker's test actually asserts the named outcome (catches "marker present but test asserts something else"); flags as `severity: minor` in critique.
+Default config ships with woof for python + typescript; consumers extend for rust, go, etc. Reviewer critique provides the semantic safety net - verifies each marker's test actually asserts the named outcome (catches "marker present but test asserts something else"); flags as `severity: minor` in critique.
 
-**Cross-epic traceability.** IDs are scoped per-epic (`O1` in E17 ≠ `O1` in E22). No cross-epic ID linkage. If E22 builds on E17's surface unchanged, E22 doesn't declare a CD for it (stable contract; consumed without modification). If E22 modifies the surface, that's a new CD in E22 (`E22.CD1`) — same surface string, distinct epic-scoped ID. Cross-epic queries like "all epics touching `POST /api/v1/comments/{id}`" run against the surface string, not via ID graph.
+**Cross-epic traceability.** IDs are scoped per-epic (`O1` in E17 != `O1` in E22). No cross-epic ID linkage. If E22 builds on E17's surface unchanged, E22 doesn't declare a CD for it (stable contract; consumed without modification). If E22 modifies the surface, that's a new CD in E22 (`E22.CD1`) - same surface string, distinct epic-scoped ID. Cross-epic queries like "all epics touching `POST /api/v1/comments/{id}`" run against the surface string, not via ID graph.
 
 ### Stage 3 Breakdown producer prompt
 
@@ -421,7 +428,7 @@ goal: <one-sentence prose>
 stories:
   - id: S1
     title: <prose>
-    intent: <prose, 1–2 sentences: what this story produces>
+    intent: <prose, 1-2 sentences: what this story produces>
     paths:                                 # git-pathspec globs the story may touch
       - "webapp/api/comments.py"
       - "tests/api/test_comments.py"
@@ -435,7 +442,7 @@ stories:
     status: pending | in_progress | done
 ```
 
-`PLAN.md` is a deterministic render of `plan.json` — no authoring at this layer.
+`PLAN.md` is a deterministic render of `plan.json` - no authoring at this layer.
 
 The graph dispatches the primary route to produce `plan.json`, validates it against `schemas/plan.schema.json`, renders `PLAN.md`, dispatches the reviewer route with `playbooks/critique/plan.md`, and opens the mandatory plan gate. Producer prompts do not author `PLAN.md`, dispatch reviewers, write gates, select successors, or revise the epic contract.
 
@@ -443,11 +450,12 @@ The graph dispatches the primary route to produce `plan.json`, validates it agai
 
 Stage 5 story-execution guidance is Woof-owned and portable. The graph dispatches the primary producer with `playbooks/execution/story.md`, so the producer prompt contains the required story-execution instructions directly. It must not instruct the producer to invoke a Claude-only slash command such as `/wf:execute-story`.
 
-`.claude/commands/wf/execute-story.md` can remain as a local convenience wrapper, but it is not a graph dependency and is not part of the consumer contract.
+Prompt wrappers may exist in a development checkout, but they are not graph
+dependencies and are not part of the consumer contract.
 
 ### Stage 5 deterministic gate checks
 
-Nine checks, derived from a failure-class taxonomy. Checks 1–8 run after the story's inner sequence completes; Check 9 is the periodic-review valve and runs on a cadence (every-N stories and at end-of-epic). Checks operate against repo HEAD plus staged-but-uncommitted state, not just the diff (a contract surface created by S1 and committed earlier is still present in HEAD when S3 runs). Failures collate into `gate.md.triggered_by[]`.
+Nine checks, derived from a failure-class taxonomy. Checks 1-8 run after the story's inner sequence completes; Check 9 is the periodic-review valve and runs on a cadence (every-N stories and at end-of-epic). Checks operate against repo HEAD plus staged-but-uncommitted state, not just the diff (a contract surface created by S1 and committed earlier is still present in HEAD when S3 runs). Failures collate into `gate.md.triggered_by[]`.
 
 Registry completeness is part of Stage-5 verification. A registered runner that raises `NotImplementedError` is reported as a `blocker` check result, included in `triggered_by[]`, and causes `woof check stage-5` to exit 1. There is no bootstrap placeholder pass path in graph-owned verification.
 
@@ -458,7 +466,7 @@ Registry completeness is part of Stage-5 verification. A registered runner that 
 | A | Build / lint / type / test broken | Project quality-gate command exits non-zero |
 | B | Built the wrong thing (story spec uncovered) | No test references some `outcome_id` in `story.satisfies[]` |
 | C | Path discipline broken (creep, wrong files) | Diff touches files outside `story.paths[]` globs |
-| D | Epic contract violated (E146-class) | Some `contract_decisions[].(openapi|pydantic|json_schema)_ref` artefact validates as broken or implementation drifts from the referenced contract |
+| D | Epic contract reference broken | Some `contract_decisions[].(openapi|pydantic|json_schema)_ref` artefact is missing, malformed, or does not resolve under its native validator |
 | E | Plan integrity broken | `plan.json` invalid against schema or cross-refs |
 | F | Reviewer critique flags blocker | `critique/story-S<k>.md` front-matter `severity == blocker` |
 | G | Story incomplete / not commit-ready | Working tree dirty, no staged changes, or status not `done` |
@@ -471,12 +479,12 @@ Registry completeness is part of Stage-5 verification. A registered runner that 
 |---|---|---|---|
 | 1 | A | Each blocking gate command in `.woof/quality-gates.toml` exits 0 within its declared timeout; advisory gates (`blocking = false`) record a minor finding on non-zero exit and do not fail the check | shell |
 | 2 | B | Every `outcome_id` in `satisfies[]` has an asserting test reachable in the diff (test-name / docstring / adjacent comment, per `.woof/test-markers.toml`) | jq + grep; helper |
-| 3 | C | `git diff --name-only --staged` ⊆ `story.paths[]` globs (matched via git-pathspec) | shell + git pathspec |
-| 4 | D | For every CD with `implements_contract_decisions` ownership in this story: the referenced artefact is present and resolves under its native tooling. Current scope is bounded contract-reference conformance: OpenAPI documents parse, declared JSON pointers resolve, and refs under `#/paths` must point to operation-shaped objects with `responses`; `pydantic_ref` targets import and resolve to a `BaseModel` subclass; `json_schema_ref` targets compile under `ajv-cli`, and top-level `examples[]` validate when present. Broader conformance testing (`schemathesis run`, external fixture suites, Pydantic model validation against declared fixtures) is a deferred enhancement; the runner surfaces the resolved artefact path on failure, and missing `ajv-cli` is a preflight failure rather than an in-band finding. | external native validators |
-| 5 | E | `plan.json` validates against `plan.schema.json`; cross-refs (`satisfies[]` ⊆ `observable_outcomes[].id`, both `*_contract_decisions[]` arrays ⊆ `contract_decisions[].id`, every CD owned by exactly one story, `depends_on[]` ⊆ `stories[].id`); status coherence | `ajv-cli` + jq + helper |
+| 3 | C | `git diff --name-only --staged` subset of `story.paths[]` globs (matched via git-pathspec) | shell + git pathspec |
+| 4 | D | For every CD with `implements_contract_decisions` ownership in this story: the referenced artefact is present and resolves under its native tooling. OpenAPI documents parse, declared JSON pointers resolve, and refs under `#/paths` must point to operation-shaped objects with `responses`; `pydantic_ref` targets import and resolve to a `BaseModel` subclass; `json_schema_ref` targets compile under `ajv-cli`, and top-level `examples[]` validate when present. Behavioural conformance belongs in declared quality-gate commands; the runner surfaces the resolved artefact path on failure, and missing `ajv-cli` is a preflight failure rather than an in-band finding. | external native validators |
+| 5 | E | `plan.json` validates against `plan.schema.json`; cross-refs (`satisfies[]` subset of `observable_outcomes[].id`, both `*_contract_decisions[]` arrays subset of `contract_decisions[].id`, every CD owned by exactly one story, `depends_on[]` subset of `stories[].id`); status coherence | `ajv-cli` + jq + helper |
 | 6 | F | `critique/story-S<k>.md` exists; front-matter validates against `critique.schema.json`; top-level `severity` equals max severity over `findings[]`; `severity != blocker`; non-blocking critiques have `dispositions/story-S<k>.md` conforming to `disposition.schema.json` and covering each finding | `ajv-cli` + helper |
 | 7 | G | `git diff --staged` non-empty AND staged paths match `story.paths[]` AND `.woof/epics/E<N>/{plan.json,critique/story-S<k>.md,dispositions/story-S<k>.md,epic.jsonl}` are also staged AND `git status --porcelain` shows nothing unstaged outside scope. Honours `empty_diff` (see below). | shell |
-| 8 | H | If `.woof/docs-paths.toml` defines `code_pattern → doc_pattern` mappings, touched code triggers required doc paths in same diff. No-op when file absent. | helper |
+| 8 | H | If `.woof/docs-paths.toml` defines `code_pattern -> doc_pattern` mappings, touched code triggers required doc paths in same diff. No-op when file absent. | helper |
 | 9 | I | After every N completed stories (configurable in `.woof/agents.toml.review_valve.every_n_stories`, default 5) AND once before epic close (`review_valve.end_of_epic = true`), open a `review_gate` summarising the cumulative `severity: minor` findings since the last review. Resolution decision via standard taxonomy (approve / revise_plan / split_story / etc.). | helper |
 
 **Implemented Stage 5 order of operations (per story):**
@@ -504,7 +512,7 @@ If a process dies during the commit transition after the plan has been marked `d
 stories' broader changes already realised the outcomes. An empty diff opens a
 `story_gate` with `triggered_by: ["empty_diff_review"]` so the operator
 confirms the outcome was actually realised before the story is marked done.
-Auto-completion requires a future architecture change.
+Woof does not auto-complete empty-diff stories.
 
 **Story commit transaction model.** Code changes and durable `.woof` state
 updates ship in one commit. The manifest includes the active story paths,
@@ -527,7 +535,7 @@ diff must filter `.woof/` paths if it only wants code changes.
 
 **Dispatch.** The graph invokes producer and reviewer nodes through `woof dispatch --role <role-name>`. Producers receive structured input, write declared output artefacts, and do not choose successor nodes. Dispatch sends the rendered prompt to the adapter on stdin rather than as an argv element. The deprecated `woof dispatch <claude|codex> --role <role-name>` shape is retained only as a compatibility check and must match the adapter resolved from `.woof/agents.toml`.
 
-**Install-safe subprocess re-entry.** Graph nodes that shell back into Woof for validation (`validate --schema ...`), dispatch (`dispatch --role ...`), or Stage-5 verification (`check stage-5 ...`) invoke the active Python interpreter plus the `woof` module (`[sys.executable, "-m", "woof", ...]`) and pass an env that prefixes `PYTHONPATH` with the resolved `tool_root()` layout (source `src/` directory or installed site-packages). The source-checkout `bin/woof` wrapper relies on `uv run --script` metadata that does not declare the `woof` package itself; that wrapper is convenient for operators but unsafe to execute from an isolated wheel install, so graph subprocesses never call it. Wheel installs ship `schemas/`, `playbooks/`, and `languages/` alongside the `woof` package, and `tool_root()` resolves them in either layout.
+**Install-safe subprocess re-entry.** Graph nodes that shell back into Woof for validation (`validate --schema ...`), dispatch (`dispatch --role ...`), or Stage-5 verification (`check stage-5 ...`) invoke the active Python interpreter plus the `woof` module (`[sys.executable, "-m", "woof", ...]`) and pass an env that prefixes `PYTHONPATH` with the resolved `tool_root()` layout. Graph subprocesses never call development-only checkout wrappers. Wheel installs ship `schemas/`, `playbooks/`, and `languages/` alongside the `woof` package, and `tool_root()` resolves them in either installed or development layout.
 
 **Timeouts, crashes, and incomplete state.** Role timeouts are configured in `.woof/agents.toml`. Timeout, non-zero subprocess exit, missing declared output, or malformed output opens a gate with a structured trigger and evidence. Missing or malformed graph-owned handoff artefacts use `triggered_by: ["incomplete_stage_state"]`. There is no automatic retry.
 
@@ -545,9 +553,9 @@ diff must filter `.woof/` paths if it only wants code changes.
 # <<< woof-cartography
 ```
 
-Re-running detects the fenced block and skips. User-owned hook content above and below the block is preserved. Per-worktree installation — each worktree runs preflight on first setup.
+Re-running detects the fenced block and skips. User-owned hook content above and below the block is preserved. Per-worktree installation - each worktree runs preflight on first setup.
 
-**Cartography artefacts and git.** `.woof/codebase/{tags,tree.txt,freshness.json}` are gitignored (per-worktree). They are regenerated by the consumer-owned `./scripts/refresh-cartography` script when the Woof post-commit hook block invokes it; the block is a no-op when the script is absent. Cartography substance — choice of indexer, languages, and refresh strategy — is consumer-owned because the artefacts depend on the project's language stack. `woof preflight` flags a present-but-non-executable `./scripts/refresh-cartography` so a broken or stale script fails loud at preflight rather than silently no-opping in the hook. `.woof/codebase/summary.md` is committed (human-authored, project-stable). Root `.gitignore` must include the three runtime artefacts; `woof init` writes the required block on first setup.
+**Cartography artefacts and git.** `.woof/codebase/{tags,tree.txt,freshness.json}` are gitignored (per-worktree). They are regenerated by the consumer-owned `./scripts/refresh-cartography` script when the Woof post-commit hook block invokes it; the block is a no-op when the script is absent. Cartography substance - choice of indexer, languages, and refresh strategy - is consumer-owned because the artefacts depend on the project's language stack. `woof preflight` flags a present-but-non-executable `./scripts/refresh-cartography` so a broken or stale script fails loud at preflight rather than silently no-opping in the hook. `.woof/codebase/summary.md` is committed (human-authored, project-stable). Root `.gitignore` must include the three runtime artefacts; `woof init` writes the required block on first setup.
 
 ### Codebase mapping
 
@@ -565,22 +573,22 @@ Cartography that serves graph-owned consumers: deterministic gate checks, review
 
 **Static artefacts** (file-based):
 
-- `tags` — symbol → file:line index via `ctags -R --output-format=u-ctags`
-- `tree.txt` — gitignore-aware file enumeration via `git ls-files`
-- `summary.md` — human-curated architecture overview; LLM scaffolds template + seed data on first run, human authors prose; tool never re-touches
-- `freshness.json` — staleness metadata (`{ts, git_ref}`)
+- `tags` - symbol -> file:line index via `ctags -R --output-format=u-ctags`
+- `tree.txt` - gitignore-aware file enumeration via `git ls-files`
+- `summary.md` - human-curated architecture overview; LLM scaffolds template + seed data on first run, human authors prose; tool never re-touches
+- `freshness.json` - staleness metadata (`{ts, git_ref}`)
 
 **Runtime tooling** (no on-disk artefact):
 
-- **Tree-sitter** — on-demand structural queries via `tree-sitter parse` for cross-file syntactic walks (route wiring, scope precision, decorator chains). Multi-language uniform query interface.
-- **Claude Code native LSP** (v2.0.74+) — in-session semantic depth (types, refs, hover) via CC's plugin model; transparent to skills, automatic during code reading/editing.
-- **Reviewer critique** — covers the verifications that require semantic judgement Tree-sitter can't deterministically express (cross-AI second opinion; not a deterministic gate check).
+- **Tree-sitter** - on-demand structural queries via `tree-sitter parse` for cross-file syntactic walks (route wiring, scope precision, decorator chains). Multi-language uniform query interface.
+- **Claude Code native LSP** (v2.0.74+) - in-session semantic depth (types, refs, hover) via CC's plugin model; transparent to skills, automatic during code reading/editing.
+- **Reviewer critique** - covers the verifications that require semantic judgement Tree-sitter can't deterministically express (cross-AI second opinion; not a deterministic gate check).
 
 **Refresh:** the Woof-managed post-commit hook block invokes `./scripts/refresh-cartography` when present; the consumer owns the script and the choice of indexer (ctags, tree-sitter, etc.). Without the script the hook block is a no-op and the cartography artefacts simply do not exist. ~1s for typical repos in scripted form. `summary.md` is human-only; the tool never modifies it. LSP results stay in-process; never cached to disk.
 
-**Why Tree-sitter and not AST:** Tree-sitter gives multi-language uniform queries with one CLI; AST per-language tooling adds 4× operational footprint without coverage gain for our verifications (syntactic checks). AST would earn its place if RAG-style code embedding chunking is added — defer until then.
+**Why Tree-sitter and not AST:** Tree-sitter gives multi-language uniform queries with one CLI; AST per-language tooling adds 4x operational footprint without coverage gain for our verifications (syntactic checks). AST would earn its place if RAG-style code embedding chunking is added - defer until then.
 
-**Why on-disk static + runtime semantic:** graph-owned consumers such as gate checks and reviewer prompts need file-readable artefacts; active model sessions may also have native LSP access. Caching semantic info to disk would silently degrade as code changes — LSP servers cache internally; we don't reproduce that.
+**Why on-disk static + runtime semantic:** graph-owned consumers such as gate checks and reviewer prompts need file-readable artefacts; active model sessions may also have native LSP access. Caching semantic info to disk would silently degrade as code changes - LSP servers cache internally; we don't reproduce that.
 
 ### Contract implementation model
 
@@ -596,7 +604,7 @@ Cartography that serves graph-owned consumers: deterministic gate checks, review
 | Cross-artefact invariants (e.g., route-coverage, outcome-coverage) | Small script | Python / TS / shell per complexity |
 | Generate JSON Schema from typed class (optional convenience) | Pydantic / zod / equivalent | Per-helper choice |
 
-`ajv-cli` ≠ `jq` — they solve different problems (validation vs. extraction). Use both, not interchangeably.
+`ajv-cli` != `jq` - they solve different problems (validation vs. extraction). Use both, not interchangeably.
 
 JSON Schema is the canonical contract format. Runtime code may use Pydantic, zod, or shell helpers to parse, validate, or transform data, but that code does not replace the schema artefact.
 
@@ -611,11 +619,11 @@ Do not mix the two casually. If a type crosses a durable JSON, CLI, LLM-node, or
 
 ### Infrastructure prerequisites (hard-gated)
 
-§1 #4 made operational. `woof preflight` is the startup infrastructure check. It verifies the Woof installation, consumer `.woof/` files, role routes, public CLI availability, generated MCP config, issue-tracker reachability, quality-gate commands, language tooling, and project-specific host/server prerequisites. It also prints an operator-state section for `.woof/.current-epic` when present: current epic marker validity, next graph action, gate cause, Stage-5 check summary, dispatch routes, trusted-local runtime policy, and audit pointers. Missing prerequisite → exit non-zero with concrete install commands inline. No partial-mode fallback.
+Section 1 #4 made operational. `woof preflight` is the startup infrastructure check. It verifies the Woof installation, consumer `.woof/` files, role routes, public CLI availability, generated MCP config, issue-tracker reachability, quality-gate commands, language tooling, and project-specific host/server prerequisites. It also prints an operator-state section for `.woof/.current-epic` when present: current epic marker validity, next graph action, gate cause, Stage-5 check summary, dispatch routes, trusted-local runtime policy, and audit pointers. Missing prerequisite -> exit non-zero with concrete install commands inline. No partial-mode fallback.
 
 **Two-tier configuration.**
 
-**Project-level** (`.woof/prerequisites.toml`) — declares *what* the project needs:
+**Project-level** (`.woof/prerequisites.toml`) - declares *what* the project needs:
 
 ```toml
 [infra]
@@ -656,7 +664,7 @@ required = "local application stack is reachable"
 install = "just dev"
 ```
 
-**Tool-level language registry** (ships with Woof — `woof/languages/<lang>.toml`) — declares *how* to install per language:
+**Tool-level language registry** (ships with Woof - `woof/languages/<lang>.toml`) - declares *how* to install per language:
 
 ```toml
 # woof/languages/python.toml
@@ -710,18 +718,18 @@ For each declared prereq, in order:
 5. Per role route: configured public adapter exists, configured model is explicit, configured effort is explicit, the trusted-local runtime mode is disclosed, and the adapter can construct the required per-invocation effort flag plus any generated Claude MCP JSON.
 6. Per host/server prerequisite: declared platform matches and each configured readiness command or HTTP probe succeeds.
 
-ANY failure → exit non-zero with structured output (install commands + gotchas inline). The preflight output IS the per-language documentation — no separate setup docs maintained.
+ANY failure -> exit non-zero with structured output (install commands + gotchas inline). The preflight output IS the per-language documentation - no separate setup docs maintained.
 
 **Worked failure output:**
 
 ```
-[INFRA PREFLIGHT FAILED — 3 missing prerequisites]
+[INFRA PREFLIGHT FAILED - 3 missing prerequisites]
 
-✗ tree-sitter CLI
+! tree-sitter CLI
   Required: 0.22+ (latest preferred)
   Install:  npm install -g tree-sitter-cli@latest
 
-✗ pyright (Python LSP)
+! pyright (Python LSP)
   Install:  npm install -g pyright
   Plugin:   claude plugin install pyright-lsp@claude-plugins-official
   Notes:
@@ -729,7 +737,7 @@ ANY failure → exit non-zero with structured output (install commands + gotchas
     - Virtualenv: set venvPath
     - Monorepo: use executionEnvironments
 
-✗ tree-sitter grammar: rust
+! tree-sitter grammar: rust
   Install:  npm install -g tree-sitter-rust@latest
   Notes:
     - Initial workspace indexing can take minutes
@@ -744,7 +752,7 @@ Re-run `woof preflight` after installing.
 **Preflight caching.** Two-tier:
 
 1. **Floor checks** (binaries exist, version meets floor, LSP plugin installed, Tree-sitter grammars parse) cached at `.woof/.preflight-floor` keyed by SHA256 of `.woof/prerequisites.toml` + language-registry TOML contents. Skipped if hash unchanged and `verified-at < 24h`; `woof preflight --force` refreshes the cache.
-2. **Runtime checks** (gh auth + reachability via `gh api /rate_limit`, Claude/Codex credential markers, configured model/effort route resolution) cached at `.woof/.preflight-runtime` for 5 min, with a rate-remaining safety margin (`> 100` reqs/hr). Stale → re-verify; fail loud on auth expiry with exact re-auth command. Subprocesses inherit parent's runtime cache via stat()-based checks; no fresh network calls per subprocess. The Claude/Codex credential check is intentionally conservative: it confirms either an API-key environment variable (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`) is set or the adapter's credential file is present (Claude `~/.claude/.credentials.json`, override via `CLAUDE_CONFIG_DIR`; Codex `~/.codex/auth.json`, override via `CODEX_HOME`). Live API auth state and model availability are only validated at first dispatch, because probing them costs tokens and would couple preflight to model availability windows. A revoked token or a retired model surfaces as a fail-loud dispatch error, not a preflight finding.
+2. **Runtime checks** (gh auth + reachability via `gh api /rate_limit`, Claude/Codex credential markers, configured model/effort route resolution) cached at `.woof/.preflight-runtime` for 5 min, with a rate-remaining safety margin (`> 100` reqs/hr). Stale -> re-verify; fail loud on auth expiry with exact re-auth command. Subprocesses inherit parent's runtime cache via stat()-based checks; no fresh network calls per subprocess. The Claude/Codex credential check is intentionally conservative: it confirms either an API-key environment variable (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`) is set or the adapter's credential file is present (Claude `~/.claude/.credentials.json`, override via `CLAUDE_CONFIG_DIR`; Codex `~/.codex/auth.json`, override via `CODEX_HOME`). Live API auth state and model availability are only validated at first dispatch, because probing them costs tokens and would couple preflight to model availability windows. A revoked token or a retired model surfaces as a fail-loud dispatch error, not a preflight finding.
 
 Both cache files are gitignored.
 
@@ -780,11 +788,11 @@ Required `.gitignore` entries (consumer adds at first setup):
 
 **Cross-worktree epic activity.** An epic is active in exactly one worktree at a time. `.woof/` is per-worktree by convention; with the `github` tracker, cross-worktree handover happens via the tracker epic (the canonical contract), not by copying `.woof/`. No mechanical enforcement; document-level rule.
 
-**Config initialisation.** `woof init` scaffolds a fresh consumer setup: it writes `.woof/{prerequisites,agents,quality-gates,test-markers}.toml` with `<replace>` placeholders for project-specific values (issue-tracker repo, quality-gate command) and inserts a fenced `# >>> woof` block into the repository `.gitignore` containing the required runtime entries. `--tracker github` (the default) scaffolds a GitHub-backed `[tracker]` table and declares `gh` as required infra; `--tracker local` scaffolds the no-remote `local` tracker and omits `gh` so a consumer without a hosted issue tracker is not forced to install it. `--with-docs-paths` additionally scaffolds `.woof/docs-paths.toml`. Re-running `woof init` is idempotent: existing TOMLs are preserved unless `--force` is passed, and the gitignore block is updated in place rather than duplicated. Preflight with no `.woof/prerequisites.toml` still emits a template with `<replace>` placeholders and exits non-zero so a stranger who lands in a `.woof/` directory with the file accidentally deleted gets the same starter content inline. `.woof/agents.toml` is required before graph execution because role routes are startup infrastructure; optional configs such as `test-markers.toml` keep built-in defaults when absent. The end-to-end first-run walkthrough — install, `woof init`, placeholder fill-in, authentication, preflight, hook install, `woof wf new`, and the printed `woof wf --epic <N>` command — lives in `docs/consumers.md`.
+**Config initialisation.** `woof init` scaffolds a fresh consumer setup: it writes `.woof/{prerequisites,agents,quality-gates,test-markers}.toml` with `<replace>` placeholders for project-specific values (issue-tracker repo, quality-gate command) and inserts a fenced `# >>> woof` block into the repository `.gitignore` containing the required runtime entries. `--tracker github` (the default) scaffolds a GitHub-backed `[tracker]` table and declares `gh` as required infra; `--tracker local` scaffolds the no-remote `local` tracker and omits `gh` so a consumer without a hosted issue tracker is not forced to install it. `--with-docs-paths` additionally scaffolds `.woof/docs-paths.toml`. Re-running `woof init` is idempotent: existing TOMLs are preserved unless `--force` is passed, and the gitignore block is updated in place rather than duplicated. Preflight with no `.woof/prerequisites.toml` still emits a template with `<replace>` placeholders and exits non-zero so a stranger who lands in a `.woof/` directory with the file accidentally deleted gets the same starter content inline. `.woof/agents.toml` is required before graph execution because role routes are startup infrastructure; optional configs such as `test-markers.toml` keep built-in defaults when absent. The end-to-end first-run walkthrough - install, `woof init`, placeholder fill-in, authentication, preflight, hook install, `woof wf new`, and the printed `woof wf --epic <N>` command - lives in `docs/consumers.md`.
 
 ### Agent role configuration
 
-Roles in the Woof pipeline are configurable per-project via `.woof/agents.toml`. ADR-002 makes these roles semantic rather than provider-owned. Each dispatchable role declares the public CLI adapter, model, effort, MCP set, and pass-through flags. Woof constructs the full invocation dynamically — no hard-coded model IDs and no private shell aliases in graph code.
+Roles in the Woof pipeline are configurable per-project via `.woof/agents.toml`. ADR-002 makes these roles semantic rather than provider-owned. Each dispatchable role declares the public CLI adapter, model, effort, MCP set, and pass-through flags. Woof constructs the full invocation dynamically - no hard-coded model IDs and no private shell aliases in graph code.
 
 | Role | Invoked for | Preferred route | Configurable |
 |---|---|---|---|
@@ -841,7 +849,7 @@ adapter = "in-session"
 - Woof injects required project context into Codex prompts itself; it does not rely on private wrappers or external sync side effects.
 - Woof runs public CLIs in trusted-local automation mode; preflight verifies CLI availability, route settings, and runtime-mode disclosure before graph execution.
 
-**Hard prereq.** `claude` and `codex` must be in `PATH`. Preflight verifies them. Absent → fail loud; there is no fallback to private wrappers.
+**Hard prereq.** `claude` and `codex` must be in `PATH`. Preflight verifies them. Absent -> fail loud; there is no fallback to private wrappers.
 
 **Implementation constraints:**
 
@@ -872,6 +880,9 @@ The CLI is the operator surface. Prompt wrappers may call these commands, but th
 
 ---
 
-## 3. Implementation Sequencing
+## 3. Change Control
 
-This architecture document does not carry live backlog rows, workstream status, or continuation prompts. The implementation roadmap and progress ledger live in `docs/implementation-plan.md`. Architecture changes that alter graph topology or stage contracts require an ADR and, when implementation remains, a matching ledger item.
+Architecture changes that alter graph topology, stage contracts, tracker
+authority, runtime safety boundaries, or operator surfaces require an ADR and
+matching tests. Release-readiness and validation evidence live in
+`docs/implementation-plan.md`.

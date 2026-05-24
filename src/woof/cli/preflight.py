@@ -810,7 +810,7 @@ def _check_adapter_auth_markers(repo_root: Path) -> list[PreflightFinding]:
     The marker check is intentionally conservative: it confirms either an API-key
     environment variable is set or the adapter has been logged in once (its
     credential file exists). Live API auth state and model availability are only
-    validated at first dispatch — runtime token expiry, revoked credentials, or
+    validated at first dispatch - runtime token expiry, revoked credentials, or
     a model the underlying API has retired surface as a fail-loud dispatch
     error rather than a preflight finding.
     """

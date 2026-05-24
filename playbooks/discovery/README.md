@@ -34,11 +34,11 @@ successor selection.
 These are *building blocks*, not a fixed sequence. The graph bundles every
 playbook for a bucket into that bucket's producer prompt; the primary route
 selects the playbooks that match the spark and the uncertainties in play. The
-playbook text is embedded directly in the dispatched prompt, so a consumer
-without Woof's source checkout on the dispatch path still receives the full
-technique set. Each building-block playbook is non-interactive: it carries
-`type: discovery-playbook` frontmatter, does not use interactive question
-tools, and writes its artefact into the epic's discovery bucket directory.
+playbook text is embedded directly in the dispatched prompt, so an installed
+Woof package still provides the full technique set. Each building-block playbook
+is non-interactive: it carries `type: discovery-playbook` frontmatter, does not
+use interactive question tools, and writes its artefact into the epic's
+discovery bucket directory.
 
 `ask-me-questions.md` is a human-operator intake aid for shaping a vague spark
 before `woof wf new "<spark>"`. It is interactive by design and is not

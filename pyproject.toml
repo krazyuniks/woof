@@ -1,7 +1,7 @@
 [project]
 name = "woof"
 version = "0.1.0"
-description = "Deterministic inner-loop SDLC orchestration for AI-assisted development"
+description = "Python CLI for agentic multi-step software delivery through a deterministic graph"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"

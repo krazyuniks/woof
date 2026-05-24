@@ -1,12 +1,7 @@
-# Woof Implementation Plan
+# Woof Technical Finish And Release Readiness
 
-> **Purpose:** Prescriptive technical roadmap for finishing Woof.
-> **Authority:** Architecture remains governed by `docs/architecture.md`; graph topology
-> remains governed by `docs/adr/001-orchestration-topology.md`; role routing remains
-> governed by `docs/adr/002-graph-led-role-routing.md`; tracker boundaries remain
-> governed by `docs/adr/003-issue-tracker-abstraction.md`.
-> **Operating rule:** This is the single live backlog. Select the first `In progress`
-> or `Ready` Technical Finish item by order unless the user explicitly redirects.
+> **Purpose:** Completion ledger and release-readiness evidence for the current public Woof workflow.
+> **Authority:** Architecture is governed by `docs/architecture.md`; graph topology by `docs/adr/001-orchestration-topology.md`; role routing by `docs/adr/002-graph-led-role-routing.md`; tracker boundaries by `docs/adr/003-issue-tracker-abstraction.md`.
 
 ## Product Goal
 
@@ -19,62 +14,32 @@ Woof delivers software through an agentic multi-step process:
 5. commit only through manifest-verified graph transactions;
 6. leave an auditable epic trail that can be inspected and resumed.
 
-The product is not a wrapper around a specific consumer repository. It is a
-portable orchestration tool that runs against any repository with `.woof/`
-configuration.
+Woof is portable across consumer repositories. Consumer policy is declared under
+`.woof/`; Woof owns graph transitions, schemas, dispatch adapters, checks, gate
+writing, and transaction manifests.
 
-## Strategy
+## Release-Readiness Status
 
-Build the smallest complete vertical product first, then harden its failure
-paths. The roadmap is ordered around executable software delivery, not around
-documentation provenance or distribution polish.
+The Technical Finish items are complete. TF-001 through TF-007 are implemented,
+covered by tests, and validated through `just check`.
 
-Architecture invariants:
-
-- Woof is graph-led. The deterministic Python graph owns transitions, state,
-  gates, verification, and commits.
-- LLMs are producers or reviewers. They do not orchestrate the workflow.
-- The primary producer route is `primary`; the reviewer route is `reviewer`.
-- Reviewer blockers open human gates. There is no model-to-model debate loop.
-- Issue tracking stays behind the `Tracker` protocol.
-- Runtime agent execution is trusted-local: Woof does not add sandboxing,
-  command allow-lists, writable-path restrictions, network policy, or MCP
-  restriction logic. Safety is enforced before changes land through checks,
-  reviewer critique, gates, transaction manifests, and commit decisions.
-- Woof must not depend on private shell wrappers, external sync tools, dotfiles,
-  or host-specific absolute paths.
-
-## Operating Loop
-
-Every implementation turn follows this loop:
-
-1. Read `AGENTS.md`, `README.md`, this file, and any architecture, schema, or
-   source file directly touched by the selected item.
-2. Run `git status --short --branch` before editing and preserve unrelated local
-   changes.
-3. Select the first `In progress` or `Ready` Technical Finish item by order.
-4. Implement a broad, coherent slice that advances the selected item end to end.
-5. Update code, schemas, tests, and docs together when behaviour changes.
-6. Run focused validation while developing.
-7. Run `just check` before handoff unless a real external prerequisite blocks it.
-8. Update this file with status and validation evidence.
-9. Commit using a conventional commit message.
-10. Push and monitor CI to a terminal state when the session is operating in the
-    normal repository workflow.
-
-Stop only for a real blocker, a risky architecture change that needs a decision,
-or completion of the selected item.
+REL-001 covers public repository readiness: GitHub-facing documentation,
+architecture alignment, consumer setup guidance, ADR cleanup, package metadata,
+and validation evidence. This file records the release-readiness validation
+performed for REL-001.
 
 ## Definition Of Done
 
-Woof is technically finished enough for regular use when these are true:
+The current public workflow is complete when these are true:
 
 - `woof init --tracker local` creates a complete consumer configuration.
-- `woof wf new "<spark>"` creates a local epic.
-- `woof wf --epic <N>` can drive Stage 1 through Stage 4 to a plan gate.
+- `woof init --tracker github` creates a GitHub-backed consumer configuration.
+- `woof wf new "<spark>"` creates a tracker-backed epic and prints the next graph command.
+- `woof wf --epic <N>` drives Stage 1 through Stage 4 to the mandatory plan gate.
 - `woof wf --epic <N> --resolve approve` resumes into Stage 5.
-- Stage 5 can dispatch a producer, dispatch a reviewer, record a disposition,
-  run checks, verify the transaction manifest, and commit the story.
+- Stage 5 dispatches a producer, dispatches a reviewer, records a disposition,
+  runs deterministic checks, verifies the transaction manifest, and commits the
+  story.
 - Gates open predictably for malformed state, subprocess crashes, reviewer
   blockers, check failures, empty diffs, tracker conflicts, and manifest
   mismatches.
@@ -82,65 +47,37 @@ Woof is technically finished enough for regular use when these are true:
   for an operator to resume without reading source code.
 - The full path is covered by CLI-level acceptance tests using throwaway
   consumer repositories and public CLI-shaped test doubles.
-- Installation/runtime boundaries are covered by smoke tests for both the source
-  checkout and installed package paths.
+- Installation/runtime boundaries are covered by smoke tests for both
+  development checkout and installed package paths.
 
-## Technical Finish Backlog
+## Technical Finish Ledger
 
 | ID | Status | Work item | Observable outcome | Validation |
 |---|---|---|---|---|
 | TF-001 | Completed | End-to-end CLI workflow acceptance | A CLI-level integration test creates a throwaway consumer repository, runs `woof init --tracker local`, starts an epic, drives Stage 1-5 with public CLI-shaped `codex` and `claude` stubs, approves the plan gate, verifies the story commit, and asserts audit events. The implementation also stages graph-owned durable `.woof` files before commit-readiness checks, includes durable planning artefacts in story manifests, and ignores transient Stage-5 result files in `woof init` scaffolds. | Passed: `uv run pytest tests/integration/test_wf_acceptance.py -q`; `uv run pytest tests/unit/test_init.py tests/unit/test_graph.py tests/unit/test_check_3_scope.py tests/unit/test_check_7_commit_transaction.py tests/integration/test_wf_acceptance.py -q`; `just check` (339 tests) |
-| TF-002 | Completed | Gate and recovery acceptance | CLI tests cover subprocess crash gates, reviewer blocker gates, failed check gates, empty-diff gates, malformed-state gates, and interrupted commit resume. The final story transaction now records `epic_completed` before the manifest-checked commit when that story completes the plan, so interrupted commit resume does not leave the durable audit log dirty after commit. | Passed: `uv run pytest tests/integration/test_wf_gate_recovery_acceptance.py -q`; `uv run pytest tests/integration/test_wf_acceptance.py tests/integration/test_wf_gate_recovery_acceptance.py tests/unit/test_graph.py -q`; `just check` (345 tests) |
-| TF-003 | Completed | Operator state surfaces | `woof observe` and `woof preflight` expose current epic state, next action, gate cause, dispatch route, runtime policy, audit pointers, and check summaries without requiring source inspection. The status/audit views now report `.woof/.current-epic`, next operator command, gate cause, Stage-5 check summaries, resolved primary/reviewer routes, trusted-local runtime policy, and audit log pointers; `preflight` includes the same current-epic operator-state summary in text and JSON output. | Passed: `uv run pytest tests/integration/test_operator_state_surfaces.py tests/unit/test_observe.py tests/unit/test_preflight.py -q`; `just lint`; `just check` (349 tests) |
-| TF-004 | Completed | Stage-5 check conformance matrix | Each Stage-5 check now has explicit success and failure conformance fixtures that call the real registry runner and prove its contract: quality gates, outcome markers, scope, contract refs, plan crossrefs, critique blockers, transaction manifests, docs drift, and review valve behaviour. The matrix also asserts every Stage-5 check has both fixture kinds. | Passed: `uv run pytest tests/unit/test_stage5_check_conformance_matrix.py -q`; `uv run pytest tests/unit/test_check_1_quality_gates.py tests/unit/test_check_2_outcome_markers.py tests/unit/test_check_3_scope.py tests/unit/test_check_4_contract_refs.py tests/unit/test_check_5_plan_crossrefs.py tests/unit/test_check_6_critique_blocker.py tests/unit/test_check_7_commit_transaction.py tests/unit/test_check_8_docs_drift.py tests/unit/test_check_9_review_valve.py tests/unit/test_check_stage_5_subcommand.py tests/unit/test_stage5_check_conformance_matrix.py -q`; `just lint`; `just check` (368 tests) |
-| TF-005 | Completed | Tracker contract matrix | The `local` and `github` adapters now share a parametrised `Tracker` protocol contract matrix for create, fetch, authority checks, all sync-conflict resolution decisions, plan summary push, and epic completion. The matrix uses a deterministic `gh` command stub for the GitHub adapter. The `local` adapter remains no-remote and no-`.last-sync`, but its lifecycle methods now load local `EPIC.md`/`plan.json`, render the shared managed body shape, and reject epic completion until all stories are `done`. | Passed: `uv run pytest tests/unit/test_trackers.py -q`; `uv run pytest tests/unit/test_trackers.py tests/unit/test_render_epic.py tests/unit/test_wf_github_sync.py -q`; `uv run pytest tests/integration/test_operator_state_surfaces.py -q`; `just lint`; `just check` (388 tests) |
-| TF-006 | Completed | Installed-package workflow acceptance | The installed package path now runs the same local-tracker workflow acceptance as the source checkout: build wheel, install into an isolated venv, scaffold a consumer with `woof init --tracker local`, drive Stage 1-5 through `python -m woof`, approve the plan gate, verify the story commit, and assert audit events without source-checkout wrappers or private host state. | Passed: `uv run pytest tests/integration/test_wf_acceptance.py::test_installed_package_wf_cli_drives_local_tracker_epic_to_story_commit -q`; `uv run pytest tests/integration/test_wf_acceptance.py -q`; `just lint`; `just check` (389 tests) |
-| TF-007 | Completed | Final operator documentation | README, architecture, schemas, help text, and consumer docs now describe the implemented operator workflow with tracker-neutral commands, installed-CLI consumer usage, trusted-local runtime disclosure, schema-aligned Stage-5 reference checks, and explicit next operator commands from init/new epic through graph resume. `woof wf new` also reports the next `woof wf --epic <N>` command in text and JSON output. | Passed: `uv run pytest tests/unit/test_operator_help_docs.py tests/unit/test_init.py::test_init_outputs_next_steps tests/unit/test_trackers.py::test_woof_wf_new_local_tracker_never_calls_gh tests/unit/test_validate.py::test_shipped_schema_compiles -q`; `just lint`; `just check` (392 tests) |
+| TF-002 | Completed | Gate and recovery acceptance | CLI tests cover subprocess crash gates, reviewer blocker gates, failed check gates, empty-diff gates, malformed-state gates, and interrupted commit resume. The final story transaction records `epic_completed` before the manifest-checked commit when that story completes the plan, so interrupted commit resume does not leave the durable audit log dirty after commit. | Passed: `uv run pytest tests/integration/test_wf_gate_recovery_acceptance.py -q`; `uv run pytest tests/integration/test_wf_acceptance.py tests/integration/test_wf_gate_recovery_acceptance.py tests/unit/test_graph.py -q`; `just check` (345 tests) |
+| TF-003 | Completed | Operator state surfaces | `woof observe` and `woof preflight` expose current epic state, next action, gate cause, dispatch route, runtime policy, audit pointers, and check summaries without requiring source inspection. The status/audit views report `.woof/.current-epic`, next operator command, gate cause, Stage-5 check summaries, resolved primary/reviewer routes, trusted-local runtime policy, and audit log pointers; `preflight` includes the same current-epic operator-state summary in text and JSON output. | Passed: `uv run pytest tests/integration/test_operator_state_surfaces.py tests/unit/test_observe.py tests/unit/test_preflight.py -q`; `just lint`; `just check` (349 tests) |
+| TF-004 | Completed | Stage-5 check conformance matrix | Each Stage-5 check has explicit success and failure conformance fixtures that call the real registry runner and prove its contract: quality gates, outcome markers, scope, contract refs, plan crossrefs, critique blockers, transaction manifests, docs drift, and review valve behaviour. The matrix also asserts every Stage-5 check has both fixture kinds. | Passed: `uv run pytest tests/unit/test_stage5_check_conformance_matrix.py -q`; `uv run pytest tests/unit/test_check_1_quality_gates.py tests/unit/test_check_2_outcome_markers.py tests/unit/test_check_3_scope.py tests/unit/test_check_4_contract_refs.py tests/unit/test_check_5_plan_crossrefs.py tests/unit/test_check_6_critique_blocker.py tests/unit/test_check_7_commit_transaction.py tests/unit/test_check_8_docs_drift.py tests/unit/test_check_9_review_valve.py tests/unit/test_check_stage_5_subcommand.py tests/unit/test_stage5_check_conformance_matrix.py -q`; `just lint`; `just check` (368 tests) |
+| TF-005 | Completed | Tracker contract matrix | The `local` and `github` adapters share a parametrised `Tracker` protocol contract matrix for create, fetch, authority checks, sync-conflict resolution decisions, plan summary push, and epic completion. The matrix uses a deterministic `gh` command stub for the GitHub adapter. The `local` adapter remains no-remote and no-`.last-sync`, but its lifecycle methods load local `EPIC.md`/`plan.json`, render the shared managed body shape, and reject epic completion until all stories are `done`. | Passed: `uv run pytest tests/unit/test_trackers.py -q`; `uv run pytest tests/unit/test_trackers.py tests/unit/test_render_epic.py tests/unit/test_wf_github_sync.py -q`; `uv run pytest tests/integration/test_operator_state_surfaces.py -q`; `just lint`; `just check` (388 tests) |
+| TF-006 | Completed | Installed-package workflow acceptance | The installed package path runs the same local-tracker workflow acceptance as the development checkout: build wheel, install into an isolated virtual environment, scaffold a consumer with `woof init --tracker local`, drive Stage 1-5 through `python -m woof`, approve the plan gate, verify the story commit, and assert audit events without checkout wrappers or private host state. | Passed: `uv run pytest tests/integration/test_wf_acceptance.py::test_installed_package_wf_cli_drives_local_tracker_epic_to_story_commit -q`; `uv run pytest tests/integration/test_wf_acceptance.py -q`; `just lint`; `just check` (389 tests) |
+| TF-007 | Completed | Final operator documentation | README, architecture, schemas, help text, and consumer docs describe the implemented operator workflow with tracker-neutral commands, installed-CLI consumer usage, trusted-local runtime disclosure, schema-aligned Stage-5 reference checks, and explicit next operator commands from init/new epic through graph resume. `woof wf new` reports the next `woof wf --epic <N>` command in text and JSON output. | Passed: `uv run pytest tests/unit/test_operator_help_docs.py tests/unit/test_init.py::test_init_outputs_next_steps tests/unit/test_trackers.py::test_woof_wf_new_local_tracker_never_calls_gh tests/unit/test_validate.py::test_shipped_schema_compiles -q`; `just lint`; `just check` (392 tests) |
 
-## Current Item
+## REL-001 Validation Evidence
 
-The Technical Finish backlog is complete. No `In progress` or `Ready` item
-remains in the backlog.
+REL-001 documentation readiness validation, 2026-05-24:
 
-## Next Continuation Prompt
-
-```text
-We are working in /home/ryan/Work/woof.
-
-Product goal:
-Woof delivers software through an agentic multi-step process: discovery,
-definition, breakdown, review, gate, execution, verification, manifest-checked
-commit, and audit/resume.
-
-The Technical Finish backlog is complete. No `In progress` or `Ready` item
-remains in docs/implementation-plan.md.
-
-Read first:
-1. AGENTS.md
-2. README.md
-3. docs/implementation-plan.md
-4. docs/architecture.md
-5. docs/adr/001-orchestration-topology.md
-6. docs/adr/002-graph-led-role-routing.md
-7. docs/adr/003-issue-tracker-abstraction.md
-
-Start with:
-Run `git status --short --branch`, preserve unrelated local changes, and verify
-whether a new backlog item has been added.
-
-Execution rule:
-If a new implementation item exists, select the first `In progress` or `Ready`
-item by order and implement a broad source-code slice. Do not stop at a
-proposal. Update tests and docs with any behaviour change. Run focused
-validation and `just check`. Use conventional commits. Push and monitor CI when
-the repository workflow requires it.
-
-Do not:
-- add project-specific consumer assumptions;
-- depend on private shell wrappers, external sync tools, dotfiles, or
-  host-specific absolute paths;
-- add runtime sandboxing or permission policy logic unless a new architecture
-  decision explicitly requires it;
-- reopen the completed Technical Finish backlog without adding a new explicit
-  backlog item.
-```
+- Public documentation audit covered `README.md`, `docs/**/*.md`,
+  `examples/**/*.md`, playbook READMEs, schema descriptions, CLI help text,
+  package metadata, and GitHub Actions workflow.
+- Stale roadmap, session-prompt, checkout-only, private-wrapper,
+  host-dependent, provider-locked, and historical work-log language was removed
+  from the main reader path or marked archival.
+- Current public docs scanned clean for the release-readiness stale-language
+  patterns used during the audit.
+- Current public docs scanned clean for non-ASCII typography in the files edited
+  for REL-001.
+- Passed: `git diff --check`.
+- Passed: `uv run pytest tests/unit/test_operator_help_docs.py -q` (3 tests).
+- Passed: `just lint`.
+- Passed: `just check` (392 tests).
+- Remaining release blockers: none known.

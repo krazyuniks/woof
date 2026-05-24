@@ -152,7 +152,10 @@ private host assumptions into a consumer repository.
 The packaging smoke tests prove graph subprocesses can re-enter through
 `python -m woof` without the source-checkout `bin/woof` wrapper. They build a
 wheel, install it into an isolated virtual environment, and verify bundled
-assets such as `schemas/`, `playbooks/`, and `languages/`.
+assets such as `schemas/`, `playbooks/`, and `languages/`. The installed-package
+workflow acceptance also drives the full local-tracker path from `wf new`
+through the checked story commit using the wheel-installed `python -m woof`
+entry point.
 
 Run the smoke checks through the normal gate:
 
@@ -164,6 +167,12 @@ Run the installed-package smoke directly:
 
 ```bash
 uv run pytest tests/integration/test_release_smoke.py
+```
+
+Run the installed-package workflow acceptance directly:
+
+```bash
+uv run pytest tests/integration/test_wf_acceptance.py::test_installed_package_wf_cli_drives_local_tracker_epic_to_story_commit -q
 ```
 
 ## Source Map

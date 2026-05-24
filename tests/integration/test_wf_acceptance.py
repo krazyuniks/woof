@@ -368,21 +368,36 @@ def _write_cli_stubs(bin_dir: Path) -> None:
     _write_executable(bin_dir / "claude", REVIEWER_STUB)
 
 
-def _acceptance_env(tmp_path: Path) -> dict[str, str]:
+def _acceptance_env(tmp_path: Path, *, isolated: bool = False) -> dict[str, str]:
     stub_bin = tmp_path / "bin"
     _write_cli_stubs(stub_bin)
     env = os.environ.copy()
+    if isolated:
+        for key in ("PYTHONPATH", "WOOF_TOOL_ROOT", "VIRTUAL_ENV"):
+            env.pop(key, None)
+        env["HOME"] = str(tmp_path / "home")
+        Path(env["HOME"]).mkdir(parents=True, exist_ok=True)
+        env.setdefault("UV_CACHE_DIR", str(tmp_path / "uv-cache"))
     env["PATH"] = f"{stub_bin}{os.pathsep}{env['PATH']}"
     env.pop("GIT_DIR", None)
     env.pop("GIT_WORK_TREE", None)
     return env
 
 
-def _configure_consumer(consumer: Path, env: dict[str, str]) -> None:
+def _run_woof(
+    woof_cmd: list[str],
+    *args: str,
+    cwd: Path,
+    env: dict[str, str],
+) -> subprocess.CompletedProcess[str]:
+    return _run([*woof_cmd, *args], cwd=cwd, env=env)
+
+
+def _configure_consumer(consumer: Path, env: dict[str, str], woof_cmd: list[str]) -> None:
     _assert_ok(_run(["git", "init"], cwd=consumer, env=env))
     _assert_ok(_run(["git", "config", "user.email", "test@example.com"], cwd=consumer, env=env))
     _assert_ok(_run(["git", "config", "user.name", "Workflow Test"], cwd=consumer, env=env))
-    _assert_ok(_run([str(WOOF_BIN), "init", "--tracker", "local"], cwd=consumer, env=env))
+    _assert_ok(_run_woof(woof_cmd, "init", "--tracker", "local", cwd=consumer, env=env))
     gitignore = consumer / ".gitignore"
     gitignore.write_text(gitignore.read_text(encoding="utf-8") + "\n__pycache__/\n*.pyc\n")
 
@@ -432,26 +447,41 @@ def _jsonl(path: Path) -> list[dict[str, object]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
 
 
-def test_wf_cli_drives_local_tracker_epic_to_story_commit(tmp_path: Path) -> None:
-    """The public CLI can drive the product loop from spark to checked commit."""
+def _install_wheel(tmp_path: Path, env: dict[str, str]) -> Path:
+    dist_dir = tmp_path / "dist"
+    build = _run(
+        ["uv", "build", "--wheel", "-o", str(dist_dir), str(REPO_ROOT)], cwd=tmp_path, env=env
+    )
+    _assert_ok(build)
+    wheels = sorted(dist_dir.glob("woof-*.whl"))
+    assert wheels, build.stdout + build.stderr
 
-    for tool in ("uv", "ajv", "git"):
-        _require_tool(tool)
+    venv = tmp_path / "venv"
+    created = _run(["uv", "venv", str(venv)], cwd=tmp_path, env=env)
+    _assert_ok(created)
+    python = venv / "bin" / "python"
+    installed = _run(
+        ["uv", "pip", "install", "--python", str(python), str(wheels[-1])], cwd=tmp_path, env=env
+    )
+    _assert_ok(installed)
+    return python
 
-    env = _acceptance_env(tmp_path)
-    consumer = tmp_path / "consumer"
-    consumer.mkdir()
-    _configure_consumer(consumer, env)
 
-    created = _run(
-        [str(WOOF_BIN), "wf", "new", "ship acceptance artefact", "--format", "json"],
+def _drive_local_tracker_workflow(consumer: Path, env: dict[str, str], woof_cmd: list[str]) -> None:
+    created = _run_woof(
+        woof_cmd,
+        "wf",
+        "new",
+        "ship acceptance artefact",
+        "--format",
+        "json",
         cwd=consumer,
         env=env,
     )
     _assert_ok(created)
     assert json.loads(created.stdout)["epic_id"] == 1
 
-    planned = _run([str(WOOF_BIN), "wf", "--epic", "1", "--format", "json"], cwd=consumer, env=env)
+    planned = _run_woof(woof_cmd, "wf", "--epic", "1", "--format", "json", cwd=consumer, env=env)
     _assert_ok(planned)
     planned_events = [json.loads(line) for line in planned.stdout.splitlines() if line]
     assert planned_events[-1]["status"] == "gate_opened"
@@ -460,19 +490,13 @@ def test_wf_cli_drives_local_tracker_epic_to_story_commit(tmp_path: Path) -> Non
     gate = consumer / ".woof" / "epics" / "E1" / "gate.md"
     assert gate.is_file()
 
-    approved = _run(
-        [str(WOOF_BIN), "wf", "--epic", "1", "--resolve", "approve"],
-        cwd=consumer,
-        env=env,
+    approved = _run_woof(
+        woof_cmd, "wf", "--epic", "1", "--resolve", "approve", cwd=consumer, env=env
     )
     _assert_ok(approved)
     assert not gate.exists()
 
-    executed = _run(
-        [str(WOOF_BIN), "wf", "--epic", "1", "--format", "json"],
-        cwd=consumer,
-        env=env,
-    )
+    executed = _run_woof(woof_cmd, "wf", "--epic", "1", "--format", "json", cwd=consumer, env=env)
     _assert_ok(executed)
     executed_events = [json.loads(line) for line in executed.stdout.splitlines() if line]
     assert executed_events[-1]["status"] == "epic_complete"
@@ -504,3 +528,35 @@ def test_wf_cli_drives_local_tracker_epic_to_story_commit(tmp_path: Path) -> Non
     assert any(event.get("event") == "plan_gate_resolved" for event in epic_events)
     assert any(event.get("event") == "transaction_manifest_verified" for event in epic_events)
     assert any(event.get("event") == "epic_completed" for event in epic_events)
+
+
+def test_wf_cli_drives_local_tracker_epic_to_story_commit(tmp_path: Path) -> None:
+    """The source-checkout CLI can drive the product loop from spark to checked commit."""
+
+    for tool in ("uv", "ajv", "git"):
+        _require_tool(tool)
+
+    env = _acceptance_env(tmp_path)
+    consumer = tmp_path / "consumer"
+    consumer.mkdir()
+    woof_cmd = [str(WOOF_BIN)]
+    _configure_consumer(consumer, env, woof_cmd)
+
+    _drive_local_tracker_workflow(consumer, env, woof_cmd)
+
+
+def test_installed_package_wf_cli_drives_local_tracker_epic_to_story_commit(tmp_path: Path) -> None:
+    """The installed package can drive the same workflow without checkout wrappers."""
+
+    for tool in ("uv", "ajv", "git"):
+        _require_tool(tool)
+
+    env = _acceptance_env(tmp_path, isolated=True)
+    python = _install_wheel(tmp_path, env)
+    woof_cmd = [str(python), "-m", "woof"]
+
+    consumer = tmp_path / "installed-consumer"
+    consumer.mkdir()
+    _configure_consumer(consumer, env, woof_cmd)
+
+    _drive_local_tracker_workflow(consumer, env, woof_cmd)

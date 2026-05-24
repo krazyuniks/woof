@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.2 - 2026-05-24
+
+- Fixed reviewer-blocker gate approval so corrected story work re-enters
+  reviewer critique instead of reopening the stale blocker gate.
+
 ## 0.1.1 - 2026-05-24
 
 - Removed the obsolete `codex exec -a never` approval flag so the Codex-backed

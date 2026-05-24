@@ -90,6 +90,14 @@ def _story_critique_requires_requeue(critique_path: Path) -> bool:
     return critique_severity(front) not in NON_BLOCKING_SEVERITIES
 
 
+def _check_result_ok(check_result_path: Path) -> bool:
+    try:
+        payload = json.loads(check_result_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return False
+    return isinstance(payload, dict) and payload.get("ok") is True
+
+
 def _update_story(repo_root: Path, epic_id: int, story_id: str, **updates: object) -> None:
     plan = load_plan(repo_root, epic_id)
     stories: list[StorySpec] = []
@@ -166,7 +174,11 @@ def _apply_gate_resolution_effects(
         check_result = directory / "check-result.json"
         executor_result = directory / "executor_result.json"
         if decision == "approve":
-            changed.extend(_remove_paths(repo_root, check_result))
+            preserve_check_result = (
+                "check_7_commit_transaction" in triggered_by and _check_result_ok(check_result)
+            )
+            if not preserve_check_result:
+                changed.extend(_remove_paths(repo_root, check_result))
             if story_id and "check_6_critique_blocker" in triggered_by:
                 critique_path = story_critique_path(directory, story_id)
                 if _story_critique_requires_requeue(critique_path):

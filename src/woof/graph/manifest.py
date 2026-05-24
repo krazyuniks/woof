@@ -63,9 +63,10 @@ def build_story_manifest(repo_root: Path, epic_id: int, story: StorySpec) -> Tra
         f".woof/epics/E{epic_id}/critique/story-{story.id}.md",
         story_disposition_relpath(epic_id, story.id),
     ]
-    audit_paths = _audit_paths(epic_dir, repo_root)
-    durable_paths = durable_epic_paths(epic_dir, repo_root)
-    candidate_paths = [path for path in changed_paths(repo_root) if not path.startswith(".woof/")]
+    changed = set(changed_paths(repo_root))
+    audit_paths = [path for path in _audit_paths(epic_dir, repo_root) if path in changed]
+    durable_paths = [path for path in durable_epic_paths(epic_dir, repo_root) if path in changed]
+    candidate_paths = [path for path in changed if not path.startswith(".woof/")]
     try:
         story_paths = filter_paths_matching(repo_root, candidate_paths, list(story.paths))
     except PathspecEvaluationError:

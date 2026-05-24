@@ -2517,6 +2517,89 @@ def test_transaction_manifest_reports_missing_expected_index_paths(tmp_path: Pat
     assert result.missing_paths == [".woof/epics/E16/dispatch.jsonl"]
 
 
+def test_transaction_manifest_excludes_committed_prior_epic_artifacts(tmp_path: Path) -> None:
+    _init_git_repo(tmp_path)
+    directory = _write_plan(tmp_path, 17)
+    (directory / "EPIC.md").write_text("---\nepic_id: 17\n---\n")
+    (directory / "PLAN.md").write_text("# Plan\n")
+    (directory / "dispatch.jsonl").write_text("{}\n")
+    (directory / "spark.md").write_text("initial spark\n")
+    critique_dir = directory / "critique"
+    critique_dir.mkdir()
+    (critique_dir / "story-S1.md").write_text(
+        "---\ntarget: story\ntarget_id: S1\nseverity: info\n"
+        "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
+        "findings: []\n---\n"
+    )
+    _write_disposition(directory, 17, "S1")
+    audit_dir = directory / "audit"
+    audit_dir.mkdir()
+    (audit_dir / "old-story.prompt").write_text("old prompt")
+    _git(tmp_path, "add", ".woof", check=True)
+    _git(tmp_path, "commit", "-m", "feat: first story", check=True)
+
+    (directory / "plan.json").write_text(
+        json.dumps(
+            {
+                "epic_id": 17,
+                "goal": "test graph",
+                "stories": [
+                    {
+                        "id": "S1",
+                        "title": "first",
+                        "intent": "done",
+                        "paths": ["src/*.py"],
+                        "satisfies": ["O1"],
+                        "implements_contract_decisions": [],
+                        "uses_contract_decisions": [],
+                        "depends_on": [],
+                        "tests": {"count": 1, "types": ["unit"]},
+                        "status": "done",
+                    },
+                    {
+                        "id": "S2",
+                        "title": "docs",
+                        "intent": "document",
+                        "paths": ["README.md"],
+                        "satisfies": ["O2"],
+                        "implements_contract_decisions": [],
+                        "uses_contract_decisions": [],
+                        "depends_on": ["S1"],
+                        "tests": {"count": 0, "types": ["documentation", "manual"]},
+                        "status": "in_progress",
+                    },
+                ],
+            }
+        )
+    )
+    (directory / "epic.jsonl").write_text("{}\n{}\n")
+    (critique_dir / "story-S2.md").write_text(
+        "---\ntarget: story\ntarget_id: S2\nseverity: info\n"
+        "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
+        "findings: []\n---\n"
+    )
+    _write_disposition(directory, 17, "S2")
+    (audit_dir / "new-story.prompt").write_text("new prompt")
+    (tmp_path / "README.md").write_text("manual story docs\n")
+
+    story = StorySpec(
+        id="S2",
+        title="docs",
+        paths=["README.md"],
+        satisfies=["O2"],
+        status="in_progress",
+        tests={"count": 0, "types": ["documentation", "manual"]},
+    )
+    manifest = build_story_manifest(tmp_path, 17, story)
+
+    assert ".woof/epics/E17/critique/story-S1.md" not in manifest.expected_paths
+    assert ".woof/epics/E17/audit/old-story.prompt" not in manifest.expected_paths
+    assert ".woof/epics/E17/spark.md" not in manifest.expected_paths
+    assert ".woof/epics/E17/critique/story-S2.md" in manifest.expected_paths
+    assert ".woof/epics/E17/audit/new-story.prompt" in manifest.expected_paths
+    assert "README.md" in manifest.expected_paths
+
+
 def test_transaction_manifest_honours_recursive_pathspec(tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     directory = _write_plan(tmp_path, 23)

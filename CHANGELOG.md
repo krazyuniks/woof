@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.4 - 2026-05-24
+
+- Fixed story transaction manifests so later stories do not require already
+  committed epic artefacts from earlier stories to be staged again.
+
 ## 0.1.3 - 2026-05-24
 
 - Allowed documentation/manual stories with no automated test work to skip

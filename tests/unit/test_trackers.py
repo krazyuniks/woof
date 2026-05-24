@@ -5,18 +5,23 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import textwrap
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 import woof.trackers.github as github_module
 from woof.trackers import (
+    CONFLICT_DECISIONS,
     GitHubTracker,
     LocalTracker,
     Tracker,
     TrackerError,
     resolve_tracker,
 )
+from woof.trackers.base import sha256_text
 from woof.trackers.epic_body import (
     epic_markdown_from_issue,
     render_epic_issue_body,
@@ -33,9 +38,9 @@ def _write_prereq(project: Path, body: str) -> None:
     (project / ".woof" / "prerequisites.toml").write_text(body)
 
 
-def _epic_front() -> dict:
+def _epic_front(epic_id: int = 1) -> dict[str, Any]:
     return {
-        "epic_id": 1,
+        "epic_id": epic_id,
         "title": "Comment publishing",
         "observable_outcomes": [
             {"id": "O1", "statement": "Users can post a comment.", "verification": "automated"},
@@ -43,6 +48,240 @@ def _epic_front() -> dict:
         "contract_decisions": [],
         "acceptance_criteria": ["All outcomes covered by tests."],
     }
+
+
+def _epic_md(epic_id: int = 1) -> str:
+    return textwrap.dedent(
+        f"""\
+        ---
+        epic_id: {epic_id}
+        title: Comment publishing
+        observable_outcomes:
+          - id: O1
+            statement: Users can post a comment.
+            verification: automated
+          - id: O2
+            statement: Comments appear in real time.
+            verification: hybrid
+        contract_decisions:
+          - id: CD1
+            related_outcomes: [O1, O2]
+            title: Comment publishing route
+            openapi_ref: spec/openapi.yaml#/paths/~1comments/post
+        acceptance_criteria:
+          - All outcomes covered by tests.
+        ---
+        Enable users to publish comments.
+        """
+    )
+
+
+def _plan_payload(epic_id: int = 1, *, done: bool = False) -> dict[str, Any]:
+    status = "done" if done else "pending"
+    return {
+        "epic_id": epic_id,
+        "goal": "Ship comment publishing.",
+        "stories": [
+            {
+                "id": "S1",
+                "title": "Create comment API",
+                "intent": "Add the write API.",
+                "paths": ["src/comments.py"],
+                "satisfies": ["O1"],
+                "implements_contract_decisions": ["CD1"],
+                "uses_contract_decisions": [],
+                "depends_on": [],
+                "tests": {"count": 2, "types": ["unit"]},
+                "status": status,
+            },
+            {
+                "id": "S2",
+                "title": "Render live comments",
+                "intent": "Show new comments in real time.",
+                "paths": ["src/live.py"],
+                "satisfies": ["O2"],
+                "implements_contract_decisions": [],
+                "uses_contract_decisions": ["CD1"],
+                "depends_on": ["S1"],
+                "tests": {"count": 1, "types": ["integration"]},
+                "status": status,
+            },
+        ],
+    }
+
+
+def _write_epic_contract_files(project: Path, epic_id: int, *, done: bool = False) -> Path:
+    epic_dir = project / ".woof" / "epics" / f"E{epic_id}"
+    epic_dir.mkdir(parents=True, exist_ok=True)
+    (epic_dir / "EPIC.md").write_text(_epic_md(epic_id), encoding="utf-8")
+    (epic_dir / "plan.json").write_text(json.dumps(_plan_payload(epic_id, done=done)))
+    return epic_dir
+
+
+def _write_last_sync(epic_dir: Path, epic_id: int, *, updated_at: str, body: str) -> None:
+    (epic_dir / ".last-sync").write_text(
+        json.dumps(
+            {
+                "issue_number": epic_id,
+                "updated_at": updated_at,
+                "body_sha256": sha256_text(body),
+                "body": body,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+class GhCommandStub:
+    def __init__(
+        self,
+        *,
+        repo: str = "acme/widgets",
+        issue_number: int = 7,
+        title: str = "Tracker contract",
+        body: str = "Remote tracker body.\n",
+        updated_at: str = "2026-01-01T00:00:00Z",
+    ) -> None:
+        self.repo = repo
+        self.issue_number = issue_number
+        self.issue: dict[str, Any] = {
+            "number": issue_number,
+            "title": title,
+            "body": body,
+            "updated_at": updated_at,
+            "state": "open",
+        }
+        self.calls: list[list[str]] = []
+        self.created_body: str | None = None
+        self.edited_bodies: list[str] = []
+        self.close_count = 0
+        self._tick = 1
+
+    def set_remote(
+        self,
+        *,
+        body: str,
+        title: str | None = None,
+        updated_at: str = "2026-01-01T00:00:00Z",
+        state: str = "open",
+    ) -> None:
+        self.issue.update(
+            {
+                "body": body,
+                "updated_at": updated_at,
+                "state": state,
+            }
+        )
+        if title is not None:
+            self.issue["title"] = title
+
+    def run(self, argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        assert argv[0] == "gh"
+        assert kwargs["capture_output"] is True
+        assert kwargs["text"] is True
+        assert kwargs["timeout"] == GITHUB_COMMAND_TIMEOUT_SECONDS
+        self.calls.append(argv[1:])
+
+        if argv[1:3] == ["api", "/rate_limit"]:
+            return subprocess.CompletedProcess(
+                argv,
+                0,
+                '{"resources":{"core":{"remaining":5000}}}',
+                "",
+            )
+
+        issue_api = f"/repos/{self.repo}/issues/{self.issue_number}"
+        if argv[1:3] == ["api", issue_api]:
+            return subprocess.CompletedProcess(argv, 0, json.dumps(self.issue), "")
+
+        if argv[1:3] == ["issue", "create"]:
+            title = argv[argv.index("--title") + 1]
+            self.created_body = str(kwargs.get("input") or "")
+            self.issue.update(
+                {
+                    "title": title,
+                    "body": self.created_body,
+                    "updated_at": self._next_updated_at(),
+                    "state": "open",
+                }
+            )
+            return subprocess.CompletedProcess(
+                argv,
+                0,
+                f"https://github.com/{self.repo}/issues/{self.issue_number}\n",
+                "",
+            )
+
+        if argv[1:3] == ["issue", "edit"]:
+            body_path = Path(argv[argv.index("--body-file") + 1])
+            body = body_path.read_text(encoding="utf-8")
+            self.issue["body"] = body
+            self.issue["updated_at"] = self._next_updated_at()
+            self.edited_bodies.append(body)
+            return subprocess.CompletedProcess(argv, 0, "", "")
+
+        if argv[1:3] == ["issue", "close"]:
+            self.issue["state"] = "closed"
+            self.issue["updated_at"] = self._next_updated_at()
+            self.close_count += 1
+            return subprocess.CompletedProcess(argv, 0, "", "")
+
+        raise AssertionError(f"unexpected gh argv: {argv}")
+
+    def _next_updated_at(self) -> str:
+        self._tick += 1
+        return f"2026-01-{self._tick:02d}T00:00:00Z"
+
+
+@dataclass(frozen=True)
+class TrackerContractCase:
+    kind: str
+    tracker: Tracker
+    repo_root: Path
+    gh: GhCommandStub | None = None
+
+
+@pytest.fixture(params=("local", "github"))
+def tracker_contract(
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> TrackerContractCase:
+    if request.param == "local":
+        return TrackerContractCase(
+            kind="local",
+            tracker=LocalTracker(tmp_path),
+            repo_root=tmp_path,
+        )
+
+    gh = GhCommandStub()
+    monkeypatch.setattr(github_module.subprocess, "run", gh.run)
+    return TrackerContractCase(
+        kind="github",
+        tracker=GitHubTracker(tmp_path, gh.repo),
+        repo_root=tmp_path,
+        gh=gh,
+    )
+
+
+def _prepare_contract_epic(
+    case: TrackerContractCase,
+    *,
+    done: bool = False,
+    remote_body: str = "Remote intent.\n\n## Observable Outcomes\n\n- stale\n",
+) -> int:
+    epic_id = case.gh.issue_number if case.gh else 1
+    epic_dir = _write_epic_contract_files(case.repo_root, epic_id, done=done)
+    if case.gh is not None:
+        case.gh.set_remote(body=remote_body, updated_at="2026-01-01T00:00:00Z")
+        _write_last_sync(
+            epic_dir,
+            epic_id,
+            updated_at="2026-01-01T00:00:00Z",
+            body=remote_body,
+        )
+    return epic_id
 
 
 # ---------------------------------------------------------------------------
@@ -102,6 +341,179 @@ def test_adapters_satisfy_tracker_protocol(tracker: Tracker) -> None:
     assert tracker.kind in {"github", "local"}
 
 
+def test_tracker_contract_create_epic_initialises_runtime_state(
+    tracker_contract: TrackerContractCase,
+) -> None:
+    tracker_contract.tracker.assert_runtime_reachable()
+
+    result = tracker_contract.tracker.create_epic("Contract matrix\n\nShared create behaviour.")
+
+    assert result.epic_dir == tracker_contract.repo_root / ".woof" / "epics" / f"E{result.epic_id}"
+    assert result.spark_path == result.epic_dir / "spark.md"
+    assert result.current_epic_path == tracker_contract.repo_root / ".woof" / ".current-epic"
+    assert result.current_epic_path.read_text(encoding="utf-8") == f"E{result.epic_id}\n"
+    assert result.spark_path.read_text(encoding="utf-8").startswith("# Contract matrix\n\n")
+    assert tracker_contract.tracker.has_sync_state(result.epic_id) is True
+
+    events = [
+        json.loads(line)
+        for line in (result.epic_dir / "epic.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert events[0]["event"] == "spark_created"
+    assert events[0]["source"] == tracker_contract.kind
+    assert events[-1]["event"] == "current_epic_selected"
+
+    if tracker_contract.kind == "github":
+        assert result.epic_ref == "https://github.com/acme/widgets/issues/7"
+        assert result.last_sync_path.is_file()
+    else:
+        assert result.epic_ref == ".woof/epics/E1"
+        assert not result.last_sync_path.exists()
+
+
+def test_tracker_contract_fetch_epic_cold_start(
+    tracker_contract: TrackerContractCase,
+) -> None:
+    if tracker_contract.kind == "local":
+        with pytest.raises(TrackerError, match="no remote to fetch from"):
+            tracker_contract.tracker.fetch_epic(7)
+        return
+
+    result = tracker_contract.tracker.fetch_epic(7)
+
+    assert result.epic_id == 7
+    assert result.epic_dir == tracker_contract.repo_root / ".woof" / "epics" / "E7"
+    assert result.spark_path.read_text(encoding="utf-8").startswith("# Tracker contract\n\n")
+    assert result.last_sync_path.is_file()
+    assert tracker_contract.tracker.has_sync_state(7) is True
+
+
+def test_tracker_contract_authority_checks(
+    tracker_contract: TrackerContractCase,
+) -> None:
+    if tracker_contract.kind == "local":
+        _write_epic_contract_files(tracker_contract.repo_root, 1)
+        tracker_contract.tracker.assert_epic_authority(1)
+        assert tracker_contract.tracker.has_sync_state(1) is True
+        assert tracker_contract.tracker.has_sync_state(99) is False
+        with pytest.raises(TrackerError, match="E99 not found"):
+            tracker_contract.tracker.assert_epic_authority(99)
+        return
+
+    result = tracker_contract.tracker.fetch_epic(7)
+    tracker_contract.tracker.assert_epic_authority(7)
+    assert tracker_contract.tracker.has_sync_state(7) is True
+
+    payload = json.loads(result.last_sync_path.read_text(encoding="utf-8"))
+    payload["issue_number"] = 99
+    result.last_sync_path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(TrackerError, match="expected 7"):
+        tracker_contract.tracker.assert_epic_authority(7)
+
+
+@pytest.mark.parametrize("decision", CONFLICT_DECISIONS)
+def test_tracker_contract_conflict_resolution_decisions(
+    tracker_contract: TrackerContractCase,
+    decision: str,
+) -> None:
+    if tracker_contract.kind == "local":
+        _write_epic_contract_files(tracker_contract.repo_root, 1)
+        with pytest.raises(TrackerError, match="no remote"):
+            tracker_contract.tracker.resolve_conflict(1, decision)
+        return
+
+    epic_id = 7
+    epic_dir = tracker_contract.repo_root / ".woof" / "epics" / "E7"
+    epic_dir.mkdir(parents=True)
+    assert tracker_contract.gh is not None
+    remote_body = render_epic_issue_body(
+        _epic_front(epic_id),
+        "Remote canonical intent.\n",
+        remote_body=None,
+    )
+    tracker_contract.gh.set_remote(
+        body=remote_body,
+        title="Remote title",
+        updated_at="2026-02-01T00:00:00Z",
+    )
+
+    result = tracker_contract.tracker.resolve_conflict(epic_id, decision)
+
+    assert result.epic_id == epic_id
+    assert result.decision == decision
+    last_sync = json.loads(result.last_sync_path.read_text(encoding="utf-8"))
+    assert last_sync["issue_number"] == epic_id
+    assert last_sync["updated_at"] == "2026-02-01T00:00:00Z"
+    assert last_sync["body"] == remote_body
+    if decision == "accept_remote":
+        assert result.epic_path == epic_dir / "EPIC.md"
+        assert "Remote canonical intent." in result.epic_path.read_text(encoding="utf-8")
+    else:
+        assert result.epic_path is None
+
+
+def test_tracker_contract_conflict_resolution_rejects_unknown_decision(
+    tracker_contract: TrackerContractCase,
+) -> None:
+    with pytest.raises(TrackerError, match="unsupported tracker_sync_conflict decision"):
+        tracker_contract.tracker.resolve_conflict(1, "overwrite_remote")
+
+
+def test_tracker_contract_plan_summary_push_renders_stories(
+    tracker_contract: TrackerContractCase,
+) -> None:
+    epic_id = _prepare_contract_epic(tracker_contract)
+
+    result = tracker_contract.tracker.push_plan_summary(epic_id)
+
+    assert result.epic_id == epic_id
+    assert result.closed is False
+    assert "## Plan Summary" in result.body
+    assert "- **S1**" in result.body
+    assert "Create comment API" in result.body
+    assert "## Closing Summary" not in result.body
+    if tracker_contract.kind == "github":
+        assert tracker_contract.gh is not None
+        assert result.changed is True
+        assert tracker_contract.gh.edited_bodies[-1] == result.body
+        assert result.last_sync_path.is_file()
+    else:
+        assert result.changed is False
+        assert not result.last_sync_path.exists()
+
+
+def test_tracker_contract_epic_completion_requires_done_plan(
+    tracker_contract: TrackerContractCase,
+) -> None:
+    epic_id = _prepare_contract_epic(tracker_contract)
+
+    with pytest.raises(TrackerError, match="cannot be closed until all plan stories are done"):
+        tracker_contract.tracker.complete_epic(epic_id)
+
+
+def test_tracker_contract_epic_completion_renders_and_closes(
+    tracker_contract: TrackerContractCase,
+) -> None:
+    epic_id = _prepare_contract_epic(tracker_contract, done=True)
+
+    result = tracker_contract.tracker.complete_epic(epic_id)
+
+    assert result.epic_id == epic_id
+    assert result.closed is True
+    assert "## Plan Summary" in result.body
+    assert "## Closing Summary" in result.body
+    assert "Epic completed with 2/2 planned stories done." in result.body
+    if tracker_contract.kind == "github":
+        assert tracker_contract.gh is not None
+        assert result.changed is True
+        assert tracker_contract.gh.close_count == 1
+        assert tracker_contract.gh.issue["state"] == "closed"
+        assert result.last_sync_path.is_file()
+    else:
+        assert result.changed is False
+        assert not result.last_sync_path.exists()
+
+
 # ---------------------------------------------------------------------------
 # local adapter
 # ---------------------------------------------------------------------------
@@ -141,11 +553,13 @@ def test_local_resolve_conflict_fails_loud(tmp_path: Path) -> None:
         LocalTracker(tmp_path).resolve_conflict(1, "keep_local")
 
 
-def test_local_runtime_and_authority_checks_are_noops(tmp_path: Path) -> None:
+def test_local_runtime_check_noop_and_authority_uses_epic_directory(tmp_path: Path) -> None:
     tracker = LocalTracker(tmp_path)
     tracker.assert_runtime_reachable()
+    _write_epic_contract_files(tmp_path, 1)
     tracker.assert_epic_authority(1)
     assert tracker.has_sync_state(1) is True
+    assert tracker.has_sync_state(2) is False
 
 
 def test_local_push_operations_keep_everything_local(tmp_path: Path) -> None:
@@ -154,13 +568,16 @@ def test_local_push_operations_keep_everything_local(tmp_path: Path) -> None:
     assert definition.changed is False
     assert "## Observable Outcomes" in definition.body
 
+    _write_epic_contract_files(tmp_path, 1, done=True)
     plan_summary = tracker.push_plan_summary(1)
     assert plan_summary.changed is False
     assert plan_summary.closed is False
+    assert "## Plan Summary" in plan_summary.body
 
     completion = tracker.complete_epic(1)
     assert completion.changed is False
     assert completion.closed is True
+    assert "## Closing Summary" in completion.body
 
 
 # ---------------------------------------------------------------------------

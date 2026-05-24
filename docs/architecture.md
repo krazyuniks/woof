@@ -231,7 +231,7 @@ repo = "<org>/<repo>"     # required when kind = "github"
 Two adapters ship:
 
 - **`github`** — one GitHub issue per epic. `E<N>` ≡ gh issue `#<N>`; gh assigns the issue number on creation. Always-online: the `gh` CLI must be authenticated and the declared repo accessible. Push is conflict-detected.
-- **`local`** — filesystem-only. `.woof/epics/E<N>/` is the sole authority for an epic; there is no remote. Epic IDs are integers allocated locally as one greater than the highest existing `E<N>`. Push operations are no-ops because there is no second copy of the contract to keep in sync, so a sync conflict cannot arise. The `local` adapter lets any repository run Woof without a hosted tracker.
+- **`local`** — filesystem-only. `.woof/epics/E<N>/` is the sole authority for an epic; there is no remote. Epic IDs are integers allocated locally as one greater than the highest existing `E<N>`. Push operations write no remote state and no `.last-sync` because there is no second copy of the contract to keep in sync, so a sync conflict cannot arise. Lifecycle push methods still load local `EPIC.md` and `plan.json`, render the same managed body shape as hosted trackers, and reject epic completion until every planned story is `done`. The `local` adapter lets any repository run Woof without a hosted tracker.
 
 **Epic IDs.** A tracker-assigned integer. For `github` it is the gh issue number; for `local` it is a locally allocated counter. The user does not pick it. With the `github` tracker every epic has a gh issue, and a `.woof/epics/E<N>/` directory without `.last-sync` issue authority is not a valid epic.
 

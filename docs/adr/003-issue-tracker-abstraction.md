@@ -87,9 +87,12 @@ Two adapters ship:
   issue number, push is conflict-detected against `.last-sync`.
 - `local` - filesystem-only. `.woof/epics/E<N>/` is the sole authority for an
   epic. Epic IDs are integers allocated locally as one more than the highest
-  existing `E<N>` directory. Push operations are no-ops because there is no
-  second copy of the contract to keep in sync; a sync conflict can never
-  arise, so a `local` epic never opens a `tracker_sync_conflict` gate.
+  existing `E<N>` directory. Push operations write no remote state and no
+  `.last-sync` because there is no second copy of the contract to keep in sync;
+  a sync conflict can never arise, so a `local` epic never opens a
+  `tracker_sync_conflict` gate. Lifecycle push methods still load local
+  `EPIC.md` and `plan.json`, render the shared managed body shape, and reject
+  epic completion until every planned story is `done`.
 
 ### Epic identifiers
 

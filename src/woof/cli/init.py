@@ -317,5 +317,6 @@ def _print_result(result: InitResult) -> None:
     print("  3. Run `woof preflight` and resolve any remaining failures.")
     print("  4. Run `woof hooks install` to enable the post-commit cartography hook.")
     print('  5. Start your first epic: `woof wf new "<spark>"`.')
+    print("  6. Run the graph with the command printed by `woof wf new`.")
     print()
     print("See docs/consumers.md for the full first-run walkthrough.")

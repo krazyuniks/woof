@@ -747,6 +747,7 @@ def test_woof_wf_new_local_tracker_never_calls_gh(tmp_path: Path) -> None:
     assert payload["status"] == "created"
     assert payload["epic_id"] == 1
     assert payload["epic_ref"] == ".woof/epics/E1"
+    assert payload["next_command"] == "woof wf --epic 1"
     epic_dir = project / ".woof" / "epics" / "E1"
     assert (epic_dir / "spark.md").read_text() == "# Portable epic\n\nRuns without GitHub.\n"
     assert (project / ".woof" / ".current-epic").read_text() == "E1\n"

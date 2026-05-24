@@ -202,6 +202,7 @@ def test_init_outputs_next_steps(tmp_path: Path, run_woof) -> None:
     assert "codex login" in proc.stdout
     assert "woof preflight" in proc.stdout
     assert "woof wf new" in proc.stdout, "next steps must reach the first epic"
+    assert "Run the graph with the command printed by `woof wf new`" in proc.stdout
     assert "docs/consumers.md" in proc.stdout, "next steps must point at the walkthrough"
 
 

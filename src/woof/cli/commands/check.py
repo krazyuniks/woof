@@ -174,7 +174,7 @@ def setup_check_parser(sub: argparse._SubParsersAction) -> None:  # type: ignore
     check_sub = check_p.add_subparsers(dest="check_stage", required=True)
 
     stage5 = check_sub.add_parser("stage-5", help="run Stage-5 checks for a story")
-    stage5.add_argument("--epic", type=int, help="epic id (gh issue number)")
+    stage5.add_argument("--epic", type=int, help="tracker-assigned epic id")
     stage5.add_argument("--story", help="story id (e.g. S1)")
     stage5.add_argument(
         "--format",

@@ -95,22 +95,12 @@ Woof is technically finished enough for regular use when these are true:
 | TF-004 | Completed | Stage-5 check conformance matrix | Each Stage-5 check now has explicit success and failure conformance fixtures that call the real registry runner and prove its contract: quality gates, outcome markers, scope, contract refs, plan crossrefs, critique blockers, transaction manifests, docs drift, and review valve behaviour. The matrix also asserts every Stage-5 check has both fixture kinds. | Passed: `uv run pytest tests/unit/test_stage5_check_conformance_matrix.py -q`; `uv run pytest tests/unit/test_check_1_quality_gates.py tests/unit/test_check_2_outcome_markers.py tests/unit/test_check_3_scope.py tests/unit/test_check_4_contract_refs.py tests/unit/test_check_5_plan_crossrefs.py tests/unit/test_check_6_critique_blocker.py tests/unit/test_check_7_commit_transaction.py tests/unit/test_check_8_docs_drift.py tests/unit/test_check_9_review_valve.py tests/unit/test_check_stage_5_subcommand.py tests/unit/test_stage5_check_conformance_matrix.py -q`; `just lint`; `just check` (368 tests) |
 | TF-005 | Completed | Tracker contract matrix | The `local` and `github` adapters now share a parametrised `Tracker` protocol contract matrix for create, fetch, authority checks, all sync-conflict resolution decisions, plan summary push, and epic completion. The matrix uses a deterministic `gh` command stub for the GitHub adapter. The `local` adapter remains no-remote and no-`.last-sync`, but its lifecycle methods now load local `EPIC.md`/`plan.json`, render the shared managed body shape, and reject epic completion until all stories are `done`. | Passed: `uv run pytest tests/unit/test_trackers.py -q`; `uv run pytest tests/unit/test_trackers.py tests/unit/test_render_epic.py tests/unit/test_wf_github_sync.py -q`; `uv run pytest tests/integration/test_operator_state_surfaces.py -q`; `just lint`; `just check` (388 tests) |
 | TF-006 | Completed | Installed-package workflow acceptance | The installed package path now runs the same local-tracker workflow acceptance as the source checkout: build wheel, install into an isolated venv, scaffold a consumer with `woof init --tracker local`, drive Stage 1-5 through `python -m woof`, approve the plan gate, verify the story commit, and assert audit events without source-checkout wrappers or private host state. | Passed: `uv run pytest tests/integration/test_wf_acceptance.py::test_installed_package_wf_cli_drives_local_tracker_epic_to_story_commit -q`; `uv run pytest tests/integration/test_wf_acceptance.py -q`; `just lint`; `just check` (389 tests) |
-| TF-007 | Ready | Final operator documentation | README, architecture, schemas, help text, and consumer docs describe only implemented behaviour and the next required operator commands. | Docs review, schema validation, `just check` |
+| TF-007 | Completed | Final operator documentation | README, architecture, schemas, help text, and consumer docs now describe the implemented operator workflow with tracker-neutral commands, installed-CLI consumer usage, trusted-local runtime disclosure, schema-aligned Stage-5 reference checks, and explicit next operator commands from init/new epic through graph resume. `woof wf new` also reports the next `woof wf --epic <N>` command in text and JSON output. | Passed: `uv run pytest tests/unit/test_operator_help_docs.py tests/unit/test_init.py::test_init_outputs_next_steps tests/unit/test_trackers.py::test_woof_wf_new_local_tracker_never_calls_gh tests/unit/test_validate.py::test_shipped_schema_compiles -q`; `just lint`; `just check` (392 tests) |
 
 ## Current Item
 
-TF-007 is the next ready item. It should bring README, architecture, schemas,
-help text, and consumer docs into final alignment with implemented behaviour and
-operator commands.
-
-Planned files:
-
-- `README.md`
-- `docs/architecture.md`
-- `docs/consumers.md`
-- `docs/implementation-plan.md`
-- `schemas/*.schema.json`
-- `src/woof/cli/`
+The Technical Finish backlog is complete. No `In progress` or `Ready` item
+remains in the backlog.
 
 ## Next Continuation Prompt
 
@@ -122,7 +112,8 @@ Woof delivers software through an agentic multi-step process: discovery,
 definition, breakdown, review, gate, execution, verification, manifest-checked
 commit, and audit/resume.
 
-Next item is TF-007: Final operator documentation.
+The Technical Finish backlog is complete. No `In progress` or `Ready` item
+remains in docs/implementation-plan.md.
 
 Read first:
 1. AGENTS.md
@@ -134,21 +125,15 @@ Read first:
 7. docs/adr/003-issue-tracker-abstraction.md
 
 Start with:
-Run `git status --short --branch`, preserve unrelated local changes, and select
-the first `In progress` or `Ready` item from the Technical Finish Backlog in
-docs/implementation-plan.md.
+Run `git status --short --branch`, preserve unrelated local changes, and verify
+whether a new backlog item has been added.
 
 Execution rule:
-Implement a broad source-code slice for the selected item. Do not stop at a
+If a new implementation item exists, select the first `In progress` or `Ready`
+item by order and implement a broad source-code slice. Do not stop at a
 proposal. Update tests and docs with any behaviour change. Run focused
 validation and `just check`. Use conventional commits. Push and monitor CI when
 the repository workflow requires it.
-
-For TF-007:
-Align README, architecture, schemas, help text, and consumer docs with the
-implemented operator workflow. Describe only behaviour that exists, remove stale
-source-checkout or GitHub-only assumptions where they are no longer authoritative,
-and make the next required operator commands explicit.
 
 Do not:
 - add project-specific consumer assumptions;
@@ -156,6 +141,6 @@ Do not:
   host-specific absolute paths;
 - add runtime sandboxing or permission policy logic unless a new architecture
   decision explicitly requires it;
-- ask packaging, tagging, or distribution questions before the technical finish
-  backlog is complete.
+- reopen the completed Technical Finish backlog without adding a new explicit
+  backlog item.
 ```

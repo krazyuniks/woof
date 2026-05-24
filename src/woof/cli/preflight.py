@@ -49,6 +49,9 @@ CONFIG_SCHEMAS = {
 }
 
 PREREQUISITES_TEMPLATE = """\
+# Woof project prerequisites. Verified by `woof preflight`.
+# Replace every <replace> placeholder before invoking `woof wf`.
+
 [infra]
 just = "1.0+"
 git = "2.30+"
@@ -62,6 +65,10 @@ codex = "any"
 ajv = "any"
 ajv-formats = "any"
 
+# Issue tracker for epic-level contracts. The default GitHub adapter keeps
+# each epic in a GitHub issue and requires `repo`. Use `woof init --tracker
+# local` to scaffold a no-remote setup for repositories without a hosted
+# tracker.
 [tracker]
 kind = "github"
 repo = "<replace>/<replace>"
@@ -365,16 +372,16 @@ def _check_woof_install() -> list[PreflightFinding]:
         return [
             PreflightFinding(
                 id="woof.install",
-                label="Woof checkout/install",
+                label="Woof installation",
                 ok=False,
                 detail="missing Woof tool asset(s): " + ", ".join(str(path) for path in missing),
-                install="Install Woof from the source checkout or package including schemas/ and languages/.",
+                install="Install Woof with bundled schemas/ and languages/ assets.",
             )
         ]
     return [
         PreflightFinding(
             id="woof.install",
-            label="Woof checkout/install",
+            label="Woof installation",
             ok=True,
             detail=f"tool assets found at {root}",
         )

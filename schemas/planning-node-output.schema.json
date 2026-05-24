@@ -25,7 +25,8 @@
     },
     "epic_id": {
       "type": "integer",
-      "minimum": 1
+      "minimum": 1,
+      "description": "Tracker-assigned epic identifier. Same value as E<N>."
     },
     "story_id": {
       "type": "null"

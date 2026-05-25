@@ -50,6 +50,13 @@ COST_FIELDS = (
     "cache_write_cost_usd",
     "total_cost_usd",
 )
+TELEMETRY_FIELDS = (
+    "prompt_bytes",
+    "artefact_bytes",
+    "output_bytes",
+    "stderr_bytes",
+    "command_count",
+)
 VIEWS = ("status", "timeline", "gate", "audit", "all")
 
 
@@ -114,10 +121,12 @@ def build_observe_report(repo_root: Path, epic_id: int) -> dict[str, Any]:
     timeline = _timeline([*epic_records, *dispatch_records])
     dispatch_events = [record.payload for record in dispatch_records]
     audit_pointers = _audit_pointers(repo_root, directory, dispatch_events)
-    usage = _usage_summary(
+    returned_events = [
         event for event in dispatch_events if event.get("event") == "subprocess_returned"
-    )
-    audit = _audit_summary(repo_root, directory, dispatch_events, usage, audit_pointers)
+    ]
+    usage = _usage_summary(returned_events)
+    telemetry = _telemetry_summary(returned_events)
+    audit = _audit_summary(repo_root, directory, dispatch_events, usage, telemetry, audit_pointers)
     checks = _check_summary(repo_root, directory)
     dispatch_routes = _dispatch_routes_summary(repo_root)
     runtime_policy = trusted_runtime_policy()
@@ -130,6 +139,7 @@ def build_observe_report(repo_root: Path, epic_id: int) -> dict[str, Any]:
         gate=gate,
         timeline=timeline,
         usage=usage,
+        telemetry=telemetry,
         current_epic=current_epic,
         checks=checks,
         dispatch_routes=dispatch_routes,
@@ -206,6 +216,7 @@ def _status_summary(
     gate: dict[str, Any],
     timeline: list[dict[str, Any]],
     usage: dict[str, Any],
+    telemetry: dict[str, Any],
     current_epic: dict[str, Any],
     checks: dict[str, Any],
     dispatch_routes: dict[str, Any],
@@ -234,6 +245,7 @@ def _status_summary(
         "runtime_policy": runtime_policy,
         "audit_pointers": audit_pointers,
         "usage": usage,
+        "telemetry": telemetry,
         "latest_event": timeline[-1] if timeline else None,
     }
 
@@ -633,6 +645,7 @@ def _audit_summary(
     directory: Path,
     dispatch_events: list[dict[str, Any]],
     usage: dict[str, Any],
+    telemetry: dict[str, Any],
     audit_pointers: dict[str, Any],
 ) -> dict[str, Any]:
     audit_dir = directory / "audit"
@@ -679,6 +692,7 @@ def _audit_summary(
             "returned_events": dispatch_returned,
         },
         "usage": usage,
+        "telemetry": telemetry,
     }
     return summary
 
@@ -761,6 +775,11 @@ def _timeline(records: list[JsonlRecord]) -> list[dict[str, Any]]:
             "codex_audit_path",
             "claude_transcript_path",
             "artefacts_loaded",
+            "prompt_bytes",
+            "artefact_bytes",
+            "output_bytes",
+            "stderr_bytes",
+            "command_count",
         ):
             if key in payload:
                 item[key] = payload[key]
@@ -803,6 +822,22 @@ def _usage_summary(events: Any) -> dict[str, Any]:
     return usage
 
 
+def _telemetry_summary(events: Any) -> dict[str, Any]:
+    totals = {field: 0 for field in TELEMETRY_FIELDS}
+    telemetry_events = 0
+    for event in events:
+        values = _number_fields(event, TELEMETRY_FIELDS)
+        if not values:
+            continue
+        telemetry_events += 1
+        for field, value in values.items():
+            totals[field] += int(value)
+    return {
+        "events": telemetry_events,
+        "totals": totals if telemetry_events else {},
+    }
+
+
 def _dispatch_counts(timeline: list[dict[str, Any]]) -> dict[str, int]:
     return {
         "spawned": sum(1 for item in timeline if item["event"] == "subprocess_spawned"),
@@ -826,6 +861,11 @@ def _dispatch_return_summary(event: dict[str, Any]) -> dict[str, Any]:
             "codex_audit_path",
             "claude_transcript_path",
             "artefacts_loaded",
+            "prompt_bytes",
+            "artefact_bytes",
+            "output_bytes",
+            "stderr_bytes",
+            "command_count",
         )
         if key in event
     }
@@ -975,6 +1015,7 @@ def _print_status(status: dict[str, Any]) -> None:
     _print_audit_pointers(status["audit_pointers"])
     _print_dispatch_routes(status["dispatch_routes"])
     _print_usage(status["usage"])
+    _print_telemetry(status["telemetry"])
 
 
 def _print_gate(gate: dict[str, Any]) -> None:
@@ -1006,6 +1047,7 @@ def _print_audit(audit: dict[str, Any]) -> None:
     print(f"raw_overflow_path: {audit['raw_overflow_path']}")
     print("retention_archive: not implemented")
     _print_usage(audit["usage"])
+    _print_telemetry(audit["telemetry"])
     returned = audit["dispatch"]["returned"]
     spawned = audit["dispatch"]["spawned"]
     killed = audit["dispatch"]["killed"]
@@ -1107,6 +1149,13 @@ def _print_usage(usage: dict[str, Any]) -> None:
         )
     else:
         print("cost: unavailable")
+
+
+def _print_telemetry(telemetry: dict[str, Any]) -> None:
+    if telemetry["events"]:
+        print("telemetry: " + _usage_values(telemetry["totals"]) + f" events={telemetry['events']}")
+    else:
+        print("telemetry: unavailable")
 
 
 def _usage_values(values: dict[str, int | float]) -> str:

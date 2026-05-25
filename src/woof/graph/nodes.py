@@ -23,6 +23,7 @@ from woof.graph.dispositions import (
     story_disposition_path,
     story_disposition_relpath,
     validate_story_disposition,
+    write_deterministic_story_disposition,
 )
 from woof.graph.git import git, staged_paths
 from woof.graph.manifest import build_story_manifest, verify_staged_manifest
@@ -1507,38 +1508,29 @@ def review_disposition_node(inp: NodeInput) -> NodeOutput:
 
     disposition_path = story_disposition_path(directory, inp.story_id)
     if not disposition_path.exists():
-        proc = _run_dispatch(
-            inp.repo_root,
-            role="primary",
+        write_deterministic_story_disposition(
+            epic_dir=directory,
             epic_id=inp.epic_id,
             story_id=inp.story_id,
-            prompt=_disposition_prompt(inp.epic_id, inp.story_id),
-            artefacts_loaded=_disposition_artefacts(inp.repo_root, inp.epic_id, inp.story_id),
+            critique=critique,
+            timestamp=_now(),
         )
-        if proc.returncode != 0:
-            write_gate_for_trigger(
-                trigger="subprocess_crash",
-                epic_dir=directory,
-                story_id=inp.story_id,
-                exit_code=proc.returncode,
-                schema_path=schema_dir() / "gate.schema.json",
-            )
-            return NodeOutput(
-                node_type=inp.node_type,
-                status=NodeStatus.GATE_OPENED,
-                epic_id=inp.epic_id,
-                story_id=inp.story_id,
-                gate_path=_gate_path(inp.epic_id),
-                triggered_by=["subprocess_crash"],
-                message=proc.stderr.strip(),
-            )
 
     validation = validate_story_disposition(directory, inp.epic_id, inp.story_id)
     if not validation.ok:
-        return _write_disposition_incomplete_gate(
-            inp,
-            "Primary disposition is invalid: " + "; ".join(validation.errors),
+        write_deterministic_story_disposition(
+            epic_dir=directory,
+            epic_id=inp.epic_id,
+            story_id=inp.story_id,
+            critique=critique,
+            timestamp=_now(),
         )
+        validation = validate_story_disposition(directory, inp.epic_id, inp.story_id)
+        if not validation.ok:
+            return _write_disposition_incomplete_gate(
+                inp,
+                "Primary disposition is invalid: " + "; ".join(validation.errors),
+            )
 
     return NodeOutput(
         node_type=inp.node_type,

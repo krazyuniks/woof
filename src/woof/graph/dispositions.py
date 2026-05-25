@@ -47,6 +47,76 @@ def story_disposition_relpath(epic_id: int, story_id: str) -> str:
     return f".woof/epics/E{epic_id}/dispositions/story-{story_id}.md"
 
 
+def render_deterministic_story_disposition(
+    *,
+    epic_id: int,
+    story_id: str,
+    critique: MarkdownFrontMatter,
+    timestamp: str,
+) -> str:
+    """Render a schema-valid disposition for non-blocking reviewer critiques."""
+    severity = critique_severity(critique.front)
+    if severity not in NON_BLOCKING_SEVERITIES:
+        raise ValueError("deterministic dispositions require info or minor severity")
+
+    findings = [
+        finding
+        for finding in critique_findings(critique.front)
+        if str(finding.get("severity", severity)) in NON_BLOCKING_SEVERITIES
+        and isinstance(finding.get("id"), str)
+    ]
+    dispositions = [
+        {
+            "finding_id": str(finding["id"]),
+            "decision": "deferred",
+            "rationale": (
+                "Reviewer marked this finding non-blocking; Woof recorded a deterministic "
+                "disposition and continued to verification without a primary model revision."
+            ),
+        }
+        for finding in findings
+    ]
+    front = {
+        "target": "story",
+        "target_id": story_id,
+        "critique_path": story_critique_relpath(epic_id, story_id),
+        "severity": severity,
+        "timestamp": timestamp,
+        "harness": "woof-deterministic-disposition",
+        "dispositions": dispositions,
+    }
+    body = (
+        "Woof recorded this disposition deterministically because the reviewer critique "
+        f"severity is `{severity}`. Non-blocking findings proceed to verification; blocker "
+        "findings still open a human gate.\n"
+    )
+    return "---\n" + yaml.safe_dump(front, sort_keys=False) + "---\n" + body
+
+
+def write_deterministic_story_disposition(
+    *,
+    epic_dir: Path,
+    epic_id: int,
+    story_id: str,
+    critique: MarkdownFrontMatter,
+    timestamp: str,
+) -> Path:
+    path = story_disposition_path(epic_dir, story_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(
+        render_deterministic_story_disposition(
+            epic_id=epic_id,
+            story_id=story_id,
+            critique=critique,
+            timestamp=timestamp,
+        ),
+        encoding="utf-8",
+    )
+    tmp.replace(path)
+    return path
+
+
 def read_markdown_front_matter(path: Path) -> MarkdownFrontMatter:
     text = path.read_text(encoding="utf-8")
     if not text.startswith("---\n"):

@@ -207,6 +207,8 @@ def test_dry_run_records_repo_relative_artefacts(woof_project: Path) -> None:
         ".woof/epics/E1/EPIC.md",
         ".woof/epics/E1/plan.json",
     ]
+    assert payload["prompt_bytes"] == len(b"do the thing\n")
+    assert payload["artefact_bytes"] == len(b"contract\n") + len(b"{}\n")
 
 
 @pytest.mark.parametrize(
@@ -447,6 +449,38 @@ def test_parse_codex_output() -> None:
         "tokens_out": 130,  # 50 + 20 + 60
         "cache_read_tokens": 30,
     }
+
+
+def test_count_codex_command_executions_counts_completed_items_once() -> None:
+    mod = _import_woof_module()
+    stream = "\n".join(
+        [
+            json.dumps(
+                {
+                    "type": "item.started",
+                    "item": {"id": "item_1", "type": "command_execution"},
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {"id": "item_1", "type": "command_execution"},
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {"id": "item_1", "type": "command_execution"},
+                }
+            ),
+            json.dumps(
+                {"type": "item.completed", "item": {"id": "item_2", "type": "agent_message"}}
+            ),
+            "not json",
+        ]
+    )
+
+    assert mod.count_codex_command_executions(stream) == 1
 
 
 def test_parse_codex_output_no_turns() -> None:
@@ -732,6 +766,10 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
     assert meta["artefacts_loaded"] == [".woof/epics/E7/EPIC.md"]
     assert meta["runtime_policy"] == EXPECTED_TRUSTED_RUNTIME_POLICY
     assert meta["exit_code"] == 0
+    assert meta["prompt_bytes"] == len(b"run the story\n")
+    assert meta["artefact_bytes"] == len(b"contract\n")
+    assert meta["output_bytes"] == len(claude_response.encode()) + 1
+    assert meta["stderr_bytes"] == 0
     assert meta["tokens"] == {
         "tokens_in": 7,
         "tokens_out": 11,
@@ -758,9 +796,15 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
     assert events[0]["prompt_transport"] == "stdin"
     assert events[0]["runtime_policy"] == EXPECTED_TRUSTED_RUNTIME_POLICY
     assert events[0]["artefacts_loaded"] == [".woof/epics/E7/EPIC.md"]
+    assert events[0]["prompt_bytes"] == len(b"run the story\n")
+    assert events[0]["artefact_bytes"] == len(b"contract\n")
     assert events[1]["artefacts_loaded"] == [".woof/epics/E7/EPIC.md"]
     assert events[1]["prompt_transport"] == "stdin"
     assert events[1]["runtime_policy"] == EXPECTED_TRUSTED_RUNTIME_POLICY
+    assert events[1]["prompt_bytes"] == len(b"run the story\n")
+    assert events[1]["artefact_bytes"] == len(b"contract\n")
+    assert events[1]["output_bytes"] == len(claude_response.encode()) + 1
+    assert events[1]["stderr_bytes"] == 0
     assert events[1]["tokens_in"] == 7
     assert events[1]["tokens_out"] == 11
     assert events[1]["cc_session_id"] == "00000000-0000-0000-0000-000000000001"
@@ -775,6 +819,18 @@ def test_end_to_end_codex_records_thread_and_audit_path(woof_project: Path, tmp_
     codex_stream = "\n".join(
         [
             json.dumps({"type": "thread.started", "thread_id": "thr-1"}),
+            json.dumps(
+                {
+                    "type": "item.started",
+                    "item": {"id": "item_1", "type": "command_execution"},
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {"id": "item_1", "type": "command_execution"},
+                }
+            ),
             json.dumps(
                 {
                     "type": "turn.completed",
@@ -823,7 +879,17 @@ def test_end_to_end_codex_records_thread_and_audit_path(woof_project: Path, tmp_
     assert returned["tokens_in"] == 50
     assert returned["tokens_out"] == 7  # 5 + 2 reasoning
     assert returned["cache_read_tokens"] == 10
+    assert returned["prompt_bytes"] == len(b"critique me\n")
+    assert returned["artefact_bytes"] == 0
+    assert returned["output_bytes"] == len(codex_stream.encode()) + 1
+    assert returned["stderr_bytes"] == 0
+    assert returned["command_count"] == 1
     assert returned["codex_audit_path"].startswith(".woof/epics/E9/audit/codex-primary-")
+
+    meta_file = next((woof_project / ".woof" / "epics" / "E9" / "audit").glob("*.meta"))
+    meta = json.loads(meta_file.read_text())
+    assert meta["command_count"] == 1
+    assert meta["prompt_bytes"] == len(b"critique me\n")
 
     validate = subprocess.run([*WOOF_VALIDATE, str(jsonl)], capture_output=True, text=True)
     assert validate.returncode == 0, validate.stdout + validate.stderr

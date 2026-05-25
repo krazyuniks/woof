@@ -142,6 +142,40 @@ def parse_codex_output(stdout: str) -> tuple[dict, str | None]:
     }, thread_id
 
 
+def count_codex_command_executions(stdout: str) -> int:
+    """Count completed shell-command tool calls in ``codex exec --json`` output."""
+    count = 0
+    seen_ids: set[str] = set()
+    for raw in stdout.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            evt = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if evt.get("type") != "item.completed":
+            continue
+        item = evt.get("item")
+        if not isinstance(item, dict) or item.get("type") != "command_execution":
+            continue
+        item_id = item.get("id")
+        if isinstance(item_id, str) and item_id:
+            if item_id in seen_ids:
+                continue
+            seen_ids.add(item_id)
+        count += 1
+    return count
+
+
+def artefacts_byte_count(repo_root: Path, artefacts_loaded: list[str]) -> int:
+    """Return the current byte size of explicitly audited repo artefacts."""
+    total = 0
+    for relpath in artefacts_loaded:
+        total += (repo_root / relpath).stat().st_size
+    return total
+
+
 def _adapter_from_role_config(role_name: str, role: dict[str, Any]) -> str:
     raw = role.get("adapter", role.get("harness"))
     if raw is None:
@@ -513,9 +547,12 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         mcp_names = _mcp_names(route.config)
         argv = build_argv(route.adapter, route.config, prompt, mcp_servers=mcp_servers)
         artefacts_loaded = normalise_artefacts_loaded(repo_root, args.artefacts_loaded)
+        artefact_bytes = artefacts_byte_count(repo_root, artefacts_loaded)
     except DispatchConfigError as exc:
         sys.stderr.write(f"woof: {exc}\n")
         return 2
+
+    prompt_bytes = len(prompt.encode("utf-8"))
 
     if args.dry_run:
         wrapped = ["timeout", f"{timeout_min}m", *argv]
@@ -535,6 +572,8 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
             "flags": route.config.get("flags") or [],
             "timeout_min": timeout_min,
             "artefacts_loaded": artefacts_loaded,
+            "prompt_bytes": prompt_bytes,
+            "artefact_bytes": artefact_bytes,
         }
         if route.adapter == "claude":
             payload["mcp_config"] = _claude_mcp_config(route.config, mcp_servers)
@@ -575,6 +614,8 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         "prompt_transport": "stdin",
         "runtime_policy": trusted_runtime_policy(),
         "artefacts_loaded": artefacts_loaded,
+        "prompt_bytes": prompt_bytes,
+        "artefact_bytes": artefact_bytes,
     }
     if route.config_role != args.role:
         spawned_event["config_role"] = route.config_role
@@ -611,13 +652,17 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     duration_ms = int((ended_at - started_at).total_seconds() * 1000)
     output_file.write_text(stdout, encoding="utf-8")
     stderr_file.write_text(stderr, encoding="utf-8")
+    output_bytes = len(stdout.encode("utf-8"))
+    stderr_bytes = len(stderr.encode("utf-8"))
 
     if route.adapter == "claude":
         tokens, session_id = parse_claude_output(stdout)
         thread_id = None
+        command_count = 0
     else:
         tokens, thread_id = parse_codex_output(stdout)
         session_id = None
+        command_count = count_codex_command_executions(stdout)
 
     timed_out = proc.returncode == 124
     if timed_out:
@@ -648,6 +693,10 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         "prompt_transport": "stdin",
         "runtime_policy": trusted_runtime_policy(),
         "artefacts_loaded": artefacts_loaded,
+        "prompt_bytes": prompt_bytes,
+        "artefact_bytes": artefact_bytes,
+        "output_bytes": output_bytes,
+        "stderr_bytes": stderr_bytes,
     }
     if route.config_role != args.role:
         returned["config_role"] = route.config_role
@@ -664,6 +713,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         returned["claude_transcript_path"] = claude_transcript_path(repo_root, session_id)
     if route.adapter == "codex":
         returned["codex_audit_path"] = str(base.relative_to(repo_root))
+        returned["command_count"] = command_count
     append_jsonl(dispatch_jsonl, returned)
 
     meta = {
@@ -687,10 +737,16 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         "duration_ms": duration_ms,
         "exit_code": proc.returncode,
         "timed_out": timed_out,
+        "prompt_bytes": prompt_bytes,
+        "artefact_bytes": artefact_bytes,
+        "output_bytes": output_bytes,
+        "stderr_bytes": stderr_bytes,
         "tokens": tokens,
     }
     if route.adapter == "claude":
         meta["mcp_config"] = _claude_mcp_config(route.config, mcp_servers)
+    else:
+        meta["command_count"] = command_count
     if session_id:
         meta["cc_session_id"] = session_id
         meta["claude_transcript_path"] = claude_transcript_path(repo_root, session_id)

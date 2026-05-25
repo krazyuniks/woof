@@ -16,7 +16,7 @@ Woof implements the graph-owned path from Stage 1 Discovery through Stage 5 stor
 - Stage 1 Discovery runs four graph producer nodes in order - research, thinking, and brainstorm bucket producers, then synthesis. The bucket nodes dispatch the primary producer to populate `discovery/{research,thinking,brainstorm}/`; synthesis dispatches the primary producer to create or validate `discovery/synthesis/{CONCEPT,PRINCIPLES,ARCHITECTURE,OPEN_QUESTIONS}.md`.
 - Stage 2 Definition dispatches the primary producer to create or validate schema-valid `EPIC.md`.
 - Stage 3 Breakdown dispatches the primary producer to create or validate schema-valid `plan.json`, renders deterministic `PLAN.md`, dispatches the reviewer to create schema-valid `critique/plan.md`, and Stage 4 opens the mandatory `plan_gate` before any story execution.
-- Stage-5 graph nodes dispatch the primary producer with `playbooks/execution/story.md`, dispatch the reviewer, run Stage-5 verification, open gates, and commit through a transaction manifest.
+- Stage-5 graph nodes dispatch the primary producer with `playbooks/execution/story.md`, dispatch the reviewer, write deterministic non-blocking review dispositions, run Stage-5 verification, open gates, and commit through a transaction manifest.
 - `playbooks/` prompts are producer or reviewer node prompts. They do not own successor selection, critique dispatch, gate writing, or commits.
 - Local prompt wrappers, when present, are development conveniences and are not part of the consumer contract.
 - ADR-002 defines the role-routing policy: the graph orchestrates; the default scaffolded primary route uses Codex; the default scaffolded reviewer route uses Claude with explicit effort.
@@ -143,7 +143,7 @@ timestamp: <ISO 8601>
 
 1. **Primary model builds** the artefact against a typed schema.
 2. **Reviewer model is dispatched** with the artefact and source inputs, then writes a critique document.
-3. **Primary model records a disposition** for `info` / `minor` findings and updates the artefact when it accepts the feedback.
+3. **The graph records a deterministic disposition** for `info` / `minor` findings. It does not spend another model turn to restate non-blocking reviewer feedback.
 4. **Human gate opens** for plan gates and reviewer `blocker` findings, with both positions surfaced.
 5. **Graph continues** after gate resolution or after non-blocking reviewer disposition. The models never negotiate successor state.
 
@@ -152,7 +152,7 @@ timestamp: <ISO 8601>
 Two complementary advisory layers, both surfaced via conversational gates (principle #2):
 
 - **Structural validation** - deterministic checks against typed artefact schemas (JSON Schema). Fast, mechanical. Produces structured findings.
-- **Cross-AI critique** - multi-provider critique. The reviewer writes the critique document at `.woof/epics/E<N>/critique/<artefact>.md`. The primary model records the disposition for non-blocking findings; blocker findings open a human gate.
+- **Cross-AI critique** - multi-provider critique. The reviewer writes the critique document at `.woof/epics/E<N>/critique/<artefact>.md`. The graph records a covering deterministic disposition for non-blocking story findings; blocker findings open a human gate.
 
 Neither auto-rejects. Neither runs in a loop. Both produce findings and positions for the human to engage with when a gate opens.
 
@@ -176,7 +176,7 @@ JSONL event logs (`epic.jsonl`, `dispatch.jsonl`) enable crash-resume and post-h
   exclusion. It does not provide a retention or archive policy; `woof observe
   --epic <N> --view audit` reports that boundary explicitly.
 
-**Token usage logging.** Subprocess dispatch records token usage; the Python graph itself does not spend tokens. Every `subprocess_returned` event includes `tokens_in`, `tokens_out`, `cache_read_tokens`, `cache_write_tokens`, `duration_ms`, and `artefacts_loaded[]` when the adapter can determine them. `artefacts_loaded[]` contains explicit repo-relative artefact references that the graph or operator loaded into the dispatched prompt payload; absolute paths, home-relative paths, and parent traversal are rejected. `woof observe --epic <N> --view audit` and `--view timeline` aggregate token and cost fields only when those fields are present in dispatch events; they do not estimate missing usage or provider cost. Graph transitions are deterministic Python and do not consume tokens.
+**Dispatch telemetry logging.** Subprocess dispatch records token usage and deterministic size counters; the Python graph itself does not spend tokens. Every `subprocess_returned` event includes `duration_ms`, `artefacts_loaded[]`, `prompt_bytes`, `artefact_bytes`, `output_bytes`, and `stderr_bytes`. It includes `tokens_in`, `tokens_out`, `cache_read_tokens`, and `cache_write_tokens` when the adapter can determine them. Codex dispatches also include `command_count`, the number of completed `command_execution` tool calls observed in `codex exec --json` output. `artefacts_loaded[]` contains explicit repo-relative artefact references that the graph or operator loaded into the dispatched prompt payload; absolute paths, home-relative paths, and parent traversal are rejected. `woof observe --epic <N> --view status`, `--view audit`, and `--view timeline` aggregate token, cost, byte, and command-count fields only when those fields are present in dispatch events; they do not estimate missing usage or provider cost. Graph transitions are deterministic Python and do not consume tokens.
 
 **Dispatch adapter layer.** Subprocesses are spawned via graph-owned role dispatch, not via private wrappers or shell aliases. The internal primitive is `woof dispatch --role <role-name>`; the role route, not a provider target, selects the public CLI adapter. The adapter reads `.woof/agents.toml`, constructs the raw `claude` or `codex` invocation, generates any required MCP JSON, and emits dispatch events. Dispatch dry-run output, dispatch events, `woof preflight`, and `woof observe --view status` include `runtime_policy.mode = "trusted-local"` plus the resolved primary/reviewer adapter, model, effort, MCP set, and timeout so operators and audit readers can see that Woof is not constraining runtime read/write/execute/network/MCP access. This boundary stops CLI interface drift from breaking graph call sites.
 
@@ -493,7 +493,7 @@ Registry completeness is part of Stage-5 verification. A registered runner that 
 1. The Python graph reads `plan.json` and selects the next dependency-ready `pending` story.
 2. `executor_dispatch` marks the story `in_progress` and dispatches the `primary` producer prompt. The producer writes `executor_result.json` only.
 3. `critique_dispatch` dispatches the `reviewer` and expects `critique/story-S<k>.md`.
-4. `review_disposition` opens a story gate immediately for reviewer `blocker` severity; for `info` or `minor`, it dispatches the `primary` to write `dispositions/story-S<k>.md`. If a human approves a corrected blocker gate, the stale blocker critique is invalidated and reviewer critique is re-run before verification.
+4. `review_disposition` opens a story gate immediately for reviewer `blocker` severity; for `info` or `minor`, it writes `dispositions/story-S<k>.md` deterministically and repairs malformed non-blocking dispositions before verification. If a human approves a corrected blocker gate, the stale blocker critique is invalidated and reviewer critique is re-run before verification.
 5. `verification` runs `woof check stage-5 --epic <N> --story <S<k>> --format json` and writes `check-result.json`.
 6. `gate_open` writes `gate.md` if the primary result, subprocess result, verifier result, or an incomplete Stage-5 handoff state requires human review.
 7. `commit` computes the transaction manifest from the current story paths plus changed durable/audit `.woof` artefacts, stages the exact expected file set, verifies the index, appends graph events, records `epic_completed` before the final story commit when that story completes the plan, commits with `executor_result.commit_subject` when supplied, and removes transient `executor_result.json` / `check-result.json`.
@@ -798,7 +798,7 @@ Roles in the Woof pipeline are configurable per-project via `.woof/agents.toml`.
 | Role | Invoked for | Preferred route | Configurable |
 |---|---|---|---|
 | Orchestrator | Graph-owned workflow execution | Python graph behind `woof wf` | No |
-| Primary | Plans, story execution, non-blocking reviewer dispositions | `codex`, `gpt-5.5`, `xhigh` reasoning | Yes |
+| Primary | Discovery artefacts, definitions, plans, and story execution | `codex`, `gpt-5.5`, `xhigh` reasoning | Yes |
 | Reviewer | Plan and story critique, blocker detection, second opinion | `claude`, `claude-opus-4-7`, `max` effort | Yes |
 | Gate-resolver | Surfacing open gates and recording human decisions | In-session operator | No |
 
@@ -856,7 +856,7 @@ adapter = "in-session"
 
 - Dispatch must record a stable harness session reference or an audit-file path for every subprocess.
 - Role-specific model and effort settings must be declared through `.woof/agents.toml`. Command-specific flag details stay inside the dispatch adapter.
-- Reviewer `info` and `minor` findings require a primary disposition. Reviewer `blocker` findings open a human gate; no automatic debate loop is allowed.
+- Reviewer `info` and `minor` findings require a graph-owned deterministic disposition. Reviewer `blocker` findings open a human gate; no automatic debate loop is allowed.
 
 ### User surface
 

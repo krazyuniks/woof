@@ -151,7 +151,7 @@
         "pydantic_ref": {
           "type": "string",
           "minLength": 1,
-          "description": "Module-and-class reference to a Pydantic model. Example: 'webapp/schemas/comment.py:CommentCreate'. Stage 5 Check 4 imports the target and verifies it is a pydantic.BaseModel subclass."
+        "description": "Module-and-class reference to a Pydantic model. Example: 'webapp/schemas/comment.py:CommentCreate'. Stage 5 Check 4 imports the target and verifies it is a pydantic.BaseModel subclass. For file-based refs whose project-only imports are unavailable in Woof's tool environment, Check 4 falls back to static source inspection for BaseModel/BaseSettings inheritance."
         },
         "json_schema_ref": {
           "type": "string",

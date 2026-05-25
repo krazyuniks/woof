@@ -22,3 +22,7 @@ Read the declared synthesis directory and produce only `EPIC.md` at the declared
 - `resolved_open_questions` object entries for discovery questions resolved during Definition, each with `id` and `resolution`
 
 The prose body may add context for a human reader, but the front matter is the contract. Do not run `woof wf`, `woof dispatch`, checks, gates, commits, breakdown planning, or reviewer work. The graph validates the file and selects the next node.
+
+YAML safety rule: quote front-matter strings that contain Markdown syntax,
+backticks, colons, brackets, hashes, or leading punctuation. If unsure, quote every string value in front matter. Do not start an unquoted scalar with a
+backtick or other YAML-significant character.

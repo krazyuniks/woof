@@ -205,6 +205,56 @@ def test_broken_pydantic_ref_not_basemodel_fails(fixture_copy: Path) -> None:
     assert "BaseModel" in cd2["detail"]
 
 
+def test_file_pydantic_ref_static_fallback_when_project_dependency_missing(tmp_path: Path) -> None:
+    """File refs should not require project-only imports inside Woof's tool venv."""
+
+    source = tmp_path / "src" / "specwright" / "config.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "from pathlib import Path\n"
+        "from pydantic_settings import BaseSettings, SettingsConfigDict\n\n"
+        "class Settings(BaseSettings):\n"
+        "    model_config = SettingsConfigDict(env_prefix='SPECWRIGHT_')\n"
+        "    workspace_dir: Path = Path('workspace')\n"
+        "    examples_dir: Path = Path('examples')\n",
+        encoding="utf-8",
+    )
+    epic = tmp_path / "EPIC.md"
+    epic.write_text(
+        "---\n"
+        "epic_id: 1\n"
+        "title: Doctor\n"
+        "observable_outcomes:\n"
+        "  - id: O1\n"
+        "    statement: Doctor reports settings.\n"
+        "    verification: automated\n"
+        "contract_decisions:\n"
+        "  - id: CD1\n"
+        "    related_outcomes: [O1]\n"
+        "    title: Settings shape\n"
+        "    pydantic_ref: src/specwright/config.py:Settings\n"
+        "acceptance_criteria:\n"
+        "  - Contract refs resolve.\n"
+        "---\n"
+        "Doctor command.\n",
+        encoding="utf-8",
+    )
+
+    proc = subprocess.run(
+        [str(WOOF_BIN), "check-cd", "--format", "json", str(epic)],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+    )
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    payload = json.loads(proc.stdout)
+    cd1 = next(f for f in payload["findings"] if f["id"] == "CD1")
+    assert cd1["ok"] is True
+    assert "static source check" in cd1["detail"]
+    assert "BaseSettings" in cd1["detail"]
+
+
 def test_broken_json_schema_ref_file_missing_fails(fixture_copy: Path) -> None:
     epic = fixture_copy / "EPIC.md"
     _localise_refs(epic)

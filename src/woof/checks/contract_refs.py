@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import importlib
 import importlib.util
 import json
@@ -18,6 +19,7 @@ import yaml
 from woof.paths import schema_dir
 
 HTTP_METHODS = {"delete", "get", "head", "options", "patch", "post", "put", "trace"}
+PYDANTIC_BASE_NAMES = {"BaseModel", "BaseSettings"}
 
 
 @dataclass(frozen=True)
@@ -293,7 +295,7 @@ def _check_pydantic_ref(repo_root: Path, ref: str) -> tuple[bool, str]:
         try:
             loader.exec_module(module)
         except Exception as exc:
-            return False, f"failed to import {locator}: {exc}"
+            return _check_pydantic_source_static(path, class_name, import_error=str(exc))
     else:
         try:
             module = importlib.import_module(locator)
@@ -309,6 +311,82 @@ def _check_pydantic_ref(repo_root: Path, ref: str) -> tuple[bool, str]:
     except TypeError:
         return False, f"'{class_name}' is not a class"
     return True, f"BaseModel subclass with {len(cls.model_fields)} field(s)"
+
+
+def _check_pydantic_source_static(
+    path: Path,
+    class_name: str,
+    *,
+    import_error: str,
+) -> tuple[bool, str]:
+    """Fallback for file refs whose project dependencies are outside Woof's venv."""
+
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    except SyntaxError as exc:
+        return False, f"failed to import {path}: {import_error}; source parse failed: {exc}"
+
+    aliases = _pydantic_base_aliases(tree)
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and node.name == class_name:
+            base = _matching_pydantic_base(node, aliases)
+            if base is None:
+                return False, f"'{class_name}' is not a pydantic.BaseModel subclass"
+            field_count = _annotated_field_count(node)
+            return (
+                True,
+                f"static source check found {class_name} subclassing {base} "
+                f"with {field_count} annotated field(s); import skipped because {import_error}",
+            )
+    return False, f"class '{class_name}' not found in {path}"
+
+
+def _pydantic_base_aliases(tree: ast.Module) -> dict[str, str]:
+    aliases: dict[str, str] = {}
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom) and node.module in {"pydantic", "pydantic_settings"}:
+            for alias in node.names:
+                if alias.name in PYDANTIC_BASE_NAMES:
+                    aliases[alias.asname or alias.name] = alias.name
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name in {"pydantic", "pydantic_settings"}:
+                    aliases[alias.asname or alias.name] = alias.name
+    return aliases
+
+
+def _matching_pydantic_base(node: ast.ClassDef, aliases: dict[str, str]) -> str | None:
+    for base in node.bases:
+        name = _base_name(base)
+        if name is None:
+            continue
+        if name in aliases and aliases[name] in PYDANTIC_BASE_NAMES:
+            return aliases[name]
+        qualifier, _, attr = name.rpartition(".")
+        if attr in PYDANTIC_BASE_NAMES and qualifier in aliases:
+            return attr
+    return None
+
+
+def _base_name(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        parent = _base_name(node.value)
+        return f"{parent}.{node.attr}" if parent else node.attr
+    return None
+
+
+def _annotated_field_count(node: ast.ClassDef) -> int:
+    count = 0
+    for statement in node.body:
+        if (
+            isinstance(statement, ast.AnnAssign)
+            and isinstance(statement.target, ast.Name)
+            and not statement.target.id.startswith("_")
+        ):
+            count += 1
+    return count
 
 
 def _check_json_schema_ref(repo_root: Path, ref: str) -> tuple[bool, str]:

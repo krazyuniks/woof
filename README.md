@@ -29,13 +29,13 @@ runs lint, tests, and package build on pushes to `main` and on pull requests.
 Install the current release as a standalone tool:
 
 ```bash
-uv tool install git+https://github.com/krazyuniks/woof@v0.1.5
+uv tool install git+https://github.com/krazyuniks/woof@v0.1.6
 ```
 
 Or install it into an existing Python environment:
 
 ```bash
-pip install git+https://github.com/krazyuniks/woof@v0.1.5
+pip install git+https://github.com/krazyuniks/woof@v0.1.6
 ```
 
 Confirm the command is available:

@@ -44,3 +44,11 @@ def test_schema_descriptions_match_implemented_operator_workflow() -> None:
     assert "just wf-preflight" not in rendered
     assert "schemathesis or equivalent" not in rendered
     assert "gh issue number" not in rendered
+
+
+def test_definition_playbook_warns_about_yaml_string_quoting() -> None:
+    text = (REPO_ROOT / "playbooks" / "discovery" / "definition.md").read_text(encoding="utf-8")
+
+    assert "YAML safety rule" in text
+    assert "backtick" in text
+    assert "quote every string value" in text

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.6 - 2026-05-25
+
+- Added a static source fallback for file-based `pydantic_ref` contract checks
+  when the referenced consumer module imports project dependencies that are not
+  installed in Woof's tool environment.
+- Tightened the Definition playbook's YAML front-matter guidance so generated
+  `EPIC.md` strings with Markdown punctuation are quoted safely.
+
 ## 0.1.5 - 2026-05-24
 
 - Preserved successful Stage 5 check results when resolving commit-transaction

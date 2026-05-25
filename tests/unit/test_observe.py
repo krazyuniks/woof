@@ -130,6 +130,11 @@ No separate reviewer position was available.
                 "tokens_out": 25,
                 "cache_read_tokens": 10,
                 "cost_usd": 0.031,
+                "prompt_bytes": 1200,
+                "artefact_bytes": 200,
+                "output_bytes": 3000,
+                "stderr_bytes": 40,
+                "command_count": 7,
             }
         )
     (epic_dir / "dispatch.jsonl").write_text(
@@ -301,6 +306,17 @@ def test_observe_all_json_reports_status_gate_timeline_and_audit(tmp_path: Path)
         "cost_events": 1,
         "cost": {"cost_usd": 0.031},
     }
+    assert payload["audit"]["telemetry"] == {
+        "events": 1,
+        "totals": {
+            "prompt_bytes": 1200,
+            "artefact_bytes": 200,
+            "output_bytes": 3000,
+            "stderr_bytes": 40,
+            "command_count": 7,
+        },
+    }
+    assert payload["status"]["telemetry"] == payload["audit"]["telemetry"]
     returned = payload["audit"]["dispatch"]["returned_events"]
     assert returned[0]["tokens"] == {
         "tokens_in": 100,
@@ -308,6 +324,8 @@ def test_observe_all_json_reports_status_gate_timeline_and_audit(tmp_path: Path)
         "cache_read_tokens": 10,
     }
     assert returned[0]["cost"] == {"cost_usd": 0.031}
+    assert returned[0]["prompt_bytes"] == 1200
+    assert returned[0]["command_count"] == 7
     assert "tokens" not in returned[1]
     assert "cost" not in returned[1]
 
@@ -327,6 +345,7 @@ def test_observe_does_not_invent_usage_when_dispatch_events_do_not_report_it(
         "cost_events": 0,
         "cost": {},
     }
+    assert payload["telemetry"] == {"events": 0, "totals": {}}
     assert "tokens" not in payload["dispatch"]["returned_events"][0]
     assert "cost" not in payload["dispatch"]["returned_events"][0]
 
@@ -341,6 +360,7 @@ def test_observe_audit_text_reports_raw_overflow_and_no_archive(tmp_path: Path) 
     assert "retention_archive: not implemented" in proc.stdout
     assert "tokens: unavailable" in proc.stdout
     assert "cost: unavailable" in proc.stdout
+    assert "telemetry: unavailable" in proc.stdout
 
 
 def test_observe_status_text_reports_operator_state(tmp_path: Path) -> None:

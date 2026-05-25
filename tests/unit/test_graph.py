@@ -232,6 +232,11 @@ def _read_gate_fm(gate_path: Path) -> dict:
     return yaml.safe_load(text[4 : text.find("\n---\n", 4)])
 
 
+def _read_yaml_front_matter(path: Path) -> dict:
+    text = path.read_text()
+    return yaml.safe_load(text[4 : text.find("\n---\n", 4)])
+
+
 def _assert_node_output_schema(tmp_path: Path, payload: dict) -> None:
     path = tmp_path / "node-output.json"
     path.write_text(json.dumps(payload))
@@ -1461,7 +1466,7 @@ def test_critique_dispatch_failure_opens_reviewer_gate(tmp_path: Path, monkeypat
     assert gate_fm["triggered_by"] == ["reviewer_unreachable"]
 
 
-def test_review_disposition_dispatches_primary_for_non_blocking_critique(
+def test_review_disposition_writes_deterministic_non_blocking_disposition(
     tmp_path: Path, monkeypatch
 ) -> None:
     directory = _write_plan(tmp_path, 1)
@@ -1486,40 +1491,10 @@ def test_review_disposition_dispatches_primary_for_non_blocking_critique(
         "findings:\n  - id: F1\n    severity: minor\n    summary: needs note\n---\n"
     )
 
-    def fake_dispatch(
-        repo_root: Path,
-        role: str,
-        epic_id: int,
-        story_id: str | None,
-        prompt: str,
-        artefacts_loaded: list[str] | None = None,
-    ) -> subprocess.CompletedProcess[str]:
-        assert repo_root == tmp_path
-        assert role == "primary"
-        assert epic_id == 1
-        assert story_id == "S1"
-        assert "dispositions/story-S1.md" in prompt
-        assert artefacts_loaded == [
-            ".woof/epics/E1/EPIC.md",
-            ".woof/epics/E1/plan.json",
-            ".woof/epics/E1/critique/story-S1.md",
-        ]
-        disposition_dir = directory / "dispositions"
-        disposition_dir.mkdir()
-        (disposition_dir / "story-S1.md").write_text(
-            "---\ntarget: story\ntarget_id: S1\n"
-            "critique_path: .woof/epics/E1/critique/story-S1.md\n"
-            "severity: minor\n"
-            "timestamp: '2026-01-01T00:00:00Z'\nharness: test-primary\n"
-            "dispositions:\n"
-            "  - finding_id: F1\n"
-            "    decision: accepted\n"
-            "    rationale: Added a note.\n"
-            "---\n"
-        )
-        return subprocess.CompletedProcess([], 0, "", "")
+    def fail_dispatch(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise AssertionError("non-blocking dispositions should be graph-owned")
 
-    monkeypatch.setattr(nodes, "_run_dispatch", fake_dispatch)
+    monkeypatch.setattr(nodes, "_run_dispatch", fail_dispatch)
 
     assert next_node(tmp_path, 1) == (NodeType.REVIEW_DISPOSITION, "S1")
     output = nodes.review_disposition_node(
@@ -1534,6 +1509,76 @@ def test_review_disposition_dispatches_primary_for_non_blocking_critique(
     assert output.status == NodeStatus.COMPLETED
     assert output.next_node == NodeType.VERIFICATION
     assert output.paths == [".woof/epics/E1/dispositions/story-S1.md"]
+    disposition = _read_yaml_front_matter(directory / "dispositions" / "story-S1.md")
+    assert disposition["timestamp"]
+    assert disposition["harness"] == "woof-deterministic-disposition"
+    assert disposition["severity"] == "minor"
+    assert disposition["dispositions"] == [
+        {
+            "finding_id": "F1",
+            "decision": "deferred",
+            "rationale": (
+                "Reviewer marked this finding non-blocking; Woof recorded a deterministic "
+                "disposition and continued to verification without a primary model revision."
+            ),
+        }
+    ]
+
+
+def test_review_disposition_repairs_invalid_non_blocking_timestamp(
+    tmp_path: Path, monkeypatch
+) -> None:
+    directory = _write_plan(tmp_path, 1)
+    mark_story_status(tmp_path, 1, "S1", "in_progress")
+    (directory / "executor_result.json").write_text(
+        json.dumps(
+            {
+                "epic_id": 1,
+                "story_id": "S1",
+                "outcome": "staged_for_verification",
+                "commit_body": "done",
+                "position": None,
+            }
+        )
+    )
+    critique_dir = directory / "critique"
+    critique_dir.mkdir()
+    (critique_dir / "story-S1.md").write_text(
+        "---\ntarget: story\ntarget_id: S1\nseverity: info\n"
+        "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\nfindings: []\n---\n"
+    )
+    disposition_dir = directory / "dispositions"
+    disposition_dir.mkdir()
+    (disposition_dir / "story-S1.md").write_text(
+        "---\ntarget: story\ntarget_id: S1\n"
+        "critique_path: .woof/epics/E1/critique/story-S1.md\n"
+        "severity: info\n"
+        "timestamp: ''\n"
+        "harness: test-primary\n"
+        "dispositions: []\n"
+        "---\n"
+    )
+
+    def fail_dispatch(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise AssertionError("invalid non-blocking dispositions should be repaired")
+
+    monkeypatch.setattr(nodes, "_run_dispatch", fail_dispatch)
+
+    assert next_node(tmp_path, 1) == (NodeType.REVIEW_DISPOSITION, "S1")
+    output = nodes.review_disposition_node(
+        NodeInput(
+            node_type=NodeType.REVIEW_DISPOSITION,
+            epic_id=1,
+            story_id="S1",
+            repo_root=tmp_path,
+        )
+    )
+
+    assert output.status == NodeStatus.COMPLETED
+    assert output.next_node == NodeType.VERIFICATION
+    disposition = _read_yaml_front_matter(disposition_dir / "story-S1.md")
+    assert disposition["timestamp"]
+    assert disposition["harness"] == "woof-deterministic-disposition"
 
 
 def test_reviewer_blocker_opens_gate_without_primary_debate(tmp_path: Path, monkeypatch) -> None:

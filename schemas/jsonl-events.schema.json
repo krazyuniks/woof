@@ -228,6 +228,31 @@
       "uniqueItems": true,
       "description": "Repo-relative artefact references explicitly loaded or embedded into the dispatched prompt. Useful for audit reconstruction and token-budget post-mortems."
     },
+    "prompt_bytes": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "UTF-8 byte count of the prompt sent to the dispatch adapter."
+    },
+    "artefact_bytes": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total byte count of repo-relative artefacts listed in artefacts_loaded at dispatch time."
+    },
+    "output_bytes": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "UTF-8 byte count of captured subprocess stdout."
+    },
+    "stderr_bytes": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "UTF-8 byte count of captured subprocess stderr."
+    },
+    "command_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Completed Codex command_execution tool calls observed in codex exec --json output."
+    },
     "runtime_policy": {
       "type": "object",
       "additionalProperties": false,

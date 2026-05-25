@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Added dispatch telemetry for prompt bytes, explicit artefact bytes, captured
+  stdout/stderr bytes, and Codex command counts, surfaced through `woof observe`.
+- Made non-blocking story dispositions deterministic so `info` and `minor`
+  critiques no longer spawn a primary disposition subprocess and malformed
+  non-blocking dispositions are repaired before verification.
+
 ## 0.1.6 - 2026-05-25
 
 - Added a static source fallback for file-based `pydantic_ref` contract checks

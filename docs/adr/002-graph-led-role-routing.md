@@ -22,16 +22,17 @@ Roles are semantic:
 
 | Role | Responsibility | Default scaffolded route |
 |---|---|---|
-| `primary` | Produce discovery artefacts, definitions, plans, story diffs, dispositions, and other graph-declared outputs. | `codex` CLI, `gpt-5.5`, `xhigh` reasoning |
+| `primary` | Produce discovery artefacts, definitions, plans, story diffs, and other graph-declared outputs. | `codex` CLI, `gpt-5.5`, `xhigh` reasoning |
 | `reviewer` | Critique plans and story outputs; classify findings as `info`, `minor`, or `blocker`. | `claude` CLI, `claude-opus-4-7`, `max` effort |
 | `gate-resolver` | Surface open gates and record structured human decisions. | In-session human/operator |
 
-The graph continues after reviewer `info` or `minor` findings. For `minor`
-findings, the primary records a disposition: accepted, rejected, or deferred
-with concise reasoning. Reviewer `blocker` findings open a human gate. There is
-no model-to-model debate loop. If the human fixes the story output and approves
-the gate, the graph invalidates the stale blocker critique and re-runs reviewer
-critique against the corrected staged diff before verification.
+The graph continues after reviewer `info` or `minor` findings. For non-blocking
+story findings, the graph records a deterministic covering disposition rather
+than dispatching another primary model turn. Reviewer `blocker` findings open a
+human gate. There is no model-to-model debate loop. If the human fixes the story
+output and approves the gate, the graph invalidates the stale blocker critique
+and re-runs reviewer critique against the corrected staged diff before
+verification.
 
 Woof owns public command construction. Role routes are declared in
 `.woof/agents.toml`; dispatch records the resolved command, adapter, model,

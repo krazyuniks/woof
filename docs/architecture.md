@@ -178,7 +178,7 @@ JSONL event logs (`epic.jsonl`, `dispatch.jsonl`) enable crash-resume and post-h
 
 **Dispatch telemetry logging.** Subprocess dispatch records token usage and deterministic size counters; the Python graph itself does not spend tokens. Every `subprocess_returned` event includes `duration_ms`, `artefacts_loaded[]`, `prompt_bytes`, `artefact_bytes`, `output_bytes`, and `stderr_bytes`. It includes `tokens_in`, `tokens_out`, `cache_read_tokens`, and `cache_write_tokens` when the adapter can determine them. Codex dispatches also include `command_count`, the number of completed `command_execution` tool calls observed in `codex exec --json` output. `artefacts_loaded[]` contains explicit repo-relative artefact references that the graph or operator loaded into the dispatched prompt payload; absolute paths, home-relative paths, and parent traversal are rejected. `woof observe --epic <N> --view status`, `--view audit`, and `--view timeline` aggregate token, cost, byte, and command-count fields only when those fields are present in dispatch events; they do not estimate missing usage or provider cost. Graph transitions are deterministic Python and do not consume tokens.
 
-**Dispatch adapter layer.** Subprocesses are spawned via graph-owned role dispatch, not via private wrappers or shell aliases. The internal primitive is `woof dispatch --role <role-name>`; the role route, not a provider target, selects the public CLI adapter. The adapter reads `.woof/agents.toml`, constructs the raw `claude` or `codex` invocation, generates any required MCP JSON, and emits dispatch events. Dispatch dry-run output, dispatch events, `woof preflight`, and `woof observe --view status` include `runtime_policy.mode = "trusted-local"` plus the resolved primary/reviewer adapter, model, effort, MCP set, and timeout so operators and audit readers can see that Woof is not constraining runtime read/write/execute/network/MCP access. This boundary stops CLI interface drift from breaking graph call sites.
+**Dispatch adapter layer.** Subprocesses are spawned via graph-owned role dispatch, not via private wrappers or shell aliases. The internal primitive is `woof dispatch --role <role-name>`; the role route, not a provider target, selects the public CLI adapter. The adapter reads `.woof/agents.toml`, applies the selected model profile when one is configured, constructs the raw `claude` or `codex` invocation, generates any required MCP JSON, and emits dispatch events. Dispatch dry-run output, dispatch events, `woof preflight`, and `woof observe --view status` include `runtime_policy.mode = "trusted-local"` plus the resolved primary/reviewer adapter, model, effort, selected profile, MCP set, and timeout so operators and audit readers can see that Woof is not constraining runtime read/write/execute/network/MCP access. This boundary stops CLI interface drift from breaking graph call sites.
 
 ### Consumer checkout boundary
 
@@ -793,7 +793,7 @@ Required `.gitignore` entries (consumer adds at first setup):
 
 ### Agent role configuration
 
-Roles in the Woof pipeline are configurable per-project via `.woof/agents.toml`. ADR-002 makes these roles semantic rather than provider-owned. Each dispatchable role declares the public CLI adapter, model, effort, MCP set, and pass-through flags. Woof constructs the full invocation dynamically - no hard-coded model IDs and no private shell aliases in graph code.
+Roles in the Woof pipeline are configurable per-project via `.woof/agents.toml`. ADR-002 makes these roles semantic rather than provider-owned. Each dispatchable role declares the public CLI adapter, MCP set, and pass-through flags. Model and effort values may live directly on the role for legacy/simple configs, or in named `model_profiles` selected by top-level `model_profile` or the `WOOF_MODEL_PROFILE` environment variable. Woof constructs the full invocation dynamically - no hard-coded model IDs and no private shell aliases in graph code.
 
 | Role | Invoked for | Preferred route | Configurable |
 |---|---|---|---|
@@ -809,23 +809,35 @@ Roles in the Woof pipeline are configurable per-project via `.woof/agents.toml`.
 # agents, restrict writable paths, allow-list commands, block network access, or
 # add MCP restrictions; commit-safety checks and gates guard what lands.
 
+model_profile = "default"
+
 # adapter: claude | codex
-# model: adapter-specific ID, passed through to underlying CLI or inherited
-# effort: low | medium | high | xhigh | max; max is Claude-only
 # mcp: array of Claude MCP server names; empty = no MCPs.
 # flags: arbitrary additional pass-through args after adapter-owned options
+# model profile role fields: model, effort, optional adapter/mcp/flags overrides
 
 [roles.primary]
 adapter = "codex"
-model = "gpt-5.5"
-effort = "xhigh"
-mcp = []
 
 [roles.reviewer]
 adapter = "claude"
+mcp = []
+
+[model_profiles.default.roles.primary]
+model = "gpt-5.5"
+effort = "xhigh"
+
+[model_profiles.default.roles.reviewer]
 model = "claude-opus-4-7"
 effort = "max"
-mcp = []
+
+[model_profiles.smoke.roles.primary]
+model = "<replace-codex-model>"
+effort = "low"
+
+[model_profiles.smoke.roles.reviewer]
+model = "<replace-claude-model>"
+effort = "low"
 
 [mcp_servers.chrome-devtools]
 command = "npx"
@@ -843,6 +855,8 @@ adapter = "in-session"
 
 **Effort settings.** Effort is part of the route, not hidden prompt prose. Woof maps role effort to the public CLI's per-invocation mechanism. For Claude Code, that is `claude --effort <level>`; the reviewer route uses `--effort max`. For Codex, Woof passes `-c model_reasoning_effort="<level>"`; the preferred primary route uses `xhigh`.
 
+**Model profiles.** The selected profile overlays `[roles.<name>]` after semantic role resolution. `WOOF_MODEL_PROFILE=smoke woof dispatch --role primary ...` uses `[model_profiles.smoke.roles.primary]` without changing prompts or graph code. Dispatch dry-run output, `dispatch.jsonl`, `woof observe`, `woof preflight`, and efficiency benchmark manifests include the selected `model_profile` and `profile_role` when a profile supplied route fields.
+
 **Adapter guarantees relied on:**
 
 - Woof passes `--strict-mcp-config --mcp-config '<json>'` to Claude and generates the JSON itself. Empty MCP means `{"mcpServers":{}}`.
@@ -855,7 +869,7 @@ adapter = "in-session"
 **Implementation constraints:**
 
 - Dispatch must record a stable harness session reference or an audit-file path for every subprocess.
-- Role-specific model and effort settings must be declared through `.woof/agents.toml`. Command-specific flag details stay inside the dispatch adapter.
+- Role-specific model and effort settings must be declared directly in `.woof/agents.toml` routes or in named `.woof/agents.toml` model profiles. Command-specific flag details stay inside the dispatch adapter.
 - Reviewer `info` and `minor` findings require a graph-owned deterministic disposition. Reviewer `blocker` findings open a human gate; no automatic debate loop is allowed.
 
 ### User surface

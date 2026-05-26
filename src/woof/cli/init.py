@@ -68,22 +68,20 @@ def _prerequisites_template(tracker_kind: str) -> str:
 
 
 AGENTS_TEMPLATE = """\
-# Woof role routes. ADR-002: GPT-5.5 is the preferred primary route; Claude
-# Opus 4.7 at `max` effort is the preferred reviewer route. Reviewer blockers
-# open human gates; do not add model-to-model debate loops.
+# Woof role routes. ADR-002: primary/reviewer are semantic routes. Model
+# choices live in model profiles so evals and local runs can switch them without
+# changing prompt text or graph orchestration.
 # Runtime model: trusted-local automation. Woof does not sandbox dispatched
 # agents, restrict writable paths, allow-list commands, block network access, or
 # add MCP restrictions; commit-safety checks and gates guard what lands.
 
+model_profile = "default"
+
 [roles.primary]
 adapter = "codex"
-model = "gpt-5.5"
-effort = "xhigh"
 
 [roles.reviewer]
 adapter = "claude"
-model = "claude-opus-4-7"
-effort = "max"
 mcp = []
 
 [roles.orchestrator]
@@ -91,6 +89,14 @@ adapter = "in-session"
 
 [roles.gate-resolver]
 adapter = "in-session"
+
+[model_profiles.default.roles.primary]
+model = "gpt-5.5"
+effort = "xhigh"
+
+[model_profiles.default.roles.reviewer]
+model = "claude-opus-4-7"
+effort = "max"
 
 [timeouts]
 default_minutes = 30

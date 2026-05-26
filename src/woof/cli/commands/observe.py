@@ -17,7 +17,8 @@ from woof.cli.dispatcher import (
     _mcp_names,
     _role_effort,
     build_argv,
-    resolve_role_route,
+    resolve_agent_route,
+    selected_model_profile,
     trusted_runtime_policy,
 )
 from woof.graph.dispositions import (
@@ -420,6 +421,7 @@ def _dispatch_routes_summary(repo_root: Path) -> dict[str, Any]:
         "exists": agents_path.is_file(),
         "roles": {},
         "timeout_min": None,
+        "model_profile": None,
     }
     if not agents_path.is_file():
         summary["error"] = f"{_display_path(repo_root, agents_path)} not found"
@@ -445,6 +447,7 @@ def _dispatch_routes_summary(repo_root: Path) -> dict[str, Any]:
     except (TypeError, ValueError):
         timeout_error = "timeouts.default_minutes must be an integer"
     summary["timeout_min"] = timeout_min
+    summary["model_profile"] = selected_model_profile(loaded)
     roles = loaded.get("roles") or {}
     if not isinstance(roles, dict):
         summary["error"] = "roles table is not an object"
@@ -461,7 +464,7 @@ def _dispatch_routes_summary(repo_root: Path) -> dict[str, Any]:
     for role_name in ("primary", "reviewer"):
         route_summary = _dispatch_route_summary(
             role_name,
-            roles,
+            loaded,
             mcp_servers,
             timeout_min,
         )
@@ -474,12 +477,12 @@ def _dispatch_routes_summary(repo_root: Path) -> dict[str, Any]:
 
 def _dispatch_route_summary(
     role_name: str,
-    roles: dict[str, Any],
+    agents: dict[str, Any],
     mcp_servers: dict[str, Any],
     timeout_min: int,
 ) -> dict[str, Any]:
     try:
-        route = resolve_role_route(roles, role_name)
+        route = resolve_agent_route(agents, role_name)
     except DispatchConfigError as exc:
         return {"ok": False, "role": role_name, "errors": [str(exc)]}
 
@@ -508,6 +511,8 @@ def _dispatch_route_summary(
         "ok": not errors,
         "role": role_name,
         "config_role": route.config_role,
+        "model_profile": route.model_profile,
+        "profile_role": route.profile_role,
         "adapter": route.adapter,
         "model": model,
         "effort": effort,
@@ -1098,14 +1103,17 @@ def _print_audit_pointers(pointers: dict[str, Any]) -> None:
 
 def _print_dispatch_routes(routes: dict[str, Any]) -> None:
     print(f"dispatch_routes: {routes['path']}")
+    if routes.get("model_profile"):
+        print(f"model_profile: {routes['model_profile']}")
     for role_name in ("primary", "reviewer"):
         route = (routes.get("roles") or {}).get(role_name) or {}
         if route.get("ok"):
             mcp = ",".join(route.get("mcp") or []) or "-"
+            profile = route.get("model_profile") or "-"
             print(
                 f"  {role_name}: adapter={route.get('adapter')} "
                 f"model={route.get('model')} effort={route.get('effort')} "
-                f"config_role={route.get('config_role')} mcp={mcp} "
+                f"profile={profile} config_role={route.get('config_role')} mcp={mcp} "
                 f"timeout={route.get('timeout_min')}m"
             )
         else:

@@ -34,11 +34,12 @@ output and approves the gate, the graph invalidates the stale blocker critique
 and re-runs reviewer critique against the corrected staged diff before
 verification.
 
-Woof owns public command construction. Role routes are declared in
-`.woof/agents.toml`; dispatch records the resolved command, adapter, model,
-effort, flags, MCP set, timeout, runtime policy, and audit/session reference.
-Commands must not require private shell wrappers, dotfiles, aliases, host
-absolute paths, or external sync side effects.
+Woof owns public command construction. Role routes and optional model-profile
+overrides are declared in `.woof/agents.toml`; dispatch records the resolved
+command, adapter, model, effort, selected profile, flags, MCP set, timeout,
+runtime policy, and audit/session reference. Commands must not require private
+shell wrappers, dotfiles, aliases, host absolute paths, or external sync side
+effects.
 
 For Claude Code subprocesses, Woof builds the raw command itself, including MCP
 isolation:
@@ -81,5 +82,7 @@ the role route selects the adapter.
   construction, trusted-local runtime disclosure, credentials, tracker access,
   quality-gate commands, and configured host/server prerequisites.
 - Dispatch audit references use portable home-relative or repo-relative paths.
+- Model/profile selection stays in `.woof/agents.toml` and `WOOF_MODEL_PROFILE`;
+  prompt text and graph orchestration do not carry model IDs.
 - Legacy route names (`planner`, `story-executor`, `critiquer`) and legacy
   harness values (`cld`, `cod`) are accepted only as migration input.

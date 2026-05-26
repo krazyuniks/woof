@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import tomllib
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -40,6 +41,7 @@ STORY_ID_RE = re.compile(r"^S[1-9]\d*$")
 AUDIT_COMPONENT_RE = re.compile(r"[^A-Za-z0-9_-]+")
 AGENTS_SCHEMA_PATH = schema_dir() / "agents.schema.json"
 TRUSTED_RUNTIME_MODE = "trusted-local"
+MODEL_PROFILE_ENV = "WOOF_MODEL_PROFILE"
 TRUSTED_RUNTIME_NOTE = (
     "trusted-local runtime: Woof does not constrain dispatched agents at runtime; "
     "commit safety is enforced through deterministic checks, reviewer critique, "
@@ -53,6 +55,8 @@ class RoleRoute:
     config_role: str
     adapter: str
     config: dict[str, Any]
+    model_profile: str | None = None
+    profile_role: str | None = None
 
 
 class DispatchConfigError(ValueError):
@@ -221,6 +225,101 @@ def resolve_role_route(roles: dict[str, Any], requested_role: str) -> RoleRoute:
         )
 
     raise DispatchConfigError(f"role '{requested_role}' not declared")
+
+
+def selected_model_profile(
+    agents: dict[str, Any],
+    *,
+    env: Mapping[str, str] | None = None,
+) -> str | None:
+    """Return the selected model profile from env or agents.toml."""
+
+    env_map = os.environ if env is None else env
+    env_value = env_map.get(MODEL_PROFILE_ENV)
+    if env_value is not None and env_value.strip():
+        return env_value.strip()
+
+    configured = agents.get("model_profile")
+    if configured is None:
+        return None
+    configured = str(configured).strip()
+    return configured or None
+
+
+def resolve_agent_route(
+    agents: dict[str, Any],
+    requested_role: str,
+    *,
+    model_profile: str | None = None,
+) -> RoleRoute:
+    """Resolve a role route after applying the selected model profile.
+
+    Direct ``[roles.<name>]`` model/effort values remain valid. A selected
+    ``[model_profiles.<profile>.roles.<name>]`` table overlays the base role so
+    operators can switch model/effort choices without changing graph code or
+    prompt text.
+    """
+
+    roles = agents.get("roles") or {}
+    if not isinstance(roles, dict):
+        raise DispatchConfigError("roles table is not an object")
+
+    route = resolve_role_route(roles, requested_role)
+    profile_name = model_profile if model_profile is not None else selected_model_profile(agents)
+    if not profile_name:
+        return route
+
+    profiles = agents.get("model_profiles") or {}
+    if not isinstance(profiles, dict):
+        raise DispatchConfigError("model_profiles table is not an object")
+    profile = profiles.get(profile_name)
+    if not isinstance(profile, dict):
+        raise DispatchConfigError(
+            f"model profile {profile_name!r} is not declared in .woof/agents.toml"
+        )
+
+    profile_roles = profile.get("roles") or {}
+    if not isinstance(profile_roles, dict):
+        raise DispatchConfigError(f"model profile {profile_name!r} roles table is not an object")
+
+    profile_role_name = _select_profile_role_name(profile_roles, route)
+    if profile_role_name is None:
+        return RoleRoute(
+            requested_role=route.requested_role,
+            config_role=route.config_role,
+            adapter=route.adapter,
+            config=route.config,
+            model_profile=profile_name,
+            profile_role=None,
+        )
+
+    profile_role = profile_roles.get(profile_role_name)
+    if not isinstance(profile_role, dict):
+        raise DispatchConfigError(
+            f"model profile {profile_name!r} role {profile_role_name!r} is not an object"
+        )
+
+    config = {**route.config, **profile_role}
+    adapter = _adapter_from_role_config(route.config_role, config)
+    return RoleRoute(
+        requested_role=route.requested_role,
+        config_role=route.config_role,
+        adapter=adapter,
+        config=config,
+        model_profile=profile_name,
+        profile_role=profile_role_name,
+    )
+
+
+def _select_profile_role_name(profile_roles: dict[str, Any], route: RoleRoute) -> str | None:
+    candidates = [route.requested_role, route.config_role]
+    alias = LEGACY_ROLE_ALIASES.get(route.requested_role)
+    if alias:
+        candidates.append(alias)
+    for candidate in candidates:
+        if candidate in profile_roles:
+            return candidate
+    return None
 
 
 def _role_effort(adapter: str, role: dict[str, Any]) -> str | None:
@@ -514,9 +613,8 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         sys.stderr.write(f"woof: {agents_path}: schema invalid\n{output}\n")
         return 2
 
-    roles = agents.get("roles") or {}
     try:
-        route = resolve_role_route(roles, args.role)
+        route = resolve_agent_route(agents, args.role)
     except DispatchConfigError as exc:
         sys.stderr.write(f"woof: {exc} in {agents_path}\n")
         return 2
@@ -566,6 +664,8 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
             "config_role": route.config_role,
             "adapter": route.adapter,
             "harness": route.adapter,
+            "model_profile": route.model_profile,
+            "profile_role": route.profile_role,
             "model": route.config.get("model"),
             "effort": effort,
             "mcp": mcp_names,
@@ -619,6 +719,10 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     }
     if route.config_role != args.role:
         spawned_event["config_role"] = route.config_role
+    if route.model_profile:
+        spawned_event["model_profile"] = route.model_profile
+    if route.profile_role:
+        spawned_event["profile_role"] = route.profile_role
     if args.story:
         spawned_event["story_id"] = args.story
     if route.config.get("model"):
@@ -700,6 +804,10 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     }
     if route.config_role != args.role:
         returned["config_role"] = route.config_role
+    if route.model_profile:
+        returned["model_profile"] = route.model_profile
+    if route.profile_role:
+        returned["profile_role"] = route.profile_role
     if args.story:
         returned["story_id"] = args.story
     if route.config.get("model"):
@@ -721,6 +829,8 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         "adapter": route.adapter,
         "role": args.role,
         "config_role": route.config_role,
+        "model_profile": route.model_profile,
+        "profile_role": route.profile_role,
         "epic_id": args.epic,
         "story_id": args.story,
         "model": route.config.get("model"),

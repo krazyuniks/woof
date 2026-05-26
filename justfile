@@ -38,6 +38,10 @@ install-hooks:
 woof *ARGS:
     ./bin/woof {{ARGS}}
 
+# Run the small-valid-epic efficiency benchmark harness.
+efficiency-bench *ARGS:
+    uv run python -m woof.bench.efficiency {{ARGS}}
+
 # Bundle Claude Code transcripts referenced by an epic dispatch log.
 wf-audit-bundle EPIC:
     ./bin/woof audit-bundle {{EPIC}}

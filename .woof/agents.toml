@@ -3,22 +3,28 @@
 # agents, restrict writable paths, allow-list commands, block network access, or
 # add MCP restrictions; commit-safety checks and gates guard what lands.
 
+model_profile = "default"
+
 [roles.orchestrator]
 adapter = "in-session"
 
 [roles.primary]
 adapter = "codex"
-model = "gpt-5.5"
-effort = "xhigh"
 
 [roles.reviewer]
 adapter = "claude"
-model = "claude-opus-4-7"
-effort = "max"
 mcp = []
 
 [roles.gate-resolver]
 adapter = "in-session"
+
+[model_profiles.default.roles.primary]
+model = "gpt-5.5"
+effort = "xhigh"
+
+[model_profiles.default.roles.reviewer]
+model = "claude-opus-4-7"
+effort = "max"
 
 [timeouts]
 default_minutes = 30

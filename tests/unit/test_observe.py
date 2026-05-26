@@ -258,6 +258,8 @@ def test_observe_all_json_reports_status_gate_timeline_and_audit(tmp_path: Path)
         "ok": True,
         "role": "primary",
         "config_role": "primary",
+        "model_profile": None,
+        "profile_role": None,
         "adapter": "codex",
         "model": "gpt-5.5",
         "effort": "xhigh",

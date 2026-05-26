@@ -53,7 +53,7 @@ Open each scaffolded TOML and replace every `<replace>` value:
 
 - `prerequisites.toml` - for the `github` tracker, set `[tracker] repo` to `<owner>/<name>`; the `local` tracker has no `repo` line. Adjust the declared `[infra]`, `[commands]`, and `[validators]` versions to what the project actually requires.
 - `quality-gates.toml` - set `[gates.test] command` to the project's real verification command, for example `just test` or `pytest`.
-- `agents.toml` - the default routes follow [ADR-002](adr/002-graph-led-role-routing.md) (primary `codex`/`gpt-5.5`, reviewer `claude`/`claude-opus-4-7`); edit only if the project routes differ. The scaffolded runtime note is intentional: dispatched agents run as trusted local automation, with broad public-CLI permission modes and no Woof sandbox, command allow-list, writable-path, network, or MCP restriction layer.
+- `agents.toml` - the default routes follow [ADR-002](adr/002-graph-led-role-routing.md) (primary `codex`/`gpt-5.5`, reviewer `claude`/`claude-opus-4-7`). The scaffold puts model choices in `model_profiles.default`; select another profile with `model_profile = "<name>"`, `WOOF_MODEL_PROFILE=<name>`, or the efficiency harness `--model-profile` flag. The scaffolded runtime note is intentional: dispatched agents run as trusted local automation, with broad public-CLI permission modes and no Woof sandbox, command allow-list, writable-path, network, or MCP restriction layer.
 - `test-markers.toml` - optional; the shipped Python and TypeScript defaults work unless the project uses a different test layout.
 
 An unedited `<replace>` string fails loud at `woof preflight` or first command resolution, so an un-filled bootstrap cannot run silently.

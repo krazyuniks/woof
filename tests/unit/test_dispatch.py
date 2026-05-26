@@ -7,6 +7,7 @@ Token-parser helpers are exercised via fixtures of recorded harness output.
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import subprocess
 from datetime import UTC, datetime
@@ -66,6 +67,7 @@ def run_dispatch(
     project: Path,
     *args: str,
     stdin: str = "do the thing\n",
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [str(WOOF_BIN), "dispatch", *args],
@@ -73,6 +75,7 @@ def run_dispatch(
         text=True,
         input=stdin,
         cwd=project,
+        env=env,
     )
 
 
@@ -158,6 +161,101 @@ def test_dry_run_primary_uses_raw_codex_argv(woof_project: Path) -> None:
     assert payload["harness"] == "codex"
     assert payload["effort"] == "xhigh"
     assert payload["runtime_policy"] == EXPECTED_TRUSTED_RUNTIME_POLICY
+
+
+def test_model_profile_overrides_route_model_and_effort(woof_project: Path) -> None:
+    (woof_project / ".woof" / "agents.toml").write_text("""\
+model_profile = "smoke"
+
+[roles.primary]
+adapter = "codex"
+
+[roles.reviewer]
+adapter = "claude"
+mcp = []
+
+[model_profiles.smoke.roles.primary]
+model = "gpt-5.5-mini"
+effort = "low"
+
+[model_profiles.smoke.roles.reviewer]
+model = "claude-sonnet-4-6"
+effort = "high"
+
+[timeouts]
+default_minutes = 15
+""")
+
+    proc = run_dispatch(
+        woof_project,
+        "--role",
+        "primary",
+        "--epic",
+        "42",
+        "--dry-run",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    assert payload["model_profile"] == "smoke"
+    assert payload["profile_role"] == "primary"
+    assert payload["model"] == "gpt-5.5-mini"
+    assert payload["effort"] == "low"
+    assert "--model" in payload["argv"]
+    assert "gpt-5.5-mini" in payload["argv"]
+    assert 'model_reasoning_effort="low"' in payload["argv"]
+
+
+def test_env_model_profile_selects_alternate_profile(woof_project: Path) -> None:
+    (woof_project / ".woof" / "agents.toml").write_text("""\
+model_profile = "default"
+
+[roles.primary]
+adapter = "codex"
+
+[roles.reviewer]
+adapter = "claude"
+mcp = []
+
+[model_profiles.default.roles.primary]
+model = "gpt-5.5"
+effort = "xhigh"
+
+[model_profiles.default.roles.reviewer]
+model = "claude-opus-4-7"
+effort = "max"
+
+[model_profiles.cheap.roles.primary]
+model = "gpt-5.5-mini"
+effort = "low"
+
+[model_profiles.cheap.roles.reviewer]
+model = "claude-sonnet-4-6"
+effort = "low"
+
+[timeouts]
+default_minutes = 15
+""")
+    env = {**os.environ, "WOOF_MODEL_PROFILE": "cheap"}
+
+    proc = run_dispatch(
+        woof_project,
+        "--role",
+        "reviewer",
+        "--epic",
+        "42",
+        "--dry-run",
+        env=env,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    assert payload["model_profile"] == "cheap"
+    assert payload["profile_role"] == "reviewer"
+    assert payload["model"] == "claude-sonnet-4-6"
+    assert payload["effort"] == "low"
+    assert "--model" in payload["argv"]
+    assert "claude-sonnet-4-6" in payload["argv"]
 
 
 def test_prompt_file_overrides_stdin(woof_project: Path, tmp_path: Path) -> None:

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://woof.dev/schemas/agents.schema.json",
   "title": "woof agent role configuration",
-  "description": "Project-side declaration at .woof/agents.toml. Dispatchable roles resolve to public CLI adapters (claude or codex); Woof builds the subprocess invocation itself and does not require private shell wrappers. In trusted-local mode, Woof does not add runtime sandboxing, command allow-lists, writable-path restrictions, network policy, or MCP restriction logic; broad public-CLI permission modes are intentional. Roles may declare adapter-specific model, effort, flags, and Claude MCP server names. Legacy role names and legacy harness values are accepted only as migration input and are resolved to public adapters at runtime.",
+  "description": "Project-side declaration at .woof/agents.toml. Dispatchable roles resolve to public CLI adapters (claude or codex); Woof builds the subprocess invocation itself and does not require private shell wrappers. In trusted-local mode, Woof does not add runtime sandboxing, command allow-lists, writable-path restrictions, network policy, or MCP restriction logic; broad public-CLI permission modes are intentional. Roles may declare adapter settings directly, while named model_profiles can overlay model, effort, flags, and Claude MCP server names for repeatable evals or local runs. Legacy role names and legacy harness values are accepted only as migration input and are resolved to public adapters at runtime.",
   "type": "object",
   "additionalProperties": false,
   "required": ["roles"],
@@ -20,6 +20,16 @@
         "gate-resolver": { "$ref": "#/$defs/in_session_role" }
       },
       "description": "Semantic roles invoked by Woof. primary and reviewer are the graph-owned dispatch roles. planner/story-executor/critiquer are legacy aliases retained for migration; planner and story-executor map to primary, critiquer maps to reviewer."
+    },
+    "model_profile": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Default model profile selected when WOOF_MODEL_PROFILE is not set. Profiles overlay route fields from [roles.*] without changing graph code or prompt text."
+    },
+    "model_profiles": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/model_profile" },
+      "description": "Named route overlays. Operators can run the same graph with a different model/effort profile by setting WOOF_MODEL_PROFILE or the benchmark harness --model-profile flag."
     },
     "timeouts": {
       "type": "object",
@@ -83,6 +93,62 @@
     }
   },
   "$defs": {
+    "model_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["roles"],
+      "properties": {
+        "roles": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "primary": { "$ref": "#/$defs/profile_role" },
+            "reviewer": { "$ref": "#/$defs/profile_role" },
+            "planner": { "$ref": "#/$defs/profile_role" },
+            "story-executor": { "$ref": "#/$defs/profile_role" },
+            "critiquer": { "$ref": "#/$defs/profile_role" }
+          },
+          "description": "Role-specific overrides applied after the base [roles.*] route resolves. Semantic primary/reviewer keys are preferred; legacy keys are accepted for migration."
+        }
+      }
+    },
+    "profile_role": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "adapter": {
+          "type": "string",
+          "enum": ["claude", "codex", "in-session"],
+          "description": "Optional adapter override for this profile role. Most profiles should leave adapter in the base route and override only model/effort."
+        },
+        "harness": {
+          "type": "string",
+          "enum": ["claude", "codex", "cld", "cod", "in-session"],
+          "description": "Legacy adapter spelling accepted only for migration."
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "effort": {
+          "type": "string",
+          "enum": ["low", "medium", "high", "xhigh", "max"],
+          "description": "Profile-specific reasoning effort."
+        },
+        "mcp": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true,
+          "description": "Profile-specific Claude MCP server names."
+        },
+        "flags": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Profile-specific adapter flags."
+        },
+        "notes": { "type": "string" }
+      }
+    },
     "in_session_role": {
       "type": "object",
       "additionalProperties": false,

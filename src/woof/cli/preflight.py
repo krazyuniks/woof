@@ -30,7 +30,7 @@ from woof.cli.dispatcher import (
     _mcp_names,
     _role_effort,
     build_argv,
-    resolve_role_route,
+    resolve_agent_route,
 )
 from woof.cli.main import (
     SCHEMAS,
@@ -464,22 +464,21 @@ def _check_role_routes(repo_root: Path) -> list[PreflightFinding]:
         ]
 
     findings: list[PreflightFinding] = []
-    roles = loaded.get("roles") or {}
     mcp_servers = loaded.get("mcp_servers") or {}
     for role_name in ("primary", "reviewer"):
-        findings.extend(_check_dispatch_role_route(role_name, roles, mcp_servers, repo_root))
+        findings.extend(_check_dispatch_role_route(role_name, loaded, mcp_servers, repo_root))
     return findings
 
 
 def _check_dispatch_role_route(
     role_name: str,
-    roles: dict[str, Any],
+    agents: dict[str, Any],
     mcp_servers: dict[str, Any],
     repo_root: Path,
 ) -> list[PreflightFinding]:
     label = f"{role_name} route"
     try:
-        route = resolve_role_route(roles, role_name)
+        route = resolve_agent_route(agents, role_name)
     except DispatchConfigError as exc:
         return [
             PreflightFinding(
@@ -520,7 +519,8 @@ def _check_dispatch_role_route(
             ok=not errors,
             detail=(
                 f"[roles.{route.config_role}] resolves adapter={route.adapter}, "
-                f"model={model}, effort={effort}, runtime={TRUSTED_RUNTIME_MODE}"
+                f"model={model}, effort={effort}, "
+                f"profile={route.model_profile or '-'}, runtime={TRUSTED_RUNTIME_MODE}"
                 if not errors
                 else "; ".join(errors)
             ),
@@ -594,16 +594,22 @@ def _agents_template() -> str:
 # agents, restrict writable paths, allow-list commands, block network access, or
 # add MCP restrictions; commit-safety checks and gates guard what lands.
 
+model_profile = "default"
+
 [roles.primary]
 adapter = "codex"
-model = "gpt-5.5"
-effort = "xhigh"
 
 [roles.reviewer]
 adapter = "claude"
+mcp = []
+
+[model_profiles.default.roles.primary]
+model = "gpt-5.5"
+effort = "xhigh"
+
+[model_profiles.default.roles.reviewer]
 model = "claude-opus-4-7"
 effort = "max"
-mcp = []
 """
 
 
@@ -821,12 +827,11 @@ def _check_adapter_auth_markers(repo_root: Path) -> list[PreflightFinding]:
     loaded = _load_toml(agents_path)
     if not isinstance(loaded, dict):
         return []
-    roles = loaded.get("roles") or {}
     findings: list[PreflightFinding] = []
     seen: set[tuple[str, str]] = set()
     for role_name in ("primary", "reviewer"):
         try:
-            route = resolve_role_route(roles, role_name)
+            route = resolve_agent_route(loaded, role_name)
         except DispatchConfigError:
             continue
         if route.adapter not in ADAPTER_AUTH_MARKERS:
@@ -1435,15 +1440,18 @@ def _print_operator_state(operator_state: dict[str, Any]) -> None:
 
 def _print_operator_routes(routes: dict[str, Any]) -> None:
     print(f"  dispatch_routes: {routes.get('path') or '-'}")
+    if routes.get("model_profile"):
+        print(f"  model_profile: {routes.get('model_profile')}")
     roles = routes.get("roles") or {}
     for role_name in ("primary", "reviewer"):
         route = roles.get(role_name) or {}
         if route.get("ok"):
             mcp = ",".join(route.get("mcp") or []) or "-"
+            profile = route.get("model_profile") or "-"
             print(
                 f"    {role_name}: adapter={route.get('adapter')} "
                 f"model={route.get('model')} effort={route.get('effort')} "
-                f"config_role={route.get('config_role')} mcp={mcp} "
+                f"profile={profile} config_role={route.get('config_role')} mcp={mcp} "
                 f"timeout={route.get('timeout_min')}m"
             )
         else:

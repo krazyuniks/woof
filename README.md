@@ -129,6 +129,8 @@ critique, human gates, transaction manifests, and graph-owned commit decisions.
   repository using either `local` or `github` tracking.
 - [`docs/implementation-plan.md`](docs/implementation-plan.md) - completion
   ledger and release-readiness validation evidence.
+- [`docs/efficiency-evals.md`](docs/efficiency-evals.md) - repeatable
+  small-valid-epic efficiency eval workflow and execution prompt.
 - [`CHANGELOG.md`](CHANGELOG.md) - public release notes.
 - [`docs/adr/001-orchestration-topology.md`](docs/adr/001-orchestration-topology.md)
   - deterministic graph topology.

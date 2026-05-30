@@ -1,10 +1,10 @@
 # Woof Agent Guide
 
-## Project Shape
+## Project shape
 
-Woof is a Python CLI for deterministic inner-loop SDLC orchestration. It owns schemas, playbooks, graph execution, gate writing, and validation for `.woof/` consumer projects.
+Woof is an inner-loop SDLC tool for AI-assisted development. It has four layers: state on disk (`.woof/`), a Python graph library (`src/woof/`), a Claude Code skill suite (`skills/`) as the operator orchestrator, and dispatched producer/reviewer/mapper subagents.
 
-Use `README.md` for the public overview and `docs/architecture.md` / `docs/adr/001-orchestration-topology.md` for design authority.
+Authority for design decisions: ADRs under `docs/adr/`. Authority for system architecture: `docs/architecture.md`. Authority for open work: `docs/backlog.md`. Authority for execution sequencing: `docs/implementation-plan.md`.
 
 ## Commands
 
@@ -26,23 +26,31 @@ Do not introduce parallel Make, npm, tox, or ad-hoc shell entry points while a `
 - Schema validation uses `ajv-cli` plus `ajv-formats`; keep `.woof/*.toml`, `languages/*.toml`, and schema fixtures valid with `woof validate`.
 - Shell scripts are zsh unless a file has a stronger local reason to use another shell.
 
-## Code Boundaries
+## Code boundaries
 
-- CLI command wiring lives under `src/woof/cli/`.
-- Deterministic graph behaviour lives under `src/woof/graph/`.
-- Stage check definitions live under `src/woof/checks/`.
-- Gate authoring lives under `src/woof/gate/`.
-- JSON Schema contracts live under `schemas/`; keep tests and docs aligned when a contract changes.
-- Playbook prompt content lives under `playbooks/`; avoid burying executable orchestration in prompts.
+- `src/woof/graph/` — deterministic graph transitions, typed graph commands, validation, JSONL audit.
+- `src/woof/cli/` — CLI command surface (`woof init`, `woof preflight`, `woof hooks install`, `woof graph`, `woof validate`, etc.).
+- `src/woof/checks/` — Stage-5 check runners.
+- `src/woof/gate/` — gate authoring helpers.
+- `src/woof/trackers/` — `Tracker` protocol and adapters.
+- `src/woof/bench/` — eval harness.
+- `schemas/` — JSON Schema contracts.
+- `playbooks/` — producer and reviewer prompt templates.
+- `languages/` — per-language registry: install instructions, LSP binaries, tree-sitter grammars, refresh-cartography templates.
+- `skills/` — Claude Code skill bundles: `woof-setup`, `woof-map-codebase`, `woof-run`, `woof-target-architecture`.
 
-## Workflow Rules
+## Workflow rules
 
 - Read the relevant schema before changing artefact shape.
 - Update docs in the same change as code when behaviour, commands, or contracts move.
-- Prefer narrow changes that preserve the deterministic graph topology from ADR-001.
-- Do not commit runtime Woof state: locks, current-epic markers, generated audit raw data, and codebase maps are intentionally gitignored.
+- Preserve the layered topology (ADR-001). The skill is the orchestrator; Python is the engine library; state is on disk.
+- Preserve the role-routing policy (ADR-002). Stage 5 producer is Claude (LSP); reviewer is Codex. Other stages are the reverse.
+- Preserve the cartography prerequisite (ADR-004). Do not introduce nodes that bypass `.woof/codebase/` content loading.
+- Do not introduce a parallel operator surface for running epics. The only operator entry point for running an epic is `/woof:run`.
+- Do not add generic graph mutation commands. Skill-facing state changes use typed `woof graph` verbs and `state_token` guards.
+- Do not commit runtime state: locks, current-epic markers, generated audit raw data, and the mechanical cartography layer are gitignored.
 - Use conventional commits, e.g. `feat(graph): add transaction guard`.
 
-## Quality Bar
+## Quality bar
 
 Before handing off code changes, run `just check` unless the task is docs-only or an external prerequisite is unavailable. If schema-facing behaviour changed, include targeted validation or tests that prove the contract.

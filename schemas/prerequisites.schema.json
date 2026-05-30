@@ -44,7 +44,7 @@
         "kind": {
           "type": "string",
           "enum": ["github", "local"],
-          "description": "Issue-tracker adapter. 'github' keeps each epic's contract in a GitHub issue (one issue per epic, E<N> equals the GitHub issue number, woof verifies reachability at every woof wf invocation). 'local' keeps the contract entirely under .woof/epics/E<N>/ with no remote, so any repository can run Woof without a hosted tracker."
+          "description": "Issue-tracker adapter. 'github' keeps each epic's contract in a GitHub issue (one issue per epic, E<N> equals the GitHub issue number, Woof verifies reachability when the graph resumes tracker-backed state). 'local' keeps the contract entirely under .woof/epics/E<N>/ with no remote, so any repository can run Woof without a hosted tracker."
         },
         "repo": {
           "type": "string",

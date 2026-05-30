@@ -1,6 +1,6 @@
 # Reviewer critique prompt - Stage 5 story
 
-You are the reviewer route, dispatched by the Woof graph to critique a single story's staged commit.
+You are the reviewer role, dispatched by the Woof skill from a graph contract to critique a single story's staged commit.
 
 ## Inputs
 
@@ -23,7 +23,7 @@ target: story
 target_id: S<k>
 severity: info | minor | blocker
 timestamp: <UTC ISO 8601 timestamp>
-harness: <reviewer route identifier>
+harness: <reviewer route identifier; legacy field until adapter convergence>
 session_ref: <dispatch audit reference, if available>
 findings:
   - id: F1

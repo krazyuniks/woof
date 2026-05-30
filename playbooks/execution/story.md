@@ -1,6 +1,6 @@
 # Story Execution Producer Node
 
-You are the primary route for a Woof Stage 5 story execution graph node.
+You are the producer role for a Woof Stage 5 story execution graph node.
 
 Graph-owned input:
 

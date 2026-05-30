@@ -1,6 +1,6 @@
 # Breakdown Planning Producer Node
 
-You are the primary route for a Woof `breakdown_planning` graph node.
+You are the producer role for a Woof `breakdown_planning` graph node.
 
 Graph-owned input:
 
@@ -38,20 +38,22 @@ Read the declared `EPIC.md` contract and produce only `plan.json` at the declare
 
 Planning rules:
 
+- Treat `EPIC.md` as the locked contract for breakdown. Do not weaken, reinterpret, or broaden its outcomes and contract decisions.
 - Every story has an `S<n>` ID, title, intent, paths, outcome refs, contract-decision refs, dependencies, test estimate, and `pending` status.
 - Outcome-driven granularity: each story realises 1-3 related outcomes. Group by shared concern or dependency. Reject zero-outcome stories and catch-all stories.
 - Path discipline: each story declares the git-pathspec glob patterns it may touch through `paths[]`. Keep story scopes non-overlapping unless the overlap is unavoidable and explicit.
 - Explicit dependencies: declare inferred dependencies in `depends_on[]`. If one story modifies a surface another story creates, the later story depends on the earlier story.
 - Contract ownership: every active contract decision in `EPIC.md` appears in exactly one story's `implements_contract_decisions[]`. Stories that consume that surface without creating it list the ID in `uses_contract_decisions[]`.
+- New interfaces, schemas, commands, storage files, or lifecycle states must trace to an `EPIC.md` contract decision. If a surface is not named there, do not invent it in the plan.
 - Dependency order is topologically sorted and acyclic.
 - Stories describe what they produce, not implementation pseudocode. Do not pre-name variables, classes, function signatures, migrations, or concrete test names unless those names are already locked by `EPIC.md`.
 - Test planning is an estimate, not enumeration: use `tests.count` and `tests.types` to express expected coverage families.
-- Right-sized stories: aim for one primary story producer node of work, roughly 5-10 files, 3-10 tests, and 200-800 lines of change. Split work above that range; merge fragments that have no standalone value.
+- Right-sized stories: aim for one story producer node of work, roughly 5-10 files, 3-10 tests, and 200-800 lines of change. Split work above that range; merge fragments that have no standalone value.
 
 Output rules:
 
 - Write only `plan.json` at the declared `plan_path`.
 - Do not author `PLAN.md`; the graph renders the declared `plan_markdown_path` deterministically from `plan.json`.
-- Do not run `woof wf`, `woof dispatch`, checks, gates, commits, reviewer work, or story execution.
+- Do not run Woof graph commands, dispatch commands, checks, gates, commits, reviewer work, or story execution.
 - Do not write `gate.md`, critique files, dispositions, event logs, or implementation code.
 - Do not select the next node or describe what should happen after this node. The graph validates the plan and selects the next node.

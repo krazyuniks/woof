@@ -1,145 +1,78 @@
 # Woof
 
-Woof is a Python CLI for agentic multi-step software delivery. It owns
-discovery, definition, breakdown, review, gate, execution, verification,
-manifest-checked commit, and audit/resume through a deterministic graph.
+Woof is an inner-loop SDLC tool for AI-assisted software delivery. It owns discovery, definition, breakdown, review, gate, execution, verification, manifest-checked commit, and audit through a deterministic Python graph. The operator drives Woof from a Claude Code session.
 
-Agents produce artefacts and critiques. Humans resolve explicit gates. Woof owns
-state transitions, schemas, checks, transaction manifests, and commit decisions.
-
-## Status
-
-The technical finish path is complete for the current public workflow:
-
-- `woof init --tracker local` or `woof init --tracker github` scaffolds a
-  consumer repository.
-- `woof wf new "<spark>"` creates a tracker-backed epic.
-- `woof wf --epic <N>` drives the graph from discovery through story execution.
-- Plan gates, story gates, reviewer blockers, check failures, empty diffs,
-  tracker conflicts, and interrupted commit transactions have CLI-level
-  acceptance coverage.
-- The package build and installed-package workflow path are covered by smoke and
-  acceptance tests.
-
-Distribution is currently from tagged releases in this GitHub repository. CI
-runs lint, tests, and package build on pushes to `main` and on pull requests.
+Producer and reviewer subagents create artefacts and critiques; humans resolve explicit gates. Woof owns state transitions, schemas, checks, transaction manifests, and commit decisions.
 
 ## Install
 
-Install the current release as a standalone tool:
+Woof currently ships the Python engine. The Claude Code skill suite is part of the redesign backlog and is documented as the target operator surface; its installer is added when E3 ships.
 
 ```bash
-uv tool install git+https://github.com/krazyuniks/woof@v0.1.6
+uv tool install git+https://github.com/krazyuniks/woof@main
 ```
 
-Or install it into an existing Python environment:
-
-```bash
-pip install git+https://github.com/krazyuniks/woof@v0.1.6
-```
-
-Confirm the command is available:
+Confirm the engine is available:
 
 ```bash
 woof --help
 ```
 
-## Consumer Setup
+## Consumer setup
 
-Run Woof from the root of the repository you want it to manage.
+Run Woof against the repository you want it to manage. The target skill suite walks you through onboarding:
 
-For a filesystem-only setup with no hosted issue tracker:
-
-```bash
-woof init --tracker local
+```
+/woof:setup
 ```
 
-For a GitHub-backed setup where each Woof epic maps to one GitHub issue:
+This invokes `woof init` for file scaffolding, prompts you to author the target architecture and design principles for the project, and optionally runs `/woof:map-codebase` to produce the current-state codebase documentation.
 
-```bash
-woof init --tracker github
-```
+## Operator workflow
 
-Then replace every `<replace>` placeholder in `.woof/*.toml`, authenticate the
-model CLIs, and run preflight:
+Three operator-facing skills cover the inner loop. One entry point per task.
 
-```bash
-claude /login
-codex login
-woof preflight
-```
+| Skill | When to use |
+|---|---|
+| `/woof:setup` | Onboard a new consumer repository. |
+| `/woof:map-codebase` | Regenerate the codebase mapper documents when the codebase has changed materially. |
+| `/woof:run` | Execute an epic. |
 
-The full first-run guide is in [`docs/consumers.md`](docs/consumers.md).
+Inside `/woof:run`, the skill drives or resumes one epic. It may start from a new spark, resume `.woof/.current-epic`, or resume an explicit `E<N>`. The skill calls `woof graph next-node`, dispatches producer and reviewer subagents for dispatch-shaped nodes, calls typed `woof graph record-*` commands for model-produced artefacts, runs graph-owned deterministic nodes through `woof graph run-deterministic-node`, surfaces gates conversationally, and records gate resolutions. The on-disk state under `.woof/` is authoritative; the skill's in-session context is opportunistic and reconstructed from disk on a new session.
 
-## Operator Workflow
+The target graph checks contract readiness after definition and before planning. That gate runs early, but not immediately after epic creation: at creation time Woof only has a spark. Once `EPIC.md` exists, Woof can deterministically check whether acceptance criteria are machine-checkable, contract decisions are concrete, and referenced existing paths resolve before any model decomposes the work.
 
-Create an epic from a one-line spark:
+## Cartography
 
-```bash
-woof wf new "<spark>"
-```
+Every consumer repository carries a mandatory cartography artefact group at `.woof/codebase/`:
 
-The command prints the assigned `E<N>` and the next graph command. Run or resume
-the graph with:
+- Human-authored design layer (`TARGET-ARCHITECTURE.md`, `PRINCIPLES.md`).
+- Mapper-authored AS-IS layer (`CURRENT-ARCHITECTURE.md`, `STACK.md`, `INTEGRATIONS.md`, `STRUCTURE.md`, `CONVENTIONS.md`, `TESTING.md`, `CONCERNS.md`).
+- Mechanical layer (`tags`, `files.txt`, `freshness.json`) refreshed on every commit.
 
-```bash
-woof wf --epic <N>
-```
+The skill orchestrator loads the relevant subset per node, so producer and reviewer subagents do not pay tokens to rediscover the repo. See `docs/adr/004-cartography-prerequisite.md`.
 
-When the graph opens a gate, inspect the current state and resolve it with a
-structured decision:
+## Runtime model
 
-```bash
-woof observe --epic <N> --view status
-woof observe --epic <N> --view gate
-woof wf --epic <N> --resolve approve
-woof wf --epic <N>
-```
+Dispatched agents run in trusted-local mode. Woof does not sandbox them, restrict commands, restrict writable paths, block network access, or add an MCP restriction layer. The safety boundary is before changes land: deterministic checks, reviewer critique, human gates, transaction manifests, and graph-owned commit decisions.
 
-Other read-only operator views:
+The runtime model is reported by `woof preflight` and by the skill at epic start.
 
-```bash
-woof observe --epic <N> --view timeline
-woof observe --epic <N> --view audit
-```
+Woof is allowed to be opinionated about expert-local tooling. tmux may be used for long-running supervision, logs, and dashboards when it improves operability. It is not a workflow authority; graph state, typed commands, gates, and commits remain owned by `.woof/` and the Python engine.
 
-Inspect the resolved dispatch route and runtime policy without spawning an
-agent:
-
-```bash
-woof dispatch --role primary --epic <N> --dry-run
-```
-
-## Runtime Model
-
-Dispatched agents run in trusted-local mode. Woof does not sandbox them, restrict
-commands, restrict writable paths, block network access, or add an MCP
-restriction layer. This is reported by `woof preflight`, `woof dispatch
---dry-run`, dispatch audit events, and `woof observe`.
-
-The safety boundary is before changes land: deterministic checks, reviewer
-critique, human gates, transaction manifests, and graph-owned commit decisions.
+Quality gates support two postures in the target architecture. Strict mode blocks on any failure. Baseline mode starts as a command-level brownfield posture: pre-existing red commands can be recorded and reported without blocking, while fine-grained per-failure subtraction requires a structured parser or machine-readable gate output.
 
 ## Documentation
 
-- [`docs/architecture.md`](docs/architecture.md) - current architecture,
-  contracts, stages, gates, runtime boundary, tracker abstraction, and operator
-  surfaces.
-- [`docs/consumers.md`](docs/consumers.md) - first-run guide for a consumer
-  repository using either `local` or `github` tracking.
-- [`docs/implementation-plan.md`](docs/implementation-plan.md) - completion
-  ledger and release-readiness validation evidence.
-- [`docs/efficiency-evals.md`](docs/efficiency-evals.md) - repeatable
-  small-valid-epic efficiency eval workflow and execution prompt.
-- [`CHANGELOG.md`](CHANGELOG.md) - public release notes.
-- [`docs/adr/001-orchestration-topology.md`](docs/adr/001-orchestration-topology.md)
-  - deterministic graph topology.
-- [`docs/adr/002-graph-led-role-routing.md`](docs/adr/002-graph-led-role-routing.md)
-  - semantic primary/reviewer role routing.
-- [`docs/adr/003-issue-tracker-abstraction.md`](docs/adr/003-issue-tracker-abstraction.md)
-  - tracker protocol and local/GitHub adapters.
-- [`examples/safety-model.md`](examples/safety-model.md) - concise examples of
-  Woof's safety behaviours.
+- [`docs/architecture.md`](docs/architecture.md) — system architecture: layers, stages, cartography, role routing, schemas, gates, transaction manifests, prerequisites.
+- [`docs/backlog.md`](docs/backlog.md) — open work, prescriptive.
+- [`docs/implementation-plan.md`](docs/implementation-plan.md) — how the backlog gets executed.
+- [`docs/adr/001-orchestration-topology.md`](docs/adr/001-orchestration-topology.md) — layered topology.
+- [`docs/adr/002-graph-led-role-routing.md`](docs/adr/002-graph-led-role-routing.md) — semantic role routing.
+- [`docs/adr/003-issue-tracker-abstraction.md`](docs/adr/003-issue-tracker-abstraction.md) — tracker protocol.
+- [`docs/adr/004-cartography-prerequisite.md`](docs/adr/004-cartography-prerequisite.md) — cartography artefact group.
+- [`docs/adr/005-skill-suite.md`](docs/adr/005-skill-suite.md) — operator skill suite.
+- [`docs/adr/006-operational-resilience.md`](docs/adr/006-operational-resilience.md) — readiness, dispatch telemetry, circuit breaker, baseline gates, reviewer evidence, drift detection, tmux supervision, and later conformance auditing.
 
 ## Development
 
@@ -156,29 +89,25 @@ Useful development commands:
 just lint
 just test
 just woof --help
-uv run pytest tests/integration/test_release_smoke.py
 ```
 
-`just woof ...` is a development convenience for running the checkout CLI. The
-installed operator command is `woof`.
+`just woof ...` is a development convenience for running the checkout CLI. The installed operator command is `woof`.
 
-## Source Map
+## Source map
 
-- `src/woof/cli/` - argparse command implementations.
-- `src/woof/graph/` - deterministic graph, transition table, node contracts,
-  and transaction manifest verification.
-- `src/woof/checks/` - Stage-5 checker registry and runners.
-- `src/woof/gate/` - gate authoring helpers.
-- `src/woof/trackers/` - `Tracker` protocol and adapter implementations.
-- `schemas/` - JSON Schema contracts for runtime artefacts, graph node I/O, and
-  transaction manifests.
-- `playbooks/` - producer and reviewer prompt templates loaded into dispatched
-  LLM contexts.
-- `languages/` - per-language install, lint, and test registry files.
-- `bin/woof` - development-only source checkout wrapper.
+- `src/woof/cli/` — command implementations.
+- `src/woof/graph/` — deterministic graph, transition contracts, typed record verbs, state-token guarded mutation, transaction manifest verification.
+- `src/woof/checks/` — Stage-5 checker registry and runners.
+- `src/woof/gate/` — gate authoring helpers.
+- `src/woof/trackers/` — `Tracker` protocol and adapter implementations.
+- `src/woof/bench/` — eval harness.
+- `schemas/` — JSON Schema contracts.
+- `playbooks/` — producer and reviewer prompt templates.
+- `languages/` — per-language install, lint, test, and refresh-cartography registry files.
+- `skills/` — Claude Code skill bundles (`woof-setup`, `woof-map-codebase`, `woof-run`, `woof-target-architecture`).
+- `bin/woof` — development-only source checkout wrapper.
 
-JSON Schema is the durable contract authority. Pydantic is used at schema and
-serialisation boundaries; dataclasses are used for trusted in-process records.
+JSON Schema is the durable contract authority. Pydantic is used at schema and serialisation boundaries; dataclasses are used for trusted in-process records.
 
 ## License
 

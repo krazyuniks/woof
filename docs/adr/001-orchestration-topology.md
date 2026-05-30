@@ -1,63 +1,52 @@
+---
+type: adr
+status: accepted
+date: 2026-05-27
+---
+
 # ADR-001: Orchestration Topology
-
-## Status
-
-Accepted. Implemented by the `woof wf --epic <N>` graph path.
 
 ## Context
 
-Woof's workflow needs LLM judgement for generation and critique, but successor
-selection, gate creation, verification, transaction manifests, and commits must
-be deterministic.
+Woof orchestrates an inner-loop SDLC pipeline. LLM inference must not own workflow control: a producer can skip a safety check while still producing plausible prose. The orchestrator must:
 
-If an LLM owns the workflow graph, it can skip or reorder safety steps while
-still producing plausible prose. Woof therefore separates orchestration from
-inference: Python owns the graph, LLMs own typed producer or reviewer artefacts,
-and humans own explicit gate decisions.
+- Hold codebase context warm across an epic so dispatched nodes do not pay tokens to rediscover the repo.
+- Surface gates conversationally to the operator.
+- Preserve producer-reviewer context isolation.
+- Use LSP where the dispatched model supports it.
+- Provide one entry point per operator task.
+- Support crash recovery from on-disk state.
 
 ## Decision
 
-The orchestrator is a deterministic Python graph. LLM inference and human review
-are typed nodes within it. Every node and edge is explicit; no participant
-selects successors at runtime.
+Woof is layered. Each layer has one responsibility.
 
-Concrete rules:
+| Layer | Responsibility | Implementation |
+|---|---|---|
+| State | Durable, schema-governed record of every epic, plan, gate, dispatch, and cartography artefact. | Files under `.woof/`. |
+| Graph | Pure, deterministic transitions. Given on-disk state, returns the next node and its inputs. Validates artefacts against schemas. Writes typed JSONL audit events as a consequence of typed commands. No LLM picks successors. | Python library at `src/woof/`, exposed via `woof graph <command>`. |
+| Orchestrator | Holds in-memory context warm across an epic. Loads cartography slices. Dispatches producer and reviewer subagents. Surfaces gates. Calls the graph library via Bash. | Claude Code skill at `skills/woof-run/`. |
+| Dispatched | Stateless, isolated LLM invocations. Each subagent receives only its prompt and scoped artefacts. Output is written back to state via the graph library. | `Task` subagents for Claude; `Bash + codex exec` for Codex. |
 
-1. The graph is owned by Python code. Stages, transitions, and gate conditions
-   are encoded in Woof source, not in prompt prose.
-2. Nodes are typed. Each node has a fixed type, schema-governed input/output,
-   and explicit successor rules.
-3. LLM nodes are pure producers or reviewers. They receive structured input,
-   write declared output artefacts, and do not dispatch subprocesses, choose
-   successors, write gates, or commit.
-4. Human gates are graph states. The graph halts on `gate.md` until
-   `woof wf --epic <N> --resolve <decision>` records a structured decision.
-5. `woof wf` is the workflow entry point. Operator intervention is represented
-   as gate resolution and graph re-entry.
-6. Commit-producing transitions use graph-owned transaction manifests. The
-   staged file set must match the expected manifest exactly.
+State on disk is the only authoritative record. Orchestrator in-memory context is opportunistic; a new session reconstructs from disk.
+
+Project setup commands (`woof init`, `woof preflight`, `woof hooks install`) are non-interactive Python CLI utilities used once per project lifecycle. They are not parallel orchestrators for running epics.
+
+Human gates remain graph states: the graph halts on `gate.md` until `woof graph resolve-gate <decision>` records a structured decision.
+
+`woof graph next-node` is the skill-facing state query. It returns a dispatch, deterministic, gate, or complete contract plus a `state_token`. Mutating commands require the observed `state_token` and fail if canonical state changed. The graph takes short locks during mutation only; it never holds a lock across an LLM dispatch.
+
+Dispatched output is persisted through typed graph verbs such as `record-executor-result` and `record-story-critique`. There is no raw "append event" API for the skill.
 
 ## Consequences
 
-- The same filesystem state produces the same successor node sequence.
-- Graph state is replayable from `.woof/epics/E<N>/` artefacts and JSONL audit
-  streams.
-- Prompt templates stay local to producer/reviewer work and cannot become
-  orchestration authority.
-- Adding a stage, check, or node type is a source, schema, test, and docs
-  change.
-- Missing, malformed, or unsafe state opens a gate or fails loud instead of
-  being silently repaired by a prompt.
-
-## Implementation
-
-- `src/woof/graph/` owns graph state, transitions, node handlers, locking,
-  crash-resume, and transaction manifest verification.
-- `src/woof/cli/commands/wf.py` is the operator entry point for graph execution,
-  epic creation, and structured gate resolution.
-- `schemas/node-input.schema.json`, `schemas/node-output.schema.json`,
-  `schemas/planning-node-input.schema.json`,
-  `schemas/planning-node-output.schema.json`, and
-  `schemas/transaction-manifest.schema.json` define graph contracts.
-- `playbooks/` holds model-facing producer and reviewer prompts. These prompts
-  do not own workflow transitions.
+- Running an epic requires Claude Code as the operator's runtime.
+- The skill assumes the 1M Opus context tier.
+- Single-threaded within a session: parallel-story execution is not supported.
+- Producer-reviewer separation is preserved by construction: each subagent dispatch is a fresh context.
+- Crash recovery is a state-layer property: any orchestrator can resume from on-disk state.
+- Graph layer is callable from outside Python via `woof graph <command>`. It remains the schema-and-validation authority.
+- Graph commands expose typed verbs rather than generic mutation primitives; invalid state should be hard to express from the skill.
+- A non-Claude orchestrator surface is a strict addition; state and graph do not change.
+- Adding a stage or node type is a source, schema, test, and docs change.
+- Malformed or unsafe state opens a gate or fails loud; it is never silently repaired by a prompt.

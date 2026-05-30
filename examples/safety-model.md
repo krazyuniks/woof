@@ -1,15 +1,16 @@
 # Safety Model Examples
 
-These examples show the core safety behaviours Woof enforces in the current
-architecture. They point to live schemas and source files rather than replaying
-old project narratives.
+These examples show the core safety behaviours Woof enforces in the target
+architecture. They point to live schemas and source files where the behaviour
+already exists, and to the graph boundary where E1 moves orchestration behind
+typed `woof graph` commands.
 
 ## Behaviour Map
 
 | Safety behaviour | Current rule | What to inspect |
 |---|---|---|
-| Graph-owned orchestration | Python selects every successor node; producer and reviewer prompts do not choose workflow state. | [`src/woof/graph/transitions.py`](../src/woof/graph/transitions.py), [`src/woof/graph/nodes.py`](../src/woof/graph/nodes.py) |
-| Reviewer enforcement | Reviewer `blocker` critiques open a human gate; `info` and `minor` critiques require a primary disposition. | [`schemas/critique.schema.json`](../schemas/critique.schema.json), [`schemas/disposition.schema.json`](../schemas/disposition.schema.json) |
+| Graph-owned orchestration | Python selects every successor node; producer and reviewer prompts do not choose workflow state. E1 exposes this through typed `woof graph` commands. | [`src/woof/graph/transitions.py`](../src/woof/graph/transitions.py), [`src/woof/graph/nodes.py`](../src/woof/graph/nodes.py) |
+| Reviewer enforcement | Reviewer `blocker` critiques open a human gate; `info` and `minor` critiques receive a deterministic graph-owned disposition. | [`schemas/critique.schema.json`](../schemas/critique.schema.json), [`schemas/disposition.schema.json`](../schemas/disposition.schema.json) |
 | Manifest-verified commits | Story commits stage and verify the exact manifest-computed file set. | [`src/woof/graph/manifest.py`](../src/woof/graph/manifest.py), [`schemas/transaction-manifest.schema.json`](../schemas/transaction-manifest.schema.json) |
 | Gate resolution | Gates halt the graph; resolution is recorded as a structured event. | [`schemas/gate.schema.json`](../schemas/gate.schema.json), [`schemas/jsonl-events.schema.json`](../schemas/jsonl-events.schema.json) |
 | Contract fidelity | Definition records user-facing contracts as native artefact references; Check 4 verifies the declared references. | [`schemas/epic.schema.json`](../schemas/epic.schema.json), [`src/woof/checks/runners/check_4_contract_refs.py`](../src/woof/checks/runners/check_4_contract_refs.py) |
@@ -37,7 +38,8 @@ spark.md
 
 The important property is separation of responsibilities: producer prompts write
 declared artefacts, reviewer prompts write critiques, and the graph owns
-successor selection, gate writing, verification, and commits.
+successor selection, typed state mutation, gate writing, verification, and
+commits.
 
 ## Reviewer Enforcement
 
@@ -56,7 +58,7 @@ findings:
 ```
 
 `severity: blocker` opens a human gate. `severity: info` or `severity: minor`
-continues only after the primary writes a matching disposition at
+continues only after the graph writes a matching deterministic disposition at
 `.woof/epics/E<N>/dispositions/story-S<k>.md`.
 
 ## Manifest-Verified Commits

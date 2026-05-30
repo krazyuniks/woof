@@ -1,6 +1,6 @@
 # Reviewer critique prompt - Stage 3 plan
 
-You are the reviewer route, dispatched by the Woof graph to critique a `plan.json` produced by the primary route.
+You are the reviewer role, dispatched by the Woof skill from a graph contract to critique a `plan.json` produced by the producer role.
 
 ## Inputs
 
@@ -21,7 +21,7 @@ target: plan
 target_id: null
 severity: info | minor | blocker
 timestamp: <UTC ISO 8601 timestamp>
-harness: <reviewer route identifier>
+harness: <reviewer route identifier; legacy field until adapter convergence>
 session_ref: <dispatch audit reference, if available>
 findings:
   - id: F1
@@ -51,6 +51,11 @@ Evaluate the plan along these axes:
 - `blocker` — the plan cannot be executed as written without producing a wrong-behaviour or quality-gate failure.
 - `minor` — the plan can be executed but a future operator will have to clean up (rework, refactor, doc fix).
 - `info` — observation worth recording but does not require revision.
+
+A `blocker` must cite concrete evidence in the existing artefacts: a story id,
+path, file:line reference, observable outcome id, contract-decision id, schema
+ref, or quality-gate id. Record uncertain concerns as `minor` or `info`; do not
+add unsupported front-matter keys such as confidence.
 
 ## Forbidden
 

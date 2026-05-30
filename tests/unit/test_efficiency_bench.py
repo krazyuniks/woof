@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import tomllib
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -71,6 +72,16 @@ resolved_open_questions: []
         encoding="utf-8",
     )
     return path
+
+
+def test_packaged_small_valid_epic_keeps_consumer_story_behaviour_scoped() -> None:
+    text = Path("examples/efficiency/small-valid-epic/EPIC.md").read_text(encoding="utf-8")
+
+    assert "helper in the consumer source reports measured status" in text
+    assert "test calls the helper and asserts the measured status result" in text
+    assert "must not inspect Woof runtime files under .woof/" in text
+    assert "benchmark harness records graph state" in text
+    assert "The manifest records graph state" not in text
 
 
 def _write_json(path: Path, payload: object) -> None:
@@ -347,6 +358,33 @@ def test_throwaway_worktrees_start_from_same_base_and_do_not_share_woof_state(
     finally:
         for worktree in worktrees:
             remove_worktree(worktree)
+
+
+def test_stub_quality_gate_is_plan_neutral_for_src_and_tests_paths(tmp_path: Path) -> None:
+    repo = tmp_path / "consumer"
+    _init_repo(repo)
+    fixture = _epic_fixture(tmp_path / "EPIC.md")
+    seed_epic_fixture(repo, epic_fixture=fixture, stub_models=True)
+    (repo / "src" / "specwright").mkdir(parents=True)
+    (repo / "src" / "specwright" / "benchmark.py").write_text(
+        "def fixture_benchmark_note() -> dict[str, object]:\n    return {'measured': True}\n",
+        encoding="utf-8",
+    )
+    (repo / "tests").mkdir(exist_ok=True)
+    (repo / "tests" / "test_benchmark_note.py").write_text(
+        '"""outcomes: O1"""\n\n'
+        "from specwright.benchmark import fixture_benchmark_note\n\n\n"
+        "def test_fixture_benchmark_note_reports_measured() -> None:\n"
+        "    assert fixture_benchmark_note()['measured'] is True\n",
+        encoding="utf-8",
+    )
+    config = tomllib.loads((repo / ".woof" / "quality-gates.toml").read_text())
+    command = config["gates"]["compile"]["command"]
+
+    proc = subprocess.run(command, cwd=repo, shell=True, capture_output=True, text=True)
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "bench_note.py tests/test_bench_note.py" not in command
 
 
 def test_manifest_redaction_covers_sensitive_fields_and_known_patterns() -> None:

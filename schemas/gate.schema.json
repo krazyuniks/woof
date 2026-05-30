@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://woof.dev/schemas/gate.schema.json",
   "title": "woof gate front-matter",
-  "description": "YAML front-matter of .woof/epics/E<N>/gate.md. Validates the structured header only; the prose sections (## Context, ## Findings, ## Primary position, ## Reviewer position) are unconstrained markdown. The gate.md represents an OPEN gate; resolution is recorded as a jsonl event with a decision drawn from the taxonomy in jsonl-events.schema.json (gate_resolved.decision). triggered_by[] enum values are registry-derived check IDs plus graph-level triggers; the enum is snapshot-tested against the registry in tests/unit/test_check_stage_5_subcommand.py.",
+  "description": "YAML front-matter of .woof/epics/E<N>/gate.md. Validates the structured header only; prose sections are unconstrained markdown. The gate.md represents an OPEN gate; resolution is recorded as a jsonl event with a decision drawn from the taxonomy in jsonl-events.schema.json (gate_resolved.decision). triggered_by[] enum values are registry-derived check IDs plus graph-level triggers; the enum is snapshot-tested against the registry in tests/unit/test_check_stage_5_subcommand.py.",
   "type": "object",
   "additionalProperties": false,
   "required": ["type", "stage", "story_id", "triggered_by", "timestamp"],
@@ -10,12 +10,12 @@
     "type": {
       "type": "string",
       "enum": ["plan_gate", "story_gate", "review_gate"],
-      "description": "plan_gate (Stage 4, always opens). story_gate (Stage 6, conditional on Stage 5 check failure or executor halt). review_gate (periodic; opens every-N stories or before epic close to surface accumulated minor critique findings)."
+      "description": "plan_gate (Stage 4, always opens). story_gate (Stage 5 halt, conditional on check failure or executor halt). review_gate (periodic; opens every-N stories or before epic close to surface accumulated minor critique findings)."
     },
     "stage": {
       "type": "integer",
       "enum": [4, 5, 6],
-      "description": "Stage that wrote the gate. plan_gate=4, story_gate=6, review_gate=5 (post-story rollup) or 6 (end-of-epic)."
+      "description": "Stage that wrote the gate. Target shape: plan_gate=4, story_gate=5, review_gate=5. E1 normalises legacy stage=6 artefacts."
     },
     "story_id": {
       "oneOf": [

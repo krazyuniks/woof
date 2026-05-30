@@ -291,7 +291,20 @@ redact_patterns = []
     woof_dir.joinpath("quality-gates.toml").write_text(
         """\
 [gates.compile]
-command = "PYTHONDONTWRITEBYTECODE=1 python -m py_compile bench_note.py tests/test_bench_note.py"
+command = '''PYTHONDONTWRITEBYTECODE=1 python - <<'PY'
+from pathlib import Path
+import py_compile
+
+paths = []
+for root in ("src", "tests"):
+    base = Path(root)
+    if base.exists():
+        paths.extend(sorted(base.rglob("*.py")))
+if Path("bench_note.py").exists():
+    paths.append(Path("bench_note.py"))
+for path in paths:
+    py_compile.compile(str(path), doraise=True)
+PY'''
 timeout_seconds = 30
 """,
         encoding="utf-8",

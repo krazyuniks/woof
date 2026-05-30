@@ -25,8 +25,9 @@ from woof.graph.dispositions import (
     validate_story_disposition,
     write_deterministic_story_disposition,
 )
-from woof.graph.git import git, staged_paths
+from woof.graph.git import changed_paths, git, staged_paths
 from woof.graph.manifest import build_story_manifest, verify_staged_manifest
+from woof.graph.pathspec import PathspecEvaluationError, filter_paths_matching
 from woof.graph.planning_contracts import (
     validate_definition_open_questions,
     validate_discovery_synthesis_contract,
@@ -1406,6 +1407,14 @@ def executor_dispatch_node(inp: NodeInput) -> NodeOutput:
 def critique_dispatch_node(inp: NodeInput) -> NodeOutput:
     if not inp.story_id:
         raise ValueError("critique_dispatch requires story_id")
+    try:
+        _stage_changed_story_paths(inp.repo_root, inp.epic_id, inp.story_id)
+    except (subprocess.CalledProcessError, StageStateError, ValueError) as exc:
+        return _write_position_gate(
+            inp,
+            trigger="incomplete_stage_state",
+            position=f"Story paths could not be staged before reviewer critique: {exc}",
+        )
     prompt = _story_critique_prompt(inp.repo_root, inp.epic_id, inp.story_id)
     proc = _run_dispatch(
         inp.repo_root,
@@ -1542,21 +1551,38 @@ def review_disposition_node(inp: NodeInput) -> NodeOutput:
     )
 
 
-def _stage_graph_owned_story_paths(repo_root: Path, epic_id: int, story_id: str) -> list[str]:
-    """Stage durable graph-owned files before Stage-5 commit-readiness checks.
+def _stage_changed_story_paths(repo_root: Path, epic_id: int, story_id: str) -> list[str]:
+    """Stage changed files that belong to the active story pathscope."""
 
-    The producer owns story paths. The graph owns `.woof` state, dispatch audit
-    files, critiques, dispositions, and JSONL events that must be in the same
-    transaction.
+    plan = load_plan(repo_root, epic_id)
+    story = story_by_id(plan, story_id)
+    candidate_paths = [path for path in changed_paths(repo_root) if not path.startswith(".woof/")]
+    try:
+        story_paths = filter_paths_matching(repo_root, candidate_paths, list(story.paths))
+    except PathspecEvaluationError as exc:
+        raise StageStateError(f"story pathspec evaluation failed: {exc}") from exc
+    if story_paths:
+        git(repo_root, "add", "--", *story_paths)
+    return story_paths
+
+
+def _stage_story_transaction_paths(repo_root: Path, epic_id: int, story_id: str) -> list[str]:
+    """Stage story and graph-owned files before Stage-5 commit-readiness checks.
+
+    The producer owns story content. The graph owns the transaction boundary:
+    changed files within `story.paths[]`, durable `.woof` state, dispatch audit
+    files, critiques, dispositions, and JSONL events must be staged together so
+    deterministic checks and reviewer critique inspect the same candidate diff.
     """
 
     plan = load_plan(repo_root, epic_id)
     story = story_by_id(plan, story_id)
+    story_paths = _stage_changed_story_paths(repo_root, epic_id, story_id)
     manifest = build_story_manifest(repo_root, epic_id, story)
     graph_paths = [path for path in manifest.expected_paths if path.startswith(".woof/")]
     if graph_paths:
         git(repo_root, "add", "--", *graph_paths)
-    return graph_paths
+    return sorted(set(story_paths + graph_paths))
 
 
 def verification_node(inp: NodeInput) -> NodeOutput:
@@ -1564,12 +1590,12 @@ def verification_node(inp: NodeInput) -> NodeOutput:
         raise ValueError("verification requires story_id")
     result_path = epic_dir(inp.repo_root, inp.epic_id) / "check-result.json"
     try:
-        _stage_graph_owned_story_paths(inp.repo_root, inp.epic_id, inp.story_id)
+        _stage_story_transaction_paths(inp.repo_root, inp.epic_id, inp.story_id)
     except (subprocess.CalledProcessError, StageStateError, ValueError) as exc:
         return _write_position_gate(
             inp,
             trigger="incomplete_stage_state",
-            position=f"Graph-owned commit artefacts could not be staged: {exc}",
+            position=f"Story transaction artefacts could not be staged: {exc}",
         )
     proc = subprocess.run(
         [

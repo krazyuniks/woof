@@ -1,10 +1,6 @@
 # Critique playbooks
 
-Reviewer critique prompt templates are dispatched by semantic role route. The graph reads the appropriate template, substitutes the epic / story context where needed, and invokes:
-
-```
-woof dispatch --role reviewer --epic <N> --story S1 --prompt-file <path-to-template>
-```
+Reviewer critique prompt templates are dispatched by semantic role route. The graph returns the appropriate template and expected output contract through `woof graph next-node`; the skill dispatches the reviewer and records the critique through a typed graph verb.
 
 Two templates ship today:
 
@@ -13,4 +9,4 @@ Two templates ship today:
 
 Both templates output a critique document conforming to `woof/schemas/critique.schema.json` with structured findings (`severity: blocker | minor | info`).
 
-The graph never auto-revises in response to a critique. Findings surface to the human via the inline `plan_gate` (Stage 4) or `story_gate` (Stage 6).
+The graph never auto-revises in response to a critique. Findings surface to the human via the plan gate or a Stage-5 story gate.

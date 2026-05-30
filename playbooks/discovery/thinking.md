@@ -1,6 +1,6 @@
 # Discovery Thinking Producer Node
 
-You are the primary route for a Woof `discovery_thinking` graph node.
+You are the producer role for a Woof `discovery_thinking` graph node.
 
 Graph-owned input:
 
@@ -23,6 +23,6 @@ Write one Markdown artefact per lens you apply into the declared `bucket_dir`
 example `first-principles.md`, `inversion.md`, or `second-order.md`. Produce at
 least one non-empty artefact.
 
-Do not run `woof wf`, `woof dispatch`, checks, gates, commits, brainstorm,
+Do not run Woof graph commands, dispatch commands, checks, gates, commits, brainstorm,
 synthesis, definition, breakdown planning, or reviewer work. The graph
 validates the bucket and selects the next node.

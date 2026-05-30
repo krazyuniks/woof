@@ -4,8 +4,8 @@ Stage-1 (Discovery) prompt content for the Woof graph.
 
 ## Graph-owned producer-node prompts
 
-Stage 1 runs four deterministic producer nodes in order, each dispatched by the
-Python graph:
+Stage 1 runs four deterministic producer nodes in order. The graph returns the
+next dispatch contract; the skill performs the producer dispatch:
 
 - `research.md` - `discovery_research` node. Produces the `discovery/research/`
   bucket.
@@ -31,8 +31,8 @@ successor selection.
   5-whys, Eisenhower matrix, first-principles, inversion, Occam's razor,
   one-thing, opportunity-cost, Pareto, second-order, SWOT, via-negativa.
 
-These are *building blocks*, not a fixed sequence. The graph bundles every
-playbook for a bucket into that bucket's producer prompt; the primary route
+These are *building blocks*, not a fixed sequence. The graph contract bundles every
+playbook for a bucket into that bucket's producer prompt; the producer role
 selects the playbooks that match the spark and the uncertainties in play. The
 playbook text is embedded directly in the dispatched prompt, so an installed
 Woof package still provides the full technique set. Each building-block playbook
@@ -41,8 +41,8 @@ use interactive question tools, and writes its artefact into the epic's
 discovery bucket directory.
 
 `ask-me-questions.md` is a human-operator intake aid for shaping a vague spark
-before `woof wf new "<spark>"`. It is interactive by design and is not
-dispatched by the graph.
+before `/woof:run` creates an epic. It is interactive by design and is not a
+graph-dispatched producer prompt.
 
 Output of Stage 1 is `discovery/synthesis/{CONCEPT,PRINCIPLES,ARCHITECTURE,OPEN_QUESTIONS}.md`
 per the EPIC schema's required pre-Definition state.

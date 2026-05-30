@@ -1424,6 +1424,7 @@ def test_plan_gate_resolution_unblocks_stage_5_story_execution(tmp_path: Path) -
 
 
 def test_critique_dispatch_failure_opens_reviewer_gate(tmp_path: Path, monkeypatch) -> None:
+    _init_git_repo(tmp_path)
     directory = _write_plan(tmp_path, 1)
     (directory / "EPIC.md").write_text("---\nepic_id: 1\n---\n")
 
@@ -1464,6 +1465,151 @@ def test_critique_dispatch_failure_opens_reviewer_gate(tmp_path: Path, monkeypat
     assert output.triggered_by == ["reviewer_unreachable"]
     gate_fm = _read_gate_fm(tmp_path / ".woof" / "epics" / "E1" / "gate.md")
     assert gate_fm["triggered_by"] == ["reviewer_unreachable"]
+
+
+def test_critique_dispatch_stages_changed_story_paths_before_review(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _init_git_repo(tmp_path)
+    directory = _write_plan(tmp_path, 1)
+    (directory / "EPIC.md").write_text("---\nepic_id: 1\n---\n")
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "app.py").write_text("print('O1')\n")
+    (tmp_path / "scratch.txt").write_text("outside story scope\n")
+
+    def fake_dispatch(
+        repo_root: Path,
+        role: str,
+        epic_id: int,
+        story_id: str | None,
+        prompt: str,
+        artefacts_loaded: list[str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        staged = _git(
+            repo_root,
+            "diff",
+            "--cached",
+            "--name-only",
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+        assert role == "reviewer"
+        assert story_id == "S1"
+        assert staged == ["src/app.py"]
+        assert "scratch.txt" not in staged
+        assert '"staged_diff_command": "git diff --staged"' in prompt
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setattr(nodes, "_run_dispatch", fake_dispatch)
+
+    output = nodes.critique_dispatch_node(
+        NodeInput(
+            node_type=NodeType.CRITIQUE_DISPATCH,
+            epic_id=1,
+            story_id="S1",
+            repo_root=tmp_path,
+        )
+    )
+
+    assert output.status == NodeStatus.COMPLETED
+    assert output.next_node == NodeType.REVIEW_DISPOSITION
+
+
+def test_verification_stages_changed_story_paths_before_stage5_checks(tmp_path: Path) -> None:
+    _init_git_repo(tmp_path)
+    woof_dir = tmp_path / ".woof"
+    woof_dir.mkdir(exist_ok=True)
+    (tmp_path / ".gitignore").write_text(
+        ".woof/epics/*/executor_result.json\n"
+        ".woof/epics/*/check-result.json\n"
+        "__pycache__/\n"
+        "tests/__pycache__/\n"
+        "*.pyc\n"
+    )
+    (woof_dir / "quality-gates.toml").write_text(
+        "[gates.compile]\n"
+        'command = "PYTHONDONTWRITEBYTECODE=1 python -m py_compile src/app.py tests/test_app.py"\n'
+        "timeout_seconds = 30\n"
+    )
+    (woof_dir / "test-markers.toml").write_text(
+        "[languages.python]\n"
+        'test_paths = ["tests/"]\n'
+        r"marker_regex = '(?<![A-Za-z0-9])O\d+(?![A-Za-z0-9])'" + "\n"
+        'docstring_keyword = "outcomes:"\n'
+        'comment_prefix = "#"\n'
+        "context_lines = 3\n"
+    )
+    _git(
+        tmp_path,
+        "add",
+        "--",
+        ".gitignore",
+        ".woof/quality-gates.toml",
+        ".woof/test-markers.toml",
+        check=True,
+    )
+    _git(tmp_path, "commit", "-m", "test: initialise consumer config", check=True)
+
+    directory = _write_plan(tmp_path, 1)
+    plan = json.loads((directory / "plan.json").read_text())
+    plan["stories"][0]["paths"] = ["src/*.py", "tests/*.py"]
+    plan["stories"][0]["status"] = "in_progress"
+    (directory / "plan.json").write_text(json.dumps(plan))
+    _write_minimal_epic(directory, 1)
+    (directory / "dispatch.jsonl").write_text("{}\n")
+    (directory / "executor_result.json").write_text(
+        json.dumps(
+            {
+                "epic_id": 1,
+                "story_id": "S1",
+                "outcome": "staged_for_verification",
+                "commit_body": "done",
+                "position": None,
+            }
+        )
+    )
+    critique_dir = directory / "critique"
+    critique_dir.mkdir()
+    (critique_dir / "story-S1.md").write_text(
+        "---\ntarget: story\ntarget_id: S1\nseverity: info\n"
+        "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
+        "findings: []\n---\n"
+    )
+    _write_disposition(directory, 1, "S1")
+    src = tmp_path / "src"
+    tests = tmp_path / "tests"
+    src.mkdir()
+    tests.mkdir()
+    (src / "app.py").write_text("def marker() -> str:\n    return 'O1'\n")
+    (tests / "test_app.py").write_text(
+        '"""outcomes: O1"""\n\ndef test_marker_reports_o1() -> None:\n    assert True\n'
+    )
+
+    output = nodes.verification_node(
+        NodeInput(
+            node_type=NodeType.VERIFICATION,
+            epic_id=1,
+            story_id="S1",
+            repo_root=tmp_path,
+        )
+    )
+
+    assert output.status == NodeStatus.COMPLETED
+    check_result = json.loads((directory / "check-result.json").read_text())
+    assert check_result["ok"], check_result
+    staged = _git(
+        tmp_path,
+        "diff",
+        "--cached",
+        "--name-only",
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    assert "src/app.py" in staged
+    assert "tests/test_app.py" in staged
 
 
 def test_review_disposition_writes_deterministic_non_blocking_disposition(

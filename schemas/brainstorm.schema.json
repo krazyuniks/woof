@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://woof.dev/schemas/brainstorm.schema.json",
+  "title": "woof brainstorm bundle (Stage-0 ingestion)",
+  "description": "Front-matter of the resolved design document produced by the interactive `brainstorm` skill (its Contract 2). `woof brainstorm --epic N --from-bundle <path>` validates the bundle against this schema and writes it into the discovery/brainstorm/ bucket as a Stage-1 discovery source. The schema is a vendored, woof-local copy of the agent-toolkit brainstorm skill's bundle.schema.json so Woof stays standalone; keep the two in step. work_units[] is the decomposition manifest the graph carries into Definition.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["title", "tier", "status", "work_units"],
+  "properties": {
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Short design title."
+    },
+    "tier": {
+      "type": "string",
+      "enum": ["kb-topic", "feature", "subsystem", "system"],
+      "description": "How much of the tiered template the design engaged."
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["sdlc", "general"],
+      "description": "When absent, kb-topic implies general and every other tier implies sdlc."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["accepted", "rejected"],
+      "description": "accepted: grilled and approved for handoff. rejected: Loop 2 found a root flaw and the design returned to Loop 1 (the back-edge); woof brainstorm refuses to ingest a rejected bundle."
+    },
+    "context_ref": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Path to CONTEXT.md, the bundle's ubiquitous-language glossary."
+    },
+    "adr_refs": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Paths to ADR files recorded during Loop 2."
+    },
+    "work_units": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/work_unit" },
+      "description": "Consumer-agnostic decomposition. Woof carries these into Definition/Breakdown; may be empty for a kb-topic bundle."
+    },
+    "open_questions": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/open_question" }
+    },
+    "rejection": { "$ref": "#/$defs/rejection" }
+  },
+  "if": {
+    "properties": { "status": { "const": "rejected" } }
+  },
+  "then": {
+    "required": ["rejection"]
+  },
+  "$defs": {
+    "work_unit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "summary", "bounded_context", "acceptance"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^WU[1-9]\\d*$" },
+        "title": { "type": "string", "minLength": 1 },
+        "summary": { "type": "string", "minLength": 1 },
+        "bounded_context": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The bounded context or module seam this unit belongs to, named as in the design and CONTEXT.md."
+        },
+        "acceptance": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "deps": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^WU[1-9]\\d*$" }
+        },
+        "notes": { "type": "string" }
+      }
+    },
+    "open_question": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "question"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^OQ[1-9]\\d*$" },
+        "question": { "type": "string", "minLength": 1 },
+        "deferral_reason": { "type": "string", "minLength": 1 },
+        "decision_needed_by": { "type": "string", "minLength": 1 }
+      },
+      "anyOf": [
+        { "required": ["deferral_reason"] },
+        { "required": ["decision_needed_by"] }
+      ]
+    },
+    "rejection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reason"],
+      "properties": {
+        "reason": { "type": "string", "minLength": 1 },
+        "reenter_tier": {
+          "type": "string",
+          "enum": ["kb-topic", "feature", "subsystem", "system"]
+        }
+      }
+    }
+  }
+}

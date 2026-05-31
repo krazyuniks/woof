@@ -237,19 +237,19 @@ def _discovery_source_paths(repo_root: Path, epic_id: int) -> list[str]:
 _DISCOVERY_BUCKET_NODE_TYPE = {
     "research": NodeType.DISCOVERY_RESEARCH,
     "thinking": NodeType.DISCOVERY_THINKING,
-    "brainstorm": NodeType.DISCOVERY_BRAINSTORM,
+    "ideate": NodeType.DISCOVERY_IDEATE,
 }
 _DISCOVERY_BUCKET_NEXT_NODE = {
     "research": NodeType.DISCOVERY_THINKING,
-    "thinking": NodeType.DISCOVERY_BRAINSTORM,
-    "brainstorm": NodeType.DISCOVERY_SYNTHESIS,
+    "thinking": NodeType.DISCOVERY_IDEATE,
+    "ideate": NodeType.DISCOVERY_SYNTHESIS,
 }
 # Building-block playbook directory bundled into each producer prompt. The
-# brainstorm bucket has no building blocks; its node prompt is self-contained.
+# ideate bucket has no building blocks; its node prompt is self-contained.
 _DISCOVERY_BUCKET_PLAYBOOK_SUBDIR = {
     "research": "research",
     "thinking": "consider",
-    "brainstorm": None,
+    "ideate": None,
 }
 
 
@@ -300,7 +300,7 @@ def _discovery_bucket_playbooks(bucket: str) -> str:
 
     The playbook text is embedded directly into the producer prompt so a
     consumer without Woof's source checkout on the dispatch path still receives
-    the full Stage-1 technique set. The brainstorm bucket has no building
+    the full Stage-1 technique set. The ideate bucket has no building
     blocks and returns an empty string.
     """
 
@@ -683,7 +683,7 @@ def _run_dispatch(
 
 
 def _discovery_bucket_node(inp: NodeInput, bucket: str) -> NodeOutput:
-    """Run a Stage-1 producer bucket node (research, thinking, brainstorm)."""
+    """Run a Stage-1 producer bucket node (research, thinking, ideate)."""
 
     if inp.story_id:
         raise ValueError(f"discovery_{bucket} does not accept story_id")
@@ -775,8 +775,8 @@ def discovery_thinking_node(inp: NodeInput) -> NodeOutput:
     return _discovery_bucket_node(inp, "thinking")
 
 
-def discovery_brainstorm_node(inp: NodeInput) -> NodeOutput:
-    return _discovery_bucket_node(inp, "brainstorm")
+def discovery_ideate_node(inp: NodeInput) -> NodeOutput:
+    return _discovery_bucket_node(inp, "ideate")
 
 
 def discovery_synthesis_node(inp: NodeInput) -> NodeOutput:
@@ -1971,7 +1971,7 @@ def default_registry() -> dict[NodeType, NodeHandler]:
     return {
         NodeType.DISCOVERY_RESEARCH: discovery_research_node,
         NodeType.DISCOVERY_THINKING: discovery_thinking_node,
-        NodeType.DISCOVERY_BRAINSTORM: discovery_brainstorm_node,
+        NodeType.DISCOVERY_IDEATE: discovery_ideate_node,
         NodeType.DISCOVERY_SYNTHESIS: discovery_synthesis_node,
         NodeType.EPIC_DEFINITION: epic_definition_node,
         NodeType.BREAKDOWN_PLANNING: breakdown_planning_node,

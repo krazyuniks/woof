@@ -272,7 +272,9 @@ def _derive_next_step(
         if discovery_synthesis_complete(repo_root, epic_id):
             return {"node": "epic_definition", "story_id": None}
         if (directory / "spark.md").exists():
-            for bucket in ("research", "thinking", "brainstorm"):
+            if discovery_bucket_complete(repo_root, epic_id, "brainstorm"):
+                return {"node": "discovery_synthesis", "story_id": None}
+            for bucket in ("research", "thinking", "ideate"):
                 if not discovery_bucket_complete(repo_root, epic_id, bucket):
                     return {"node": f"discovery_{bucket}", "story_id": None}
             return {"node": "discovery_synthesis", "story_id": None}

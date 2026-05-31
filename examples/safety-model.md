@@ -23,7 +23,7 @@ The graph owns successor selection:
 spark.md
   -> discovery_research
   -> discovery_thinking
-  -> discovery_brainstorm
+  -> discovery_ideate
   -> discovery_synthesis
   -> epic_definition
   -> breakdown_planning

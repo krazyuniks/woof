@@ -103,7 +103,7 @@ def playbook_stems(text):
 
 
 result = {"tool_root": str(tool_root()), "buckets": {}}
-for bucket in ("research", "thinking", "brainstorm"):
+for bucket in ("research", "thinking", "ideate"):
     prompt = _discovery_bucket_prompt(consumer, epic_id, bucket)
     result["buckets"][bucket] = {
         "length": len(prompt),
@@ -235,9 +235,9 @@ def test_release_smoke(tmp_path: Path) -> None:
     # consumer without Woof-author-local agent skills still gets every angle.
     assert buckets["research"]["playbook_stems"] == RESEARCH_PLAYBOOKS
     assert buckets["thinking"]["playbook_stems"] == THINKING_PLAYBOOKS
-    # The brainstorm node is self-contained and has no building-block set.
-    assert buckets["brainstorm"]["playbook_stems"] == []
-    assert buckets["brainstorm"]["length"] > 0
+    # The ideate node is self-contained and has no building-block set.
+    assert buckets["ideate"]["playbook_stems"] == []
+    assert buckets["ideate"]["length"] > 0
 
     # No producer prompt leaks a Woof-author-local skill, wrapper, or host path.
     for bucket, data in buckets.items():

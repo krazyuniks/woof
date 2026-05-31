@@ -1,6 +1,6 @@
-# Discovery Brainstorm Producer Node
+# Discovery Ideate Producer Node
 
-You are the producer role for a Woof `discovery_brainstorm` graph node.
+You are the producer role for a Woof `discovery_ideate` graph node.
 
 Graph-owned input:
 
@@ -17,7 +17,7 @@ artefacts already produced for this epic). Turn that material into candidate
 directions for the epic.
 
 Write at least one non-empty Markdown artefact into the declared `bucket_dir`
-(`.woof/epics/E<N>/discovery/brainstorm/`):
+(`.woof/epics/E<N>/discovery/ideate/`):
 
 - `ideas.md` - divergent candidate directions. Generate broadly before
   filtering; capture even the ideas you expect to reject, with a one-line

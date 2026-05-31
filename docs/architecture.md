@@ -83,10 +83,14 @@ Producer surface for open-ended exploration; reviewer critiques. Four discovery 
 
 - `discovery_research` — produces research notes from spark.
 - `discovery_thinking` — produces reasoning notes from spark + research.
-- `discovery_brainstorm` — produces `ideas.md` and `options.md` from spark + research + thinking.
+- `discovery_ideate` — produces `ideas.md` and `options.md` from spark + research + thinking.
 - `discovery_synthesis` — produces `CONCEPT.md`, `PRINCIPLES.md`, `ARCHITECTURE.md`, and `OPEN_QUESTIONS.md` under `discovery/synthesis/`.
 
 Discovery is the only stage where the producer prompt scope is intentionally wide (full cartography load). Discovery outputs are markdown narratives; structured data lives in front-matter.
+
+#### Stage 0 — interactive brainstorm (optional, human-led)
+
+The headless `research → thinking → ideate` chain is the **autonomy fallback** for when no human is present (for example an overnight Hermes run). When a human wants to lead the design, `woof brainstorm --epic N --from-bundle <path>` runs first: it validates a design bundle from the `brainstorm` skill against `schemas/brainstorm.schema.json` and writes it into the `discovery/brainstorm/` bucket. The bundle is the resolved output of the skill's two interactive loops (Brainstorm then Grill Me); it carries an architecture/design doc, a `CONTEXT.md` glossary, ADRs, and a `work_units[]` manifest. When that bucket is present, `next_node` skips the headless chain and goes straight to `discovery_synthesis`, which ingests the bundle like any other discovery source. The brainstorm skill is vendored into `playbooks/brainstorm/` (pinned, generated-marked) so Woof stays standalone.
 
 ### Stage 2 — Definition (locks surface)
 
@@ -154,7 +158,7 @@ See ADR-004 for the decision. Per-node loading map:
 |---|---|
 | Stage 1 — discovery_research | `STACK.md`, `INTEGRATIONS.md`, `CONCERNS.md` |
 | Stage 1 — discovery_thinking | `CURRENT-ARCHITECTURE.md`, `STRUCTURE.md` |
-| Stage 1 — discovery_brainstorm | Full set (broad ideation) |
+| Stage 1 — discovery_ideate | Full set (broad ideation) |
 | Stage 1 — discovery_synthesis | Full set |
 | Stage 2 — epic_definition | `CURRENT-ARCHITECTURE.md`, `STRUCTURE.md`, `CONCERNS.md`, `TARGET-ARCHITECTURE.md`, `PRINCIPLES.md` |
 | Stage 2.5 — contract_readiness | `CURRENT-ARCHITECTURE.md`, `STRUCTURE.md`, `CONVENTIONS.md`, `TESTING.md`, `TARGET-ARCHITECTURE.md`, `PRINCIPLES.md`; mechanical `files.txt` |

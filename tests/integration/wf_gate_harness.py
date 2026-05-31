@@ -60,7 +60,7 @@ def git_add(*paths: str) -> None:
 
 
 def discovery_bucket(prompt: str) -> str | None:
-    for bucket in ("research", "thinking", "brainstorm"):
+    for bucket in ("research", "thinking", "ideate"):
         if f'"node_type": "discovery_{bucket}"' in prompt:
             return bucket
     return None

@@ -1,7 +1,7 @@
 ---
 epic_id: 1
 title: Small valid efficiency benchmark
-intent: Measure Woof graph efficiency from a valid epic contract without exercising brainstorm.
+intent: Measure Woof graph efficiency from a valid epic contract without exercising discovery.
 observable_outcomes:
   - id: O1
     statement: A tiny benchmark note helper in the consumer source reports measured status as a JSON-serialisable object.

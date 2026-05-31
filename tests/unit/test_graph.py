@@ -732,9 +732,19 @@ def test_pre_plan_transition_walks_discovery_buckets_before_synthesis(tmp_path: 
     _write_discovery_bucket(directory, "research")
     assert next_node(tmp_path, 210) == (NodeType.DISCOVERY_THINKING, None)
     _write_discovery_bucket(directory, "thinking")
-    assert next_node(tmp_path, 210) == (NodeType.DISCOVERY_BRAINSTORM, None)
-    _write_discovery_bucket(directory, "brainstorm")
+    assert next_node(tmp_path, 210) == (NodeType.DISCOVERY_IDEATE, None)
+    _write_discovery_bucket(directory, "ideate")
     assert next_node(tmp_path, 210) == (NodeType.DISCOVERY_SYNTHESIS, None)
+
+
+def test_pre_plan_transition_skips_headless_chain_when_brainstorm_bucket_present(
+    tmp_path: Path,
+) -> None:
+    # An interactive Stage-0 brainstorm bundle (woof brainstorm) stands in for the
+    # headless research/thinking/ideate chain; the graph goes straight to synthesis.
+    directory = _write_spark(tmp_path, 211)
+    _write_discovery_bucket(directory, "brainstorm")
+    assert next_node(tmp_path, 211) == (NodeType.DISCOVERY_SYNTHESIS, None)
 
 
 def test_discovery_research_node_dispatches_primary_and_bundles_playbooks(
@@ -809,7 +819,7 @@ def test_discovery_thinking_node_passes_prior_bucket_artefacts(tmp_path: Path, m
         ".woof/epics/E224/discovery/research/research.md",
     ]
     assert output.status == NodeStatus.COMPLETED
-    assert output.next_node == NodeType.DISCOVERY_BRAINSTORM
+    assert output.next_node == NodeType.DISCOVERY_IDEATE
 
 
 def test_discovery_bucket_node_skips_dispatch_when_already_populated(
@@ -828,7 +838,7 @@ def test_discovery_bucket_node_skips_dispatch_when_already_populated(
     )
 
     assert output.status == NodeStatus.COMPLETED
-    assert output.next_node == NodeType.DISCOVERY_BRAINSTORM
+    assert output.next_node == NodeType.DISCOVERY_IDEATE
 
 
 def test_discovery_bucket_node_halts_when_no_artefacts_produced(
@@ -841,15 +851,15 @@ def test_discovery_bucket_node_halts_when_no_artefacts_produced(
 
     monkeypatch.setattr(nodes, "_run_dispatch", empty_dispatch)
 
-    output = nodes.discovery_brainstorm_node(
-        NodeInput(node_type=NodeType.DISCOVERY_BRAINSTORM, epic_id=222, repo_root=tmp_path)
+    output = nodes.discovery_ideate_node(
+        NodeInput(node_type=NodeType.DISCOVERY_IDEATE, epic_id=222, repo_root=tmp_path)
     )
 
     assert output.status == NodeStatus.HALTED
     assert output.triggered_by == ["schema_validation_failed"]
 
 
-def test_discovery_brainstorm_node_bundles_no_building_blocks(tmp_path: Path, monkeypatch) -> None:
+def test_discovery_ideate_node_bundles_no_building_blocks(tmp_path: Path, monkeypatch) -> None:
     directory = _write_spark(tmp_path, 223)
     captured: dict[str, Any] = {}
 
@@ -862,16 +872,16 @@ def test_discovery_brainstorm_node_bundles_no_building_blocks(tmp_path: Path, mo
         artefacts_loaded: list[str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         captured["prompt"] = prompt
-        _write_discovery_bucket(directory, "brainstorm")
+        _write_discovery_bucket(directory, "ideate")
         return subprocess.CompletedProcess([], 0, "", "")
 
     monkeypatch.setattr(nodes, "_run_dispatch", fake_dispatch)
 
-    output = nodes.discovery_brainstorm_node(
-        NodeInput(node_type=NodeType.DISCOVERY_BRAINSTORM, epic_id=223, repo_root=tmp_path)
+    output = nodes.discovery_ideate_node(
+        NodeInput(node_type=NodeType.DISCOVERY_IDEATE, epic_id=223, repo_root=tmp_path)
     )
 
-    assert '"node_type": "discovery_brainstorm"' in captured["prompt"]
+    assert '"node_type": "discovery_ideate"' in captured["prompt"]
     assert "Building-block playbook:" not in captured["prompt"]
     assert output.status == NodeStatus.COMPLETED
     assert output.next_node == NodeType.DISCOVERY_SYNTHESIS
@@ -1312,9 +1322,9 @@ def test_graph_runs_discovery_definition_breakdown_and_opens_plan_gate(
         elif '"node_type": "discovery_thinking"' in prompt:
             assert role == "primary"
             _write_discovery_bucket(directory, "thinking")
-        elif '"node_type": "discovery_brainstorm"' in prompt:
+        elif '"node_type": "discovery_ideate"' in prompt:
             assert role == "primary"
-            _write_discovery_bucket(directory, "brainstorm")
+            _write_discovery_bucket(directory, "ideate")
         elif '"node_type": "discovery_synthesis"' in prompt:
             assert role == "primary"
             _write_discovery_synthesis(directory)
@@ -1338,7 +1348,7 @@ def test_graph_runs_discovery_definition_breakdown_and_opens_plan_gate(
     assert [output.node_type for output in outputs] == [
         NodeType.DISCOVERY_RESEARCH,
         NodeType.DISCOVERY_THINKING,
-        NodeType.DISCOVERY_BRAINSTORM,
+        NodeType.DISCOVERY_IDEATE,
         NodeType.DISCOVERY_SYNTHESIS,
         NodeType.EPIC_DEFINITION,
         NodeType.BREAKDOWN_PLANNING,

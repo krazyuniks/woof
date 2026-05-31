@@ -48,7 +48,7 @@
     },
     {
       "if": {
-        "properties": { "node_type": { "const": "discovery_brainstorm" } },
+        "properties": { "node_type": { "const": "discovery_ideate" } },
         "required": ["node_type"]
       },
       "then": {
@@ -116,7 +116,7 @@
       "enum": [
         "discovery_research",
         "discovery_thinking",
-        "discovery_brainstorm",
+        "discovery_ideate",
         "discovery_synthesis",
         "epic_definition",
         "breakdown_planning",
@@ -149,7 +149,7 @@
     "discovery_bucket_input": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Input for a Stage-1 producer bucket node (research, thinking, brainstorm). The producer reads the spark plus any prior-bucket source artefacts and writes one or more Markdown artefacts into bucket_dir. Building-block playbook text is appended to the producer prompt, not referenced by path.",
+      "description": "Input for a Stage-1 producer bucket node (research, thinking, ideate). The producer reads the spark plus any prior-bucket source artefacts and writes one or more Markdown artefacts into bucket_dir. Building-block playbook text is appended to the producer prompt, not referenced by path.",
       "required": ["spark_path", "discovery_dir", "bucket_dir"],
       "properties": {
         "spark_path": { "$ref": "#/$defs/path" },

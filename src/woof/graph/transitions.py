@@ -61,13 +61,18 @@ def discovery_synthesis_complete(repo_root: Path, epic_id: int) -> bool:
     )
 
 
-DISCOVERY_BUCKETS = ("research", "thinking", "brainstorm")
+DISCOVERY_BUCKETS = ("research", "thinking", "ideate")
 
 _DISCOVERY_BUCKET_NODES = (
     ("research", NodeType.DISCOVERY_RESEARCH),
     ("thinking", NodeType.DISCOVERY_THINKING),
-    ("brainstorm", NodeType.DISCOVERY_BRAINSTORM),
+    ("ideate", NodeType.DISCOVERY_IDEATE),
 )
+
+# The interactive Stage-0 bucket written by `woof brainstorm`. When present it
+# stands in for the headless research/thinking/ideate chain (which is the
+# autonomy fallback): synthesis ingests it like any other discovery source.
+INTERACTIVE_DISCOVERY_BUCKET = "brainstorm"
 
 
 def discovery_bucket_dir(repo_root: Path, epic_id: int, bucket: str) -> Path:
@@ -315,6 +320,8 @@ def next_node(repo_root: Path, epic_id: int) -> tuple[NodeType | None, str | Non
         if discovery_synthesis_complete(repo_root, epic_id):
             return NodeType.EPIC_DEFINITION, None
         if (directory / "spark.md").exists():
+            if discovery_bucket_complete(repo_root, epic_id, INTERACTIVE_DISCOVERY_BUCKET):
+                return NodeType.DISCOVERY_SYNTHESIS, None
             for bucket, node in _DISCOVERY_BUCKET_NODES:
                 if not discovery_bucket_complete(repo_root, epic_id, bucket):
                     return node, None

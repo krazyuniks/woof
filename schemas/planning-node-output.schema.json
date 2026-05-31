@@ -78,7 +78,7 @@
       "enum": [
         "discovery_research",
         "discovery_thinking",
-        "discovery_brainstorm",
+        "discovery_ideate",
         "discovery_synthesis",
         "epic_definition",
         "breakdown_planning",

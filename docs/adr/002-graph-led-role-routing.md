@@ -27,7 +27,7 @@ Roles are semantic. The skill orchestrator dispatches by role name; the route pi
 
 | Stage | Producer | Reviewer |
 |---|---|---|
-| 1. Discovery (research, thinking, brainstorm, synthesis) | Codex | Claude |
+| 1. Discovery (research, thinking, ideate, synthesis) | Codex | Claude |
 | 2. Definition | Codex | Claude |
 | 3. Breakdown / planning | Codex | Claude |
 | 4. Plan gate | (deterministic) | n/a |

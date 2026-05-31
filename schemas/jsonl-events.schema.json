@@ -200,8 +200,8 @@
     },
     "bucket": {
       "type": "string",
-      "enum": ["research", "thinking", "brainstorm"],
-      "description": "Stage-1 discovery producer bucket. Used by discovery_bucket_explored events."
+      "enum": ["research", "thinking", "ideate", "brainstorm"],
+      "description": "Stage-1 discovery bucket. research/thinking/ideate are the headless producer buckets; brainstorm is the interactive Stage-0 bucket written by `woof brainstorm`. Used by discovery_bucket_explored events."
     },
     "triggered_by": {
       "type": "array",

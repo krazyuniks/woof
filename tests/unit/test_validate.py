@@ -271,8 +271,8 @@ def _base_planning_output(
         ),
         (
             _base_planning_output(
-                "discovery_brainstorm",
-                paths=[".woof/epics/E7/discovery/brainstorm/options.md"],
+                "discovery_ideate",
+                paths=[".woof/epics/E7/discovery/ideate/options.md"],
                 next_node="discovery_synthesis",
                 stage=1,
             ),

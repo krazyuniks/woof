@@ -43,6 +43,7 @@ def test_shipped_schema_count() -> None:
     """Schema directory holds the designed artefact and graph schemas."""
     expected = {
         "epic.schema.json",
+        "brainstorm.schema.json",
         "plan.schema.json",
         "gate.schema.json",
         "critique.schema.json",

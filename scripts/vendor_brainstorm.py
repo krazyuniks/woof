@@ -33,9 +33,16 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 VENDOR_DIR = REPO_ROOT / "playbooks" / "brainstorm"
 MANIFEST = VENDOR_DIR / "VENDOR.json"
 
-# The prose an agent needs to run the two loops and produce a bundle. Schemas and
-# the Python validator are intentionally not vendored (Woof has its own).
-VENDORED_FILES = ("SKILL.md", "TEMPLATE.md", "CONTEXT-FORMAT.md", "ADR-FORMAT.md")
+# The prose an agent needs to run the two loops and produce a bundle, plus the
+# upstream attribution the format docs reference. Schemas and the Python
+# validator are intentionally not vendored (Woof has its own).
+VENDORED_FILES = (
+    "SKILL.md",
+    "TEMPLATE.md",
+    "CONTEXT-FORMAT.md",
+    "ADR-FORMAT.md",
+    "ACKNOWLEDGEMENTS.md",
+)
 
 MARKER = (
     "<!-- VENDORED from agent-toolkit skills/brainstorm - do not edit here. "

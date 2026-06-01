@@ -1,0 +1,14 @@
+{
+  "source": {
+    "repo": "agent-toolkit",
+    "path": "skills/brainstorm",
+    "commit": "23cc28cff9a930613f7e800b79a440aca934404f"
+  },
+  "marker": "<!-- VENDORED from agent-toolkit skills/brainstorm - do not edit here. Regenerate with `just vendor-brainstorm`. -->",
+  "files": {
+    "SKILL.md": "1f5a5194da97d1c7a2ef396c1090bf5f3f70f1af05253fe1a1c0471ce358396d",
+    "TEMPLATE.md": "c485d76f01c222f1a6f5411b4571021cd48178caa7ee5b894a8ff75b52c6bc29",
+    "CONTEXT-FORMAT.md": "ee2c770fd65e378622698dc8da77c63b836016ed4dbf2a0d646f3c6617410f27",
+    "ADR-FORMAT.md": "23dce2ac80d206992f45a58f753622042f4ba8df034d615f1fa5ea190cdafed2"
+  }
+}

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -309,6 +310,86 @@ def _resolve_gate(repo_root: Path, epic_id: int, decision: GateDecision, tracker
     return 0
 
 
+# `woof wf reset` returns an epic to its spark: it deletes every derived
+# artefact and keeps only the inputs and lineage - spark.md, the tracker linkage
+# (.last-sync and friends), and the append-only epic.jsonl log. The reset appends
+# an `epic_reset` marker so state-derivation readers ignore the superseded events
+# (see graph.transitions.iter_epic_events).
+_RESET_FILES = (
+    "EPIC.md",
+    "plan.json",
+    "PLAN.md",
+    "executor_result.json",
+    "check-result.json",
+    "gate.md",
+)
+_RESET_DIRS = ("discovery", "critique")
+_RESET_GLOBS = ("*-position.md",)
+
+
+def _reset_targets(directory: Path) -> list[Path]:
+    """Return the derived artefacts a reset would remove, present on disk."""
+    candidates: list[Path] = [directory / name for name in _RESET_FILES]
+    candidates += [directory / name for name in _RESET_DIRS]
+    for pattern in _RESET_GLOBS:
+        candidates += sorted(directory.glob(pattern))
+    return [path for path in candidates if path.exists()]
+
+
+def _reset_epic(repo_root: Path, epic_id: int, *, assume_yes: bool) -> int:
+    directory = epic_dir(repo_root, epic_id)
+    if not directory.is_dir():
+        sys.stderr.write(
+            f"woof wf reset: E{epic_id} not found at {_display_path(repo_root, directory)}\n"
+        )
+        return 2
+
+    present = _reset_targets(directory)
+    if not present:
+        sys.stdout.write(f"woof wf reset: E{epic_id} is already at spark; nothing to remove\n")
+        return 0
+
+    if not assume_yes:
+        sys.stderr.write(
+            f"woof wf reset will permanently delete {len(present)} derived artefact(s) from "
+            f"E{epic_id}, keeping spark.md, .last-sync, and epic.jsonl:\n"
+        )
+        for path in present:
+            sys.stderr.write(f"  - {_display_path(repo_root, path)}\n")
+        sys.stderr.write("Proceed? [y/N] ")
+        sys.stderr.flush()
+        reply = sys.stdin.readline().strip().lower()
+        if reply not in {"y", "yes"}:
+            sys.stdout.write("woof wf reset: aborted; nothing was removed\n")
+            return 1
+
+    removed: list[str] = []
+    for path in present:
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+        removed.append(_display_path(repo_root, path))
+
+    append_epic_event(
+        repo_root,
+        epic_id,
+        {
+            "event": "epic_reset",
+            "at": _now(),
+            "epic_id": epic_id,
+            "removed": removed,
+        },
+    )
+    sys.stdout.write(
+        f"woof wf reset: E{epic_id} reset to spark; removed {len(removed)} artefact(s)\n"
+    )
+    for item in removed:
+        sys.stdout.write(f"  removed {item}\n")
+    sys.stdout.write(f"Next: woof wf --epic {epic_id}\n")
+    return 0
+
+
 def cmd_wf(args: argparse.Namespace) -> int:
     try:
         repo_root = find_project_root(Path.cwd())
@@ -329,6 +410,12 @@ def cmd_wf(args: argparse.Namespace) -> int:
             sys.stderr.write(f"woof wf: tracker not reachable: {exc}\n")
             return False
         return True
+
+    if args.action == "reset":
+        if args.epic is None:
+            sys.stderr.write("woof wf reset: --epic is required, e.g. `woof wf reset --epic 12`\n")
+            return 2
+        return _reset_epic(repo_root, args.epic, assume_yes=args.yes)
 
     if args.action == "new":
         if args.epic is not None:
@@ -453,12 +540,21 @@ def setup_wf_parser(sub: argparse._SubParsersAction) -> None:  # type: ignore[ty
     wf.add_argument(
         "action",
         nargs="?",
-        choices=["new"],
-        help='optional action; use `new "<spark>"` to create a tracker-backed epic',
+        choices=["new", "reset"],
+        help=(
+            'optional action; `new "<spark>"` creates a tracker-backed epic, '
+            "`reset --epic N` returns an epic to its spark (destructive)"
+        ),
     )
     wf.add_argument("spark", nargs="?", help="spark text for `woof wf new`")
     wf.add_argument("--epic", type=int, help="epic id (tracker-assigned epic identifier)")
     wf.add_argument("--once", action="store_true", help="run a single graph node and stop")
+    wf.add_argument(
+        "--yes",
+        "-y",
+        action="store_true",
+        help="skip the confirmation prompt for destructive actions (`woof wf reset`)",
+    )
     wf.add_argument(
         "--resolve",
         choices=[

@@ -46,10 +46,10 @@ efficiency-bench *ARGS:
 wf-audit-bundle EPIC:
     ./bin/woof audit-bundle {{EPIC}}
 
-# Re-vendor the brainstorm skill playbook from agent-toolkit (one-way copy).
-vendor-brainstorm *ARGS:
-    uv run python scripts/vendor_brainstorm.py {{ARGS}}
+# Regenerate the woof-brainstorm skill from the canonical agent-toolkit skill (one-way).
+gen-brainstorm *ARGS:
+    uv run python scripts/gen_woof_brainstorm.py {{ARGS}}
 
-# Verify the vendored brainstorm playbook matches its recorded pin (no source needed).
-vendor-brainstorm-check:
-    uv run python scripts/vendor_brainstorm.py --check
+# Verify the generated woof-brainstorm skill matches its recorded pin (no source needed).
+gen-brainstorm-check:
+    uv run python scripts/gen_woof_brainstorm.py --check

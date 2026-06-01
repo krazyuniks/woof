@@ -17,9 +17,9 @@ next dispatch contract; the skill performs the producer dispatch:
   produces `discovery/synthesis/{CONCEPT,PRINCIPLES,ARCHITECTURE,OPEN_QUESTIONS}.md`.
 
 The headless research/thinking/ideate chain is the autonomy fallback. When a human
-runs the interactive `woof brainstorm` Stage 0 first, its bundle lands in the
-`discovery/brainstorm/` bucket; the graph then skips the headless chain and
-synthesis ingests the bundle directly (see `docs/architecture.md`).
+runs the interactive `woof-brainstorm` skill (`/woof:brainstorm`) first, its bundle
+lands in the `discovery/brainstorm/` bucket; the graph then skips the headless chain
+and synthesis ingests the bundle directly (see `docs/architecture.md`).
 
 `definition.md` is the graph-owned Stage 2 Definition producer-node prompt. The
 Stage 3 Breakdown producer prompt lives under `playbooks/planning/`. These

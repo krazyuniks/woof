@@ -740,8 +740,8 @@ def test_pre_plan_transition_walks_discovery_buckets_before_synthesis(tmp_path: 
 def test_pre_plan_transition_skips_headless_chain_when_brainstorm_bucket_present(
     tmp_path: Path,
 ) -> None:
-    # An interactive Stage-0 brainstorm bundle (woof brainstorm) stands in for the
-    # headless research/thinking/ideate chain; the graph goes straight to synthesis.
+    # An interactive Stage-0 brainstorm bundle (the woof-brainstorm skill) stands in
+    # for the headless research/thinking/ideate chain; the graph goes to synthesis.
     directory = _write_spark(tmp_path, 211)
     _write_discovery_bucket(directory, "brainstorm")
     assert next_node(tmp_path, 211) == (NodeType.DISCOVERY_SYNTHESIS, None)

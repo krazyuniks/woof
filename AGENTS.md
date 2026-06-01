@@ -2,7 +2,7 @@
 
 ## Project shape
 
-Woof is an inner-loop SDLC tool for AI-assisted development. It has four layers: state on disk (`.woof/`), a Python graph library (`src/woof/`), a Claude Code skill suite (`skills/`) as the operator orchestrator, and dispatched producer/reviewer/mapper subagents.
+Woof is an inner-loop SDLC tool for AI-assisted development. It has four layers: state on disk (`.woof/`), a Python graph library (`src/woof/`), a Claude Code operator skill layer (`skills/`: the `woof` umbrella over the `woof` CLI plus the `woof-brainstorm` design specialist), and dispatched producer/reviewer/mapper subagents.
 
 Authority for design decisions: ADRs under `docs/adr/`. Authority for system architecture: `docs/architecture.md`. Authority for open work: `docs/backlog.md`. Authority for execution sequencing: `docs/implementation-plan.md`.
 
@@ -29,7 +29,7 @@ Do not introduce parallel Make, npm, tox, or ad-hoc shell entry points while a `
 ## Code boundaries
 
 - `src/woof/graph/` — deterministic graph transitions, typed graph commands, validation, JSONL audit.
-- `src/woof/cli/` — CLI command surface (`woof init`, `woof preflight`, `woof hooks install`, `woof graph`, `woof validate`, etc.).
+- `src/woof/cli/` — CLI command surface (`woof wf`, `woof init`, `woof preflight`, `woof hooks install`, `woof observe`, `woof validate`, etc.).
 - `src/woof/checks/` — Stage-5 check runners.
 - `src/woof/gate/` — gate authoring helpers.
 - `src/woof/trackers/` — `Tracker` protocol and adapters.
@@ -37,7 +37,7 @@ Do not introduce parallel Make, npm, tox, or ad-hoc shell entry points while a `
 - `schemas/` — JSON Schema contracts.
 - `playbooks/` — producer and reviewer prompt templates.
 - `languages/` — per-language registry: install instructions, LSP binaries, tree-sitter grammars, refresh-cartography templates.
-- `skills/` — Claude Code skill bundles: `woof-setup`, `woof-map-codebase`, `woof-run`, `woof-target-architecture`.
+- `skills/` — Claude Code skill bundles: `woof` (the umbrella operator surface) and `woof-brainstorm` (the generated design specialist; regenerate with `just gen-brainstorm`).
 
 ## Workflow rules
 
@@ -46,8 +46,8 @@ Do not introduce parallel Make, npm, tox, or ad-hoc shell entry points while a `
 - Preserve the layered topology (ADR-001). The skill is the orchestrator; Python is the engine library; state is on disk.
 - Preserve the role-routing policy (ADR-002). Stage 5 producer is Claude (LSP); reviewer is Codex. Other stages are the reverse.
 - Preserve the cartography prerequisite (ADR-004). Do not introduce nodes that bypass `.woof/codebase/` content loading.
-- Do not introduce a parallel operator surface for running epics. The only operator entry point for running an epic is `/woof:run`.
-- Do not add generic graph mutation commands. Skill-facing state changes use typed `woof graph` verbs and `state_token` guards.
+- Do not introduce a parallel operator surface for running epics. The operator entry point is the `/woof` umbrella, which runs `woof wf` (ADR-007).
+- Do not add a parallel state-mutation path. Skill-facing state changes go through typed `woof wf` verbs (`new`, `--resolve`, `reset`); never hand-edit `.woof/` state.
 - Do not commit runtime state: locks, current-epic markers, generated audit raw data, and the mechanical cartography layer are gitignored.
 - Use conventional commits, e.g. `feat(graph): add transaction guard`.
 

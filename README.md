@@ -6,7 +6,7 @@ Producer and reviewer subagents create artefacts and critiques; humans resolve e
 
 ## Install
 
-Woof currently ships the Python engine. The Claude Code skill suite is part of the redesign backlog and is documented as the target operator surface; its installer is added when E3 ships.
+Woof ships the Python engine and the Claude Code operator skills under `skills/` (`woof`, the umbrella, and `woof-brainstorm`, the design specialist).
 
 ```bash
 uv tool install git+https://github.com/krazyuniks/woof@main
@@ -20,25 +20,24 @@ woof --help
 
 ## Consumer setup
 
-Run Woof against the repository you want it to manage. The target skill suite walks you through onboarding:
+Run Woof against the repository you want it to manage. The `/woof` skill walks you through onboarding (see `skills/woof/references/setup.md`):
 
 ```
-/woof:setup
+woof init
 ```
 
-This invokes `woof init` for file scaffolding, prompts you to author the target architecture and design principles for the project, and optionally runs `/woof:map-codebase` to produce the current-state codebase documentation.
+`woof init` scaffolds `.woof/`; you then author the target architecture and design principles, install the cartography hook (`woof hooks install`), and start your first epic with `woof wf new "<spark>"`.
 
 ## Operator workflow
 
-Three operator-facing skills cover the inner loop. One entry point per task.
+One umbrella skill is the operator's surface, plus one interactive design specialist. See `docs/adr/007-operator-skill-umbrella.md`.
 
 | Skill | When to use |
 |---|---|
-| `/woof:setup` | Onboard a new consumer repository. |
-| `/woof:map-codebase` | Regenerate the codebase mapper documents when the codebase has changed materially. |
-| `/woof:run` | Execute an epic. |
+| `/woof` | Drive the `woof` CLI: create and run epics, resolve gates, reset, observe, and onboard a repo. The operator's command-map. |
+| `/woof:brainstorm` | Lead the design conversation for an epic (the two brainstorm loops), then hand off to `woof wf`. |
 
-Inside `/woof:run`, the skill drives or resumes one epic. It may start from a new spark, resume `.woof/.current-epic`, or resume an explicit `E<N>`. The skill calls `woof graph next-node`, dispatches producer and reviewer subagents for dispatch-shaped nodes, calls typed `woof graph record-*` commands for model-produced artefacts, runs graph-owned deterministic nodes through `woof graph run-deterministic-node`, surfaces gates conversationally, and records gate resolutions. The on-disk state under `.woof/` is authoritative; the skill's in-session context is opportunistic and reconstructed from disk on a new session.
+The umbrella maps a request to the right `woof` shell command. Running an epic is `woof wf --epic N`: it reads the epic's on-disk state under `.woof/` and runs the next graph node, dispatching producer and reviewer subagents for dispatch-shaped nodes, running deterministic nodes in-process, and surfacing gates for an operator decision (`woof wf --epic N --resolve <decision>`). The on-disk state is authoritative; the skill's in-session context is reconstructed from disk on a new session. Redo a design with `woof wf reset --epic N`.
 
 The target graph checks contract readiness after definition and before planning. That gate runs early, but not immediately after epic creation: at creation time Woof only has a spark. Once `EPIC.md` exists, Woof can deterministically check whether acceptance criteria are machine-checkable, contract decisions are concrete, and referenced existing paths resolve before any model decomposes the work.
 
@@ -73,6 +72,7 @@ Quality gates support two postures in the target architecture. Strict mode block
 - [`docs/adr/004-cartography-prerequisite.md`](docs/adr/004-cartography-prerequisite.md) — cartography artefact group.
 - [`docs/adr/005-skill-suite.md`](docs/adr/005-skill-suite.md) — operator skill suite.
 - [`docs/adr/006-operational-resilience.md`](docs/adr/006-operational-resilience.md) — readiness, dispatch telemetry, circuit breaker, baseline gates, reviewer evidence, drift detection, tmux supervision, and later conformance auditing.
+- [`docs/adr/007-operator-skill-umbrella.md`](docs/adr/007-operator-skill-umbrella.md) — single-umbrella operator skill (refines ADR-005).
 
 ## Development
 
@@ -104,7 +104,7 @@ just woof --help
 - `schemas/` — JSON Schema contracts.
 - `playbooks/` — producer and reviewer prompt templates.
 - `languages/` — per-language install, lint, test, and refresh-cartography registry files.
-- `skills/` — Claude Code skill bundles (`woof-setup`, `woof-map-codebase`, `woof-run`, `woof-target-architecture`).
+- `skills/` — Claude Code skill bundles: `woof` (the umbrella operator surface) and `woof-brainstorm` (the generated design specialist).
 - `bin/woof` — development-only source checkout wrapper.
 
 JSON Schema is the durable contract authority. Pydantic is used at schema and serialisation boundaries; dataclasses are used for trusted in-process records.

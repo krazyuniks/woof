@@ -69,9 +69,9 @@ _DISCOVERY_BUCKET_NODES = (
     ("ideate", NodeType.DISCOVERY_IDEATE),
 )
 
-# The interactive Stage-0 bucket written by `woof brainstorm`. When present it
-# stands in for the headless research/thinking/ideate chain (which is the
-# autonomy fallback): synthesis ingests it like any other discovery source.
+# The interactive Stage-0 bucket written by the `woof-brainstorm` skill. When
+# present it stands in for the headless research/thinking/ideate chain (which is
+# the autonomy fallback): synthesis ingests it like any other discovery source.
 INTERACTIVE_DISCOVERY_BUCKET = "brainstorm"
 
 
@@ -187,6 +187,15 @@ def iter_epic_events(repo_root: Path, epic_id: int) -> list[dict]:
             continue
         if isinstance(event, dict):
             events.append(event)
+    # `woof wf reset` starts a new logical life for the epic: it keeps the full
+    # append-only log on disk but appends an `epic_reset` marker, and every
+    # state-derivation reader (next_node, the plan/gate resolvers, observe's
+    # stage prediction) must ignore the superseded events from before the reset.
+    # The raw timeline view reads epic.jsonl directly, so it still shows all
+    # history.
+    resets = [index for index, event in enumerate(events) if event.get("event") == "epic_reset"]
+    if resets:
+        return events[resets[-1] + 1 :]
     return events
 
 

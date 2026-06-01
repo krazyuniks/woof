@@ -1,4 +1,4 @@
-<!-- VENDORED from agent-toolkit skills/brainstorm - do not edit here. Regenerate with `just vendor-brainstorm`. -->
+<!-- VENDORED from agent-toolkit skills/brainstorm - do not edit here. Regenerate with `just gen-brainstorm`. -->
 
 # CONTEXT.md format
 

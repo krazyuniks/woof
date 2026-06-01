@@ -1,10 +1,10 @@
-<!-- VENDORED from agent-toolkit skills/brainstorm - do not edit here. Regenerate with `just vendor-brainstorm`. -->
+<!-- VENDORED from agent-toolkit skills/brainstorm - do not edit here. Regenerate with `just gen-brainstorm`. -->
 
 # Architecture / design template (tiered)
 
 The Loop 1 output. Fill the sections that fit the problem and mark the rest `N/A`. The tier sets
-how much engages. Distilled from the GTS `REFERENCE-ARCHITECTURE.md` taxonomy; that file and
-`GTS-Technical-Architecture.md` are kept as worked examples, not as this template.
+how much engages. The section taxonomy is generic and hand-authored; it is not derived from any
+specific project.
 
 The front-matter is validated by `schemas/design.schema.json` (Loop 1 -> Loop 2) and
 `schemas/bundle.schema.json` (the resolved bundle); `validate.py` additionally checks that the
@@ -52,5 +52,5 @@ context: <link to CONTEXT.md>
 
 ## Concrete technical layer (system tier, optional)
 
-Technology stack, repository structure, concrete domain model, deployment. The
-`GTS-Technical-Architecture.md` altitude.
+Technology stack, repository structure, concrete domain model, deployment. The implementation
+altitude, engaged only when a system-tier design needs to pin concrete technology choices.

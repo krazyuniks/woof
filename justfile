@@ -45,3 +45,11 @@ efficiency-bench *ARGS:
 # Bundle Claude Code transcripts referenced by an epic dispatch log.
 wf-audit-bundle EPIC:
     ./bin/woof audit-bundle {{EPIC}}
+
+# Re-vendor the brainstorm skill playbook from agent-toolkit (one-way copy).
+vendor-brainstorm *ARGS:
+    uv run python scripts/vendor_brainstorm.py {{ARGS}}
+
+# Verify the vendored brainstorm playbook matches its recorded pin (no source needed).
+vendor-brainstorm-check:
+    uv run python scripts/vendor_brainstorm.py --check

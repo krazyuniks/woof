@@ -1234,6 +1234,90 @@ def test_preflight_fails_for_missing_mechanical_layer(tmp_path: Path, run_woof) 
     assert "files.txt" in mech["detail"]
 
 
+def _write_freshness(root: Path, payload: dict | str) -> None:
+    """Overwrite the mechanical freshness.json with a chosen stamp (or raw text)."""
+
+    path = root / ".woof" / "codebase" / "freshness.json"
+    path.write_text(payload if isinstance(payload, str) else json.dumps(payload) + "\n")
+
+
+def test_preflight_warns_for_stale_cartography_freshness(tmp_path: Path, run_woof) -> None:
+    # Default staleness floor is 168h; age_s is set directly so the test does not
+    # couple to wall-clock.
+    _write_project(tmp_path, prerequisites=CARTOGRAPHY_PREREQS)
+    _write_cartography(tmp_path)
+    _write_freshness(
+        tmp_path,
+        {
+            "ts": "2026-05-20T00:00:00Z",
+            "git_ref": "abc",
+            "age_s": 169 * 3600,
+            "generator_version": 1,
+        },
+    )
+
+    proc, payload = _run_cartography_preflight(tmp_path, run_woof)
+
+    # A stale stamp warns but does not fail preflight.
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert payload["ok"] is True
+    assert payload["warnings"] == 1
+    fresh = next(f for f in payload["findings"] if f["id"] == "cartography.freshness")
+    assert fresh["ok"] is True
+    assert fresh["warn"] is True
+    assert "staleness floor" in fresh["detail"]
+    # The warning carries the refresh prompt.
+    assert any("./scripts/refresh-cartography" in note for note in fresh["notes"])
+
+
+def test_preflight_does_not_warn_for_fresh_cartography_freshness(tmp_path: Path, run_woof) -> None:
+    _write_project(tmp_path, prerequisites=CARTOGRAPHY_PREREQS)
+    _write_cartography(tmp_path)  # default stamp has age_s = 1 (fresh)
+
+    proc, payload = _run_cartography_preflight(tmp_path, run_woof)
+
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert payload["warnings"] == 0
+    fresh = next(f for f in payload["findings"] if f["id"] == "cartography.freshness")
+    assert fresh["ok"] is True
+    assert fresh.get("warn") is not True
+    assert "within the" in fresh["detail"]
+
+
+def test_preflight_warns_for_stale_freshness_via_ts_fallback(tmp_path: Path, run_woof) -> None:
+    # No age_s; age derives from ts. A ts far in the past is robustly stale
+    # regardless of the test host's wall-clock.
+    _write_project(tmp_path, prerequisites=CARTOGRAPHY_PREREQS)
+    _write_cartography(tmp_path)
+    _write_freshness(
+        tmp_path, {"ts": "2020-01-01T00:00:00Z", "git_ref": "abc", "generator_version": 1}
+    )
+
+    proc, payload = _run_cartography_preflight(tmp_path, run_woof)
+
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    fresh = next(f for f in payload["findings"] if f["id"] == "cartography.freshness")
+    assert fresh["warn"] is True
+    assert any("refresh-cartography" in note for note in fresh["notes"])
+
+
+def test_preflight_warns_for_malformed_cartography_freshness(tmp_path: Path, run_woof) -> None:
+    # An unparseable stamp is non-blocking: presence, not readability, is the
+    # blocking concern (the mechanical check already covers presence).
+    _write_project(tmp_path, prerequisites=CARTOGRAPHY_PREREQS)
+    _write_cartography(tmp_path)
+    _write_freshness(tmp_path, "{ not valid json")
+
+    proc, payload = _run_cartography_preflight(tmp_path, run_woof)
+
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    fresh = next(f for f in payload["findings"] if f["id"] == "cartography.freshness")
+    assert fresh["ok"] is True
+    assert fresh["warn"] is True
+    assert "could not be read" in fresh["detail"]
+    assert any("refresh-cartography" in note for note in fresh["notes"])
+
+
 def test_preflight_json_reports_operator_state_for_current_epic(
     tmp_path: Path,
     run_woof,

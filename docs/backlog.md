@@ -32,8 +32,9 @@ Make the cartography artefact group mandatory infrastructure with preflight enfo
 
 The contract and missing/stub enforcement landed in prompt 1 (`docs/plans/e1-cartography.md`): the `[cartography]` schema shape (`staleness_floor_hours`, `summary_min_chars`, `languages`, `stub_marker`); enforcement keyed on the block's presence and scaffolded by `woof init`; `woof preflight` failing closed on a missing/non-executable `scripts/refresh-cartography`, a missing or stub `TARGET-ARCHITECTURE.md`/`PRINCIPLES.md`, or a missing mechanical-layer file (`tags`, `files.txt`, `freshness.json`); exact stub detection (removable stub marker, or body below `summary_min_chars` unless front matter marks it complete); and the `tree.txt` -> `files.txt` rename.
 
+Prompt 2 landed the staleness warning: a `cartography.freshness` floor check reads the mechanical `freshness.json`, derives its age (prefer numeric `age_s`, else `ts` vs now), and warns (non-blocking, refresh-prompt carrying) past `staleness_floor_hours`. `PreflightFinding` gained a `warn` severity (an `ok=True` finding printed `WARN`, kept out of `failed`/exit code). A missing stamp stays the mechanical check's blocking concern; a malformed stamp warns non-blockingly.
+
 Open work:
-- Treat stale `freshness.json` beyond the declared floor as a warning with a refresh prompt, not a blocker.
 - Ship per-language `refresh-cartography` templates referenced from `languages/<lang>.toml`. Initial set: Python, Go, TypeScript, Rust.
 - Make `woof init` compose the per-language fragments into the consumer's `scripts/refresh-cartography` idempotently.
 - Make the post-commit hook regenerate the mechanical layer and fail loud if the refresh script exits non-zero.

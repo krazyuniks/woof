@@ -97,6 +97,7 @@ class PreflightFinding:
     required: str | None = None
     install: str | None = None
     notes: list[str] = field(default_factory=list)
+    warn: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -105,6 +106,8 @@ class PreflightFinding:
             "ok": self.ok,
             "detail": self.detail,
         }
+        if self.warn:
+            payload["warn"] = True
         if self.required is not None:
             payload["required"] = self.required
         if self.install is not None:
@@ -128,12 +131,17 @@ class PreflightResult:
     def failed(self) -> list[PreflightFinding]:
         return [finding for finding in self.findings if not finding.ok]
 
+    @property
+    def warnings(self) -> list[PreflightFinding]:
+        return [finding for finding in self.findings if finding.warn and finding.ok]
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "repo_root": str(self.repo_root),
             "ok": self.ok,
             "total": len(self.findings),
             "failed": len(self.failed),
+            "warnings": len(self.warnings),
             "findings": [finding.as_dict() for finding in self.findings],
             "operator_state": self.operator_state,
         }
@@ -334,6 +342,7 @@ def _finding_from_dict(payload: dict[str, Any]) -> PreflightFinding:
         required=str(payload["required"]) if payload.get("required") is not None else None,
         install=str(payload["install"]) if payload.get("install") is not None else None,
         notes=[str(note) for note in payload.get("notes") or []],
+        warn=bool(payload.get("warn", False)),
     )
 
 
@@ -915,8 +924,13 @@ CARTOGRAPHY_DESIGN_DOCS: tuple[tuple[str, str], ...] = (
     ("cartography.principles", "PRINCIPLES.md"),
 )
 CARTOGRAPHY_MECHANICAL_FILES = ("tags", "files.txt", "freshness.json")
+CARTOGRAPHY_FRESHNESS_FILE = "freshness.json"
 DEFAULT_STUB_MARKER = "<!-- woof:stub -->"
 DEFAULT_SUMMARY_MIN_CHARS = 200
+DEFAULT_STALENESS_FLOOR_HOURS = 168
+CARTOGRAPHY_REFRESH_PROMPT = (
+    "Run ./scripts/refresh-cartography to regenerate the cartography mechanical layer."
+)
 CARTOGRAPHY_AUTHOR_HINT = (
     "Author .woof/codebase/ through the /woof map-codebase flow "
     "(see skills/woof/references/setup.md and skills/woof/references/map-codebase.md)."
@@ -958,6 +972,10 @@ def _check_cartography(repo_root: Path, prereq: dict[str, Any]) -> list[Prefligh
             )
         )
     findings.append(_check_cartography_mechanical(repo_root))
+    floor_hours = int(cartography.get("staleness_floor_hours") or DEFAULT_STALENESS_FLOOR_HOURS)
+    freshness = _check_cartography_freshness(repo_root, floor_hours=floor_hours)
+    if freshness is not None:
+        findings.append(freshness)
     return findings
 
 
@@ -1100,6 +1118,94 @@ def _check_cartography_mechanical(repo_root: Path) -> PreflightFinding:
             else "Run ./scripts/refresh-cartography (or commit with the woof post-commit hook installed)."
         ),
     )
+
+
+def _check_cartography_freshness(
+    repo_root: Path,
+    *,
+    floor_hours: int,
+) -> PreflightFinding | None:
+    """Report a stale ``freshness.json`` as a non-blocking warning (ADR-004, S2).
+
+    Presence of ``freshness.json`` is the mechanical-layer check's concern and
+    blocks (``_check_cartography_mechanical``); this check only governs age. A
+    stamp older than ``floor_hours`` surfaces a warning carrying the
+    ``./scripts/refresh-cartography`` prompt; a fresh stamp passes. Either way the
+    finding is ``ok=True`` so it never affects preflight's pass/fail or exit code.
+
+    Age derivation prefers a non-negative numeric ``age_s`` and falls back to
+    ``_utc_now()`` minus the ISO ``ts``. A missing stamp yields no finding (the
+    mechanical check already blocks on absence); an unparseable stamp or one with
+    no usable age field warns non-blockingly, since presence -- not readability --
+    is the blocking concern.
+
+    Cache note: this is a floor check (24h TTL, keyed on config files, not on
+    ``freshness.json``). Staleness can therefore be under-reported for up to one
+    cache window. That is acceptable for a non-blocking warning: the window (24h)
+    is far below the default floor (168h), and a stamp only ages past the floor
+    after days without a commit, by which point the cache has long expired and the
+    check has re-run. Keeping the sub-check in the floor tier keeps the whole
+    cartography group coherent rather than splitting one finding into the runtime
+    cache.
+    """
+
+    path = repo_root / ".woof" / "codebase" / CARTOGRAPHY_FRESHNESS_FILE
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return _cartography_freshness_warn(f"{path} could not be read for a freshness age: {exc}")
+
+    age_s = _freshness_age_seconds(payload)
+    if age_s is None:
+        return _cartography_freshness_warn(
+            f"{path} has no usable age_s or ts field; cannot derive a freshness age"
+        )
+
+    age_label = _format_age(age_s)
+    if age_s >= floor_hours * 3600:
+        return _cartography_freshness_warn(
+            f"{path} is {age_label} old, beyond the {floor_hours}h staleness floor"
+        )
+    return PreflightFinding(
+        id="cartography.freshness",
+        label="cartography freshness",
+        ok=True,
+        detail=f"{path} is {age_label} old, within the {floor_hours}h staleness floor",
+    )
+
+
+def _cartography_freshness_warn(detail: str) -> PreflightFinding:
+    return PreflightFinding(
+        id="cartography.freshness",
+        label="cartography freshness",
+        ok=True,
+        warn=True,
+        detail=detail,
+        notes=[CARTOGRAPHY_REFRESH_PROMPT],
+    )
+
+
+def _freshness_age_seconds(payload: Any) -> float | None:
+    """Derive a freshness age in seconds, preferring ``age_s`` over ``ts``."""
+
+    if not isinstance(payload, dict):
+        return None
+    age_s = payload.get("age_s")
+    if isinstance(age_s, (int, float)) and not isinstance(age_s, bool) and age_s >= 0:
+        return float(age_s)
+    ts = _parse_cache_time(payload.get("ts"))
+    if ts is None:
+        return None
+    return max((_utc_now() - ts).total_seconds(), 0.0)
+
+
+def _format_age(seconds: float) -> str:
+    hours = seconds / 3600
+    if hours >= 48:
+        return f"{hours / 24:.1f} days"
+    return f"{hours:.1f} hours"
 
 
 def _split_front_matter(text: str) -> tuple[dict[str, Any], str]:
@@ -1524,13 +1630,17 @@ def _run_capture(
 
 def _print_text_result(result: PreflightResult) -> None:
     failed = result.failed
+    warnings = result.warnings
     if failed:
         print(f"[INFRA PREFLIGHT FAILED - {len(failed)} missing prerequisite(s)]")
     else:
-        print(f"[INFRA PREFLIGHT PASSED - {len(result.findings)} check(s)]")
+        summary = f"{len(result.findings)} check(s)"
+        if warnings:
+            summary += f", {len(warnings)} warning(s)"
+        print(f"[INFRA PREFLIGHT PASSED - {summary}]")
 
     for finding in result.findings:
-        mark = "OK" if finding.ok else "FAIL"
+        mark = "FAIL" if not finding.ok else "WARN" if finding.warn else "OK"
         print(f"{mark} {finding.label}")
         if finding.required:
             print(f"  Required: {finding.required}")

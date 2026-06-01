@@ -498,7 +498,6 @@ def main() -> int:
     )
     check_cd.set_defaults(func=cmd_check_cd)
 
-    from woof.cli.commands.brainstorm import setup_brainstorm_parser
     from woof.cli.commands.check import setup_check_parser
     from woof.cli.commands.gate import setup_gate_parser
     from woof.cli.commands.observe import setup_observe_parser
@@ -534,7 +533,6 @@ def main() -> int:
     setup_wf_parser(sub)
     setup_check_parser(sub)
     setup_gate_parser(sub)
-    setup_brainstorm_parser(sub)
 
     args = parser.parse_args()
     return args.func(args)

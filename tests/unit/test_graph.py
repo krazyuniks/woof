@@ -195,6 +195,14 @@ def _write_discovery_bucket(directory: Path, bucket: str) -> None:
     (bucket_dir / f"{bucket}.md").write_text(f"# {bucket}\n\nFilled discovery {bucket} artefact.\n")
 
 
+def _write_brainstorm_bundle(directory: Path, status: str = "accepted") -> None:
+    bucket_dir = directory / "discovery" / "brainstorm"
+    bucket_dir.mkdir(parents=True, exist_ok=True)
+    (bucket_dir / "DESIGN.md").write_text(
+        f"---\ntitle: Bundle\ntier: feature\nstatus: {status}\n---\n\n# Design\n"
+    )
+
+
 def _write_discovery_synthesis_with_open_question(directory: Path) -> None:
     _write_discovery_synthesis(directory)
     synthesis = directory / "discovery" / "synthesis"
@@ -737,14 +745,40 @@ def test_pre_plan_transition_walks_discovery_buckets_before_synthesis(tmp_path: 
     assert next_node(tmp_path, 210) == (NodeType.DISCOVERY_SYNTHESIS, None)
 
 
-def test_pre_plan_transition_skips_headless_chain_when_brainstorm_bucket_present(
+def test_pre_plan_transition_skips_headless_chain_when_accepted_bundle_present(
     tmp_path: Path,
 ) -> None:
-    # An interactive Stage-0 brainstorm bundle (the woof-brainstorm skill) stands in
+    # An accepted interactive brainstorm bundle (the woof-brainstorm skill) stands in
     # for the headless research/thinking/ideate chain; the graph goes to synthesis.
     directory = _write_spark(tmp_path, 211)
-    _write_discovery_bucket(directory, "brainstorm")
+    _write_brainstorm_bundle(directory, status="accepted")
     assert next_node(tmp_path, 211) == (NodeType.DISCOVERY_SYNTHESIS, None)
+
+
+def test_pre_plan_transition_does_not_skip_on_unaccepted_brainstorm_bucket(
+    tmp_path: Path,
+) -> None:
+    # A partial write (no front-matter) or a rejected back-edge bundle must NOT
+    # short-circuit the headless chain; only a resolved status: accepted bundle does.
+    directory = _write_spark(tmp_path, 212)
+    _write_discovery_bucket(directory, "brainstorm")  # plain markdown, no front-matter
+    assert next_node(tmp_path, 212) == (NodeType.DISCOVERY_RESEARCH, None)
+
+    _write_brainstorm_bundle(directory, status="rejected")  # back-edge, not accepted
+    assert next_node(tmp_path, 212) == (NodeType.DISCOVERY_RESEARCH, None)
+
+
+def test_brainstorm_bundle_is_a_synthesis_source(tmp_path: Path) -> None:
+    # Synthesis reads all of discovery/ (bar its own outputs), so the interactive
+    # brainstorm bundle is part of the input synthesis decomposes from. Woof ingests
+    # the bundle as discovery prose; it re-derives stories via the LLM synthesis ->
+    # definition -> breakdown chain rather than mechanically carrying work_units[].
+    from woof.graph.nodes import _discovery_source_paths
+
+    directory = _write_spark(tmp_path, 213)
+    _write_brainstorm_bundle(directory, status="accepted")
+    sources = _discovery_source_paths(tmp_path, 213)
+    assert any(path.endswith("discovery/brainstorm/DESIGN.md") for path in sources)
 
 
 def test_discovery_research_node_dispatches_primary_and_bundles_playbooks(

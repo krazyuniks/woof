@@ -310,30 +310,21 @@ def _resolve_gate(repo_root: Path, epic_id: int, decision: GateDecision, tracker
     return 0
 
 
-# `woof wf reset` returns an epic to its spark: it deletes every derived
-# artefact and keeps only the inputs and lineage - spark.md, the tracker linkage
-# (.last-sync and friends), and the append-only epic.jsonl log. The reset appends
-# an `epic_reset` marker so state-derivation readers ignore the superseded events
+# `woof wf reset` returns an epic to its spark. It is deny-by-default: it removes
+# every entry in the epic directory except the inputs and lineage it must keep -
+# spark.md, the tracker linkage (.last-sync), and the append-only epic.jsonl log.
+# Removing everything else (discovery/, EPIC.md, the plan, critiques, dispositions/,
+# dispatch.jsonl, audit/, gate/result/position files, the workflow lock, and any
+# future derived artefact) means no stale derived state can leak into a rebuilt
+# epic or the observe views. The reset appends an `epic_reset` marker so the kept
+# event log's state-derivation readers ignore the superseded events
 # (see graph.transitions.iter_epic_events).
-_RESET_FILES = (
-    "EPIC.md",
-    "plan.json",
-    "PLAN.md",
-    "executor_result.json",
-    "check-result.json",
-    "gate.md",
-)
-_RESET_DIRS = ("discovery", "critique")
-_RESET_GLOBS = ("*-position.md",)
+_RESET_KEEP = frozenset({"spark.md", ".last-sync", "epic.jsonl"})
 
 
 def _reset_targets(directory: Path) -> list[Path]:
     """Return the derived artefacts a reset would remove, present on disk."""
-    candidates: list[Path] = [directory / name for name in _RESET_FILES]
-    candidates += [directory / name for name in _RESET_DIRS]
-    for pattern in _RESET_GLOBS:
-        candidates += sorted(directory.glob(pattern))
-    return [path for path in candidates if path.exists()]
+    return sorted(child for child in directory.iterdir() if child.name not in _RESET_KEEP)
 
 
 def _reset_epic(repo_root: Path, epic_id: int, *, assume_yes: bool) -> int:

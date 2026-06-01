@@ -37,41 +37,24 @@ See ADR-001 for the decision and rationale. The four layers:
 | Layer | Responsibility | Implementation |
 |---|---|---|
 | State | Durable, schema-governed record. | Files under `.woof/`. |
-| Graph | Pure deterministic transitions; schema validation; typed audit/event writes; state-token guarded mutation. | Python library at `src/woof/`, exposed via `woof graph <command>`. |
-| Orchestrator | In-memory context warm across an epic; cartography slicing; subagent dispatch; gate surfacing. | Claude Code skill at `skills/woof-run/`. |
-| Dispatched | Stateless, isolated LLM invocations. | `Task` subagents for Claude; `Bash + codex exec` for Codex. |
+| Engine | Pure deterministic transitions, schema validation, typed audit/event writes, and the in-process graph runner that dispatches node work. | Python at `src/woof/`, run by `woof wf`. |
+| Operator skill | Maps operator requests to `woof` CLI calls, surfaces gates, and routes the design phase to `/woof:brainstorm`. | Claude Code `woof` umbrella skill at `skills/woof/` (ADR-007). |
+| Dispatched | Stateless, isolated LLM invocations, spawned by the engine's node handlers. | `Task` subagents for Claude; `Bash + codex exec` for Codex. |
 
-State on disk is the only authoritative record. The orchestrator and dispatched layers are reconstructable; the state and graph layers are persistent infrastructure.
+State on disk is the only authoritative record. The operator-skill and dispatched layers are reconstructable; the state and engine layers are persistent infrastructure.
 
-### Graph command contract
+### Runner contract
 
-`woof graph` is the skill-facing API. It is not a second operator workflow.
+`woof wf` is the graph runner and the operator-facing entry point. There is no separate `woof graph` command API.
 
-`woof graph next-node` is a pure state query. It returns JSON with:
+`woof wf --epic N` runs the graph in-process (`run_graph`): it derives the next node from on-disk state (`next_node`), runs that node's handler, and loops until the graph opens a gate, halts on malformed state, or completes the epic. `--once` runs a single node and stops.
 
-- `node_type` and optional `story_id`;
-- `kind`: `dispatch`, `deterministic`, `gate`, or `complete`;
-- `route_key` for dispatch-shaped nodes;
-- `prompt_template_path`, `expected_output_paths[]`, and `expected_output_schemas[]` for dispatch-shaped nodes;
-- `loaded_docs[]` as repo-relative cartography references for the skill to load and cache;
-- `allowed_decisions[]` for gate-shaped nodes;
-- `state_token`, a hash over canonical state files at read time.
+- Dispatch-shaped nodes (discovery, definition, breakdown, story execution, critique) spawn a public-CLI subprocess through `woof dispatch` for the routed role; deterministic nodes (plan gate, review disposition, verification, commit, gate open) run in-process.
+- The runner holds a per-epic workflow lock while it runs. State on disk is authoritative; the runner reconstructs position from disk on every invocation, so an interrupted run resumes by re-running `woof wf --epic N`.
+- Audit and event writes are a side effect of the runner: lifecycle and node events append to `epic.jsonl`, dispatch telemetry to `dispatch.jsonl`.
+- `woof wf new "<spark>"` creates a tracker-backed epic; `woof wf --epic N --resolve <decision>` resolves the open gate; `woof wf reset --epic N` returns an epic to its spark.
 
-Mutation commands require the last observed `state_token`. A mutation fails compare-and-set if canonical state has changed. Commands take a short filesystem lock only while reading, validating, writing state, and appending typed audit events. No lock is held across LLM dispatch.
-
-Model-produced artefacts are accepted through typed record verbs, not through a generic blob writer:
-
-- `woof graph record-discovery-bucket`
-- `woof graph record-discovery-synthesis`
-- `woof graph record-epic-definition`
-- `woof graph record-plan`
-- `woof graph record-plan-critique`
-- `woof graph record-executor-result`
-- `woof graph record-story-critique`
-
-Graph-owned deterministic outputs are not accepted through record verbs. They are produced by `woof graph run-deterministic-node <node-type>` for nodes such as `plan_gate_open`, `review_disposition`, `verification`, `commit`, and `gate_open`.
-
-The skill has no raw `append_epic_event` command. Audit writes happen as a consequence of typed graph commands such as `record-dispatch-started`, `record-dispatch-returned`, `record-*`, `run-deterministic-node`, `resolve-gate`, and `mark-cartography-refreshed`.
+ADR-005 described a decomposed `woof graph` command API (typed `record-*` verbs, `run-deterministic-node`, `next-node`, `state_token` compare-and-set) with the operator skill driving the graph node by node. That decomposition was not built; the shipped engine runs the graph itself behind `woof wf`, and ADR-007 records the matching operator surface (a single `/woof` umbrella over the CLI, not a node-by-node orchestrator skill).
 
 ## 3. Stages
 
@@ -170,7 +153,7 @@ See ADR-004 for the decision. Per-node loading map:
 Refresh model:
 
 - Mechanical layer (`tags`, `files.txt`, `freshness.json`): regenerated by the post-commit hook every commit.
-- Mapper docs: regenerated on demand via `/woof:map-codebase`. The skill checks freshness at epic start and prompts the operator if the map is stale.
+- Mapper docs: regenerated on demand via the `/woof` umbrella's map-codebase flow (parallel mapper subagents). Freshness is checked at epic start and the operator is prompted if the map is stale.
 - Design layer (`TARGET-ARCHITECTURE.md`, `PRINCIPLES.md`): human-authored; no automatic refresh.
 
 ## 5. Role routing
@@ -191,15 +174,14 @@ Mapper subagents are Claude.
 
 ## 6. Skill suite
 
-See ADR-005. Three operator-facing skills plus the nested target-architecture authoring skill.
+See ADR-007 (refines ADR-005). One umbrella operator skill plus one interactive design specialist.
 
 | Skill | Purpose |
 |---|---|
-| `/woof:setup` | Onboard a new consumer repo. Invokes `woof init`, the target-architecture skill, optionally `/woof:map-codebase`. |
-| `/woof:map-codebase` | Regenerate the cartography mapper documents in parallel. Refreshes the mechanical layer and writes `freshness.json`. |
-| `/woof:run` | Create or resume an epic. Calls `woof graph create-epic` for a new spark, `woof graph resume-epic` for tracker-backed cold start, `woof graph next-node` for progression, dispatches producer and reviewer subagents, records typed outputs, runs deterministic nodes, surfaces gates, records resolutions. |
+| `/woof` | The operator's map of the `woof` CLI: create and run epics (`woof wf`), resolve gates, reset, observe, and onboard a repo. Setup, map-codebase, run, and gate flows live in its `references/`. Routes the design phase to `/woof:brainstorm`. |
+| `/woof:brainstorm` | The interactive design specialist: runs the two brainstorm loops, writes the resolved bundle into the epic's `discovery/brainstorm/` bucket, and hands off to `woof wf`. Generated from the canonical agent-toolkit brainstorm skill (pinned, drift-checked via `scripts/gen_woof_brainstorm.py`). |
 
-Skill bundles ship under `skills/woof-<name>/` in the Woof repo and install to the operator's Claude Code skill directory.
+Skill bundles ship under `skills/woof/` (the umbrella) and `skills/woof-<name>/` in the Woof repo and install to the operator's Claude Code skill directory.
 
 ## 7. Tracker abstraction
 
@@ -263,7 +245,7 @@ JSONL event logs (`epic.jsonl`, `dispatch.jsonl`) enable crash-resume and post-h
 
 ## 10. Gates
 
-A gate is a graph state recorded by `gate.md` plus a structured event in `epic.jsonl`. The graph halts on `gate.md` presence; the orchestrator surfaces the gate to the operator; resolution via `woof graph resolve-gate <verdict>` records the structured decision and removes `gate.md`.
+A gate is a graph state recorded by `gate.md` plus a structured event in `epic.jsonl`. The runner halts on `gate.md` presence; the `/woof` operator skill surfaces the gate to the operator; resolution via `woof wf --epic N --resolve <decision>` records the structured decision and removes `gate.md`.
 
 Mandatory gates:
 
@@ -290,14 +272,14 @@ See ADR-006. Operational resilience wraps the graph without replacing it.
 
 ### Runaway protection
 
-`/woof:run` observes dispatch telemetry and graph progress. It can pause a run and open a gate when a session repeats the same normalised error signature, makes no graph or git progress for a configured number of turns, or repeatedly times out without producing expected artefacts. The graph records the durable gate and state; the skill only detects the condition and invokes typed graph commands.
+The `/woof` operator skill observes dispatch telemetry and graph progress. It can pause a run and open a gate when a session repeats the same normalised error signature, makes no graph or git progress for a configured number of turns, or repeatedly times out without producing expected artefacts. The graph records the durable gate and state; the skill only detects the condition and opens a gate through `woof wf`.
 
 Progress is stage-aware:
 
 - Stage 1-3 progress means the expected `.woof/` artefact exists and validates, or the graph state advanced.
 - Stage 5 progress means expected story artefacts changed, a valid critique/disposition/check result appeared, or a graph-owned story commit advanced HEAD.
 
-The circuit breaker tracks separate counters for consecutive no-progress turns and consecutive same-error signatures. Same-error signatures are normalised by stripping volatile paths, line/column spans, timestamps, UUIDs, and excess whitespace, preserving standalone numbers, and truncating to a bounded length. If the repeated signature indicates a newly discovered constraint, invariant, or contract gap, `/woof:run` opens a course-correction gate instead of treating the worker as merely stuck.
+The circuit breaker tracks separate counters for consecutive no-progress turns and consecutive same-error signatures. Same-error signatures are normalised by stripping volatile paths, line/column spans, timestamps, UUIDs, and excess whitespace, preserving standalone numbers, and truncating to a bounded length. If the repeated signature indicates a newly discovered constraint, invariant, or contract gap, the `/woof` operator skill opens a course-correction gate instead of treating the worker as merely stuck.
 
 ### Quality-gate modes
 
@@ -322,7 +304,7 @@ After the first production-shape baseline, Woof should grow a deterministic conf
 
 ### tmux supervision
 
-Long-running `/woof:run` sessions may use tmux for panes, logs, progress dashboards, and child-process lifecycle visibility. tmux is an operator shell/supervision layer only. It does not choose graph successors, mutate `.woof/` directly, or replace on-disk graph state.
+Long-running `woof wf` sessions may use tmux for panes, logs, progress dashboards, and child-process lifecycle visibility. tmux is an operator shell/supervision layer only. It does not choose graph successors, mutate `.woof/` directly, or replace on-disk graph state.
 
 ## 12. Infrastructure prerequisites
 
@@ -382,17 +364,17 @@ A stale `freshness.json` beyond `staleness_floor_hours` emits a warning with a r
 
 ## 13. Operator surface
 
-The three skills are the operator entry points for the inner loop. Python CLI utilities exist for project setup and as the engine library.
+The `/woof` umbrella and `/woof:brainstorm` are the operator entry points for the inner loop. Python CLI utilities exist for project setup and as the engine library.
 
 | Surface | Use |
 |---|---|
-| `/woof:setup` | Onboard a new consumer repo. |
-| `/woof:map-codebase` | Regenerate cartography mapper documents. |
-| `/woof:run` | Execute an epic. |
+| `/woof` | The umbrella operator surface over the `woof` CLI: run epics, resolve gates, reset, observe, onboard. |
+| `/woof:brainstorm` | Lead the design conversation for an epic, then hand off to `woof wf`. |
+| `woof wf` | Run the graph: `new "<spark>"`, `--epic N`, `--once`, `--resolve <decision>`, `reset --epic N`. |
 | `woof init` | Scaffold a fresh `.woof/` consumer config and the required `.gitignore` block. |
 | `woof preflight` | Validate Woof assets, prerequisites, role routes, MCP config, tracker reachability, credential markers, language tooling, quality-gate command resolution, cartography artefact presence, and `.woof/` config schemas. |
 | `woof hooks install` | Install the Woof-managed post-commit hook block without overwriting user-managed hook content. |
-| `woof graph <command>` | Internal library surface used by the skill orchestrator: `create-epic`, `resume-epic`, `next-node`, typed `record-*` verbs, `run-deterministic-node`, `resolve-gate`, `record-dispatch-started`, `record-dispatch-returned`, `mark-cartography-refreshed`. |
+| `woof observe --epic <N>` | Read-only status, timeline, gate, and audit views. |
 | `woof validate ...` | Validate JSON, TOML, JSONL, and front-matter artefacts against shipped schemas. |
 | `woof check stage-5 --epic <N> --story <S<k>>` | Run Stage-5 checks and emit structured results. |
 | `woof render-epic` | Render `EPIC.md` structured front-matter to the managed tracker body; `--sync` pushes through the configured tracker. |

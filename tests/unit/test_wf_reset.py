@@ -34,7 +34,7 @@ def _seed_epic(project: Path, epic_id: int) -> Path:
     epic_dir = project / ".woof" / "epics" / f"E{epic_id}"
     epic_dir.mkdir(parents=True)
 
-    # Kept: inputs and lineage.
+    # Kept: inputs and lineage only.
     (epic_dir / "spark.md").write_text("# Spark\n\nThe original idea.\n")
     (epic_dir / ".last-sync").write_text(json.dumps({"issue_number": epic_id}) + "\n")
     (epic_dir / "epic.jsonl").write_text(
@@ -49,10 +49,8 @@ def _seed_epic(project: Path, epic_id: int) -> Path:
         )
         + "\n"
     )
-    (epic_dir / "audit" / "raw").mkdir(parents=True)
-    (epic_dir / "audit" / "raw" / "transcript.txt").write_text("kept\n")
 
-    # Removed: every derived artefact.
+    # Removed: every derived artefact, telemetry log, and runtime file.
     (epic_dir / "EPIC.md").write_text(f"---\nepic_id: {epic_id}\n---\n")
     (epic_dir / "plan.json").write_text(f'{{"epic_id":{epic_id},"goal":"x","stories":[]}}\n')
     (epic_dir / "PLAN.md").write_text("# Plan\n")
@@ -60,6 +58,12 @@ def _seed_epic(project: Path, epic_id: int) -> Path:
     (epic_dir / "check-result.json").write_text('{"ok":true}\n')
     (epic_dir / "gate.md").write_text("---\ntype: plan_gate\n---\n")
     (epic_dir / "gate-position.md").write_text("position prose\n")
+    (epic_dir / "dispatch.jsonl").write_text('{"event":"dispatch_started"}\n')
+    (epic_dir / ".wf.lock").write_text('{"pid":1}\n')
+    (epic_dir / "dispositions").mkdir()
+    (epic_dir / "dispositions" / "story-S1.md").write_text("---\nverdict: accept\n---\n")
+    (epic_dir / "audit" / "raw").mkdir(parents=True)
+    (epic_dir / "audit" / "raw" / "transcript.txt").write_text("old transcript\n")
     (epic_dir / "discovery" / "brainstorm").mkdir(parents=True)
     (epic_dir / "discovery" / "brainstorm" / "design.md").write_text("bundle\n")
     (epic_dir / "discovery" / "synthesis").mkdir(parents=True)
@@ -80,10 +84,12 @@ def _run(project: Path, *args: str, stdin: str | None = None) -> subprocess.Comp
 
 
 def _assert_lineage_kept(epic_dir: Path) -> None:
-    assert (epic_dir / "spark.md").is_file()
-    assert (epic_dir / ".last-sync").is_file()
-    assert (epic_dir / "epic.jsonl").is_file()
-    assert (epic_dir / "audit" / "raw" / "transcript.txt").is_file()
+    # Deny-by-default: only the inputs and lineage survive.
+    assert sorted(child.name for child in epic_dir.iterdir()) == [
+        ".last-sync",
+        "epic.jsonl",
+        "spark.md",
+    ]
 
 
 def _assert_derived_gone(epic_dir: Path) -> None:
@@ -95,10 +101,12 @@ def _assert_derived_gone(epic_dir: Path) -> None:
         "check-result.json",
         "gate.md",
         "gate-position.md",
+        "dispatch.jsonl",
+        ".wf.lock",
     ):
         assert not (epic_dir / name).exists(), name
-    assert not (epic_dir / "discovery").exists()
-    assert not (epic_dir / "critique").exists()
+    for subdir in ("discovery", "critique", "dispositions", "audit"):
+        assert not (epic_dir / subdir).exists(), subdir
 
 
 def test_reset_removes_derived_keeps_lineage(tmp_path: Path) -> None:

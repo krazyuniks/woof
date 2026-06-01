@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 
 from woof.graph.dispositions import (
+    FrontMatterError,
     critique_severity,
     read_markdown_front_matter,
     story_critique_path,
@@ -89,6 +90,30 @@ def discovery_bucket_complete(repo_root: Path, epic_id: int, bucket: str) -> boo
         path.is_file() and path.read_text(encoding="utf-8").strip()
         for path in directory.glob("*.md")
     )
+
+
+def interactive_brainstorm_bundle_present(repo_root: Path, epic_id: int) -> bool:
+    """Return whether an accepted brainstorm bundle sits in the interactive bucket.
+
+    The interactive bucket is written by the `woof-brainstorm` skill straight into
+    its final location, so "any markdown present" is too weak a skip signal: a
+    partial write, a draft, or a rejected (back-edge) design must not short-circuit
+    the headless chain. Require a resolved Contract-2 bundle - a markdown file whose
+    front-matter declares ``status: accepted``. A malformed or front-matter-less
+    file is ignored, so a half-written bundle never triggers the skip.
+    """
+
+    directory = discovery_bucket_dir(repo_root, epic_id, INTERACTIVE_DISCOVERY_BUCKET)
+    if not directory.is_dir():
+        return False
+    for path in sorted(directory.glob("*.md")):
+        try:
+            front = read_markdown_front_matter(path).front
+        except (FileNotFoundError, FrontMatterError):
+            continue
+        if isinstance(front, dict) and front.get("status") == "accepted":
+            return True
+    return False
 
 
 def plan_markdown_path(repo_root: Path, epic_id: int) -> Path:
@@ -329,7 +354,7 @@ def next_node(repo_root: Path, epic_id: int) -> tuple[NodeType | None, str | Non
         if discovery_synthesis_complete(repo_root, epic_id):
             return NodeType.EPIC_DEFINITION, None
         if (directory / "spark.md").exists():
-            if discovery_bucket_complete(repo_root, epic_id, INTERACTIVE_DISCOVERY_BUCKET):
+            if interactive_brainstorm_bundle_present(repo_root, epic_id):
                 return NodeType.DISCOVERY_SYNTHESIS, None
             for bucket, node in _DISCOVERY_BUCKET_NODES:
                 if not discovery_bucket_complete(repo_root, epic_id, bucket):

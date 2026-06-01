@@ -8,10 +8,10 @@ Authority: this file plus the ADRs and `docs/architecture.md` define the project
 
 Woof is an inner-loop SDLC tool for AI-assisted development.
 
-- **Operator surface.** Three Claude Code skills: `/woof:setup` (onboard a new consumer repo), `/woof:map-codebase` (regenerate the cartography artefacts), `/woof:run` (execute an epic). One entry point per task.
+- **Operator surface.** One umbrella `/woof` skill over the `woof` CLI (run epics with `woof wf`, resolve gates, reset, observe, onboard), plus the interactive `/woof:brainstorm` design specialist (ADR-007). The setup, map-codebase, run, and gate flows live in the umbrella's `references/`.
 - **Deterministic engine.** A Python library at `src/woof/` exposes graph transitions, schema validation, JSONL audit, and tracker abstractions. The skills invoke it via Bash.
 - **Setup CLI.** `woof init`, `woof preflight`, and `woof hooks install` are non-interactive Python commands used during project setup. They are not parallel surfaces for running epics.
-- **State on disk.** `EPIC.md`, `plan.json`, JSONL audit, dispositions, gate files, and cartography artefacts are the authoritative state. The skill orchestrator holds context warm in-session; on crash or operator switch, the next session reconstructs from disk.
+- **State on disk.** `EPIC.md`, `plan.json`, JSONL audit, dispositions, gate files, and cartography artefacts are the authoritative state. The engine (`woof wf`) runs the graph in-process and reconstructs position from disk on every invocation; on crash or operator switch, re-running `woof wf --epic N` resumes.
 - **Cartography prerequisite.** Every consumer repo has `.woof/codebase/` containing human-authored design docs, mapper-authored AS-IS docs, and a mechanical index. The workflow fails preflight if the prerequisite docs are missing.
 - **Contract readiness.** After Stage 2 writes `EPIC.md`, a deterministic readiness boundary checks that the epic is machine-checkable before any model plans stories.
 - **Evidence over confidence.** Reviewer blockers must carry resolvable evidence. Confidence scores, if ever added, are advisory eval metadata and never gate-affecting.
@@ -26,6 +26,8 @@ The backlog below is not a single coding-agent prompt. Each epic is broken into 
 The plan for execution itself (sequencing the epics, deciding overlap, choosing the first prompt) lives in `docs/implementation-plan.md`.
 
 ## Epics (in order)
+
+> **Superseded direction (2026-06-01).** E1's `woof graph` re-architecture (rename `woof wf` -> `woof graph`, remove the in-process dispatch loop, `state_token` compare-and-set, typed `record-*`/`run-deterministic-node` verbs) and E3's three-skill suite were overtaken by the shipped `woof wf` in-process runner and the single `/woof` umbrella skill (ADR-007). They are kept below as planning context; whether to formally withdraw or re-scope them is an open decision. New work builds against `woof wf`, not `woof graph`.
 
 ### E1. Foundation: graph library API
 

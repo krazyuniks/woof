@@ -34,6 +34,7 @@ from woof.graph.transitions import (
     discovery_bucket_complete,
     discovery_synthesis_complete,
     epic_event_exists,
+    interactive_brainstorm_bundle_present,
     next_ready_story,
     plan_critique_path,
     plan_gate_resolved,
@@ -272,7 +273,7 @@ def _derive_next_step(
         if discovery_synthesis_complete(repo_root, epic_id):
             return {"node": "epic_definition", "story_id": None}
         if (directory / "spark.md").exists():
-            if discovery_bucket_complete(repo_root, epic_id, "brainstorm"):
+            if interactive_brainstorm_bundle_present(repo_root, epic_id):
                 return {"node": "discovery_synthesis", "story_id": None}
             for bucket in ("research", "thinking", "ideate"):
                 if not discovery_bucket_complete(repo_root, epic_id, bucket):

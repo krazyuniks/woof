@@ -43,12 +43,14 @@ epic lives, where the bundle is written, the redo flow, and the handoff.
 4. Run the two loops. Follow the canonical process below and produce the bundle: the design
    document, `CONTEXT.md`, and any ADRs.
 
-5. Write into the deterministic bucket. Write the bundle directly into
-   `.woof/epics/E<N>/discovery/brainstorm/`. There is no path argument and the operator never
-   chooses a location; Woof owns it. Put the resolved design document there (its front-matter is
-   Contract 2), `CONTEXT.md` alongside it, and any ADRs under `docs/adr/` in the consumer repo with
-   `adr_refs` pointing at them. The design document's front-matter is the bundle manifest: `tier`,
-   `status: accepted`, `work_units[]`, `open_questions[]`, `context_ref`, `adr_refs[]`.
+5. Write into the deterministic bucket. Write the whole bundle directly into
+   `.woof/epics/E<N>/discovery/brainstorm/` - there is no path argument and the operator never
+   chooses a location; Woof owns it. The bundle is self-contained in the bucket: the resolved design
+   document there (its front-matter is Contract 2), `CONTEXT.md` alongside it, and any ADRs under
+   `discovery/brainstorm/adr/NNNN-slug.md` with `adr_refs` as paths relative to the design document.
+   Keep discovery ADRs in the bucket, not the consumer repo's `docs/adr/`, unless the epic is
+   explicitly about changing repo docs. The design document's front-matter is the bundle manifest:
+   `tier`, `status: accepted`, `work_units[]`, `open_questions[]`, `context_ref`, `adr_refs[]`.
 
 6. Validate before handoff. Woof validates natively: run
    `woof validate --schema brainstorm <the design document>` and fix anything it reports. (Inside

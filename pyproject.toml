@@ -32,7 +32,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/woof"]
-force-include = { "schemas" = "schemas", "playbooks" = "playbooks", "languages" = "languages" }
+# schemas/playbooks/languages are engine runtime data; skills are the Claude Code
+# operator bundles. All ship in the wheel so they travel with `uv tool install`
+# and a skill installer can extract them from the package.
+force-include = { "schemas" = "schemas", "playbooks" = "playbooks", "languages" = "languages", "skills" = "skills" }
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

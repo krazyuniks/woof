@@ -1,8 +1,8 @@
 # Mapping the codebase (cartography)
 
 Every Woof consumer repo carries a cartography artefact group at `.woof/codebase/` so dispatched
-nodes get prompt-ready repo context cheaply (ADR-004). This is the former `/woof:map-codebase` flow,
-now a reference under the `/woof` umbrella. It runs in three layers.
+nodes get prompt-ready repo context cheaply (ADR-004). The `/woof` umbrella owns the map-codebase
+flow. It runs in three layers.
 
 ## Design layer (human-authored, durable)
 
@@ -36,7 +36,7 @@ Regenerated automatically by the Woof-managed post-commit hook, which runs the c
 `scripts/refresh-cartography`:
 
 - `tags` - a ctags index.
-- `tree.txt` - the file tree.
+- `files.txt` - `git ls-files` output.
 - `freshness.json` - the freshness stamp.
 
 Install the hook once during setup:

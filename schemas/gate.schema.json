@@ -15,7 +15,7 @@
     "stage": {
       "type": "integer",
       "enum": [4, 5, 6],
-      "description": "Stage that wrote the gate. Target shape: plan_gate=4, story_gate=5, review_gate=5. E1 normalises legacy stage=6 artefacts."
+      "description": "Stage that wrote the gate. Target shape: plan_gate=4, story_gate=5, review_gate=5. Legacy stage=6 artefacts remain read-tolerated for migration."
     },
     "story_id": {
       "oneOf": [

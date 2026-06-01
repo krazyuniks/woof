@@ -1,7 +1,6 @@
 # Onboarding a repo to Woof
 
-Bring a consumer repository under Woof. This is the former `/woof:setup` flow, now a reference under
-the `/woof` umbrella.
+Bring a consumer repository under Woof from the `/woof` umbrella.
 
 ## Steps
 

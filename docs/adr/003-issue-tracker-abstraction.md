@@ -12,7 +12,7 @@ Woof keeps the epic-level contract in an issue tracker and the runtime workflow 
 
 ## Decision
 
-Woof depends on a `Tracker` protocol, not on a specific provider. The graph, skill orchestrator, and gate code depend on the protocol; provider-specific behaviour stays in adapter implementations.
+Woof depends on a `Tracker` protocol, not on a specific provider. The engine, operator surface, and gate code depend on the protocol; provider-specific behaviour stays in adapter implementations.
 
 `src/woof/trackers/` owns the abstraction:
 
@@ -57,7 +57,7 @@ An epic ID is a tracker-assigned integer. For `github` it is the GitHub issue nu
 
 ## Conflict handling
 
-Hosted trackers use conflict-detected push. A push that finds remote divergence writes a `tracker_sync_conflict` gate and raises `TrackerError`. The skill orchestrator surfaces the gate in the operator session. The operator resolves with one of:
+Hosted trackers use conflict-detected push. A push that finds remote divergence writes a `tracker_sync_conflict` gate and raises `TrackerError`. The `/woof` operator surface presents the gate in the operator session. The operator resolves with one of:
 
 - `keep_local`;
 - `accept_remote`;
@@ -72,4 +72,4 @@ Resolution events use `tracker_synced` and `tracker_sync_conflict`.
 - Graph topology, role routing, reviewer blocker handling, gate resolution, and transaction manifests are unchanged by tracker choice.
 - GitHub-specific behaviour stays in `GitHubTracker`.
 - Local epics have no remote authority check by design; the local epic directory is self-authoritative.
-- The skill orchestrator surfaces tracker-sync conflicts conversationally; the operator resolves via the same structured verdicts the graph expects.
+- The `/woof` operator surface presents tracker-sync conflicts conversationally; the operator resolves via the same structured verdicts the graph expects.

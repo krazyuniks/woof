@@ -49,7 +49,7 @@ Every consumer repository carries a mandatory cartography artefact group at `.wo
 - Mapper-authored AS-IS layer (`CURRENT-ARCHITECTURE.md`, `STACK.md`, `INTEGRATIONS.md`, `STRUCTURE.md`, `CONVENTIONS.md`, `TESTING.md`, `CONCERNS.md`).
 - Mechanical layer (`tags`, `files.txt`, `freshness.json`) refreshed on every commit.
 
-The skill orchestrator loads the relevant subset per node, so producer and reviewer subagents do not pay tokens to rediscover the repo. See `docs/adr/004-cartography-prerequisite.md`.
+Woof loads the relevant subset per node, so producer and reviewer subagents do not pay tokens to rediscover the repo. See `docs/adr/004-cartography-prerequisite.md`.
 
 ## Runtime model
 

@@ -28,7 +28,7 @@ Do not introduce parallel Make, npm, tox, or ad-hoc shell entry points while a `
 
 ## Code boundaries
 
-- `src/woof/graph/` — deterministic graph transitions, typed graph commands, validation, JSONL audit.
+- `src/woof/graph/` — deterministic graph transitions, the `woof wf` runner, validation, and JSONL audit.
 - `src/woof/cli/` — CLI command surface (`woof wf`, `woof init`, `woof preflight`, `woof hooks install`, `woof observe`, `woof validate`, etc.).
 - `src/woof/checks/` — Stage-5 check runners.
 - `src/woof/gate/` — gate authoring helpers.
@@ -43,7 +43,7 @@ Do not introduce parallel Make, npm, tox, or ad-hoc shell entry points while a `
 
 - Read the relevant schema before changing artefact shape.
 - Update docs in the same change as code when behaviour, commands, or contracts move.
-- Preserve the layered topology (ADR-001). The skill is the orchestrator; Python is the engine library; state is on disk.
+- Preserve the layered topology (ADR-001, updated by ADR-007). Python owns graph orchestration through `woof wf`; the `/woof` skill is the operator surface; state is on disk.
 - Preserve the role-routing policy (ADR-002). Stage 5 producer is Claude (LSP); reviewer is Codex. Other stages are the reverse.
 - Preserve the cartography prerequisite (ADR-004). Do not introduce nodes that bypass `.woof/codebase/` content loading.
 - Do not introduce a parallel operator surface for running epics. The operator entry point is the `/woof` umbrella, which runs `woof wf` (ADR-007).

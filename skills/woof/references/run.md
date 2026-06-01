@@ -1,8 +1,8 @@
 # Running and resuming an epic
 
-Drive one epic forward through the deterministic graph. This is the former `/woof:run` flow, now a
-reference under the `/woof` umbrella. The graph is deterministic: `woof wf` reads the epic's
-filesystem state and runs the next node. You re-run it to advance; you never pick the stage.
+Drive one epic forward through the deterministic graph from the `/woof` umbrella. The graph is
+deterministic: `woof wf` reads the epic's filesystem state and runs the next node. You re-run it to
+advance; you never pick the stage.
 
 ## Create or cold-start
 

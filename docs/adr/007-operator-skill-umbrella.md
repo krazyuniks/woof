@@ -28,7 +28,7 @@ One umbrella operator skill plus one interactive specialist.
 
 | Skill | Role |
 |---|---|
-| `/woof` (`skills/woof/`) | The umbrella. The operator's map of the `woof` shell CLI - `wf` (new / run / `--resolve` / `reset`), `observe`, `check`, `validate`, `init`, `preflight`, `hooks`, `render-epic`, `audit-bundle` - grouped with usage, plus the gate-decision sets. It routes the design phase to `/woof:brainstorm`. The former setup, map-codebase, run, and gate flows become `references/`. |
+| `/woof` (`skills/woof/`) | The umbrella. The operator's map of the `woof` shell CLI - `wf` (new / run / `--resolve` / `reset`), `observe`, `check`, `validate`, `init`, `preflight`, `hooks`, `render-epic`, `audit-bundle` - grouped with usage, plus the gate-decision sets. It routes the design phase to `/woof:brainstorm`. Setup, map-codebase, run, and gate guidance lives in `references/`. |
 | `/woof:brainstorm` (`skills/woof-brainstorm/`) | The one interactive specialist. It hosts the multi-turn design conversation (the two brainstorm loops), writes the resolved bundle into the epic's `discovery/brainstorm/` bucket, and hands off to `woof wf`. It is generated from the canonical agent-toolkit brainstorm skill plus a woof wrapper, pinned and drift-checked (`scripts/gen_woof_brainstorm.py`), so Woof stays standalone. |
 
 ### Mechanics

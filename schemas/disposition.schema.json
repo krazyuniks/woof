@@ -42,7 +42,7 @@
     "harness": {
       "type": "string",
       "minLength": 1,
-      "description": "Legacy route identifier retained until E1 removes model-authored dispositions."
+      "description": "Legacy route identifier retained for old model-authored dispositions."
     },
     "session_ref": {
       "type": "string",

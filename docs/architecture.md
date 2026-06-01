@@ -11,9 +11,9 @@ Woof assumes a Git worktree, the `.woof/` convention, its bundled schemas / play
 ## 1. Principles
 
 - **Deterministic orchestration.** Graph transitions, gates, schema validation, and transaction manifests are deterministic Python. LLM inference is typed producer / reviewer / mapper work within the graph; no LLM picks successors.
-- **State on disk is authoritative.** Filesystem state under `.woof/` is the canonical record. The orchestrator's in-memory context is opportunistic and reconstructable from disk on crash or session switch.
+- **State on disk is authoritative.** Filesystem state under `.woof/` is the canonical record. Operator-skill context is opportunistic and reconstructable from disk on crash or session switch.
 - **Contract-first.** JSON Schemas define artefact shape; Python code implements transitions and validation; prompt files provide producer or reviewer guidance only. Shell snippets are examples, not orchestration authority.
-- **One entry point per operator task.** Three Claude Code skills cover setup, map, and run. Project-setup commands (`woof init`, `woof preflight`, `woof hooks install`) are non-interactive Python utilities used once per project. No parallel surfaces for the same job.
+- **One operator surface.** The `/woof` umbrella covers setup, map-codebase, run, gate, reset, observe, and onboarding flows over the `woof` CLI. `/woof:brainstorm` is the only specialist because design discovery is a distinct interactive loop.
 - **Idempotent.** Migrations, ingestion, and setup scripts are safe to replay.
 - **Cartography mandatory.** Every consumer repo has `.woof/codebase/` with design, AS-IS, and mechanical layers. Preflight blocks the workflow if the prerequisite is missing.
 - **Fail loud.** Missing, malformed, or unsafe state opens a gate or fails preflight. It is never silently repaired by a prompt.
@@ -54,7 +54,7 @@ State on disk is the only authoritative record. The operator-skill and dispatche
 - Audit and event writes are a side effect of the runner: lifecycle and node events append to `epic.jsonl`, dispatch telemetry to `dispatch.jsonl`.
 - `woof wf new "<spark>"` creates a tracker-backed epic; `woof wf --epic N --resolve <decision>` resolves the open gate; `woof wf reset --epic N` returns an epic to its spark.
 
-ADR-005 described a decomposed `woof graph` command API (typed `record-*` verbs, `run-deterministic-node`, `next-node`, `state_token` compare-and-set) with the operator skill driving the graph node by node. That decomposition was not built; the shipped engine runs the graph itself behind `woof wf`, and ADR-007 records the matching operator surface (a single `/woof` umbrella over the CLI, not a node-by-node orchestrator skill).
+ADR-005 described a decomposed `woof graph` command API (typed `record-*` verbs, `run-deterministic-node`, `next-node`, `state_token` compare-and-set) with the operator skill driving the graph node by node. That direction is withdrawn. The shipped engine runs the graph itself behind `woof wf`, and ADR-007 records the matching operator surface: a single `/woof` umbrella over the CLI, not a node-by-node orchestrator skill.
 
 ## 3. Stages
 
@@ -185,7 +185,7 @@ Skill bundles ship under `skills/woof/` (the umbrella) and `skills/woof-<name>/`
 
 ## 7. Tracker abstraction
 
-See ADR-003. `Tracker` protocol in `src/woof/trackers/`. Two adapters ship: `github` (one issue per epic) and `local` (filesystem-only). Tracker choice is declared in `.woof/prerequisites.toml`. The skill orchestrator surfaces tracker-sync conflicts conversationally.
+See ADR-003. `Tracker` protocol in `src/woof/trackers/`. Two adapters ship: `github` (one issue per epic) and `local` (filesystem-only). Tracker choice is declared in `.woof/prerequisites.toml`. The `/woof` operator surface presents tracker-sync conflicts conversationally.
 
 ## 8. Schemas and contracts
 
@@ -241,7 +241,7 @@ JSONL event logs (`epic.jsonl`, `dispatch.jsonl`) enable crash-resume and post-h
 
 **Audit redaction.** Commit-bound files under `.woof/epics/E<N>/audit/` are redacted before the commit transaction. Redaction strips known secret patterns. Per-file size cap defaults to 256 KB; output exceeding the cap is truncated with a footer pointing at the raw output, which lives in `.woof/epics/E<N>/audit/raw/` (gitignored). Retention beyond the local repo is the operator's responsibility.
 
-**Dispatch telemetry.** Every `subprocess_returned` event records enough information for audit, evals, orchestrator-level runaway protection, and git-position drift detection. Required fields include `node_type`, `route_key`, `duration_ms`, `artefacts_loaded[]`, `prompt_bytes`, `artefact_bytes`, `output_bytes`, `stderr_bytes`, `exit_type`, `exit_code`, `error_signature`, `head_before`, `head_after`, `branch_before`, `branch_after`, `expected_outputs[]` with presence and schema status, and `rate_limit` metadata when the adapter exposes it. It records `tokens_in`, `tokens_out`, `cache_read_tokens`, `cache_write_tokens` when the adapter provides them. Codex dispatches also record `command_count`. `artefacts_loaded[]` contains explicit repo-relative artefact references; absolute paths, home-relative paths, and parent traversal are rejected.
+**Dispatch telemetry.** Every `subprocess_returned` event records enough information for audit, evals, run-resilience gates, and git-position drift detection. Required fields include `node_type`, `route_key`, `duration_ms`, `artefacts_loaded[]`, `prompt_bytes`, `artefact_bytes`, `output_bytes`, `stderr_bytes`, `exit_type`, `exit_code`, `error_signature`, `head_before`, `head_after`, `branch_before`, `branch_after`, `expected_outputs[]` with presence and schema status, and `rate_limit` metadata when the adapter exposes it. It records `tokens_in`, `tokens_out`, `cache_read_tokens`, `cache_write_tokens` when the adapter provides them. Codex dispatches also record `command_count`. `artefacts_loaded[]` contains explicit repo-relative artefact references; absolute paths, home-relative paths, and parent traversal are rejected.
 
 ## 10. Gates
 
@@ -403,10 +403,8 @@ woof/
 ├── playbooks/                   # producer/reviewer prompt templates
 ├── languages/                   # per-language registry + refresh templates
 ├── skills/                      # Claude Code skill bundles
-│   ├── woof-setup/
-│   ├── woof-map-codebase/
-│   ├── woof-run/
-│   └── woof-target-architecture/
+│   ├── woof/
+│   └── woof-brainstorm/
 ├── tests/                       # unit and integration tests
 └── pyproject.toml
 ```

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://woof.dev/schemas/brainstorm.schema.json",
   "title": "woof brainstorm bundle (Stage-0 ingestion)",
-  "description": "Front-matter of the resolved design document produced by the interactive `woof-brainstorm` skill (its Contract 2). The skill writes the bundle into the epic's discovery/brainstorm/ bucket; `woof validate --schema brainstorm <bundle>` checks it against this schema and the graph re-validates it as a Stage-1 discovery source. The schema is a woof-local copy of the agent-toolkit brainstorm skill's bundle.schema.json so Woof stays standalone; keep the two in step. work_units[] is the decomposition manifest the graph carries into Definition.",
+  "description": "Front-matter of the resolved design document produced by the interactive `woof-brainstorm` skill (its Contract 2). The skill writes the bundle into the epic's discovery/brainstorm/ bucket; `woof validate --schema brainstorm <bundle>` checks it against this schema and the graph re-validates it as a Stage-1 discovery source. The schema is a woof-local copy of the agent-toolkit brainstorm skill's bundle.schema.json so Woof stays standalone; keep the two in step. work_units[] is discovery guidance for Woof's synthesis and breakdown prompts, not a mechanical story mapping.",
   "type": "object",
   "additionalProperties": false,
   "required": ["title", "tier", "status", "work_units"],
@@ -36,7 +36,7 @@
     "work_units": {
       "type": "array",
       "items": { "$ref": "#/$defs/work_unit" },
-      "description": "Consumer-agnostic decomposition. Woof carries these into Definition/Breakdown; may be empty for a kb-topic bundle."
+      "description": "Consumer-agnostic decomposition guidance. Woof ingests these as discovery source material and re-derives stories through synthesis, definition, and breakdown; may be empty for a kb-topic bundle."
     },
     "open_questions": {
       "type": "array",

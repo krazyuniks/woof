@@ -27,16 +27,16 @@ Woof adds operational resilience around the graph, not inside model reasoning lo
    which Woof has a structured `EPIC.md` contract to validate. Running the same check
    immediately after epic creation would only inspect the raw spark, which is too thin
    to prove acceptance criteria, contract decisions, path references, or machinability.
-2. Dispatch telemetry is part of the strict graph contract. `record-dispatch-returned`
-   records outcome and progress signals, not only token and byte counts. Minimum fields:
+2. Dispatch telemetry is part of the strict graph contract. The engine records outcome
+   and progress signals, not only token and byte counts. Minimum fields:
    exit type, exit code, normalised error signature when available, HEAD and branch
    before/after, expected artefact presence, expected artefact schema status,
    rate-limit metadata, duration, loaded artefacts, bytes, tokens, and command count
    when available.
-3. Runaway protection belongs in `/woof:run` as orchestrator supervision over graph
-   telemetry. The graph exposes the facts; the skill decides whether repeated no-progress
-   or same-error patterns should pause the run and open a human gate. Progress is
-   stage-aware: planning stages make progress by writing expected `.woof/` artefacts;
+3. Runaway protection belongs around the current `woof wf` runner, not in a separate
+   `/woof:run` skill. The engine records the facts; Woof can pause the run and
+   open a human gate when repeated no-progress or same-error patterns appear. Progress
+   is stage-aware: planning stages make progress by writing expected `.woof/` artefacts;
    story stages make progress by writing expected outputs and eventually advancing the
    graph-owned commit. Same-error and no-progress counters are separate. Constraint
    discovery routes to a course-correction gate rather than being treated as a stuck
@@ -55,7 +55,7 @@ Woof adds operational resilience around the graph, not inside model reasoning lo
    only; it must never suppress a blocker with plausible severe impact.
 6. tmux is allowed as an operator supervision and presentation layer for long-running
    Woof sessions. It may host panes, monitors, logs, and child processes. It does not
-   own graph state, choose successors, or mutate `.woof/` outside typed graph commands.
+   own graph state, choose successors, or mutate `.woof/` outside Woof commands.
 7. HEAD and branch drift are detected, not silently tolerated. Dispatch telemetry records
    the observed git position before and after a worker. The graph can open a gate when
    the branch or HEAD moves in a way not explained by a graph-owned commit.
@@ -68,10 +68,10 @@ Woof adds operational resilience around the graph, not inside model reasoning lo
 
 - The lifecycle gains a Stage 2.5 readiness boundary. This changes graph topology and
   therefore needs schemas, tests, and documentation when implemented.
-- E1 must include enough dispatch-return contract shape for future circuit-breaker,
-  rate-limit handling, and HEAD/branch drift detection. This is not a future
-  embellishment; it is part of the graph contract.
-- `/woof:run` can grow a tmux-backed long-run mode without creating a parallel
+- The run-resilience work must include enough dispatch-return contract shape for
+  circuit-breaker, rate-limit handling, and HEAD/branch drift detection. This is not
+  a future embellishment; it is part of the graph contract.
+- `woof wf` can grow tmux-backed long-run supervision without creating a parallel
   orchestration authority.
 - Baseline quality gates need durable baseline records and freshness rules. E4 should
   not claim per-failure subtraction unless the gate has a declared parser or structured

@@ -1,10 +1,12 @@
 ---
 type: adr
-status: accepted
+status: superseded by ADR-007
 date: 2026-05-27
 ---
 
 # ADR-005: Skill Suite
+
+Superseded 2026-06-01 by ADR-007. The three peer skills and `woof graph` command API described here are withdrawn. The current operator surface is one `/woof` umbrella over the `woof` CLI plus the `/woof:brainstorm` design specialist.
 
 ## Context
 

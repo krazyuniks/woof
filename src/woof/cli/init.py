@@ -33,6 +33,17 @@ ajv-formats = "any"
 
 {tracker_block}
 
+# Cartography contract (ADR-004), enforced by `woof preflight`: the consumer
+# scripts/refresh-cartography script, the human-authored design docs
+# (.woof/codebase/TARGET-ARCHITECTURE.md and PRINCIPLES.md), and the mechanical
+# layer (tags, files.txt, freshness.json). Author the design docs through the
+# /woof map-codebase flow before preflight passes. Remove this block only to opt
+# the repository out of cartography enforcement entirely.
+[cartography]
+staleness_floor_hours = 168
+summary_min_chars = 200
+# languages = ["python"]  # refresh-cartography fragments to compose (woof init)
+
 # Uncomment when the project uses LSP-backed reviewer context.
 # [lsp]
 # languages = ["python"]
@@ -165,7 +176,7 @@ GITIGNORE_ENTRIES = [
     ".woof/epics/*/check-result.json",
     ".woof/epics/*/audit/raw/",
     ".woof/codebase/tags",
-    ".woof/codebase/tree.txt",
+    ".woof/codebase/files.txt",
     ".woof/codebase/freshness.json",
     ".woof/.preflight-floor",
     ".woof/.preflight-runtime",

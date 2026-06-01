@@ -124,6 +124,38 @@
       "type": "object",
       "additionalProperties": { "$ref": "#/$defs/server_check" },
       "description": "Named local or project-specific server prerequisites. Each entry either runs a readiness command from the project root or probes a URL for the expected HTTP status."
+    },
+    "cartography": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Cartography contract (ADR-004). When this block is present, `woof preflight` enforces the cartography artefact group at .woof/codebase/: the consumer-owned scripts/refresh-cartography script (present and executable), the human-authored design docs (TARGET-ARCHITECTURE.md and PRINCIPLES.md, present and not stubs), and the mechanical layer (tags, files.txt, freshness.json, present). `woof init` scaffolds this block so new consumers are enforced by default; omit it only to opt a repository out of cartography enforcement.",
+      "properties": {
+        "staleness_floor_hours": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 168,
+          "description": "Age in hours beyond which a present freshness.json is reported as stale. Staleness is a non-blocking warning with a refresh prompt, never a preflight failure. The presence of freshness.json is part of the blocking mechanical-layer check; only its age is governed by this floor."
+        },
+        "summary_min_chars": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 200,
+          "description": "Minimum body length in characters (excluding YAML front matter) for a design doc to count as authored. A shorter doc fails preflight as a stub unless its front matter marks it intentionally complete (status: complete, or complete: true)."
+        },
+        "languages": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Languages whose per-language refresh-cartography fragments (woof/languages/<lang>.toml) compose the consumer's scripts/refresh-cartography. Drives `woof init` script composition; each name must match a language-registry entry."
+        },
+        "stub_marker": {
+          "type": "string",
+          "minLength": 1,
+          "default": "<!-- woof:stub -->",
+          "description": "Marker string that setup templates embed in design docs. A design doc that still contains this marker fails preflight as an unedited stub; removing the marker (and authoring real content) is what makes preflight pass."
+        }
+      }
     }
   },
   "$defs": {

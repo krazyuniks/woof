@@ -97,12 +97,11 @@ Current decisions are already recorded in the backlog's Settled Choices. The seq
 
 ## Active Per-Epic Plan Pointers
 
-No per-epic plan is active right now. Create `docs/plans/e1-cartography.md` when E1 starts.
+E1 is active. Its plan is `docs/plans/e1-cartography.md`. Prompt 1 has landed: the `[cartography]` contract plus missing/stub preflight enforcement. Prompts 2-5 cover the staleness warning, per-language refresh templates with `woof init` composition, the fail-loud post-commit hook, and blanket enforcement for cartography-less consumers.
 
 ## What Happens Next
 
-1. Create the focused E1 cartography plan.
-2. Run the first E1 prompt: schema + preflight contract.
-3. Review the diff and targeted validation before continuing.
+1. Run E1 prompt 2: stale `freshness.json` becomes a non-blocking warning keyed on `staleness_floor_hours`.
+2. Review the diff and targeted tests before continuing.
 
 This document is updated only when sequencing or active plan pointers change.

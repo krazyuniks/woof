@@ -14,6 +14,13 @@ Authored during setup, refreshed only when architectural strategy changes:
 
 Help the operator author or update these by hand; they are not regenerated.
 
+While `prerequisites.toml` declares a `[cartography]` block, `woof preflight` treats both design
+docs as mandatory and non-stub. A doc fails preflight as a stub if it still contains the stub
+marker (`stub_marker`, default `<!-- woof:stub -->`) or if its body (front matter excluded) is
+shorter than `summary_min_chars` (default 200). A short-but-intentional doc can opt out by
+marking itself complete in front matter (`status: complete`, or `complete: true`). Author real
+content and remove the stub marker before preflight passes.
+
 ## AS-IS layer (mapper-authored, refreshed on demand)
 
 Seven themed documents describing the repo as it is. Regenerate them by dispatching parallel mapper
@@ -46,5 +53,8 @@ woof hooks install
 ```
 
 A manual mechanical refresh is just running `./scripts/refresh-cartography` (or making a commit).
+While `[cartography]` is declared, `woof preflight` fails closed on a missing mechanical file
+(`tags`, `files.txt`, `freshness.json`) and on a missing or non-executable
+`scripts/refresh-cartography`.
 
 See ADR-004 (`docs/adr/004-cartography-prerequisite.md`) for the full rationale.

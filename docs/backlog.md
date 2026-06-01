@@ -30,22 +30,15 @@ Per-epic plans live under `docs/plans/` only when an epic is active. Do not keep
 
 Make the cartography artefact group mandatory infrastructure with preflight enforcement and per-language refresh templates.
 
+The contract and missing/stub enforcement landed in prompt 1 (`docs/plans/e1-cartography.md`): the `[cartography]` schema shape (`staleness_floor_hours`, `summary_min_chars`, `languages`, `stub_marker`); enforcement keyed on the block's presence and scaffolded by `woof init`; `woof preflight` failing closed on a missing/non-executable `scripts/refresh-cartography`, a missing or stub `TARGET-ARCHITECTURE.md`/`PRINCIPLES.md`, or a missing mechanical-layer file (`tags`, `files.txt`, `freshness.json`); exact stub detection (removable stub marker, or body below `summary_min_chars` unless front matter marks it complete); and the `tree.txt` -> `files.txt` rename.
+
 Open work:
-- Add `[cartography]` to `prerequisites.toml`: `staleness_floor_hours`, `summary_min_chars`, declared languages, and stub-marker policy.
-- Upgrade `woof preflight` to fail closed on:
-  - missing `scripts/refresh-cartography`;
-  - non-executable `scripts/refresh-cartography`;
-  - missing or stub `.woof/codebase/TARGET-ARCHITECTURE.md`;
-  - missing or stub `.woof/codebase/PRINCIPLES.md`;
-  - missing mechanical layer (`tags`, `files.txt`, `freshness.json`).
 - Treat stale `freshness.json` beyond the declared floor as a warning with a refresh prompt, not a blocker.
-- Define stub detection exactly: setup templates carry a removable stub marker; documents below `summary_min_chars` fail unless explicitly marked complete in front matter.
 - Ship per-language `refresh-cartography` templates referenced from `languages/<lang>.toml`. Initial set: Python, Go, TypeScript, Rust.
 - Make `woof init` compose the per-language fragments into the consumer's `scripts/refresh-cartography` idempotently.
-- Rename any remaining `tree.txt` references to `files.txt`.
 - Make the post-commit hook regenerate the mechanical layer and fail loud if the refresh script exits non-zero.
 - Define `freshness.json`: `{ ts, git_ref, age_s, generator_version }`.
-- Existing consumers without cartography get a clear preflight error pointing at the `/woof` setup/map-codebase references.
+- Move from opt-in (`[cartography]` present) to a clear preflight error for an existing consumer with no cartography at all, pointing at the `/woof` setup/map-codebase references.
 
 Depends on: nothing. Blocks: E2, E3.
 

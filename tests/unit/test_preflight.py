@@ -24,10 +24,69 @@ effort = "max"
 mcp = []
 """
 
+CARTOGRAPHY_PREREQS = """\
+[infra]
+just = "any"
+git = "any"
+gh = "any"
+
+[commands]
+claude = "any"
+codex = "any"
+
+[validators]
+ajv = "any"
+ajv-formats = "any"
+
+[tracker]
+kind = "github"
+repo = "example/project"
+
+[cartography]
+summary_min_chars = 40
+"""
+
+DESIGN_DOC_BODY = (
+    "# Target Architecture\n\n"
+    "The estate targets event-driven services behind an API gateway, with "
+    "deterministic orchestration and on-disk state as the source of truth.\n"
+)
+
 
 def _write_exe(path: Path, body: str) -> None:
     path.write_text("#!/usr/bin/env sh\n" + body)
     path.chmod(0o755)
+
+
+def _write_cartography(
+    root: Path,
+    *,
+    target: str | None = DESIGN_DOC_BODY,
+    principles: str | None = DESIGN_DOC_BODY,
+    mechanical: bool = True,
+    script: bool = True,
+) -> None:
+    """Author a cartography artefact set under ``root`` for a declared contract."""
+
+    codebase = root / ".woof" / "codebase"
+    codebase.mkdir(parents=True, exist_ok=True)
+    if target is not None:
+        (codebase / "TARGET-ARCHITECTURE.md").write_text(target)
+    if principles is not None:
+        (codebase / "PRINCIPLES.md").write_text(principles)
+    if mechanical:
+        (codebase / "tags").write_text("main\tsrc/main.py\t1\n")
+        (codebase / "files.txt").write_text("src/main.py\n")
+        (codebase / "freshness.json").write_text(
+            json.dumps(
+                {"ts": "2026-05-30T00:00:00Z", "git_ref": "abc", "age_s": 1, "generator_version": 1}
+            )
+            + "\n"
+        )
+    if script:
+        scripts = root / "scripts"
+        scripts.mkdir(parents=True, exist_ok=True)
+        _write_exe(scripts / "refresh-cartography", "echo refresh\n")
 
 
 def _write_project(
@@ -1063,6 +1122,116 @@ repo = "example/project"
     assert proc.returncode == 0, proc.stderr + proc.stdout
     payload = json.loads(proc.stdout)
     assert all(f["id"] != "cartography.script" for f in payload["findings"])
+
+
+def _run_cartography_preflight(tmp_path: Path, run_woof):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _stub_core_tools(bin_dir)
+    proc = run_woof(
+        "preflight",
+        "--project-root",
+        str(tmp_path),
+        "--format",
+        "json",
+        env=_env_with_path(bin_dir),
+    )
+    return proc, json.loads(proc.stdout)
+
+
+def test_preflight_passes_with_declared_cartography(tmp_path: Path, run_woof) -> None:
+    _write_project(tmp_path, prerequisites=CARTOGRAPHY_PREREQS)
+    _write_cartography(tmp_path)
+
+    proc, payload = _run_cartography_preflight(tmp_path, run_woof)
+
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    by_id = {f["id"]: f for f in payload["findings"]}
+    for fid in (
+        "cartography.script",
+        "cartography.target_architecture",
+        "cartography.principles",
+        "cartography.mechanical",
+    ):
+        assert by_id[fid]["ok"] is True, by_id[fid]
+
+
+def test_preflight_fails_for_missing_cartography_script_when_declared(
+    tmp_path: Path, run_woof
+) -> None:
+    _write_project(tmp_path, prerequisites=CARTOGRAPHY_PREREQS)
+    _write_cartography(tmp_path, script=False)
+
+    proc, payload = _run_cartography_preflight(tmp_path, run_woof)
+
+    assert proc.returncode == 1
+    script = next(f for f in payload["findings"] if f["id"] == "cartography.script")
+    assert script["ok"] is False
+    assert "not found" in script["detail"]
+    assert "map-codebase" in script["install"]
+
+
+def test_preflight_fails_for_missing_cartography_design_doc(tmp_path: Path, run_woof) -> None:
+    _write_project(tmp_path, prerequisites=CARTOGRAPHY_PREREQS)
+    _write_cartography(tmp_path, target=None)
+
+    proc, payload = _run_cartography_preflight(tmp_path, run_woof)
+
+    assert proc.returncode == 1
+    doc = next(f for f in payload["findings"] if f["id"] == "cartography.target_architecture")
+    assert doc["ok"] is False
+    assert "TARGET-ARCHITECTURE.md not found" in doc["detail"]
+    assert "map-codebase" in doc["install"]
+
+
+def test_preflight_fails_for_stub_marker_design_doc(tmp_path: Path, run_woof) -> None:
+    _write_project(tmp_path, prerequisites=CARTOGRAPHY_PREREQS)
+    _write_cartography(tmp_path, target="<!-- woof:stub -->\n" + DESIGN_DOC_BODY)
+
+    proc, payload = _run_cartography_preflight(tmp_path, run_woof)
+
+    assert proc.returncode == 1
+    doc = next(f for f in payload["findings"] if f["id"] == "cartography.target_architecture")
+    assert doc["ok"] is False
+    assert "stub marker" in doc["detail"]
+
+
+def test_preflight_fails_for_short_design_doc(tmp_path: Path, run_woof) -> None:
+    _write_project(tmp_path, prerequisites=CARTOGRAPHY_PREREQS)
+    _write_cartography(tmp_path, target="Too short.\n")
+
+    proc, payload = _run_cartography_preflight(tmp_path, run_woof)
+
+    assert proc.returncode == 1
+    doc = next(f for f in payload["findings"] if f["id"] == "cartography.target_architecture")
+    assert doc["ok"] is False
+    assert "is a stub" in doc["detail"]
+    assert "40-char floor" in doc["detail"]
+
+
+def test_preflight_accepts_short_design_doc_marked_complete(tmp_path: Path, run_woof) -> None:
+    _write_project(tmp_path, prerequisites=CARTOGRAPHY_PREREQS)
+    _write_cartography(tmp_path, target="---\nstatus: complete\n---\nTiny but intentional.\n")
+
+    proc, payload = _run_cartography_preflight(tmp_path, run_woof)
+
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    doc = next(f for f in payload["findings"] if f["id"] == "cartography.target_architecture")
+    assert doc["ok"] is True
+    assert "marked complete" in doc["detail"]
+
+
+def test_preflight_fails_for_missing_mechanical_layer(tmp_path: Path, run_woof) -> None:
+    _write_project(tmp_path, prerequisites=CARTOGRAPHY_PREREQS)
+    _write_cartography(tmp_path, mechanical=False)
+
+    proc, payload = _run_cartography_preflight(tmp_path, run_woof)
+
+    assert proc.returncode == 1
+    mech = next(f for f in payload["findings"] if f["id"] == "cartography.mechanical")
+    assert mech["ok"] is False
+    assert "missing mechanical file(s)" in mech["detail"]
+    assert "files.txt" in mech["detail"]
 
 
 def test_preflight_json_reports_operator_state_for_current_epic(

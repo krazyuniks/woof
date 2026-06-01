@@ -21,6 +21,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from woof.cli.commands.observe import build_operator_state_summary
 from woof.cli.dispatcher import (
     TRUSTED_RUNTIME_MODE,
@@ -72,6 +74,13 @@ ajv-formats = "any"
 [tracker]
 kind = "github"
 repo = "<replace>/<replace>"
+
+# Cartography contract (ADR-004), enforced below. Author the design docs
+# (.woof/codebase/TARGET-ARCHITECTURE.md and PRINCIPLES.md) through the /woof
+# map-codebase flow before preflight passes. Remove this block only to opt out.
+[cartography]
+staleness_floor_hours = 168
+summary_min_chars = 200
 """
 
 CACHE_VERSION = 1
@@ -226,7 +235,7 @@ def _run_floor_checks(repo_root: Path, prereq: dict[str, Any]) -> list[Preflight
     findings.extend(_check_language_tools(prereq))
     findings.extend(_check_tree_sitter(prereq))
     findings.extend(_check_quality_gate_commands(repo_root))
-    findings.extend(_check_cartography_script(repo_root))
+    findings.extend(_check_cartography(repo_root, prereq))
     findings.extend(_check_host_prerequisites(repo_root, prereq))
     findings.extend(_check_server_prerequisites(repo_root, prereq))
     return findings
@@ -901,46 +910,216 @@ def _check_adapter_auth(role_name: str, adapter: str) -> PreflightFinding:
     )
 
 
-def _check_cartography_script(repo_root: Path) -> list[PreflightFinding]:
-    """Validate the optional consumer-owned cartography script.
+CARTOGRAPHY_DESIGN_DOCS: tuple[tuple[str, str], ...] = (
+    ("cartography.target_architecture", "TARGET-ARCHITECTURE.md"),
+    ("cartography.principles", "PRINCIPLES.md"),
+)
+CARTOGRAPHY_MECHANICAL_FILES = ("tags", "files.txt", "freshness.json")
+DEFAULT_STUB_MARKER = "<!-- woof:stub -->"
+DEFAULT_SUMMARY_MIN_CHARS = 200
+CARTOGRAPHY_AUTHOR_HINT = (
+    "Author .woof/codebase/ through the /woof map-codebase flow "
+    "(see skills/woof/references/setup.md and skills/woof/references/map-codebase.md)."
+)
 
-    Cartography is consumer-owned: the Woof post-commit hook block invokes
-    ``./scripts/refresh-cartography`` only when present. If the script exists,
-    preflight verifies it is a regular executable file so a stale or
-    non-executable script fails loud rather than silently no-oping in the
-    post-commit hook.
+
+def _check_cartography(repo_root: Path, prereq: dict[str, Any]) -> list[PreflightFinding]:
+    """Validate the cartography artefact group at ``.woof/codebase/`` (ADR-004).
+
+    Enforcement is opt-in by the presence of a ``[cartography]`` block in
+    ``prerequisites.toml`` (``woof init`` scaffolds it). When the block is
+    declared, preflight fails closed on a missing or non-executable
+    ``scripts/refresh-cartography``, a missing or stub design doc
+    (``TARGET-ARCHITECTURE.md``, ``PRINCIPLES.md``), or a missing mechanical-layer
+    file (``tags``, ``files.txt``, ``freshness.json``). When the block is absent,
+    only the legacy optional-script check runs: a present script must be a regular
+    executable file, but an absent one is not a finding.
+    """
+
+    cartography = prereq.get("cartography")
+    required = isinstance(cartography, dict)
+    findings: list[PreflightFinding] = []
+    script = _check_cartography_script(repo_root, required=required)
+    if script is not None:
+        findings.append(script)
+    if not required:
+        return findings
+
+    min_chars = int(cartography.get("summary_min_chars") or DEFAULT_SUMMARY_MIN_CHARS)
+    stub_marker = str(cartography.get("stub_marker") or DEFAULT_STUB_MARKER)
+    for finding_id, filename in CARTOGRAPHY_DESIGN_DOCS:
+        findings.append(
+            _check_cartography_doc(
+                repo_root,
+                finding_id,
+                filename,
+                min_chars=min_chars,
+                stub_marker=stub_marker,
+            )
+        )
+    findings.append(_check_cartography_mechanical(repo_root))
+    return findings
+
+
+def _check_cartography_script(repo_root: Path, *, required: bool) -> PreflightFinding | None:
+    """Check the consumer-owned ``scripts/refresh-cartography``.
+
+    The Woof post-commit hook block invokes ``./scripts/refresh-cartography``, so
+    a stale or non-executable script must fail loud rather than silently no-op.
+    When ``required`` (the ``[cartography]`` contract is declared) an absent
+    script is a failure; otherwise an absent script is simply no finding.
     """
 
     script = repo_root / "scripts" / "refresh-cartography"
     if not script.exists():
-        return []
-    if not script.is_file():
-        return [
-            PreflightFinding(
-                id="cartography.script",
-                label="cartography script",
-                ok=False,
-                detail=f"{script} exists but is not a regular file",
-            )
-        ]
-    if not os.access(script, os.X_OK):
-        return [
-            PreflightFinding(
-                id="cartography.script",
-                label="cartography script",
-                ok=False,
-                detail=f"{script} is not executable",
-                install=f"chmod +x {script}",
-            )
-        ]
-    return [
-        PreflightFinding(
+        if not required:
+            return None
+        return PreflightFinding(
             id="cartography.script",
             label="cartography script",
-            ok=True,
-            detail=f"{script} is present and executable",
+            ok=False,
+            detail=f"{script} not found",
+            install=CARTOGRAPHY_AUTHOR_HINT,
         )
-    ]
+    if not script.is_file():
+        return PreflightFinding(
+            id="cartography.script",
+            label="cartography script",
+            ok=False,
+            detail=f"{script} exists but is not a regular file",
+        )
+    if not os.access(script, os.X_OK):
+        return PreflightFinding(
+            id="cartography.script",
+            label="cartography script",
+            ok=False,
+            detail=f"{script} is not executable",
+            install=f"chmod +x {script}",
+        )
+    return PreflightFinding(
+        id="cartography.script",
+        label="cartography script",
+        ok=True,
+        detail=f"{script} is present and executable",
+    )
+
+
+def _check_cartography_doc(
+    repo_root: Path,
+    finding_id: str,
+    filename: str,
+    *,
+    min_chars: int,
+    stub_marker: str,
+) -> PreflightFinding:
+    """Check one human-authored design doc for presence and stub state.
+
+    A doc is a stub if it still contains ``stub_marker`` or if its body (front
+    matter excluded) is shorter than ``min_chars``. A short-but-intentional doc
+    can opt out by marking itself complete in front matter (``status: complete``
+    or ``complete: true``).
+    """
+
+    path = repo_root / ".woof" / "codebase" / filename
+    label = f"cartography doc: {filename}"
+    if not path.is_file():
+        return PreflightFinding(
+            id=finding_id,
+            label=label,
+            ok=False,
+            detail=f"{path} not found",
+            install=CARTOGRAPHY_AUTHOR_HINT,
+        )
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return PreflightFinding(
+            id=finding_id,
+            label=label,
+            ok=False,
+            detail=f"{path} unreadable: {exc}",
+        )
+    if stub_marker in text:
+        return PreflightFinding(
+            id=finding_id,
+            label=label,
+            ok=False,
+            detail=(
+                f"{path} still contains the stub marker {stub_marker!r}; "
+                "author real content and remove the marker"
+            ),
+            install=CARTOGRAPHY_AUTHOR_HINT,
+        )
+    front, body = _split_front_matter(text)
+    if _doc_marked_complete(front):
+        return PreflightFinding(
+            id=finding_id,
+            label=label,
+            ok=True,
+            detail=f"{path} is marked complete in front matter",
+        )
+    body_len = len(body.strip())
+    if body_len < min_chars:
+        return PreflightFinding(
+            id=finding_id,
+            label=label,
+            ok=False,
+            detail=(
+                f"{path} is a stub: {body_len} chars of content, below the "
+                f"{min_chars}-char floor; author content or mark it complete in "
+                "front matter (status: complete)"
+            ),
+            install=CARTOGRAPHY_AUTHOR_HINT,
+        )
+    return PreflightFinding(
+        id=finding_id,
+        label=label,
+        ok=True,
+        detail=f"{path} authored ({body_len} chars)",
+    )
+
+
+def _check_cartography_mechanical(repo_root: Path) -> PreflightFinding:
+    """Check the mechanical layer (``tags``, ``files.txt``, ``freshness.json``)."""
+
+    codebase = repo_root / ".woof" / "codebase"
+    missing = [name for name in CARTOGRAPHY_MECHANICAL_FILES if not (codebase / name).is_file()]
+    ok = not missing
+    return PreflightFinding(
+        id="cartography.mechanical",
+        label="cartography mechanical layer",
+        ok=ok,
+        detail=(
+            f"{', '.join(CARTOGRAPHY_MECHANICAL_FILES)} present in {codebase}"
+            if ok
+            else f"missing mechanical file(s) in {codebase}: {', '.join(missing)}"
+        ),
+        install=(
+            None
+            if ok
+            else "Run ./scripts/refresh-cartography (or commit with the woof post-commit hook installed)."
+        ),
+    )
+
+
+def _split_front_matter(text: str) -> tuple[dict[str, Any], str]:
+    """Split leading YAML front matter from a markdown body, tolerating neither."""
+
+    if text.startswith("---\n"):
+        end = text.find("\n---\n", 4)
+        if end >= 0:
+            try:
+                front = yaml.safe_load(text[4:end])
+            except yaml.YAMLError:
+                front = None
+            body = text[end + len("\n---\n") :]
+            return (front if isinstance(front, dict) else {}), body
+    return {}, text
+
+
+def _doc_marked_complete(front: dict[str, Any]) -> bool:
+    status = str(front.get("status") or "").strip().lower()
+    return status == "complete" or front.get("complete") is True
 
 
 def _check_language_tools(prereq: dict[str, Any]) -> list[PreflightFinding]:

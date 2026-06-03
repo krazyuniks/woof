@@ -275,7 +275,7 @@ See ADR-006. Operational resilience wraps the graph without replacing it.
 
 ### Dispatch process supervision
 
-Each dispatched subprocess is supervised on three independent clocks, not one wall-clock timeout:
+See ADR-008. Each dispatched subprocess is supervised on three independent clocks, not one wall-clock timeout:
 
 - **Idle timeout** fails the dispatch when the worker produces no output for a bounded window. It resets on every output line, so a genuinely stuck worker is caught early rather than after the full budget.
 - **Completion-versus-exit.** A worker that has emitted its terminal result but whose process has not exited - because a spawned child (a long-lived MCP server, a `gh` or git subprocess) inherited the stdout pipe and holds it open - is classified as completed, not timed out. Once the terminal result is observed, a short grace window takes over from the idle timeout and resolves the dispatch successfully with the captured output. A clean process exit always wins the race, so healthy runs add no latency.

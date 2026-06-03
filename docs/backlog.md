@@ -144,9 +144,40 @@ Open work:
 
 Depends on: E1, E2, E5.
 
+### E7. Dispatch Process Supervision
+
+Harden the per-dispatch subprocess lifecycle so dispatch outcomes are correctly classified. The current `woof dispatch` blocks on one buffered read behind a coarse external `timeout` wrapper. A worker that finishes but whose spawned child (a long-lived MCP server, a `gh`/git subprocess) holds the stdout pipe open blocks until the wall-clock kill and is then misclassified as a timeout (exit 124), discarding completed work. The cross-dispatch run-resilience policy in E2 consumes these classifications, so correct per-dispatch supervision is a prerequisite for trustworthy resilience telemetry, not an optimisation. The external pattern reference is sandcastle's idle-timeout-versus-completion-timeout split.
+
+Open work:
+- Replace the buffered `communicate()` read with an incremental line read so output is observed as it arrives.
+- Add an idle timeout that fails a dispatch after a bounded silence window and resets on each output line.
+- Add completion-versus-exit handling: once the worker emits its terminal result, a short grace window takes over from the idle timeout and resolves the dispatch successfully even if the process has not exited; a clean exit always wins the race.
+- Spawn each worker in its own process group; on timeout or cancel, signal the group (SIGTERM then SIGKILL after a grace window) so orphaned children, MCP servers in particular, are reaped. Drop reliance on the external `timeout` wrapper for outcome classification.
+- Expand `exit_type` to distinguish clean exit, non-zero exit, idle kill, wall-clock timeout, completed-but-lingering, and operator cancel; stop mapping a hanging-but-done worker to `timeout`.
+- Idempotent, double-signal-safe cancellation.
+- Fault-injection tests: child holding stdout open after the worker exits; child ignoring SIGTERM; slow-drip output; zero-output hang; oversized output; double-cancel. Each asserts the correct `exit_type` and that completed work is preserved.
+
+Depends on: nothing. Refines: E2 (run-resilience signal correctness), E4 (exit classification).
+
+### E8. Run Lineage and Producer-Output Recovery
+
+Thread one run identity across an epic, and add a bounded recovery ladder so producer-output failures do not jump straight to a human gate.
+
+Open work:
+- Add a `run_id` to every `epic.jsonl` and `dispatch.jsonl` event, threading epic -> story -> dispatch -> model session -> gate -> check -> commit. Confirm an epic is reconstructable as a single trace from disk.
+- Define file-first run replay from on-disk state plus the JSONL lineage: re-enter the graph at a recorded node for debugging without re-running prior work.
+- Add resume-to-correct: when a producer artefact fails schema validation or a deterministic check, resume the producer's captured session (the `cc_session_id` / transcript reference already in dispatch telemetry) with the deterministic failure evidence as feedback, instead of a cold re-dispatch. Bounded retry budget.
+- Add a graded recovery ladder ahead of gate-open: narrow deterministic salvage of a recoverable-but-malformed payload (trim unfinished trailing value, drop dangling comma, close open containers; never invent values); normalisation with safe defaults (missing optional -> default, missing required -> hard fail); bounded retry (compacted payload or resume-to-correct); gate only when exhausted. Salvage and normalisation fail loud; they are not a tolerant parser.
+- Replace the hand-rolled `depends_on[]` acyclicity check (check 5) with a graph-library implementation (NetworkX): cycle detection, topological generations (legal execution waves), and descendant impact analysis (which stories a failed story blocks).
+- Tests: lineage id present across all event types and joinable from a check failure back to the producer session; resume-to-correct happy path and retry-budget exhaustion; salvage of truncated payloads and hard-fail on unrecoverable ones; cycle detection and topological-generation output on representative plans.
+
+Depends on: E7. Refines: E4 (telemetry lineage).
+
 ## Settled Choices
 
-- Runtime action safety is trusted-local plus commit-safety, audit, and drift detection. Woof does not add a preventive sandbox unless real usage proves detection is insufficient.
+- Runtime action safety is trusted-local plus commit-safety, audit, and drift detection. Woof does not add a preventive sandbox unless real usage proves detection is insufficient. External sandbox-orchestration tooling (e.g. sandcastle) treats the sandbox as the product; Woof deliberately places the safety boundary at commit time instead. Git worktrees, if adopted for parallel dispatch, give collision avoidance but not the isolation boundary.
+- Woof owns the graph authority in deterministic Python. LangGraph and Temporal are not adopted; their transferable concepts (explicit conditional edges, reducer-based state merge, checkpoint/interrupt/replay vocabulary) are mined into Woof's own engine rather than ceding control flow to a framework. NetworkX is adopted only as a plan-graph algorithm library (cycle and topological analysis), because it is a data structure, not an orchestrator.
+- Parallel story dispatch via git worktrees is deferred, not rejected. It is sequenced after E7 (process supervision) and E8 (run lineage), because running multiple trusted-local full-access workers concurrently turns the commit-safety boundary into a concurrency-safety boundary: concurrent transaction manifests, shared non-worktree state, shared MCP and credentials. It is not an active epic.
 - The eval harness stays in Python. `/woof` can launch it, but there is no `/woof:eval` skill.
 - tmux is optional for long runs and only supervises `woof wf`; it does not own workflow state.
 - There is no active plan to build `woof graph` or split `/woof` into peer skills.
@@ -164,3 +195,7 @@ Depends on: E1, E2, E5.
 - **Blocker evidence** - machine-resolvable evidence attached to a blocker finding, such as file:line, story id, outcome id, contract-decision id, schema ref, or gate id.
 - **HEAD/branch drift** - unexpected git position movement during dispatch or commit that is not explained by a graph-owned commit.
 - **Conformance audit** - deterministic diff-scoped audit that checks implemented production changes against `EPIC.md`, plan contracts, and consumer invariants.
+- **Run lineage** - a single `run_id` carried by every epic/dispatch event so one epic execution is reconstructable as a single end-to-end trace and replayable from disk.
+- **Completed-but-lingering** - a dispatched worker that emitted its terminal result but whose process has not exited because a spawned child holds the stdout pipe open. Classified as completed, not as a timeout.
+- **Resume-to-correct** - on a recoverable producer-output failure, resuming the producer's captured model session with the deterministic failure evidence as feedback, instead of a cold re-dispatch.
+- **Graded recovery ladder** - bounded sequence applied before a gate-open: deterministic salvage, normalisation with safe defaults, bounded retry (compacted payload or resume-to-correct), then gate.

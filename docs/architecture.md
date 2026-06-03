@@ -242,7 +242,9 @@ JSONL event logs (`epic.jsonl`, `dispatch.jsonl`) enable crash-resume and post-h
 
 **Audit redaction.** Commit-bound files under `.woof/epics/E<N>/audit/` are redacted before the commit transaction. Redaction strips known secret patterns. Per-file size cap defaults to 256 KB; output exceeding the cap is truncated with a footer pointing at the raw output, which lives in `.woof/epics/E<N>/audit/raw/` (gitignored). Retention beyond the local repo is the operator's responsibility.
 
-**Dispatch telemetry.** Every `subprocess_returned` event records enough information for audit, evals, run-resilience gates, and git-position drift detection. Required fields include `node_type`, `route_key`, `duration_ms`, `artefacts_loaded[]`, `prompt_bytes`, `artefact_bytes`, `output_bytes`, `stderr_bytes`, `exit_type`, `exit_code`, `error_signature`, `head_before`, `head_after`, `branch_before`, `branch_after`, `expected_outputs[]` with presence and schema status, and `rate_limit` metadata when the adapter exposes it. It records `tokens_in`, `tokens_out`, `cache_read_tokens`, `cache_write_tokens` when the adapter provides them. Codex dispatches also record `command_count`. `artefacts_loaded[]` contains explicit repo-relative artefact references; absolute paths, home-relative paths, and parent traversal are rejected.
+**Dispatch telemetry.** Every `subprocess_returned` event records enough information for audit, evals, run-resilience gates, and git-position drift detection. Required fields include `run_id`, `node_type`, `route_key`, `duration_ms`, `artefacts_loaded[]`, `prompt_bytes`, `artefact_bytes`, `output_bytes`, `stderr_bytes`, `exit_type`, `exit_code`, `error_signature`, `head_before`, `head_after`, `branch_before`, `branch_after`, `expected_outputs[]` with presence and schema status, and `rate_limit` metadata when the adapter exposes it. It records `tokens_in`, `tokens_out`, `cache_read_tokens`, `cache_write_tokens` when the adapter provides them. Codex dispatches also record `command_count`. `artefacts_loaded[]` contains explicit repo-relative artefact references; absolute paths, home-relative paths, and parent traversal are rejected.
+
+**Run lineage.** A single `run_id` threads one epic execution end to end: epic -> story -> dispatch -> model session -> gate -> check -> commit. Every `epic.jsonl` and `dispatch.jsonl` event carries it. Lineage makes an epic reconstructable as one trace from disk and is the basis for file-first replay of a run from a recorded node. The per-dispatch model-session reference (`cc_session_id` and the transcript path) is the join key from a failed check back to the exact producer session; the graded recovery ladder in 11.5 uses it for resume-to-correct.
 
 ## 10. Gates
 
@@ -270,6 +272,27 @@ The manifest is the commit-safety boundary. The producer cannot land changes out
 ## 11.5 Operational resilience
 
 See ADR-006. Operational resilience wraps the graph without replacing it.
+
+### Dispatch process supervision
+
+Each dispatched subprocess is supervised on three independent clocks, not one wall-clock timeout:
+
+- **Idle timeout** fails the dispatch when the worker produces no output for a bounded window. It resets on every output line, so a genuinely stuck worker is caught early rather than after the full budget.
+- **Completion-versus-exit.** A worker that has emitted its terminal result but whose process has not exited - because a spawned child (a long-lived MCP server, a `gh` or git subprocess) inherited the stdout pipe and holds it open - is classified as completed, not timed out. Once the terminal result is observed, a short grace window takes over from the idle timeout and resolves the dispatch successfully with the captured output. A clean process exit always wins the race, so healthy runs add no latency.
+- **Wall-clock ceiling.** An absolute upper bound that fails the dispatch regardless of activity.
+
+Each worker is spawned in its own process group; on timeout or cancel the whole group is signalled (SIGTERM, then SIGKILL after a grace window) so orphaned children - long-lived MCP servers in particular - are reaped rather than leaked. Per-dispatch `exit_type` distinguishes clean exit, non-zero exit, idle kill, wall-clock timeout, completed-but-lingering, and operator cancel. Runaway protection consumes these classifications; a hanging-but-done worker misclassified as a timeout would otherwise poison the same-error and no-progress counters and discard completed work.
+
+### Graded recovery before gates
+
+A producer artefact that fails schema validation or a deterministic check does not go straight to a human gate. Recovery is a bounded ladder:
+
+1. **Narrow deterministic salvage** of a recoverable-but-malformed payload: trim an unfinished trailing value, drop a dangling comma, close still-open containers. Salvage never invents a missing value.
+2. **Normalisation with safe defaults** into the expected shape: a missing optional field takes a defined default; a missing required field is a hard failure.
+3. **Bounded retry**: either re-dispatch with a compacted payload, or resume the producer's captured session with the deterministic failure evidence as feedback. The model-session reference recorded in dispatch telemetry makes resume-to-correct possible without repeating the work. The retry budget is small and explicit.
+4. **Gate** only when the ladder is exhausted.
+
+Salvage and normalisation are deterministic and fail loud on anything they cannot prove. They are not a tolerant parser that hides model failures behind a forgiving read.
 
 ### Runaway protection
 

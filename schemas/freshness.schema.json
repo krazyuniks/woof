@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://woof.dev/schemas/freshness.schema.json",
+  "title": "woof cartography freshness stamp",
+  "description": "Mechanical-layer staleness stamp at .woof/codebase/freshness.json (ADR-004). Written by the consumer's scripts/refresh-cartography on every post-commit refresh. The stamp is gitignored and regenerated per commit. `woof preflight` treats `ts` (wall-clock now minus this timestamp) as the authoritative production staleness signal, because the static `age_s` written at generation stays frozen once commits stop while `ts` keeps ageing.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ts", "git_ref", "age_s", "generator_version"],
+  "properties": {
+    "ts": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 UTC timestamp of when the stamp was written. Authoritative production staleness signal: preflight derives age as now minus ts and warns past the declared staleness_floor_hours."
+    },
+    "git_ref": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Git ref (HEAD commit) the mechanical layer was generated against, or 'unknown' when HEAD cannot be resolved."
+    },
+    "age_s": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Age of the mechanical layer in seconds at generation time. The generator writes 0 (just regenerated); it does not advance once written. Used only as a deterministic preflight fallback when ts is absent or unparseable."
+    },
+    "generator_version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Version of the refresh-cartography generator that produced this stamp, so stamps from an older composition can be detected."
+    }
+  }
+}

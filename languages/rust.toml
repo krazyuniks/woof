@@ -20,3 +20,6 @@ gotchas = [
 grammar_install = "npm install -g tree-sitter-rust"
 verify_snippet = "fn main() {}"
 verify_scope = "source.rust"
+
+[cartography]
+refresh_fragment = "refresh-cartography/rust.sh"

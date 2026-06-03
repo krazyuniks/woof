@@ -19,3 +19,6 @@ gotchas = [
 grammar_install = "npm install -g tree-sitter-typescript"
 verify_snippet = "const x: number = 0;"
 verify_scope = "source.typescript"
+
+[cartography]
+refresh_fragment = "refresh-cartography/typescript.sh"

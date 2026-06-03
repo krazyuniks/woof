@@ -1133,8 +1133,10 @@ def _check_cartography_freshness(
     ``./scripts/refresh-cartography`` prompt; a fresh stamp passes. Either way the
     finding is ``ok=True`` so it never affects preflight's pass/fail or exit code.
 
-    Age derivation prefers a non-negative numeric ``age_s`` and falls back to
-    ``_utc_now()`` minus the ISO ``ts``. A missing stamp yields no finding (the
+    Age derivation prefers ``_utc_now()`` minus the ISO ``ts`` (the authoritative
+    production staleness signal, since ``age_s`` written at generation freezes
+    once commits stop) and falls back to a non-negative numeric ``age_s`` when
+    ``ts`` is absent or unparseable. A missing stamp yields no finding (the
     mechanical check already blocks on absence); an unparseable stamp or one with
     no usable age field warns non-blockingly, since presence -- not readability --
     is the blocking concern.
@@ -1188,17 +1190,30 @@ def _cartography_freshness_warn(detail: str) -> PreflightFinding:
 
 
 def _freshness_age_seconds(payload: Any) -> float | None:
-    """Derive a freshness age in seconds, preferring ``age_s`` over ``ts``."""
+    """Derive a freshness age in seconds, preferring ``ts`` over ``age_s``.
+
+    ``ts`` (wall-clock now minus the stamp's ISO timestamp) is the authoritative
+    production staleness signal. The post-commit hook rewrites the stamp on every
+    commit, so a stamp only ages once commits stop -- exactly the case where the
+    static ``age_s`` written at generation (always 0) stays frozen while ``ts``
+    keeps ageing. Preferring ``ts`` keeps that production staleness detectable; a
+    frozen ``age_s`` can no longer mask it.
+
+    ``age_s`` is the deterministic test input and the fallback when ``ts`` is
+    absent or unparseable: a non-negative number is taken verbatim, so a test can
+    inject a precise age without coupling to wall-clock by writing ``age_s`` and
+    omitting ``ts``.
+    """
 
     if not isinstance(payload, dict):
         return None
+    ts = _parse_cache_time(payload.get("ts"))
+    if ts is not None:
+        return max((_utc_now() - ts).total_seconds(), 0.0)
     age_s = payload.get("age_s")
     if isinstance(age_s, (int, float)) and not isinstance(age_s, bool) and age_s >= 0:
         return float(age_s)
-    ts = _parse_cache_time(payload.get("ts"))
-    if ts is None:
-        return None
-    return max((_utc_now() - ts).total_seconds(), 0.0)
+    return None
 
 
 def _format_age(seconds: float) -> str:

@@ -53,6 +53,7 @@ def test_shipped_schema_count() -> None:
         "agents.schema.json",
         "test-markers.schema.json",
         "language-registry.schema.json",
+        "freshness.schema.json",
         "quality-gates.schema.json",
         "docs-paths.schema.json",
         "check-result.schema.json",

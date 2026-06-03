@@ -66,6 +66,20 @@
           "description": "Tree-sitter scope name applied to verify_snippet (e.g., source.python, source.rust)."
         }
       }
+    },
+    "cartography": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["refresh_fragment"],
+      "description": "Cartography composition metadata (ADR-004). Optional: a language only needs this block to be composable into a consumer's scripts/refresh-cartography by `woof init`.",
+      "properties": {
+        "refresh_fragment": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9._/-]+$",
+          "description": "Path, relative to woof/languages/, to the POSIX-sh fragment that `woof init` inlines into the consumer's scripts/refresh-cartography for this language. The fragment registers the language's ctags coverage via woof_add_ctags_language."
+        }
+      }
     }
   }
 }

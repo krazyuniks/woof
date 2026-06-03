@@ -223,6 +223,7 @@ Types that cross a durable JSON, CLI, LLM-node, or consumer-facing boundary use 
 | `quality-gates.schema.json` | `.woof/quality-gates.toml` |
 | `test-markers.schema.json` | `.woof/test-markers.toml` |
 | `language-registry.schema.json` | `languages/<lang>.toml` |
+| `freshness.schema.json` | `.woof/codebase/freshness.json` (cartography mechanical stamp) |
 | `node-input.schema.json`, `node-output.schema.json` | Graph node I/O |
 | `planning-node-input.schema.json`, `planning-node-output.schema.json` | Planning-stage node I/O |
 | `readiness-result.schema.json` | Stage-2.5 contract readiness result |

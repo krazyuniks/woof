@@ -44,7 +44,13 @@ Regenerated automatically by the Woof-managed post-commit hook, which runs the c
 
 - `tags` - a ctags index.
 - `files.txt` - `git ls-files` output.
-- `freshness.json` - the freshness stamp.
+- `freshness.json` - the freshness stamp, `{ts, git_ref, age_s, generator_version}`. `ts` is the
+  authoritative staleness signal (the hook rewrites it every commit, so it only ages when commits
+  stop); `age_s` is written as 0 at generation.
+
+`scripts/refresh-cartography` is composed by `woof init --language <lang>` from the per-language
+fragments in `languages/<lang>.toml` (a shared scaffold plus one fragment per declared language).
+It is re-composable: re-run `woof init` to refresh it after changing the language set.
 
 Install the hook once during setup:
 

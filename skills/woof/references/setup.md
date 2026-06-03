@@ -7,8 +7,8 @@ Bring a consumer repository under Woof from the `/woof` umbrella.
 1. Scaffold the config:
 
    ```bash
-   woof init --tracker github   # epics are GitHub issues (needs `gh` + a repo)
-   woof init --tracker local    # epics live on disk only, no remote
+   woof init --tracker github --language python   # epics are GitHub issues (needs `gh` + a repo)
+   woof init --tracker local --language python    # epics live on disk only, no remote
    ```
 
    `woof init` writes `.woof/prerequisites.toml`, `agents.toml`, `quality-gates.toml`, and
@@ -16,6 +16,14 @@ Bring a consumer repository under Woof from the `/woof` umbrella.
    `prerequisites.toml` carries a `[cartography]` block (ADR-004) that turns on cartography
    enforcement; see step 4. Add `--with-docs-paths` to also scaffold the Stage-5 docs-drift
    mappings.
+
+   Pass `--language <lang>` (repeatable; `python`, `go`, `typescript`, `rust`) to record the
+   cartography languages in `[cartography].languages` and compose the consumer-owned
+   `scripts/refresh-cartography` from the per-language fragments. Re-running `woof init` is
+   idempotent and re-composes the script when the language set changes; with no `--language` it
+   falls back to the languages already in `prerequisites.toml`. With no declared language the
+   script is not composed - re-run with `--language` (or author `scripts/refresh-cartography` by
+   hand).
 
 2. Replace every `<replace>` placeholder in `.woof/*.toml`. In particular set the project test
    command in `quality-gates.toml` and, for the GitHub tracker, the `repo` in

@@ -77,9 +77,16 @@ def _write_cartography(
     if mechanical:
         (codebase / "tags").write_text("main\tsrc/main.py\t1\n")
         (codebase / "files.txt").write_text("src/main.py\n")
+        # ts is now() so the default stamp is reliably fresh under the
+        # ts-authoritative reader (age_s mirrors the generator's frozen 0).
         (codebase / "freshness.json").write_text(
             json.dumps(
-                {"ts": "2026-05-30T00:00:00Z", "git_ref": "abc", "age_s": 1, "generator_version": 1}
+                {
+                    "ts": datetime.now(UTC).isoformat(),
+                    "git_ref": "abc",
+                    "age_s": 0,
+                    "generator_version": 1,
+                }
             )
             + "\n"
         )
@@ -1242,16 +1249,18 @@ def _write_freshness(root: Path, payload: dict | str) -> None:
 
 
 def test_preflight_warns_for_stale_cartography_freshness(tmp_path: Path, run_woof) -> None:
-    # Default staleness floor is 168h; age_s is set directly so the test does not
-    # couple to wall-clock.
+    # Models the production failure mode: the post-commit hook freezes age_s at 0
+    # on every write, so a stamp only ages once commits stop. ts is authoritative
+    # -- a deep-past ts is robustly stale regardless of the host wall-clock, and
+    # the frozen age_s = 0 must NOT mask it. Default staleness floor is 168h.
     _write_project(tmp_path, prerequisites=CARTOGRAPHY_PREREQS)
     _write_cartography(tmp_path)
     _write_freshness(
         tmp_path,
         {
-            "ts": "2026-05-20T00:00:00Z",
+            "ts": "2020-01-01T00:00:00Z",
             "git_ref": "abc",
-            "age_s": 169 * 3600,
+            "age_s": 0,
             "generator_version": 1,
         },
     )
@@ -1272,7 +1281,7 @@ def test_preflight_warns_for_stale_cartography_freshness(tmp_path: Path, run_woo
 
 def test_preflight_does_not_warn_for_fresh_cartography_freshness(tmp_path: Path, run_woof) -> None:
     _write_project(tmp_path, prerequisites=CARTOGRAPHY_PREREQS)
-    _write_cartography(tmp_path)  # default stamp has age_s = 1 (fresh)
+    _write_cartography(tmp_path)  # default stamp has ts = now() (fresh)
 
     proc, payload = _run_cartography_preflight(tmp_path, run_woof)
 
@@ -1284,14 +1293,12 @@ def test_preflight_does_not_warn_for_fresh_cartography_freshness(tmp_path: Path,
     assert "within the" in fresh["detail"]
 
 
-def test_preflight_warns_for_stale_freshness_via_ts_fallback(tmp_path: Path, run_woof) -> None:
-    # No age_s; age derives from ts. A ts far in the past is robustly stale
-    # regardless of the test host's wall-clock.
+def test_preflight_warns_for_stale_freshness_via_age_s_fallback(tmp_path: Path, run_woof) -> None:
+    # No ts: age derives from the deterministic age_s fallback. A test injects a
+    # precise age this way without coupling to wall-clock.
     _write_project(tmp_path, prerequisites=CARTOGRAPHY_PREREQS)
     _write_cartography(tmp_path)
-    _write_freshness(
-        tmp_path, {"ts": "2020-01-01T00:00:00Z", "git_ref": "abc", "generator_version": 1}
-    )
+    _write_freshness(tmp_path, {"git_ref": "abc", "age_s": 169 * 3600, "generator_version": 1})
 
     proc, payload = _run_cartography_preflight(tmp_path, run_woof)
 
@@ -1299,6 +1306,25 @@ def test_preflight_warns_for_stale_freshness_via_ts_fallback(tmp_path: Path, run
     fresh = next(f for f in payload["findings"] if f["id"] == "cartography.freshness")
     assert fresh["warn"] is True
     assert any("refresh-cartography" in note for note in fresh["notes"])
+
+
+def test_preflight_does_not_warn_for_fresh_freshness_via_age_s_fallback(
+    tmp_path: Path, run_woof
+) -> None:
+    # No ts: the deterministic age_s fallback also drives the fresh verdict, so
+    # the fallback path does not over-warn.
+    _write_project(tmp_path, prerequisites=CARTOGRAPHY_PREREQS)
+    _write_cartography(tmp_path)
+    _write_freshness(tmp_path, {"git_ref": "abc", "age_s": 1, "generator_version": 1})
+
+    proc, payload = _run_cartography_preflight(tmp_path, run_woof)
+
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert payload["warnings"] == 0
+    fresh = next(f for f in payload["findings"] if f["id"] == "cartography.freshness")
+    assert fresh["ok"] is True
+    assert fresh.get("warn") is not True
+    assert "within the" in fresh["detail"]
 
 
 def test_preflight_warns_for_malformed_cartography_freshness(tmp_path: Path, run_woof) -> None:

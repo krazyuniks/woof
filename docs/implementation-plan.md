@@ -97,11 +97,11 @@ Current decisions are already recorded in the backlog's Settled Choices. The seq
 
 ## Active Per-Epic Plan Pointers
 
-E1 is active. Its plan is `docs/plans/e1-cartography.md`. Prompts 1-2 have landed: the `[cartography]` contract plus missing/stub preflight enforcement (prompt 1), and the non-blocking stale-`freshness.json` warning keyed on `staleness_floor_hours` (prompt 2). Prompts 3-5 cover per-language refresh templates with `woof init` composition, the fail-loud post-commit hook, and blanket enforcement for cartography-less consumers.
+E1 is active. Its plan is `docs/plans/e1-cartography.md`. Prompts 1-3 have landed: the `[cartography]` contract plus missing/stub preflight enforcement (prompt 1), the non-blocking stale-`freshness.json` warning keyed on `staleness_floor_hours` (prompt 2), and the per-language `refresh-cartography` fragments with `woof init --language` composition, the `freshness.json` schema (`{ts, git_ref, age_s, generator_version}`), and the `ts`-authoritative freshness reader (prompt 3). Prompts 4-5 cover the fail-loud post-commit hook and blanket enforcement for cartography-less consumers.
 
 ## What Happens Next
 
-1. Run E1 prompt 3: ship per-language `refresh-cartography` templates referenced from `languages/<lang>.toml` (Python, Go, TypeScript, Rust) and make `woof init` compose them into the consumer's `scripts/refresh-cartography` idempotently; define the `freshness.json` shape (`{ts, git_ref, age_s, generator_version}`).
+1. Run E1 prompt 4: make the Woof post-commit hook regenerate the mechanical layer by running `./scripts/refresh-cartography` and fail loud (non-zero hook exit) when the refresh script exits non-zero, rather than the current best-effort `[ -x ... ] && ...` no-op.
 2. Review the diff and targeted tests before continuing.
 
 This document is updated only when sequencing or active plan pointers change.

@@ -19,3 +19,6 @@ gotchas = [
 grammar_install = "npm install -g tree-sitter-go"
 verify_snippet = "package main"
 verify_scope = "source.go"
+
+[cartography]
+refresh_fragment = "refresh-cartography/go.sh"

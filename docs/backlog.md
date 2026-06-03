@@ -32,13 +32,12 @@ Make the cartography artefact group mandatory infrastructure with preflight enfo
 
 The contract and missing/stub enforcement landed in prompt 1 (`docs/plans/e1-cartography.md`): the `[cartography]` schema shape (`staleness_floor_hours`, `summary_min_chars`, `languages`, `stub_marker`); enforcement keyed on the block's presence and scaffolded by `woof init`; `woof preflight` failing closed on a missing/non-executable `scripts/refresh-cartography`, a missing or stub `TARGET-ARCHITECTURE.md`/`PRINCIPLES.md`, or a missing mechanical-layer file (`tags`, `files.txt`, `freshness.json`); exact stub detection (removable stub marker, or body below `summary_min_chars` unless front matter marks it complete); and the `tree.txt` -> `files.txt` rename.
 
-Prompt 2 landed the staleness warning: a `cartography.freshness` floor check reads the mechanical `freshness.json`, derives its age (prefer numeric `age_s`, else `ts` vs now), and warns (non-blocking, refresh-prompt carrying) past `staleness_floor_hours`. `PreflightFinding` gained a `warn` severity (an `ok=True` finding printed `WARN`, kept out of `failed`/exit code). A missing stamp stays the mechanical check's blocking concern; a malformed stamp warns non-blockingly.
+Prompt 2 landed the staleness warning: a `cartography.freshness` floor check reads the mechanical `freshness.json`, derives its age, and warns (non-blocking, refresh-prompt carrying) past `staleness_floor_hours`. `PreflightFinding` gained a `warn` severity (an `ok=True` finding printed `WARN`, kept out of `failed`/exit code). A missing stamp stays the mechanical check's blocking concern; a malformed stamp warns non-blockingly.
+
+Prompt 3 landed the per-language templates and `woof init` composition: `refresh-cartography` fragments for Python, Go, TypeScript, Rust under `languages/refresh-cartography/`, referenced from each `languages/<lang>.toml` via `[cartography].refresh_fragment`. `woof init --language <lang>` (repeatable) records `[cartography].languages` and composes `scripts/refresh-cartography` (mode 0o755) from a shared scaffold (git ls-files -> files.txt; one ctags pass -> tags; freshness.json) plus the fragments, idempotently via a managed block, falling back to an existing `prerequisites.toml` on re-run. `freshness.json` is defined as `{ ts, git_ref, age_s, generator_version }` with `schemas/freshness.schema.json`; `ts` is the authoritative staleness signal and `age_s` the deterministic test fallback (the prompt-2 reader was inverted accordingly so a frozen `age_s` cannot mask production staleness).
 
 Open work:
-- Ship per-language `refresh-cartography` templates referenced from `languages/<lang>.toml`. Initial set: Python, Go, TypeScript, Rust.
-- Make `woof init` compose the per-language fragments into the consumer's `scripts/refresh-cartography` idempotently.
 - Make the post-commit hook regenerate the mechanical layer and fail loud if the refresh script exits non-zero.
-- Define `freshness.json`: `{ ts, git_ref, age_s, generator_version }`.
 - Move from opt-in (`[cartography]` present) to a clear preflight error for an existing consumer with no cartography at all, pointing at the `/woof` setup/map-codebase references.
 
 Depends on: nothing. Blocks: E2, E3.

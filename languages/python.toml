@@ -19,3 +19,6 @@ gotchas = [
 grammar_install = "npm install -g tree-sitter-python"
 verify_snippet = "def f(): pass"
 verify_scope = "source.python"
+
+[cartography]
+refresh_fragment = "refresh-cartography/python.sh"

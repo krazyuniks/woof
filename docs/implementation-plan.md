@@ -98,12 +98,16 @@ Current decisions are already recorded in the backlog's Settled Choices. The seq
 
 **E7 (Dispatch Process Supervision) is active.** Its plan is `docs/plans/e7-process-supervision.md` and its decision is ADR-008. It was chosen as the next epic ahead of E1's remaining prompts because it corrects a per-dispatch outcome-classification bug (hanging-but-done worker reported as a timeout and gated as a crash) that all downstream telemetry consumers depend on.
 
-E1 (Cartography Prerequisite) is **deferred, not dropped**. Its plan is `docs/plans/e1-cartography.md`; prompts 1-3 have landed (the `[cartography]` contract plus missing/stub preflight enforcement, the non-blocking stale-`freshness.json` warning, and the per-language `refresh-cartography` composition with the `ts`-authoritative reader). E1 prompts 4-5 (fail-loud post-commit hook; blanket enforcement for cartography-less consumers) resume after E7.
+E1 (Cartography Prerequisite) is **parked: deferred, not dropped**. Its plan is `docs/plans/e1-cartography.md`; prompts 1-3 have landed (the `[cartography]` contract plus missing/stub preflight enforcement, the non-blocking stale-`freshness.json` warning, and the per-language `refresh-cartography` composition with the `ts`-authoritative reader). E1 prompts 4-5 (fail-loud post-commit hook; blanket enforcement for cartography-less consumers) resume after E7 completes.
 
 ## What Happens Next
 
-1. Run E7 prompt 0: write ADR-008 (landed) and reconcile the architecture cross-reference (landed).
-2. Run E7 prompt 1: add the `supervise()` primitive (three phase-scoped clocks, process-group reaping, bounded output capture) with fault-injection unit tests against real fake-agent scripts.
-3. Review the diff and targeted tests before continuing.
+Confirmed E7-first ordering (operator-approved):
 
-This document is updated only when sequencing or active plan pointers change.
+1. Sequencing patch (this doc): E7 active, E1 prompts 4-5 parked. **Landed.**
+2. E7 prompt 0: ADR-008 + architecture cross-reference. **Landed.**
+3. E7 prompt 1: the `supervise()` primitive - phase-scoped clocks (idle and wall-clock pre-terminal; completion-grace and tail cap post-terminal), process-group reaping, bounded streamed capture - with fault-injection unit tests against real fake-agent scripts.
+4. E7 prompts 2-4: wire `cmd_dispatch` (and update `observe`/bench), add the shared node-layer dispatch-result classifier, then the end-to-end fault-injection integration matrix.
+5. Return to E1 prompts 4-5 (fail-loud post-commit hook; cartography-less onboarding error).
+
+Review the diff and targeted tests before each next prompt runs. This document is updated only when sequencing or active plan pointers change.

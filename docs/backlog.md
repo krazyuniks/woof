@@ -159,25 +159,43 @@ Open work:
 
 Depends on: nothing. Refines: E2 (run-resilience signal correctness), E4 (exit classification).
 
-### E8. Run Lineage and Producer-Output Recovery
+### E8. Run Lineage
 
-Thread one run identity across an epic, and add a bounded recovery ladder so producer-output failures do not jump straight to a human gate.
+Thread one run identity across an epic so it is reconstructable and replayable.
 
 Open work:
-- Add a `run_id` to every `epic.jsonl` and `dispatch.jsonl` event, threading epic -> story -> dispatch -> model session -> gate -> check -> commit. Confirm an epic is reconstructable as a single trace from disk.
+- Add a `run_id` to every `epic.jsonl` and `dispatch.jsonl` event, threading epic -> story -> dispatch -> model session -> gate -> check -> commit. Confirm an epic is reconstructable as a single trace from disk, joinable from a check failure back to the producer session.
 - Define file-first run replay from on-disk state plus the JSONL lineage: re-enter the graph at a recorded node for debugging without re-running prior work.
-- Add resume-to-correct: when a producer artefact fails schema validation or a deterministic check, resume the producer's captured session (the `cc_session_id` / transcript reference already in dispatch telemetry) with the deterministic failure evidence as feedback, instead of a cold re-dispatch. Bounded retry budget.
-- Add a graded recovery ladder ahead of gate-open: narrow deterministic salvage of a recoverable-but-malformed payload (trim unfinished trailing value, drop dangling comma, close open containers; never invent values); normalisation with safe defaults (missing optional -> default, missing required -> hard fail); bounded retry (compacted payload or resume-to-correct); gate only when exhausted. Salvage and normalisation fail loud; they are not a tolerant parser.
-- Replace the hand-rolled `depends_on[]` acyclicity check (check 5) with a graph-library implementation (NetworkX): cycle detection, topological generations (legal execution waves), and descendant impact analysis (which stories a failed story blocks).
-- Tests: lineage id present across all event types and joinable from a check failure back to the producer session; resume-to-correct happy path and retry-budget exhaustion; salvage of truncated payloads and hard-fail on unrecoverable ones; cycle detection and topological-generation output on representative plans.
+- Tests: lineage id present across all event types and joinable from a check failure to the producer session; replay re-enters at a recorded node without redoing prior work.
 
-Depends on: E7. Refines: E4 (telemetry lineage).
+Depends on: E7 (the `exit_type` being threaded must be correct first). Refines: E4 (telemetry lineage).
+
+### E9. Producer-Output Recovery
+
+Add a bounded recovery ladder so producer-output failures do not jump straight to a human gate.
+
+Open work:
+- Add resume-to-correct: when a producer artefact fails schema validation or a deterministic check, resume the producer's captured session (the `cc_session_id` / transcript reference in dispatch telemetry) with the deterministic failure evidence as feedback, instead of a cold re-dispatch. Bounded retry budget.
+- Add a graded recovery ladder ahead of gate-open: narrow deterministic salvage of a recoverable-but-malformed payload (trim unfinished trailing value, drop dangling comma, close open containers; never invent values); normalisation with safe defaults (missing optional -> default, missing required -> hard fail); bounded retry (compacted payload or resume-to-correct); gate only when exhausted. Salvage and normalisation fail loud; they are not a tolerant parser.
+- Tests: resume-to-correct happy path and retry-budget exhaustion; salvage of truncated payloads and hard-fail on unrecoverable ones.
+
+Depends on: E7 (process supervision), E8 (session-join via run lineage).
+
+### E10. Plan-Graph Algorithms
+
+Replace the hand-rolled plan dependency-graph checks with a graph-library implementation.
+
+Open work:
+- Replace the hand-rolled `depends_on[]` acyclicity check (check 5) with NetworkX: cycle detection, topological generations (legal execution waves), and descendant impact analysis (which stories a failed story blocks). NetworkX is a data-structure library, not an orchestrator; it does not own graph authority.
+- Tests: cycle detection and topological-generation output on representative plans; impact analysis identifies the blocked descendants of a failed story.
+
+Depends on: nothing (refines an existing check). Independent of E8/E9.
 
 ## Settled Choices
 
 - Runtime action safety is trusted-local plus commit-safety, audit, and drift detection. Woof does not add a preventive sandbox unless real usage proves detection is insufficient. External sandbox-orchestration tooling (e.g. sandcastle) treats the sandbox as the product; Woof deliberately places the safety boundary at commit time instead. Git worktrees, if adopted for parallel dispatch, give collision avoidance but not the isolation boundary.
 - Woof owns the graph authority in deterministic Python. LangGraph and Temporal are not adopted; their transferable concepts (explicit conditional edges, reducer-based state merge, checkpoint/interrupt/replay vocabulary) are mined into Woof's own engine rather than ceding control flow to a framework. NetworkX is adopted only as a plan-graph algorithm library (cycle and topological analysis), because it is a data structure, not an orchestrator.
-- Parallel story dispatch via git worktrees is deferred, not rejected. It is sequenced after E7 (process supervision) and E8 (run lineage), because running multiple trusted-local full-access workers concurrently turns the commit-safety boundary into a concurrency-safety boundary: concurrent transaction manifests, shared non-worktree state, shared MCP and credentials. It is not an active epic.
+- Parallel story dispatch via git worktrees is deferred, not rejected. It is sequenced after E7 (process supervision) and E8/E9 (lineage and recovery), because running multiple trusted-local full-access workers concurrently turns the commit-safety boundary into a concurrency-safety boundary: concurrent transaction manifests, shared non-worktree state, shared MCP and credentials. It is not an active epic.
 - The eval harness stays in Python. `/woof` can launch it, but there is no `/woof:eval` skill.
 - tmux is optional for long runs and only supervises `woof wf`; it does not own workflow state.
 - There is no active plan to build `woof graph` or split `/woof` into peer skills.

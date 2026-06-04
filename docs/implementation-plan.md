@@ -13,7 +13,9 @@ Do not use this document to preserve speculative architecture. If a direction is
 ## Sequence
 
 ```text
-E1 Cartography prerequisite
+E7 Dispatch process supervision   (active; refines E2/E4 telemetry, blocks nothing in the chain)
+        |
+E1 Cartography prerequisite       (prompts 4-5 deferred, not dropped)
         |
 E2 Contract readiness and run resilience
         |
@@ -24,22 +26,19 @@ E4 Eval instrumentation
 E5 Baseline eval run
         |
 E6 Contract conformance audit
+
+Follow-on (sequenced after E7, off the critical chain):
+E8 Run lineage  ->  E9 Producer-output recovery
+E10 Plan-graph algorithms   (independent; gated only by a real consumer need, not by E8/E9)
 ```
 
-E1 gives dispatched work stable codebase context. E2 hardens the current `woof wf` runner with readiness, gate, telemetry, and drift controls. E3 proves a real consumer can be prepared without extra operator ceremony. E4 and E5 measure the production shape before new optimisation work. E6 is post-baseline, so the first eval can show whether the conformance audit is the right next lever.
+E7 corrects per-dispatch outcome classification (the hanging-but-done -> timeout bug) so that E2's run-resilience counters and E4's eval summaries consume trustworthy `exit_type` signal; it depends on nothing and was chosen as the active epic ahead of E1's remaining prompts. E1 gives dispatched work stable codebase context. E2 hardens the current `woof wf` runner with readiness, gate, telemetry, and drift controls. E3 proves a real consumer can be prepared without extra operator ceremony. E4 and E5 measure the production shape before new optimisation work. E6 is post-baseline, so the first eval can show whether the conformance audit is the right next lever. E8 threads run lineage; E9 builds producer-output recovery on top of lineage and E7; E10 swaps the hand-rolled plan-DAG check for graph-library algorithms and is independent of E8/E9.
 
 The old `woof graph` API plan and split-skill suite are withdrawn. New work builds against `woof wf`, `/woof`, and `/woof:brainstorm`.
 
-## First Prompt
+## Historical: E1 first prompt
 
-The next coding prompt should start E1 with the smallest useful contract:
-
-- add the `[cartography]` schema fields and fixtures;
-- make `woof preflight` report missing/stub cartography clearly;
-- update the `/woof` setup/map-codebase references to match the checked contract;
-- add focused tests for the new preflight outcomes.
-
-Do not build a new skill or a new graph command to start E1.
+E1's first prompt (the smallest useful cartography contract: schema fields, preflight missing/stub reporting, `/woof` reference updates, focused tests) has landed, along with prompts 2-3. See Active Per-Epic Plan Pointers for the current active epic.
 
 ## Per-Epic Plan Template
 
@@ -97,11 +96,14 @@ Current decisions are already recorded in the backlog's Settled Choices. The seq
 
 ## Active Per-Epic Plan Pointers
 
-E1 is active. Its plan is `docs/plans/e1-cartography.md`. Prompts 1-3 have landed: the `[cartography]` contract plus missing/stub preflight enforcement (prompt 1), the non-blocking stale-`freshness.json` warning keyed on `staleness_floor_hours` (prompt 2), and the per-language `refresh-cartography` fragments with `woof init --language` composition, the `freshness.json` schema (`{ts, git_ref, age_s, generator_version}`), and the `ts`-authoritative freshness reader (prompt 3). Prompts 4-5 cover the fail-loud post-commit hook and blanket enforcement for cartography-less consumers.
+**E7 (Dispatch Process Supervision) is active.** Its plan is `docs/plans/e7-process-supervision.md` and its decision is ADR-008. It was chosen as the next epic ahead of E1's remaining prompts because it corrects a per-dispatch outcome-classification bug (hanging-but-done worker reported as a timeout and gated as a crash) that all downstream telemetry consumers depend on.
+
+E1 (Cartography Prerequisite) is **deferred, not dropped**. Its plan is `docs/plans/e1-cartography.md`; prompts 1-3 have landed (the `[cartography]` contract plus missing/stub preflight enforcement, the non-blocking stale-`freshness.json` warning, and the per-language `refresh-cartography` composition with the `ts`-authoritative reader). E1 prompts 4-5 (fail-loud post-commit hook; blanket enforcement for cartography-less consumers) resume after E7.
 
 ## What Happens Next
 
-1. Run E1 prompt 4: make the Woof post-commit hook regenerate the mechanical layer by running `./scripts/refresh-cartography` and fail loud (non-zero hook exit) when the refresh script exits non-zero, rather than the current best-effort `[ -x ... ] && ...` no-op.
-2. Review the diff and targeted tests before continuing.
+1. Run E7 prompt 0: write ADR-008 (landed) and reconcile the architecture cross-reference (landed).
+2. Run E7 prompt 1: add the `supervise()` primitive (three phase-scoped clocks, process-group reaping, bounded output capture) with fault-injection unit tests against real fake-agent scripts.
+3. Review the diff and targeted tests before continuing.
 
 This document is updated only when sequencing or active plan pointers change.

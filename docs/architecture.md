@@ -275,13 +275,26 @@ See ADR-006. Operational resilience wraps the graph without replacing it.
 
 ### Dispatch process supervision
 
-See ADR-008. Each dispatched subprocess is supervised on three independent clocks, not one wall-clock timeout:
+See ADR-008. Each dispatched subprocess is supervised on phase-scoped clocks, not one wall-clock timeout. The **terminal marker** (the adapter's final result event - Claude's final `--output-format json` result line, Codex's `turn.completed`) splits the dispatch into two phases:
 
-- **Idle timeout** fails the dispatch when the worker produces no output for a bounded window. It resets on every output line, so a genuinely stuck worker is caught early rather than after the full budget.
-- **Completion-versus-exit.** A worker that has emitted its terminal result but whose process has not exited - because a spawned child (a long-lived MCP server, a `gh` or git subprocess) inherited the stdout pipe and holds it open - is classified as completed, not timed out. Once the terminal result is observed, a short grace window takes over from the idle timeout and resolves the dispatch successfully with the captured output. A clean process exit always wins the race, so healthy runs add no latency.
-- **Wall-clock ceiling.** An absolute upper bound that fails the dispatch regardless of activity.
+- **Pre-terminal (work in progress).** An **idle timeout** (`idle_seconds`, resets on each output line) catches a worker that has gone silent: kill, classify `idle_kill`, fail. A **wall-clock ceiling** (`default_minutes`) is the absolute pre-terminal bound: kill, classify `wallclock_timeout`, fail.
+- **Post-terminal (terminal marker seen, process not yet exited).** The worker emitted its result but a spawned child - a long-lived MCP server, a `gh` or git subprocess - inherited the stdout pipe and holds it open, so EOF never arrives. A **completion-grace** timer (`completion_grace_seconds`, resets on each output line) and a **tail cap** (`completion_tail_cap_seconds`, absolute) both resolve `completed_lingering`, success. The tail cap exists so a child that keeps dribbling output cannot reset the grace window forever.
 
-Each worker is spawned in its own process group; on timeout or cancel the whole group is signalled (SIGTERM, then SIGKILL after a grace window) so orphaned children - long-lived MCP servers in particular - are reaped rather than leaked. Per-dispatch `exit_type` distinguishes clean exit, non-zero exit, idle kill, wall-clock timeout, completed-but-lingering, and operator cancel. Runaway protection consumes these classifications; a hanging-but-done worker misclassified as a timeout would otherwise poison the same-error and no-progress counters and discard completed work.
+Precedence: a clean process exit pre-empts every clock in both phases (so healthy runs add no latency); the terminal marker switches phase; within a phase the first clock to fire wins. The wall-clock is the pre-terminal ceiling only - once the terminal marker is seen, lingering resolves as success, bounded by the tail cap, not as a wall-clock failure.
+
+| Phase | Clock | Resets on output | Outcome |
+|---|---|---|---|
+| pre-terminal | idle (`idle_seconds`) | yes | `idle_kill` (fail) |
+| pre-terminal | wall-clock (`default_minutes`) | no | `wallclock_timeout` (fail) |
+| post-terminal | completion grace (`completion_grace_seconds`) | yes | `completed_lingering` (success) |
+| post-terminal | tail cap (`completion_tail_cap_seconds`) | no | `completed_lingering` (success) |
+| any | clean process exit | n/a | `clean` / `nonzero` |
+
+Each worker is spawned in its own process group; on any kill the whole group is signalled (SIGTERM, then SIGKILL after a grace window) so orphaned children - long-lived MCP servers in particular - are reaped rather than leaked. Per-dispatch `exit_type` is one of `clean`, `nonzero`, `idle_kill`, `wallclock_timeout`, `completed_lingering`, `operator_cancel`.
+
+**Bounded capture.** Supervision streams stdout and stderr to the per-dispatch audit files (`s9`) as lines arrive rather than buffering the full output in memory; the in-memory footprint is a bounded head/tail window plus what completion detection needs, capped by a max-captured-bytes limit. The supervised result carries the bounded view and the spooled file paths, so a verbose worker cannot exhaust memory and oversized output is truncated with a pointer to the spool, consistent with the audit cap in s9.
+
+Runaway protection consumes these classifications; a hanging-but-done worker misclassified as a timeout would otherwise poison the same-error and no-progress counters and discard completed work.
 
 ### Graded recovery before gates
 

@@ -45,6 +45,7 @@ Evaluate the plan along these axes:
 4. **Dependency correctness.** Is `depends_on[]` semantically complete? The graph has already blocked cycles and non-topological ordering. A missing edge (story B calls into a surface story A creates, but B does not depend on A) is a `minor`.
 5. **Contract-decision implementation completeness.** Is every `contract_decision.id` referenced exactly once via `implements_contract_decisions[]`? Double-booking or omission is `blocker`.
 6. **Missed Class-2 (architectural) concerns.** Will the plan, if executed as written, breach BC isolation, the import-linter contracts, the lazy-loading rules, or any other invariant declared in CLAUDE.md / AGENTS.md? `blocker` if so.
+7. **Standalone-slice value.** Once a story's `depends_on[]` are satisfied, can it be demonstrated or verified on its own through its `satisfies[]` outcomes? A story that is pure internal plumbing with no independently checkable outcome should fold into the story it serves — that is a `minor`. A story that claims an outcome it could not actually demonstrate as a standalone slice is a `blocker`.
 
 ## Severity rubric
 

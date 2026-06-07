@@ -34,9 +34,22 @@ Work one outcome at a time:
 2. GREEN: implement the smallest vertical slice that makes that outcome pass while preserving earlier GREEN outcomes.
 3. Run the configured quality command after each cycle when `.woof/quality-gates.toml` declares one.
 
-After all outcomes are GREEN, run a refactor pass with the tests as the harness, then run the configured quality command again.
+After all outcomes are GREEN, run a refactor pass with the tests as the harness, then run the configured quality command again. Never refactor while a test is RED: return to GREEN first, then refactor against a passing harness. Refactor candidates worth a pass: duplicated logic, a shallow module that only forwards calls, a leaky interface that exposes callers to internal detail, a long parameter list that should be one type, and an argument mutation that could be a returned result.
 
 Avoid the horizontal-slicing anti-pattern: all tests first then all implementation. That pattern produces the imagined-behaviour fingerprint: tests mirror assumed data structures or setup plumbing instead of proving the declared outcome through behaviour.
+
+## Module and interface design
+
+Woof verifies behaviour, not design, so designing the unit well is on you. While implementing the smallest slice, still apply these heuristics (they guide, they do not gate, and they never justify expanding scope):
+
+- Prefer deep modules: a small, simple interface hiding substantial implementation. Be suspicious of a shallow module whose interface is nearly as wide as its body, or a pass-through wrapper that only forwards calls. Apply the deletion test: if removing the layer would lose nothing, remove it.
+- Design the interface for the caller, in the caller's terms. Keep file formats, query details, and intermediate state private.
+- Accept a dependency rather than construct it where that keeps the seam testable - but do not add a seam with a single implementation and no test need. Two real adapters, or one plus a test, justify a seam; one does not.
+- Prefer returning a result over mutating an argument or shared state, unless the declared outcome is the mutation.
+
+## Repair hygiene
+
+When chasing a failing test or a behavioural symptom, first build or confirm a reliably failing signal before changing production code - reproduce, then fix. Tag any temporary instrumentation (extra logging, probes, debug prints) with a unique, greppable prefix, and remove all of it before writing `executor_result.json`. The staged diff must contain only the slice and its tests, not leftover scaffolding.
 
 ## Output
 

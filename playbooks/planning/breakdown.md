@@ -49,6 +49,7 @@ Planning rules:
 - Stories describe what they produce, not implementation pseudocode. Do not pre-name variables, classes, function signatures, migrations, or concrete test names unless those names are already locked by `EPIC.md`.
 - Test planning is an estimate, not enumeration: use `tests.count` and `tests.types` to express expected coverage families.
 - Right-sized stories: aim for one story producer node of work, roughly 5-10 files, 3-10 tests, and 200-800 lines of change. Split work above that range; merge fragments that have no standalone value.
+- Standalone-slice test: each story must be independently verifiable once its `depends_on[]` are satisfied - its `satisfies[]` outcomes should be demonstrable or checkable on their own, not only as a step toward a later story. Reject internal-plumbing-only fragments that close no outcome and leave nothing a reviewer can verify; fold them into the story whose outcome they serve. This pulls the Stage-5 tracer-bullet discipline forward to plan time: a story is a thin vertical slice, not a horizontal layer.
 
 Output rules:
 

@@ -30,6 +30,8 @@ Author a planning-ready contract:
 - forward-created references use an exact annotation outside the backticks, for example `` `path/to/file` (forward-created) `` or `` `path/to/file` (created by ticket <id>) ``;
 - subjective terms such as "good UX", "robust", or "performant" are paired with measurable assertions.
 
+Advisory (prose body, not a required front-matter field): for each outcome where it helps, name the highest existing test seam at which the outcome could be verified - the public function, CLI command, HTTP route, or module boundary a test would target. Decide these seams while writing the contract rather than leaving them to be discovered during the build; they orient breakdown and execution without locking implementation. Keep this in the prose body unless and until E2 adds an optional seam field to `epic.schema.json`.
+
 The prose body may add context for a human reader, but the front matter is the contract. Do not run Woof graph commands, dispatch commands, checks, gates, commits, breakdown planning, or reviewer work. The graph validates the file and selects the next node.
 
 YAML safety rule: quote front-matter strings that contain Markdown syntax,

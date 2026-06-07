@@ -15,23 +15,38 @@ from woof.lib.audit_config import AuditConfig, load_audit_config
 SENSITIVE_KEY_RE = re.compile(
     r"(api[_-]?key|auth|bearer|credential|jwt|oauth|password|secret|token)", re.IGNORECASE
 )
-BUILTIN_PATTERNS: tuple[tuple[Pattern[str], str], ...] = (
-    (
-        re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE),
-        "bearer_token",
-    ),
-    (
-        re.compile(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b"),
-        "jwt",
-    ),
-    (
-        re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"),
-        "aws_access_key",
-    ),
+# High-signal secret tokens: distinctive provider prefixes and key material with
+# near-zero false-positive rates. Safe to BLOCK on, so these back the cartography
+# preflight secret gate over committed planning docs; they are also folded into
+# the redaction set below.
+SECRET_TOKEN_PATTERNS: tuple[tuple[Pattern[str], str], ...] = (
+    (re.compile(r"sk-[A-Za-z0-9_-]{20,}"), "openai_key"),
+    (re.compile(r"sk_live_[A-Za-z0-9]{10,}"), "stripe_live_key"),
+    (re.compile(r"sk_test_[A-Za-z0-9]{10,}"), "stripe_test_key"),
+    (re.compile(r"\bghp_[A-Za-z0-9]{36}\b"), "github_pat"),
+    (re.compile(r"\bgho_[A-Za-z0-9]{36}\b"), "github_oauth_token"),
+    (re.compile(r"\bglpat-[A-Za-z0-9_-]{20,}"), "gitlab_pat"),
+    (re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"), "aws_access_key"),
+    (re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}"), "slack_token"),
+    (re.compile(r"-----BEGIN[A-Z ]*PRIVATE KEY-----"), "private_key"),
+    (re.compile(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b"), "jwt"),
+)
+
+# Context-dependent patterns. Over-redaction of executor transcripts is harmless,
+# but these false-positive on ordinary prose ("the password field", "a Bearer
+# token"), so the cartography gate must not use them; redaction only.
+REDACTION_ONLY_PATTERNS: tuple[tuple[Pattern[str], str], ...] = (
+    (re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE), "bearer_token"),
     (
         re.compile(r"(?i)\b(?:api[_-]?key|password|secret|token)\b\s*[:=]\s*[\"']?[^\"'\s,}]+"),
         "secret_assignment",
     ),
+)
+
+# Redaction applies the full set; the high-signal tokens run first so a value
+# matched as e.g. an aws_access_key is not also reported as a generic assignment.
+BUILTIN_PATTERNS: tuple[tuple[Pattern[str], str], ...] = (
+    SECRET_TOKEN_PATTERNS + REDACTION_ONLY_PATTERNS
 )
 
 
@@ -50,6 +65,28 @@ class AuditFileSummary:
     truncated: bool = False
     raw_path: str | None = None
     reasons: tuple[str, ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True)
+class SecretHit:
+    reason: str
+    line: int
+
+
+def scan_text_for_secrets(text: str) -> list[SecretHit]:
+    """Scan text for high-signal secret tokens.
+
+    Returns one hit per (pattern, line) match, carrying the pattern reason and
+    the 1-based line number. The matched value is never returned or logged, so
+    the result is safe to surface in preflight output, caches, and CLI text.
+    """
+
+    hits: list[SecretHit] = []
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        for regex, reason in SECRET_TOKEN_PATTERNS:
+            if regex.search(line):
+                hits.append(SecretHit(reason=reason, line=lineno))
+    return hits
 
 
 def load_project_audit_config(repo_root: Path) -> AuditConfig:

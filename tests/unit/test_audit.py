@@ -4,7 +4,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from woof.lib.audit import prepare_commit_audit
+from woof.lib.audit import prepare_commit_audit, scan_text_for_secrets
 from woof.lib.audit_bundle import NonPortableTranscriptError, bundle_claude_transcripts
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -240,3 +240,27 @@ def test_audit_bundle_cli_copies_transcripts_without_absolute_output(
     assert (
         epic_dir / "audit" / "claude-code" / project_slug / f"{session_id}.jsonl"
     ).read_text() == '{"message":"cli"}\n'
+
+
+def test_scan_text_for_secrets_flags_high_signal_tokens() -> None:
+    text = (
+        "intro line\n"
+        "leaked = sk-abcdefghijklmnopqrstuvwxyz0123\n"
+        "aws = AKIA1234567890ABCDEF\n"
+        "nothing here\n"
+    )
+
+    hits = scan_text_for_secrets(text)
+
+    assert {hit.reason for hit in hits} == {"openai_key", "aws_access_key"}
+    assert {hit.line for hit in hits} == {2, 3}
+
+
+def test_scan_text_for_secrets_ignores_prose_and_assignments() -> None:
+    text = (
+        "The password field is validated before save.\n"
+        "Pass a Bearer token in the Authorization header.\n"
+        "api_key: see the deployment runbook for where it is configured\n"
+    )
+
+    assert scan_text_for_secrets(text) == []

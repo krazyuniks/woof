@@ -39,6 +39,7 @@ from woof.cli.main import (
     load_payload,
     run_ajv,
 )
+from woof.lib.audit import scan_text_for_secrets
 from woof.paths import schema_dir, tool_root
 from woof.trackers.github import GITHUB_RATE_LIMIT_SAFETY_MARGIN, github_core_remaining
 
@@ -77,13 +78,13 @@ repo = "<replace>/<replace>"
 
 # Cartography contract (ADR-004), enforced below. Author the design docs
 # (.woof/codebase/TARGET-ARCHITECTURE.md and PRINCIPLES.md) through the /woof
-# map-codebase flow before preflight passes. Remove this block only to opt out.
+# setup flow, then run the /woof map-codebase flow before preflight passes.
 [cartography]
 staleness_floor_hours = 168
 summary_min_chars = 200
 """
 
-CACHE_VERSION = 1
+CACHE_VERSION = 2
 FLOOR_CACHE_TTL = timedelta(hours=24)
 RUNTIME_CACHE_TTL = timedelta(minutes=5)
 
@@ -206,6 +207,10 @@ def run_preflight(repo_root: Path, *, force: bool = False) -> PreflightResult:
                 detail=prereq,
             )
         )
+    # Uncached: the floor/runtime cache keys do not track cartography doc content,
+    # so a cached pass could mask a secret a mapper just wrote. A security gate
+    # must re-read the docs every run.
+    findings.extend(_check_cartography_secrets(repo_root))
     return PreflightResult(repo_root=repo_root, findings=findings, operator_state=operator_state)
 
 
@@ -935,29 +940,37 @@ CARTOGRAPHY_AUTHOR_HINT = (
     "Author .woof/codebase/ through the /woof map-codebase flow "
     "(see skills/woof/references/setup.md and skills/woof/references/map-codebase.md)."
 )
+CARTOGRAPHY_ONBOARDING_INSTALL = """\
+Follow the /woof setup onboarding path:
+1. Run `woof init --language <lang>` (repeat --language as needed) so `.woof/prerequisites.toml` contains `[cartography]` and `scripts/refresh-cartography` is composed.
+2. Author `.woof/codebase/TARGET-ARCHITECTURE.md` and `.woof/codebase/PRINCIPLES.md` during setup.
+3. Run the /woof map-codebase flow to write the AS-IS cartography docs, then run `./scripts/refresh-cartography` and `woof hooks install`.
+References:
+- skills/woof/references/setup.md
+- skills/woof/references/map-codebase.md
+"""
 
 
 def _check_cartography(repo_root: Path, prereq: dict[str, Any]) -> list[PreflightFinding]:
     """Validate the cartography artefact group at ``.woof/codebase/`` (ADR-004).
 
-    Enforcement is opt-in by the presence of a ``[cartography]`` block in
-    ``prerequisites.toml`` (``woof init`` scaffolds it). When the block is
-    declared, preflight fails closed on a missing or non-executable
+    Cartography is mandatory infrastructure. A missing ``[cartography]`` block
+    now means a legacy consumer has not been onboarded to the current setup path,
+    so preflight fails with an actionable setup/map-codebase pointer. When the
+    block is declared, preflight fails closed on a missing or non-executable
     ``scripts/refresh-cartography``, a missing or stub design doc
-    (``TARGET-ARCHITECTURE.md``, ``PRINCIPLES.md``), or a missing mechanical-layer
-    file (``tags``, ``files.txt``, ``freshness.json``). When the block is absent,
-    only the legacy optional-script check runs: a present script must be a regular
-    executable file, but an absent one is not a finding.
+    (``TARGET-ARCHITECTURE.md``, ``PRINCIPLES.md``), or a missing
+    mechanical-layer file (``tags``, ``files.txt``, ``freshness.json``).
     """
 
     cartography = prereq.get("cartography")
     required = isinstance(cartography, dict)
     findings: list[PreflightFinding] = []
-    script = _check_cartography_script(repo_root, required=required)
-    if script is not None:
-        findings.append(script)
     if not required:
-        return findings
+        return [_check_cartography_onboarding(repo_root)]
+
+    script = _check_cartography_script(repo_root)
+    findings.append(script)
 
     min_chars = int(cartography.get("summary_min_chars") or DEFAULT_SUMMARY_MIN_CHARS)
     stub_marker = str(cartography.get("stub_marker") or DEFAULT_STUB_MARKER)
@@ -979,19 +992,100 @@ def _check_cartography(repo_root: Path, prereq: dict[str, Any]) -> list[Prefligh
     return findings
 
 
-def _check_cartography_script(repo_root: Path, *, required: bool) -> PreflightFinding | None:
+def _check_cartography_secrets(repo_root: Path) -> list[PreflightFinding]:
+    """Scan committed cartography prose for leaked secrets (ADR-004 hygiene).
+
+    The design and AS-IS layers under ``.woof/codebase/`` are committed planning
+    state, authored partly by mapper subagents, so a leaked key lands in git
+    history. This gate runs uncached (the preflight floor cache key does not track
+    cartography doc content, so a cached pass would mask a freshly written secret)
+    and fails closed on a high-signal token match. Only the file, line, and
+    pattern reason are reported; the matched value is never surfaced.
+    """
+
+    codebase = repo_root / ".woof" / "codebase"
+    if not codebase.is_dir():
+        return []
+
+    findings: list[PreflightFinding] = []
+    for doc in sorted(codebase.glob("*.md")):
+        try:
+            text = doc.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            findings.append(
+                PreflightFinding(
+                    id=f"cartography.secrets.{doc.stem}",
+                    label=f"cartography secret scan ({doc.name})",
+                    ok=False,
+                    detail=f"could not read {doc.relative_to(repo_root).as_posix()}: {exc}",
+                )
+            )
+            continue
+        hits = scan_text_for_secrets(text)
+        if not hits:
+            continue
+        rel = doc.relative_to(repo_root).as_posix()
+        shown = hits[:10]
+        locations = ", ".join(f"{rel}:{hit.line} ({hit.reason})" for hit in shown)
+        if len(hits) > len(shown):
+            locations += f", +{len(hits) - len(shown)} more"
+        findings.append(
+            PreflightFinding(
+                id=f"cartography.secrets.{doc.stem}",
+                label=f"cartography secret scan ({doc.name})",
+                ok=False,
+                required="no secrets in committed cartography docs",
+                detail=(
+                    f"potential secret(s) in committed cartography doc: {locations}. "
+                    "Cartography docs are committed planning state (ADR-004); remove "
+                    "the secret before committing."
+                ),
+                notes=[
+                    "Mapper subagents must not read or quote secret-bearing files; "
+                    "see skills/woof/references/map-codebase.md.",
+                ],
+            )
+        )
+    if not findings:
+        findings.append(
+            PreflightFinding(
+                id="cartography.secrets",
+                label="cartography secret scan",
+                ok=True,
+                detail="no high-signal secrets detected in committed cartography docs",
+            )
+        )
+    return findings
+
+
+def _check_cartography_onboarding(repo_root: Path) -> PreflightFinding:
+    prereq_path = repo_root / ".woof" / "prerequisites.toml"
+    return PreflightFinding(
+        id="cartography.contract",
+        label="cartography contract",
+        ok=False,
+        required=(
+            ".woof/prerequisites.toml [cartography], .woof/codebase/ design and "
+            "mapper docs, scripts/refresh-cartography, and the Woof post-commit hook"
+        ),
+        detail=(
+            f"{prereq_path} has no [cartography] block; Woof requires the "
+            "cartography onboarding path before preflight can pass"
+        ),
+        install=CARTOGRAPHY_ONBOARDING_INSTALL,
+    )
+
+
+def _check_cartography_script(repo_root: Path) -> PreflightFinding:
     """Check the consumer-owned ``scripts/refresh-cartography``.
 
     The Woof post-commit hook block invokes ``./scripts/refresh-cartography``, so
-    a stale or non-executable script must fail loud rather than silently no-op.
-    When ``required`` (the ``[cartography]`` contract is declared) an absent
-    script is a failure; otherwise an absent script is simply no finding.
+    a missing, stale, or non-executable script must fail loud rather than
+    silently no-op.
     """
 
     script = repo_root / "scripts" / "refresh-cartography"
     if not script.exists():
-        if not required:
-            return None
         return PreflightFinding(
             id="cartography.script",
             label="cartography script",

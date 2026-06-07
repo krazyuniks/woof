@@ -112,6 +112,28 @@ def _write_project(
         (woof_dir / "quality-gates.toml").write_text(quality_gates)
 
 
+def _with_cartography_contract(prerequisites: str) -> str:
+    if "[cartography]" in prerequisites:
+        return prerequisites
+    return prerequisites.rstrip() + "\n\n[cartography]\nsummary_min_chars = 40\n"
+
+
+def _write_ready_project(
+    root: Path,
+    *,
+    prerequisites: str,
+    agents: str | None = STANDARD_AGENTS,
+    quality_gates: str | None = None,
+) -> None:
+    _write_project(
+        root,
+        prerequisites=_with_cartography_contract(prerequisites),
+        agents=agents,
+        quality_gates=quality_gates,
+    )
+    _write_cartography(root)
+
+
 def _env_with_path(bin_dir: Path, extra: dict[str, str] | None = None) -> dict[str, str]:
     uv = shutil.which("uv")
     sh = shutil.which("sh")
@@ -279,7 +301,7 @@ exit 2
 """,
     )
 
-    _write_project(
+    _write_ready_project(
         tmp_path,
         prerequisites="""\
 [infra]
@@ -365,7 +387,7 @@ command = "npx"
 args = ["-y", "chrome-devtools-mcp@latest"]
 """
     )
-    _write_project(
+    _write_ready_project(
         tmp_path,
         prerequisites="""\
 [infra]
@@ -415,7 +437,7 @@ def test_preflight_fails_for_incomplete_role_route(tmp_path: Path, run_woof) -> 
     bin_dir.mkdir()
     _stub_core_tools(bin_dir)
 
-    _write_project(
+    _write_ready_project(
         tmp_path,
         prerequisites="""\
 [infra]
@@ -471,7 +493,7 @@ def test_preflight_requires_agents_toml(tmp_path: Path, run_woof) -> None:
     bin_dir.mkdir()
     _stub_core_tools(bin_dir)
 
-    _write_project(
+    _write_ready_project(
         tmp_path,
         prerequisites="""\
 [infra]
@@ -523,7 +545,7 @@ def test_preflight_runs_host_and_server_checks(tmp_path: Path, run_woof) -> None
     else:
         platform = "windows"
 
-    _write_project(
+    _write_ready_project(
         tmp_path,
         prerequisites=f"""\
 [infra]
@@ -590,7 +612,7 @@ def test_preflight_fails_for_missing_declared_command(tmp_path: Path, run_woof) 
     _stub_core_tools(bin_dir)
     (bin_dir / "codex").unlink()
 
-    _write_project(
+    _write_ready_project(
         tmp_path,
         prerequisites="""\
 [infra]
@@ -652,7 +674,7 @@ verify_snippet = "def f(): pass"
 verify_scope = "source.python"
 """
     )
-    _write_project(
+    _write_ready_project(
         tmp_path,
         prerequisites="""\
 [infra]
@@ -700,7 +722,7 @@ def test_preflight_reuses_floor_cache_until_forced(tmp_path: Path, run_woof) -> 
     _stub_core_tools(bin_dir)
     _write_exe(bin_dir / "pyright", 'echo "pyright 1.1.1"\n')
 
-    _write_project(
+    _write_ready_project(
         tmp_path,
         prerequisites="""\
 [infra]
@@ -790,7 +812,7 @@ def test_preflight_rechecks_stale_runtime_cache(tmp_path: Path, run_woof) -> Non
     bin_dir.mkdir()
     _stub_core_tools(bin_dir)
 
-    _write_project(
+    _write_ready_project(
         tmp_path,
         prerequisites="""\
 [infra]
@@ -857,7 +879,7 @@ def test_preflight_passes_adapter_auth_when_env_keys_set(tmp_path: Path, run_woo
     bin_dir.mkdir()
     _stub_core_tools(bin_dir)
 
-    _write_project(
+    _write_ready_project(
         tmp_path,
         prerequisites="""\
 [infra]
@@ -913,7 +935,7 @@ def test_preflight_passes_adapter_auth_when_credential_files_present(
     (claude_home / ".credentials.json").write_text("{}\n")
     (codex_home / "auth.json").write_text("{}\n")
 
-    _write_project(
+    _write_ready_project(
         tmp_path,
         prerequisites="""\
 [infra]
@@ -972,7 +994,7 @@ def test_preflight_fails_when_adapter_auth_marker_missing(tmp_path: Path, run_wo
     empty_home = tmp_path / "empty-home"
     empty_home.mkdir()
 
-    _write_project(
+    _write_ready_project(
         tmp_path,
         prerequisites="""\
 [infra]
@@ -1038,25 +1060,9 @@ def test_preflight_flags_non_executable_cartography_script(tmp_path: Path, run_w
 
     _write_project(
         tmp_path,
-        prerequisites="""\
-[infra]
-just = "any"
-git = "any"
-gh = "any"
-
-[commands]
-claude = "any"
-codex = "any"
-
-[validators]
-ajv = "any"
-ajv-formats = "any"
-
-[tracker]
-kind = "github"
-repo = "example/project"
-""",
+        prerequisites=CARTOGRAPHY_PREREQS,
     )
+    _write_cartography(tmp_path, script=False)
 
     proc = run_woof(
         "preflight",
@@ -1090,7 +1096,9 @@ repo = "example/project"
     assert cart["ok"] is True
 
 
-def test_preflight_omits_cartography_finding_when_script_absent(tmp_path: Path, run_woof) -> None:
+def test_preflight_fails_with_onboarding_error_when_cartography_block_absent(
+    tmp_path: Path, run_woof
+) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     _stub_core_tools(bin_dir)
@@ -1126,9 +1134,15 @@ repo = "example/project"
         env=_env_with_path(bin_dir),
     )
 
-    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert proc.returncode == 1
     payload = json.loads(proc.stdout)
-    assert all(f["id"] != "cartography.script" for f in payload["findings"])
+    contract = next(f for f in payload["findings"] if f["id"] == "cartography.contract")
+    assert contract["ok"] is False
+    assert "no [cartography] block" in contract["detail"]
+    assert "/woof setup" in contract["install"]
+    assert "/woof map-codebase" in contract["install"]
+    assert "skills/woof/references/setup.md" in contract["install"]
+    assert "skills/woof/references/map-codebase.md" in contract["install"]
 
 
 def _run_cartography_preflight(tmp_path: Path, run_woof):
@@ -1351,7 +1365,7 @@ def test_preflight_json_reports_operator_state_for_current_epic(
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     _stub_core_tools(bin_dir)
-    _write_project(
+    _write_ready_project(
         tmp_path,
         prerequisites="""\
 [infra]
@@ -1407,7 +1421,7 @@ def test_preflight_text_reports_operator_state_for_current_epic(
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     _stub_core_tools(bin_dir)
-    _write_project(
+    _write_ready_project(
         tmp_path,
         prerequisites="""\
 [infra]
@@ -1444,3 +1458,39 @@ kind = "local"
     assert "gate: open type=story_gate story=S1 cause=check_1_quality_gates" in proc.stdout
     assert "checks: FAIL total=1 failed=1 triggered_by=check_1_quality_gates" in proc.stdout
     assert "audit_pointers: epic_jsonl=.woof/epics/E5/epic.jsonl" in proc.stdout
+
+
+def test_preflight_flags_secret_in_committed_cartography_doc(tmp_path: Path, run_woof) -> None:
+    _write_project(
+        tmp_path,
+        prerequisites=CARTOGRAPHY_PREREQS,
+    )
+    _write_cartography(tmp_path)
+    leaked = tmp_path / ".woof" / "codebase" / "CONCERNS.md"
+    leaked.write_text(
+        "# Concerns\n\nThe staging deploy hardcodes aws = AKIA1234567890ABCDEF in the script.\n"
+    )
+
+    proc = run_woof("preflight", "--project-root", str(tmp_path), "--format", "json")
+
+    assert proc.returncode != 0
+    by_id = {finding["id"]: finding for finding in json.loads(proc.stdout)["findings"]}
+    assert "cartography.secrets.CONCERNS" in by_id
+    finding = by_id["cartography.secrets.CONCERNS"]
+    assert finding["ok"] is False
+    assert "aws_access_key" in finding["detail"]
+    # The matched value must never be echoed into preflight output.
+    assert "AKIA1234567890ABCDEF" not in proc.stdout
+
+
+def test_preflight_secret_scan_passes_on_clean_cartography(tmp_path: Path, run_woof) -> None:
+    _write_project(
+        tmp_path,
+        prerequisites=CARTOGRAPHY_PREREQS,
+    )
+    _write_cartography(tmp_path)
+
+    proc = run_woof("preflight", "--project-root", str(tmp_path), "--format", "json")
+
+    by_id = {finding["id"]: finding for finding in json.loads(proc.stdout)["findings"]}
+    assert by_id["cartography.secrets"]["ok"] is True

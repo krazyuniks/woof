@@ -14,12 +14,12 @@ Authored during setup, refreshed only when architectural strategy changes:
 
 Help the operator author or update these by hand; they are not regenerated.
 
-While `prerequisites.toml` declares a `[cartography]` block, `woof preflight` treats both design
+`woof preflight` requires `prerequisites.toml` to declare `[cartography]` and treats both design
 docs as mandatory and non-stub. A doc fails preflight as a stub if it still contains the stub
 marker (`stub_marker`, default `<!-- woof:stub -->`) or if its body (front matter excluded) is
-shorter than `summary_min_chars` (default 200). A short-but-intentional doc can opt out by
-marking itself complete in front matter (`status: complete`, or `complete: true`). Author real
-content and remove the stub marker before preflight passes.
+shorter than `summary_min_chars` (default 200). A short-but-intentional doc can mark itself
+complete in front matter (`status: complete`, or `complete: true`). Author real content and remove
+the stub marker before preflight passes.
 
 ## AS-IS layer (mapper-authored, refreshed on demand)
 
@@ -37,6 +37,31 @@ directly to `.woof/codebase/`:
 
 Run the mappers in parallel for a full refresh, then update the freshness stamp.
 
+### Mapper dispatch constraints (hygiene)
+
+Each mapper subagent writes a document that is committed as planning state, so every
+dispatch prompt MUST carry these constraints.
+
+**Never read or quote the contents of secret-bearing files** (note their existence only):
+
+- `.env`, `.env.*`, `*.env` - environment files
+- `credentials.*`, `secrets.*`, `*secret*`, `*credential*` - credential files
+- `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.jks`, `*.keystore`, `*.truststore` - keys and keystores
+- `id_rsa*`, `id_ed25519*`, `id_dsa*` - SSH private keys
+- `.npmrc`, `.pypirc`, `.netrc` - package-manager auth tokens
+- `serviceAccountKey.json`, `*-credentials.json` - cloud service credentials
+- `config/secrets/*`, `.secrets/*`, `secrets/` - secret directories
+- any `.gitignore`d file that looks like it holds secrets
+
+If such a file is relevant, record only that it exists (e.g. "`.env` present - holds runtime
+configuration"). Never emit a value such as `API_KEY=...`, `sk-...`, or a token. The mapper
+output is committed to git; a leaked secret is a security incident.
+
+`woof preflight` enforces this as a backstop: it scans the committed cartography docs
+(`.woof/codebase/*.md`) for high-signal secret tokens on every run and fails closed on a
+match, reporting the file and line (never the value). The instruction above keeps secrets
+out of the docs; the preflight gate catches anything that slips through before it is committed.
+
 ## Mechanical layer (post-commit refreshed)
 
 Regenerated automatically by the Woof-managed post-commit hook, which runs the consumer-owned
@@ -47,6 +72,11 @@ Regenerated automatically by the Woof-managed post-commit hook, which runs the c
 - `freshness.json` - the freshness stamp, `{ts, git_ref, age_s, generator_version}`. `ts` is the
   authoritative staleness signal (the hook rewrites it every commit, so it only ages when commits
   stop); `age_s` is written as 0 at generation.
+
+ADR-009 adds the next planned mechanical artefact: `.woof/codebase/structural/index.sqlite`,
+a local symbols-and-edges index consumed through `woof cartography`. It is not mandatory until the
+generator and preflight support land. When that work starts, first check for any concurrent
+tree-sitter/parser implementation and reuse it rather than creating a second extraction path.
 
 `scripts/refresh-cartography` is composed by `woof init --language <lang>` from the per-language
 fragments in `languages/<lang>.toml` (a shared scaffold plus one fragment per declared language).
@@ -59,8 +89,8 @@ woof hooks install
 ```
 
 A manual mechanical refresh is just running `./scripts/refresh-cartography` (or making a commit).
-While `[cartography]` is declared, `woof preflight` fails closed on a missing mechanical file
-(`tags`, `files.txt`, `freshness.json`) and on a missing or non-executable
+`woof preflight` fails closed on a missing `[cartography]` block, a missing mechanical file
+(`tags`, `files.txt`, `freshness.json`), and a missing or non-executable
 `scripts/refresh-cartography`.
 
 See ADR-004 (`docs/adr/004-cartography-prerequisite.md`) for the full rationale.

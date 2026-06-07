@@ -13,8 +13,10 @@ Woof is an inner-loop SDLC tool for AI-assisted development.
 - **No `woof graph` command API.** The shipped runner is `woof wf`. It owns graph progression, dispatch, deterministic nodes, gate writes, and resume behaviour in-process.
 - **Setup CLI.** `woof init`, `woof preflight`, and `woof hooks install` are non-interactive Python commands used during project setup. They are not parallel surfaces for running epics.
 - **State on disk.** `spark.md`, `EPIC.md`, `plan.json`, JSONL audit, dispositions, gate files, and cartography artefacts are the authoritative state. Re-running `woof wf --epic N` resumes from disk.
+- **Dispatch supervision.** `woof dispatch` supervises workers in process groups on phase-scoped clocks: idle and wall-clock before the terminal marker, completion-grace and tail cap after it. Dispatch telemetry carries `exit_type`; `completed_lingering` is a successful outcome, not a timeout. See ADR-008.
 - **Interactive design.** `/woof:brainstorm` hydrates an existing spark by writing an accepted bundle into `.woof/epics/E<N>/discovery/brainstorm/`. Woof ingests that bundle as discovery source material; it does not mechanically map `work_units[]` to stories.
 - **Cartography prerequisite.** Every consumer repo has `.woof/codebase/` containing human-authored design docs, mapper-authored AS-IS docs, and a mechanical index.
+- **Structural cartography.** ADR-009 accepts a queryable structural index under `.woof/codebase/structural/` as the next cartography pivot: files, symbols, and typed edges regenerated locally and consumed through `woof cartography`, not through a graph DB, daemon, MCP server, or `woof graph` API.
 - **Evidence over confidence.** Reviewer blockers must carry resolvable evidence. Confidence scores, if ever added, are advisory eval metadata and never gate-affecting.
 - **Expert workstation posture.** Woof assumes explicit local prerequisites. tmux may supervise long runs, but it must not become a second graph or state authority.
 
@@ -36,11 +38,13 @@ Prompt 2 landed the staleness warning: a `cartography.freshness` floor check rea
 
 Prompt 3 landed the per-language templates and `woof init` composition: `refresh-cartography` fragments for Python, Go, TypeScript, Rust under `languages/refresh-cartography/`, referenced from each `languages/<lang>.toml` via `[cartography].refresh_fragment`. `woof init --language <lang>` (repeatable) records `[cartography].languages` and composes `scripts/refresh-cartography` (mode 0o755) from a shared scaffold (git ls-files -> files.txt; one ctags pass -> tags; freshness.json) plus the fragments, idempotently via a managed block, falling back to an existing `prerequisites.toml` on re-run. `freshness.json` is defined as `{ ts, git_ref, age_s, generator_version }` with `schemas/freshness.schema.json`; `ts` is the authoritative staleness signal and `age_s` the deterministic test fallback (the prompt-2 reader was inverted accordingly so a frozen `age_s` cannot mask production staleness).
 
-Open work:
-- Make the post-commit hook regenerate the mechanical layer and fail loud if the refresh script exits non-zero.
-- Move from opt-in (`[cartography]` present) to a clear preflight error for an existing consumer with no cartography at all, pointing at the `/woof` setup/map-codebase references.
+Prompt 4 landed the fail-loud post-commit hook path: the Woof-managed hook runs `./scripts/refresh-cartography` on every commit, emits a `woof post-commit:` diagnostic when the script is missing, non-executable, or exits non-zero, and preserves a failing refresh script's exit status from the hook.
 
-Depends on: nothing. Blocks: E2, E3.
+Prompt 5 landed the legacy-consumer onboarding error: `woof preflight` now fails a project whose `.woof/prerequisites.toml` has no `[cartography]` block with a `cartography.contract` finding that points at `/woof` setup, the map-codebase flow, `skills/woof/references/setup.md`, and `skills/woof/references/map-codebase.md`. The finding explains the expected path: re-run `woof init --language <lang>`, author the design docs, run map-codebase for the AS-IS layer, refresh the mechanical files, and install the post-commit hook. The preflight cache version was bumped so a stale green floor cache cannot mask the migration error.
+
+Status: complete. E2 and E3 are no longer blocked on E1.
+
+Depends on: nothing. Completed prerequisite for: E2, E3.
 
 ### E2. Contract Readiness and Run Resilience
 
@@ -131,33 +135,20 @@ Depends on: E3, E4.
 Add a post-baseline conformance audit inspired by Pickle Rick's Citadel shape without copying its project-specific analysers.
 
 Open work:
-- Add a diff-scoped conformance audit node or Stage-5 check that reads `EPIC.md`, `plan.json`, the story diff, and cartography.
+- Add a diff-scoped conformance audit node or Stage-5 check that reads `EPIC.md`, `plan.json`, the story diff, cartography, and the structural index when available.
 - Add `conformance-result.schema.json`.
 - Audit questions:
   - every satisfied observable outcome has production evidence in changed files, not only test markers;
   - every implemented contract decision's declared surface exists in the diff or current tree;
   - declared guards, permissions, state transitions, or lifecycle invariants from cartography are not bypassed;
-  - new allowlist/config entries have production callers or explicit rationale;
+  - new allowlist/config entries have production callers, structural-index evidence, or explicit rationale;
   - domain-specific checks are consumer-supplied rules, not hardcoded Woof assumptions.
+- Fold in the TrueCourse-style spec-to-contract-to-verify idea where it is deterministic: extract checkable obligations from `TARGET-ARCHITECTURE.md`, `PRINCIPLES.md`, and `EPIC.md`, then verify the diff against those obligations.
+- Emit stable machine-readable findings suitable for later SARIF-like export; do not make SARIF itself a V1 requirement.
 - Start with generic deterministic checks and a consumer-rule hook. Add language/framework analysers only when a real consumer proves the rule has reusable value.
 - The audit can open a story gate on deterministic high-severity violations. It must not become an LLM debate loop.
 
-Depends on: E1, E2, E5.
-
-### E7. Dispatch Process Supervision
-
-Harden the per-dispatch subprocess lifecycle so dispatch outcomes are correctly classified. The current `woof dispatch` blocks on one buffered read behind a coarse external `timeout` wrapper. A worker that finishes but whose spawned child (a long-lived MCP server, a `gh`/git subprocess) holds the stdout pipe open blocks until the wall-clock kill and is then misclassified as a timeout (exit 124), discarding completed work. The cross-dispatch run-resilience policy in E2 consumes these classifications, so correct per-dispatch supervision is a prerequisite for trustworthy resilience telemetry, not an optimisation. The external pattern reference is sandcastle's idle-timeout-versus-completion-timeout split.
-
-Open work:
-- Replace the buffered `communicate()` read with an incremental line read so output is observed as it arrives.
-- Add an idle timeout that fails a dispatch after a bounded silence window and resets on each output line.
-- Add completion-versus-exit handling: once the worker emits its terminal result, a short grace window takes over from the idle timeout and resolves the dispatch successfully even if the process has not exited; a clean exit always wins the race.
-- Spawn each worker in its own process group; on timeout or cancel, signal the group (SIGTERM then SIGKILL after a grace window) so orphaned children, MCP servers in particular, are reaped. Drop reliance on the external `timeout` wrapper for outcome classification.
-- Expand `exit_type` to distinguish clean exit, non-zero exit, idle kill, wall-clock timeout, completed-but-lingering, and operator cancel; stop mapping a hanging-but-done worker to `timeout`.
-- Idempotent, double-signal-safe cancellation.
-- Fault-injection tests: child holding stdout open after the worker exits; child ignoring SIGTERM; slow-drip output; zero-output hang; oversized output; double-cancel. Each asserts the correct `exit_type` and that completed work is preserved.
-
-Depends on: nothing. Refines: E2 (run-resilience signal correctness), E4 (exit classification).
+Depends on: E1, E2, E5, E13.
 
 ### E8. Run Lineage
 
@@ -168,7 +159,7 @@ Open work:
 - Define file-first run replay from on-disk state plus the JSONL lineage: re-enter the graph at a recorded node for debugging without re-running prior work.
 - Tests: lineage id present across all event types and joinable from a check failure to the producer session; replay re-enters at a recorded node without redoing prior work.
 
-Depends on: E7 (the `exit_type` being threaded must be correct first). Refines: E4 (telemetry lineage).
+Depends on: completed E7 process supervision. Refines: E4 (telemetry lineage).
 
 ### E9. Producer-Output Recovery
 
@@ -179,7 +170,7 @@ Open work:
 - Add a graded recovery ladder ahead of gate-open: narrow deterministic salvage of a recoverable-but-malformed payload (trim unfinished trailing value, drop dangling comma, close open containers; never invent values); normalisation with safe defaults (missing optional -> default, missing required -> hard fail); bounded retry (compacted payload or resume-to-correct); gate only when exhausted. Salvage and normalisation fail loud; they are not a tolerant parser.
 - Tests: resume-to-correct happy path and retry-budget exhaustion; salvage of truncated payloads and hard-fail on unrecoverable ones.
 
-Depends on: E7 (process supervision), E8 (session-join via run lineage).
+Depends on: completed E7 process supervision, E8 (session-join via run lineage).
 
 ### E10. Plan-Graph Algorithms
 
@@ -191,11 +182,103 @@ Open work:
 
 Depends on: nothing (refines an existing check). Independent of E8/E9.
 
+### E11. MP Engineering Review Imports
+
+Convert the MP engineering-skill comparison into Woof improvements without interrupting the active E1/E2 implementation line. This epic is a holding area for review-derived work: small prompt/doc fixes can be pulled into earlier epics when they touch the same file, while larger capability work starts only when the current chain has room.
+
+Open work:
+- **P0.1 live hygiene and onboarding correctness:**
+  - Fix the generated `woof-brainstorm` bundle's dangling `README.md` references. Re-establish a live agent-toolkit source/pin, add the referenced `README.md` to the generated companion set (or remove the references upstream), regenerate with `just gen-brainstorm`, and keep drift tests green. Do not hand-edit the generated body.
+  - Finish the `woof init` repo-slug follow-up. Repo inference from GitHub `origin`/`upstream` is implemented, but CLI next-steps and `skills/woof/references/setup.md` must stop implying the GitHub `repo` placeholder always needs manual replacement. Decide whether no-GitHub-remote repositories should default to `--tracker local` instead of scaffolding a GitHub tracker with a placeholder.
+- **P0.2 prompt doctrine imports:**
+  - Add a Stage-3 standalone-slice rule: every story should be independently verifiable through its `satisfies[]` outcomes once its dependencies are done; reject internal-plumbing fragments with no story-close demo or verification value. Mirror this in `playbooks/critique/plan.md`.
+  - Add Stage-5 design vocabulary: deep-module/interface heuristics, dependency acceptance over construction where appropriate, return-results-over-mutation where appropriate, and "never refactor while RED" plus a short refactor-candidate list.
+  - Add diagnosis-style repair hygiene to Stage 5/resume-to-correct wording: first build or confirm a failing signal for a behavioural symptom, tag any temporary instrumentation with a unique debug prefix, and require cleanup before `executor_result.json`.
+  - Add Definition-time test-seam thinking: the producer names the highest existing seam for each outcome where useful. Keep this advisory unless E2 decides to add optional `epic.schema.json` metadata.
+  - Add the cheap architecture-deepening heuristics to existing prompts: deletion test, dependency-category seam chooser, and "two adapters justify a seam".
+- **P0.3 new inner-loop capability:**
+  - Add a human-supervised "build a throwaway to learn" escape hatch to `woof-brainstorm`, preferably upstream in agent-toolkit. The probe must be named throwaway, answer a stated design question, feed the answer into the brainstorm bundle, and be deleted or absorbed.
+  - Design a scoped bug-diagnosis lifecycle: a `kind: bug` spark path, a diagnosis playbook for reproduce/minimise/hypothesise/instrument, and a handoff into the existing Stage-5 red-green-refactor fix flow.
+- **P0.4 review later, lower on the backlog:**
+  - Review whether to build a standalone codebase-deepening review flow off the `CURRENT-ARCHITECTURE.md` / `TARGET-ARCHITECTURE.md` delta. Treat it as a small subsystem, not a prompt tweak; defer until the cheap heuristics or baseline eval data justify it.
+  - Review an on-demand "zoom out this neighbourhood" operator gesture and the lifecycle for binding repo-durable cartography to per-epic `CONTEXT.md` glossary terms.
+
+Sequencing: preserve the current E1/E2 chain. P0.1 and P0.2 may be pulled forward when they touch active files; P0.3 starts after the readiness and structural-cartography paths are stable; P0.4 is explicitly deferred for later review.
+
+### E12. Structural Cartography Index
+
+Build the ADR-009 mechanical structural index as the foundation for impact queries and later context optimisation.
+
+Open work:
+- Start with a tree-sitter work audit: inspect any concurrent tree-sitter/parser branch or landed code, decide whether it is the extraction substrate, and avoid creating a second parser path. If no reusable substrate exists, implement the V1 Python extractor with a clear adapter boundary so tree-sitter can replace or extend it later.
+- Add `.woof/codebase/structural/index.sqlite` as a gitignored mechanical artefact regenerated by `scripts/refresh-cartography` once the generator exists.
+- Define the SQLite schema and migration/versioning strategy for `files`, `symbols`, `edges`, and `meta`. Keep line numbers as metadata, not primary symbol identity.
+- Define stable symbol IDs for Python v1: module path + qualified name + kind, with overload/disambiguation rules where needed. Do not use line-sensitive IDs for durable audit references.
+- Build the Python-first extractor:
+  - symbol outlines for modules, classes, functions, methods, signatures, docstrings where cheap, and line spans;
+  - `contains` and `defines` edges;
+  - import/dependency edges;
+  - high-confidence direct call edges where resolution is safe;
+  - labelled `EXTRACTED`, `HEURISTIC`, or `AMBIGUOUS` provenance/confidence for every edge.
+- Prefer precision over apparent completeness. Dynamic dispatch, member calls, import alias ambiguity, and framework magic should be omitted or explicitly labelled rather than silently guessed.
+- Add `woof cartography` read-only CLI verbs: `symbols`, `callers`, `callees`, `impact`, `context`, and `stats`, each with JSON and token-bounded text output.
+- Add `cartography-structural-query-result.schema.json` for JSON query output and focused fixtures for a small Python repo.
+- Add an eval harness and a Woof-on-Woof gold set (the 2026-06-07 spike under vault `research/code-mapping/spikes/` seeds both): hand-labelled true callers/callees for a sample of symbols, plus one larger external Python repo for scale. Measure extraction coverage, per-tier edge precision (`EXTRACTED` target >= 0.95, observed ~1.0 on the seed sample; `HEURISTIC` measured and thresholded, with common-name method edges suppressed), caller/callee precision and recall, changed-file -> affected-symbol impact recall, and structural-context token cost. These metrics gate E13 producer wiring and any completeness claim.
+- Update `woof preflight`, `woof init`, `skills/woof/references/map-codebase.md`, and architecture docs so structural indexing is opt-in until the generator is present, then enforced by the declared cartography capability.
+- Tests: extractor fixtures for outlines/imports/calls; stable-ID resilience to line shifts; ambiguous-edge labelling; query CLI output; refresh idempotency; gitignore coverage; preflight behaviour when structural indexing is declared but stale/missing.
+
+Depends on: E1. Can start before E5 only for isolated parser/indexer foundation work; prompt dispatch integration waits for E5 baseline measurement.
+
+### E13. Stage-5 Impact Context Integration
+
+Thread structural impact context into the story loop, starting with the independent reviewer.
+
+Open work:
+- Map staged diff paths and hunks to changed files/symbols using the structural index, falling back cleanly to file-level impact when symbol resolution is unavailable.
+- Feed Stage-5 `critique_dispatch` a bounded `woof cartography impact` context: direct callers/importers first, then likely transitive neighbours, with provenance/confidence labels preserved.
+- Record structural-context bytes and token estimates in dispatch telemetry and E4/E5 eval manifests.
+- Add reviewer prompt wording: structural impact is evidence to inspect, not proof of correctness; ambiguous or heuristic edges require source verification before becoming a blocker.
+- Keep producer integration off by default until the E12 eval metrics plus a reviewer-delta A/B (Stage-5 critique with vs without impact context, over real Woof diffs) show a net real-finding improvement with no noise blow-up. If enabled later, give the producer neighbours and tests before editing, not a broad graph dump.
+- Tests: diff-to-symbol mapping, prompt assembly under token caps, fallback when index is missing/stale, telemetry attribution, and blocker evidence resolving to structural query output plus file lines.
+
+Depends on: E12, E4, E5.
+
+### E14. Ranked And Semantic Cartography Retrieval
+
+Add the non-structural retrieval recommendations as separate, measurable artefacts rather than bundling them into the call graph.
+
+Open work:
+- Add Aider-style ranking over the structural index: centrality/PageRank, task personalisation from epic/story paths and mentioned identifiers, and a token-budgeted signature skeleton.
+- Add token-savings instrumentation for cartography context: raw candidate bytes/tokens vs injected bytes/tokens, per node.
+- Add a Semble-style semantic retrieval artefact under `.woof/codebase/retrieval/`: BM25 first, then static local embeddings only if dependency and model size stay compatible with Woof's expert-workstation posture.
+- Add `woof cartography search` returning bounded snippets with file path, line span, score, and why it matched. This is retrieval, not structural truth.
+- Add `cartography-search-result.schema.json`.
+- Tests and evals: ranking determinism, personalisation effect, retrieval fallback without embeddings, token-saving accounting, and no API-key/network dependency in the default path.
+
+Depends on: E12. Sequenced after E13 unless E5 shows retrieval is a larger bottleneck than structural impact.
+
+### E15. Structural Onboarding And Mapper Grounding
+
+Use the structural index to improve large-repo onboarding and AS-IS cartography without replacing mapper-authored prose.
+
+Open work:
+- Add an onboarding-only structural pass that computes hubs, bridge files, shortest paths between entry points, and coarse communities from the structural index.
+- Use structural summaries to seed mapper subagent prompts so `CURRENT-ARCHITECTURE.md` and `STRUCTURE.md` are grounded in observed edges rather than mapper rediscovery alone.
+- Add a bottom-up mapper option: summarise leaf modules first, then feed those summaries upward into architecture/structure docs.
+- Adopt SCIP-style stable symbol strings in AS-IS prose where useful, so docs can cite exact symbols rather than free-text names.
+- Add DESCRIBES-style lightweight links from AS-IS sections to files/symbols they cover. Use them later for precise stale-doc prompts when the structural index changes.
+- Keep visualisation and human `observe` views optional. Do not build an HTML/graph UI until a real onboarding run proves it is worth the surface area.
+- Tests: generated prompt seed shape, symbol-link validation, stale-section detection over changed symbols, and mapper output hygiene preserving the forbidden-files/secret-scan rules.
+
+Depends on: E12. Best started when a real large inherited repo or specwright-scale onboarding run exists.
+
 ## Settled Choices
 
 - Runtime action safety is trusted-local plus commit-safety, audit, and drift detection. Woof does not add a preventive sandbox unless real usage proves detection is insufficient. External sandbox-orchestration tooling (e.g. sandcastle) treats the sandbox as the product; Woof deliberately places the safety boundary at commit time instead. Git worktrees, if adopted for parallel dispatch, give collision avoidance but not the isolation boundary.
 - Woof owns the graph authority in deterministic Python. LangGraph and Temporal are not adopted; their transferable concepts (explicit conditional edges, reducer-based state merge, checkpoint/interrupt/replay vocabulary) are mined into Woof's own engine rather than ceding control flow to a framework. NetworkX is adopted only as a plan-graph algorithm library (cycle and topological analysis), because it is a data structure, not an orchestrator.
-- Parallel story dispatch via git worktrees is deferred, not rejected. It is sequenced after E7 (process supervision) and E8/E9 (lineage and recovery), because running multiple trusted-local full-access workers concurrently turns the commit-safety boundary into a concurrency-safety boundary: concurrent transaction manifests, shared non-worktree state, shared MCP and credentials. It is not an active epic.
+- Structural cartography is an embedded mechanical index, not an orchestration graph. Default storage is SQLite under `.woof/codebase/structural/`; the only public surface is `woof cartography`. Woof does not adopt Neo4j, LadybugDB, always-on code-intel daemons, or MCP graph tools.
+- Structural-index confidence is advisory. Reviewer blockers still need resolvable evidence; an `AMBIGUOUS` or `HEURISTIC` edge can point a reviewer to source, but cannot block on its own.
+- Parallel story dispatch via git worktrees is deferred, not rejected. It is sequenced after the completed E7 process-supervision work plus E8/E9 (lineage and recovery), because running multiple trusted-local full-access workers concurrently turns the commit-safety boundary into a concurrency-safety boundary: concurrent transaction manifests, shared non-worktree state, shared MCP and credentials. It is not an active epic.
 - The eval harness stays in Python. `/woof` can launch it, but there is no `/woof:eval` skill.
 - tmux is optional for long runs and only supervises `woof wf`; it does not own workflow state.
 - There is no active plan to build `woof graph` or split `/woof` into peer skills.
@@ -203,7 +286,9 @@ Depends on: nothing (refines an existing check). Independent of E8/E9.
 ## Glossary
 
 - **Cartography** - the artefact group at `.woof/codebase/`: durable design docs, mapper-authored AS-IS docs, and mechanical files.
-- **Mechanical layer** - `tags`, `files.txt`, and `freshness.json`; cheap, post-commit refreshed, and gitignored.
+- **Mechanical layer** - `tags`, `files.txt`, `freshness.json`, and planned generated indexes such as `.woof/codebase/structural/`; cheap, post-commit refreshed, and gitignored.
+- **Structural cartography index** - ADR-009's generated files/symbols/edges SQLite artefact under `.woof/codebase/structural/`.
+- **Structural impact context** - token-bounded callers/callees/dependencies output from `woof cartography impact`, used first by the Stage-5 reviewer.
 - **Producer** - the LLM-dispatched node that creates an artefact for a graph stage.
 - **Reviewer** - the LLM-dispatched node that critiques the producer's output in an isolated context.
 - **Mapper subagent** - a Claude subagent launched by the `/woof` map-codebase flow to author one or two cartography docs.

@@ -5,12 +5,21 @@
 does not have to hand-assemble four schema-bound TOMLs and remember every
 required gitignore line. The templates use explicit ``<replace>`` placeholders
 so a consumer cannot accidentally run preflight against unedited boilerplate.
+
+Init infers what it safely can from the project's git remotes. With ``--tracker``
+omitted it picks the tracker kind: ``github`` (pre-filling ``repo`` as ``owner/name``)
+when an ``origin``/``upstream`` github remote is reachable, otherwise ``local``. An
+explicit ``--tracker`` is always honoured; for an explicit ``github`` tracker the
+``repo`` slug is still inferred when a github remote is reachable. Inference only ever
+replaces a placeholder with a real value; when no github remote is reachable the github
+``repo`` keeps its ``<replace>`` placeholder, so init stays fail-closed.
 """
 
 from __future__ import annotations
 
 import argparse
 import re
+import subprocess
 import sys
 import tomllib
 from dataclasses import dataclass
@@ -40,8 +49,7 @@ ajv-formats = "any"
 # scripts/refresh-cartography script, the human-authored design docs
 # (.woof/codebase/TARGET-ARCHITECTURE.md and PRINCIPLES.md), and the mechanical
 # layer (tags, files.txt, freshness.json). Author the design docs through the
-# /woof map-codebase flow before preflight passes. Remove this block only to opt
-# the repository out of cartography enforcement entirely.
+# /woof setup flow, then run the /woof map-codebase flow before preflight passes.
 [cartography]
 staleness_floor_hours = 168
 summary_min_chars = 200
@@ -60,13 +68,7 @@ CARTOGRAPHY_LANGUAGES_HINT = (
     '# languages = ["python"]  # refresh-cartography fragments to compose (woof init --language)'
 )
 
-TRACKER_BLOCK_GITHUB = """\
-# Issue tracker for epic-level contracts. kind = "github" keeps each epic in a
-# GitHub issue and needs `repo`. Re-run `woof init --tracker local` to scaffold
-# the local-only variant for a repository with no hosted issue tracker.
-[tracker]
-kind = "github"
-repo = "<replace>/<replace>\""""
+GITHUB_REPO_PLACEHOLDER = "<replace>/<replace>"
 
 TRACKER_BLOCK_LOCAL = """\
 # Issue tracker for epic-level contracts. kind = "local" keeps every epic under
@@ -74,6 +76,100 @@ TRACKER_BLOCK_LOCAL = """\
 # hosted issue tracker. Re-run `woof init --tracker github` for a GitHub setup.
 [tracker]
 kind = "local\""""
+
+# github remote URL forms init understands: scp-like ssh, ssh://, git://, and
+# https (with an optional `user@`). The `owner/name` after the host is captured,
+# with an optional `.git` suffix and trailing slash stripped.
+_GITHUB_REMOTE_RE = re.compile(
+    r"^(?:"
+    r"git@github\.com:"
+    r"|ssh://git@github\.com/"
+    r"|git://github\.com/"
+    r"|https://(?:[^@/]+@)?github\.com/"
+    r")(?P<owner>[^/]+)/(?P<name>.+?)(?:\.git)?/?$"
+)
+
+
+def _tracker_block_github(repo: str) -> str:
+    """Render the github ``[tracker]`` block with ``repo`` pre-filled.
+
+    ``repo`` is the inferred ``owner/name`` slug, or ``GITHUB_REPO_PLACEHOLDER``
+    when it could not be inferred from a git remote - the placeholder keeps init
+    fail-closed so preflight refuses unedited boilerplate.
+    """
+    return (
+        '# Issue tracker for epic-level contracts. kind = "github" keeps each epic in a\n'
+        "# GitHub issue and needs `repo`. Re-run `woof init --tracker local` to scaffold\n"
+        "# the local-only variant for a repository with no hosted issue tracker.\n"
+        "[tracker]\n"
+        'kind = "github"\n'
+        f'repo = "{repo}"'
+    )
+
+
+def _parse_github_repo(url: str) -> str | None:
+    """Extract an ``owner/name`` slug from a github remote URL, else None."""
+    match = _GITHUB_REMOTE_RE.match(url.strip())
+    if match is None:
+        return None
+    return f"{match.group('owner')}/{match.group('name')}"
+
+
+def _git_remote_url(project_root: Path, remote: str) -> str | None:
+    """Return the URL of ``remote`` in ``project_root``, or None.
+
+    Tolerates a missing git binary, a non-repository directory, and an absent
+    remote - every failure resolves to None so init falls back to the placeholder.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(project_root), "remote", "get-url", remote],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    url = proc.stdout.strip()
+    return url or None
+
+
+def _infer_github_repo(project_root: Path) -> str | None:
+    """Infer the github ``owner/name`` slug from the project's git remotes.
+
+    Checks ``origin`` then ``upstream`` and returns the first that parses as a
+    github URL; None when no github remote is reachable, so the scaffold keeps
+    its explicit ``<replace>`` placeholder.
+    """
+    for remote in ("origin", "upstream"):
+        url = _git_remote_url(project_root, remote)
+        if url is not None:
+            slug = _parse_github_repo(url)
+            if slug is not None:
+                return slug
+    return None
+
+
+def _resolve_tracker(project_root: Path, tracker: str | None) -> tuple[str, str | None, bool]:
+    """Resolve the tracker kind, github repo slug, and whether the kind was inferred.
+
+    An explicit ``tracker`` (``github``/``local``) is honoured; an explicit github
+    tracker still gets its ``repo`` inferred from the remote when reachable. With
+    ``tracker`` omitted (None) the kind is inferred from the git remote: ``github``
+    (plus slug) when a github remote is reachable, otherwise ``local``. Returns
+    ``(resolved_kind, repo_slug, kind_inferred)``.
+    """
+    if tracker == "local":
+        return "local", None, False
+    if tracker == "github":
+        return "github", _infer_github_repo(project_root), False
+    slug = _infer_github_repo(project_root)
+    if slug is not None:
+        return "github", slug, True
+    return "local", None, True
 
 
 def _cartography_languages_line(languages: list[str]) -> str:
@@ -89,12 +185,16 @@ def _cartography_languages_line(languages: list[str]) -> str:
     return f"languages = [{rendered}]"
 
 
-def _prerequisites_template(tracker_kind: str, languages: list[str]) -> str:
+def _prerequisites_template(
+    tracker_kind: str, languages: list[str], repo_slug: str | None = None
+) -> str:
     """Render prerequisites.toml for the chosen tracker.
 
     The github tracker declares `gh` as required infra; the local tracker omits
     it so a consumer with no hosted issue tracker is not forced to install it.
     Declared cartography languages are written into ``[cartography].languages``.
+    ``repo_slug`` pre-fills the github ``repo`` line when inferred from a git
+    remote; without it the ``<replace>`` placeholder is kept.
     """
     cartography_languages = _cartography_languages_line(languages)
     if tracker_kind == "local":
@@ -103,9 +203,10 @@ def _prerequisites_template(tracker_kind: str, languages: list[str]) -> str:
             tracker_block=TRACKER_BLOCK_LOCAL,
             cartography_languages=cartography_languages,
         )
+    tracker_block = _tracker_block_github(repo_slug or GITHUB_REPO_PLACEHOLDER)
     return PREREQUISITES_TEMPLATE.format(
         infra_gh='gh = "2.0+"\n',
-        tracker_block=TRACKER_BLOCK_GITHUB,
+        tracker_block=tracker_block,
         cartography_languages=cartography_languages,
     )
 
@@ -310,6 +411,8 @@ class InitResult:
     script: FileAction | None = None
     script_note: str | None = None
     languages: tuple[str, ...] = ()
+    inferred_repo: str | None = None
+    tracker_inferred: bool = False
 
     @property
     def changed(self) -> bool:
@@ -361,8 +464,12 @@ def setup_init_parser(subparsers: argparse._SubParsersAction) -> None:  # type: 
     init.add_argument(
         "--tracker",
         choices=["github", "local"],
-        default="github",
-        help="issue tracker to scaffold in prerequisites.toml (default: github)",
+        default=None,
+        help=(
+            "issue tracker to scaffold in prerequisites.toml. Omit to infer from the "
+            "git remote: github (with repo pre-filled) when an origin/upstream github "
+            "remote is reachable, otherwise local."
+        ),
     )
     init.add_argument(
         "--language",
@@ -383,7 +490,7 @@ def run_init(
     *,
     force: bool = False,
     with_docs_paths: bool = False,
-    tracker: str = "github",
+    tracker: str | None = None,
     languages: list[str] | None = None,
 ) -> InitResult:
     woof_dir = project_root / ".woof"
@@ -392,11 +499,13 @@ def run_init(
     requested = _normalise_languages(languages)
     _validate_cartography_languages(requested)
 
+    resolved_tracker, inferred_repo, tracker_inferred = _resolve_tracker(project_root, tracker)
+
     files: list[FileAction] = []
     prereq_path = woof_dir / "prerequisites.toml"
     prereq_existed = prereq_path.is_file()
     targets: list[tuple[str, str]] = [
-        ("prerequisites.toml", _prerequisites_template(tracker, requested)),
+        ("prerequisites.toml", _prerequisites_template(resolved_tracker, requested, inferred_repo)),
         ("agents.toml", AGENTS_TEMPLATE),
         ("quality-gates.toml", QUALITY_GATES_TEMPLATE),
         ("test-markers.toml", TEST_MARKERS_TEMPLATE),
@@ -440,14 +549,22 @@ def run_init(
             "(pass --language <lang> or set [cartography].languages in prerequisites.toml)"
         )
 
+    # Only report inference when the prereq file was actually written with it;
+    # a skipped (pre-existing) prereq keeps the user's own values.
+    prereq_written = (not prereq_existed) or force
+    reported_repo = inferred_repo if (inferred_repo and prereq_written) else None
+    reported_tracker_inferred = tracker_inferred and prereq_written
+
     return InitResult(
         project_root=project_root,
         files=files,
         gitignore_changed=gitignore_changed,
-        tracker=tracker,
+        tracker=resolved_tracker,
         script=script,
         script_note=script_note,
         languages=tuple(effective),
+        inferred_repo=reported_repo,
+        tracker_inferred=reported_tracker_inferred,
     )
 
 
@@ -594,6 +711,14 @@ def _print_result(result: InitResult) -> None:
     for action in result.files:
         suffix = f" ({action.reason})" if action.reason else ""
         print(f"  {action.action:<8} {action.relpath}{suffix}")
+    if result.tracker_inferred and result.tracker == "local":
+        print(
+            "  note     inferred tracker: local "
+            "(no github remote found; pass --tracker github to override)"
+        )
+    if result.inferred_repo is not None:
+        prefix = "inferred tracker: github, " if result.tracker_inferred else ""
+        print(f"  note     {prefix}repo = {result.inferred_repo} (from git remote)")
     if result.gitignore_changed:
         print("  updated  .gitignore (woof block)")
     else:
@@ -604,7 +729,10 @@ def _print_result(result: InitResult) -> None:
         print(f"  note     {result.script_note}")
     print()
     print("Next steps:")
-    print("  1. Replace every <replace> placeholder in .woof/*.toml.")
+    print(
+        "  1. Replace any remaining <replace> placeholders in .woof/*.toml "
+        "(for example the test command in quality-gates.toml)."
+    )
     print("  2. Authenticate the model CLIs once: `claude /login` and `codex login`.")
     print("  3. Run `woof preflight` and resolve any remaining failures.")
     print("  4. Run `woof hooks install` to enable the post-commit cartography hook.")

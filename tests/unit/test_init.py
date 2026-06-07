@@ -4,9 +4,33 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 from pathlib import Path
 
+import pytest
+
+from woof.cli.init import (
+    GITHUB_REPO_PLACEHOLDER,
+    _parse_github_repo,
+    run_init,
+)
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+_HAS_GIT = shutil.which("git") is not None
+
+
+def _git_init_repo(path: Path, *, origin: str | None = None) -> None:
+    """Initialise a git repo at ``path``, optionally with an ``origin`` remote."""
+    subprocess.run(["git", "init"], cwd=path, check=True, capture_output=True, text=True)
+    if origin is not None:
+        subprocess.run(
+            ["git", "remote", "add", "origin", origin],
+            cwd=path,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
 
 
 def _env() -> dict[str, str]:
@@ -35,7 +59,7 @@ def test_init_creates_starter_config_and_gitignore_block(tmp_path: Path, run_woo
     assert not (woof_dir / "docs-paths.toml").exists()
 
     prereq = (woof_dir / "prerequisites.toml").read_text()
-    assert "<replace>/<replace>" in prereq
+    assert "[tracker]" in prereq
     agents = (woof_dir / "agents.toml").read_text()
     assert "Runtime model: trusted-local automation" in agents
 
@@ -72,7 +96,11 @@ def test_init_force_overwrites_existing_files(tmp_path: Path, run_woof) -> None:
     prereq_path = tmp_path / ".woof" / "prerequisites.toml"
     prereq_path.write_text("# user-edited\n")
 
-    forced = run_woof("init", "--project-root", str(tmp_path), "--force", env=_env())
+    # Explicit --tracker github exercises the placeholder path (the test PATH has
+    # no git, so no remote is reachable and the slug stays a placeholder).
+    forced = run_woof(
+        "init", "--project-root", str(tmp_path), "--tracker", "github", "--force", env=_env()
+    )
     assert forced.returncode == 0, forced.stderr + forced.stdout
     assert "<replace>/<replace>" in prereq_path.read_text()
     assert "updated" in forced.stdout
@@ -92,15 +120,16 @@ def test_init_with_docs_paths_scaffolds_optional_file(tmp_path: Path, run_woof) 
     assert "code_pattern" in docs_paths.read_text()
 
 
-def test_init_default_tracker_is_github(tmp_path: Path, run_woof) -> None:
+def test_init_default_infers_local_without_github_remote(tmp_path: Path, run_woof) -> None:
+    # No --tracker and no reachable github remote (git is off the test PATH) -> local.
     proc = run_woof("init", "--project-root", str(tmp_path), env=_env())
     assert proc.returncode == 0, proc.stderr + proc.stdout
-    assert "tracker: github" in proc.stdout
+    assert "tracker: local" in proc.stdout
 
     prereq = (tmp_path / ".woof" / "prerequisites.toml").read_text()
-    assert 'kind = "github"' in prereq
-    assert 'repo = "<replace>/<replace>"' in prereq
-    assert 'gh = "2.0+"' in prereq
+    assert 'kind = "local"' in prereq
+    assert "repo =" not in prereq
+    assert "gh = " not in prereq
 
 
 def test_init_tracker_local_scaffolds_local_tracker(tmp_path: Path, run_woof) -> None:
@@ -230,3 +259,105 @@ def test_init_handles_missing_project_root_argument(tmp_path: Path, monkeypatch,
     proc = run_woof("init", env=_env())
     assert proc.returncode == 0, proc.stderr + proc.stdout
     assert (tmp_path / ".woof" / "prerequisites.toml").is_file()
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("git@github.com:acme/widgets.git", "acme/widgets"),
+        ("git@github.com:acme/widgets", "acme/widgets"),
+        ("https://github.com/acme/widgets.git", "acme/widgets"),
+        ("https://github.com/acme/widgets", "acme/widgets"),
+        ("https://github.com/acme/widgets/", "acme/widgets"),
+        ("https://user@github.com/acme/widgets.git", "acme/widgets"),
+        ("ssh://git@github.com/acme/widgets.git", "acme/widgets"),
+        ("git://github.com/acme/widgets.git", "acme/widgets"),
+        # Non-github hosts and junk fall through to the placeholder.
+        ("git@gitlab.com:acme/widgets.git", None),
+        ("https://example.com/acme/widgets.git", None),
+        ("not a url", None),
+        ("", None),
+    ],
+)
+def test_parse_github_repo(url: str, expected: str | None) -> None:
+    assert _parse_github_repo(url) == expected
+
+
+@pytest.mark.skipif(not _HAS_GIT, reason="git not available")
+def test_init_default_infers_github_and_slug_from_origin(tmp_path: Path) -> None:
+    _git_init_repo(tmp_path, origin="git@github.com:acme/widgets.git")
+
+    result = run_init(tmp_path)
+
+    prereq = (tmp_path / ".woof" / "prerequisites.toml").read_text()
+    assert 'kind = "github"' in prereq
+    assert 'repo = "acme/widgets"' in prereq
+    assert GITHUB_REPO_PLACEHOLDER not in prereq
+    assert result.tracker == "github"
+    assert result.tracker_inferred is True
+    assert result.inferred_repo == "acme/widgets"
+
+
+@pytest.mark.skipif(not _HAS_GIT, reason="git not available")
+def test_init_default_infers_local_when_no_remote(tmp_path: Path) -> None:
+    _git_init_repo(tmp_path)  # a git repo, but no remote
+
+    result = run_init(tmp_path)
+
+    prereq = (tmp_path / ".woof" / "prerequisites.toml").read_text()
+    assert 'kind = "local"' in prereq
+    assert "repo =" not in prereq
+    assert result.tracker == "local"
+    assert result.tracker_inferred is True
+    assert result.inferred_repo is None
+
+
+def test_init_default_infers_local_outside_git_repo(tmp_path: Path) -> None:
+    # tmp_path is not a git repo; inference finds no remote -> local default.
+    result = run_init(tmp_path)
+
+    prereq = (tmp_path / ".woof" / "prerequisites.toml").read_text()
+    assert 'kind = "local"' in prereq
+    assert result.tracker == "local"
+    assert result.inferred_repo is None
+
+
+@pytest.mark.skipif(not _HAS_GIT, reason="git not available")
+def test_init_explicit_github_infers_slug_from_origin(tmp_path: Path) -> None:
+    _git_init_repo(tmp_path, origin="https://github.com/acme/widgets.git")
+
+    result = run_init(tmp_path, tracker="github")
+
+    prereq = (tmp_path / ".woof" / "prerequisites.toml").read_text()
+    assert 'repo = "acme/widgets"' in prereq
+    assert GITHUB_REPO_PLACEHOLDER not in prereq
+    assert result.tracker == "github"
+    assert result.tracker_inferred is False
+    assert result.inferred_repo == "acme/widgets"
+
+
+@pytest.mark.skipif(not _HAS_GIT, reason="git not available")
+def test_init_explicit_github_without_remote_keeps_placeholder(tmp_path: Path) -> None:
+    _git_init_repo(tmp_path)  # a git repo, but no remote
+
+    result = run_init(tmp_path, tracker="github")
+
+    prereq = (tmp_path / ".woof" / "prerequisites.toml").read_text()
+    assert f'repo = "{GITHUB_REPO_PLACEHOLDER}"' in prereq
+    assert result.tracker == "github"
+    assert result.inferred_repo is None
+
+
+@pytest.mark.skipif(not _HAS_GIT, reason="git not available")
+def test_init_explicit_local_ignores_github_remote(tmp_path: Path) -> None:
+    """`--tracker local` must not infer or scaffold a repo line even with a github remote."""
+    _git_init_repo(tmp_path, origin="git@github.com:acme/widgets.git")
+
+    result = run_init(tmp_path, tracker="local")
+
+    prereq = (tmp_path / ".woof" / "prerequisites.toml").read_text()
+    assert 'kind = "local"' in prereq
+    assert "repo =" not in prereq
+    assert result.tracker == "local"
+    assert result.tracker_inferred is False
+    assert result.inferred_repo is None

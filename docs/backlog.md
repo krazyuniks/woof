@@ -189,13 +189,7 @@ Convert the MP engineering-skill comparison into Woof improvements without inter
 Open work:
 - **P0.1 live hygiene and onboarding correctness:**
   - Fix the generated `woof-brainstorm` bundle's dangling `README.md` references. Re-establish a live agent-toolkit source/pin, add the referenced `README.md` to the generated companion set (or remove the references upstream), regenerate with `just gen-brainstorm`, and keep drift tests green. Do not hand-edit the generated body.
-  - Finish the `woof init` repo-slug follow-up. Repo inference from GitHub `origin`/`upstream` is implemented, but CLI next-steps and `skills/woof/references/setup.md` must stop implying the GitHub `repo` placeholder always needs manual replacement. Decide whether no-GitHub-remote repositories should default to `--tracker local` instead of scaffolding a GitHub tracker with a placeholder.
-- **P0.2 prompt doctrine imports:**
-  - Add a Stage-3 standalone-slice rule: every story should be independently verifiable through its `satisfies[]` outcomes once its dependencies are done; reject internal-plumbing fragments with no story-close demo or verification value. Mirror this in `playbooks/critique/plan.md`.
-  - Add Stage-5 design vocabulary: deep-module/interface heuristics, dependency acceptance over construction where appropriate, return-results-over-mutation where appropriate, and "never refactor while RED" plus a short refactor-candidate list.
-  - Add diagnosis-style repair hygiene to Stage 5/resume-to-correct wording: first build or confirm a failing signal for a behavioural symptom, tag any temporary instrumentation with a unique debug prefix, and require cleanup before `executor_result.json`.
-  - Add Definition-time test-seam thinking: the producer names the highest existing seam for each outcome where useful. Keep this advisory unless E2 decides to add optional `epic.schema.json` metadata.
-  - Add the cheap architecture-deepening heuristics to existing prompts: deletion test, dependency-category seam chooser, and "two adapters justify a seam".
+  - Align `skills/woof/references/setup.md` with current `woof init` behaviour: init infers the tracker default and repo slug from the git remote (an `origin`/`upstream` github remote yields a github tracker with `repo` pre-filled, otherwise local), so the doc must stop implying the GitHub `repo` placeholder always needs manual replacement. The CLI behaviour and next-steps wording are in place; only the reference doc lags.
 - **P0.3 new inner-loop capability:**
   - Add a human-supervised "build a throwaway to learn" escape hatch to `woof-brainstorm`, preferably upstream in agent-toolkit. The probe must be named throwaway, answer a stated design question, feed the answer into the brainstorm bundle, and be deleted or absorbed.
   - Design a scoped bug-diagnosis lifecycle: a `kind: bug` spark path, a diagnosis playbook for reproduce/minimise/hypothesise/instrument, and a handoff into the existing Stage-5 red-green-refactor fix flow.
@@ -203,7 +197,7 @@ Open work:
   - Review whether to build a standalone codebase-deepening review flow off the `CURRENT-ARCHITECTURE.md` / `TARGET-ARCHITECTURE.md` delta. Treat it as a small subsystem, not a prompt tweak; defer until the cheap heuristics or baseline eval data justify it.
   - Review an on-demand "zoom out this neighbourhood" operator gesture and the lifecycle for binding repo-durable cartography to per-epic `CONTEXT.md` glossary terms.
 
-Sequencing: preserve the current E1/E2 chain. P0.1 and P0.2 may be pulled forward when they touch active files; P0.3 starts after the readiness and structural-cartography paths are stable; P0.4 is explicitly deferred for later review.
+Sequencing: preserve the current E1/E2 chain. The P0.2 prompt-doctrine imports have landed across the producer/reviewer playbooks; the remaining P0.1 item (setup.md alignment) and the dangling-README fix may be pulled forward when they touch active files; P0.3 starts after the readiness and structural-cartography paths are stable; P0.4 is explicitly deferred for later review.
 
 ### E12. Structural Cartography Index
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import os
@@ -22,6 +23,18 @@ from woof.graph.transitions import StageStateError, epic_dir, mark_story_status,
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WOOF_BIN = REPO_ROOT / "bin" / "woof"
+
+
+def _dispatch_result(
+    exit_type: str,
+    *,
+    returncode: int = 0,
+    stderr: str = "",
+) -> nodes.DispatchRunResult:
+    return nodes.DispatchRunResult(
+        process=subprocess.CompletedProcess([], returncode, "", stderr),
+        exit_type=exit_type,
+    )
 
 
 def _write_plan(root: Path, epic_id: int = 1) -> Path:
@@ -143,6 +156,87 @@ default_minutes = 15
     events = [json.loads(line) for line in (directory / "dispatch.jsonl").read_text().splitlines()]
     assert events[0]["prompt_transport"] == "stdin"
     assert events[0]["argv"][-1] == "<prompt:stdin>"
+
+
+def test_executor_dispatch_completed_lingering_advances(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_plan(tmp_path, 1)
+
+    def fake_dispatch(
+        repo_root: Path,
+        role: str,
+        epic_id: int,
+        story_id: str | None,
+        prompt: str,
+        artefacts_loaded: list[str] | None = None,
+    ) -> nodes.DispatchRunResult:
+        assert repo_root == tmp_path
+        assert role == "primary"
+        assert epic_id == 1
+        assert story_id == "S1"
+        assert '"node_type": "executor_dispatch"' in prompt
+        assert artefacts_loaded == [".woof/epics/E1/plan.json"]
+        return _dispatch_result("completed_lingering")
+
+    monkeypatch.setattr(nodes, "_run_dispatch", fake_dispatch)
+
+    output = nodes.executor_dispatch_node(
+        NodeInput(
+            node_type=NodeType.EXECUTOR_DISPATCH,
+            epic_id=1,
+            story_id="S1",
+            repo_root=tmp_path,
+        )
+    )
+
+    assert output.status == NodeStatus.COMPLETED
+    assert output.next_node == NodeType.CRITIQUE_DISPATCH
+
+
+@pytest.mark.parametrize(
+    ("exit_type", "returncode"),
+    [
+        ("nonzero", 7),
+        ("idle_kill", 124),
+        ("wallclock_timeout", 124),
+        ("operator_cancel", 130),
+    ],
+)
+def test_executor_dispatch_failure_exit_types_open_existing_crash_gate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    exit_type: str,
+    returncode: int,
+) -> None:
+    _write_plan(tmp_path, 1)
+
+    def fake_dispatch(
+        repo_root: Path,
+        role: str,
+        epic_id: int,
+        story_id: str | None,
+        prompt: str,
+        artefacts_loaded: list[str] | None = None,
+    ) -> nodes.DispatchRunResult:
+        return _dispatch_result(exit_type, returncode=returncode, stderr=f"{exit_type} failed")
+
+    monkeypatch.setattr(nodes, "_run_dispatch", fake_dispatch)
+
+    output = nodes.executor_dispatch_node(
+        NodeInput(
+            node_type=NodeType.EXECUTOR_DISPATCH,
+            epic_id=1,
+            story_id="S1",
+            repo_root=tmp_path,
+        )
+    )
+
+    assert output.status == NodeStatus.GATE_OPENED
+    assert output.triggered_by == ["subprocess_crash"]
+    assert output.message == f"{exit_type} failed"
+    gate_fm = _read_gate_fm(tmp_path / ".woof" / "epics" / "E1" / "gate.md")
+    assert gate_fm["triggered_by"] == ["subprocess_crash"]
 
 
 def _make_gh_rate_limit_stub(bin_dir: Path) -> dict[str, str]:
@@ -701,11 +795,27 @@ def test_dispatch_helper_uses_role_route_without_provider_target(
         captured["env"] = env
         captured["capture_output"] = capture_output
         captured["text"] = text
+        dispatch_jsonl = cwd / ".woof" / "epics" / "E1" / "dispatch.jsonl"
+        dispatch_jsonl.parent.mkdir(parents=True, exist_ok=True)
+        dispatch_jsonl.write_text(
+            json.dumps(
+                {
+                    "event": "subprocess_returned",
+                    "epic_id": 1,
+                    "role": "primary",
+                    "story_id": "S1",
+                    "pid": 1234,
+                    "exit_type": "completed_lingering",
+                    "exit_code": 0,
+                }
+            )
+            + "\n"
+        )
         return subprocess.CompletedProcess(args, 0, "", "")
 
     monkeypatch.setattr(nodes.subprocess, "run", fake_run)
 
-    nodes._run_dispatch(
+    result = nodes._run_dispatch(
         tmp_path,
         role="primary",
         epic_id=1,
@@ -725,6 +835,48 @@ def test_dispatch_helper_uses_role_route_without_provider_target(
     env = captured["env"]
     assert env is not None
     assert "PYTHONPATH" in env
+    assert result.exit_type == "completed_lingering"
+    assert result.process.returncode == 0
+
+
+def test_dispatch_consumers_route_results_through_shared_classifier() -> None:
+    source = Path(nodes.__file__).read_text(encoding="utf-8")
+    module = ast.parse(source)
+    expected_consumers = {
+        "_discovery_bucket_node",
+        "discovery_synthesis_node",
+        "epic_definition_node",
+        "breakdown_planning_node",
+        "plan_critique_node",
+        "executor_dispatch_node",
+        "critique_dispatch_node",
+    }
+    functions = {item.name: item for item in module.body if isinstance(item, ast.FunctionDef)}
+    dispatch_consumers = {
+        name
+        for name, function in functions.items()
+        if any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_run_dispatch"
+            for node in ast.walk(function)
+        )
+    }
+
+    assert dispatch_consumers == expected_consumers
+    for name in expected_consumers:
+        function = functions[name]
+        assert any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_classify_dispatch_result"
+            for node in ast.walk(function)
+        ), name
+        assert not [
+            node
+            for node in ast.walk(function)
+            if isinstance(node, ast.Attribute) and node.attr == "returncode"
+        ], name
 
 
 def test_pre_plan_transition_enters_discovery_when_spark_exists(tmp_path: Path) -> None:
@@ -823,6 +975,39 @@ def test_discovery_research_node_dispatches_primary_and_bundles_playbooks(
     events = [json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines()]
     assert events[-1]["event"] == "discovery_bucket_explored"
     assert events[-1]["bucket"] == "research"
+
+
+def test_discovery_dispatch_completed_lingering_advances(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    directory = _write_spark(tmp_path, 225)
+
+    def fake_dispatch(
+        repo_root: Path,
+        role: str,
+        epic_id: int,
+        story_id: str | None,
+        prompt: str,
+        artefacts_loaded: list[str] | None = None,
+    ) -> nodes.DispatchRunResult:
+        assert repo_root == tmp_path
+        assert role == "primary"
+        assert epic_id == 225
+        assert story_id is None
+        assert '"node_type": "discovery_research"' in prompt
+        assert artefacts_loaded == [".woof/epics/E225/spark.md"]
+        _write_discovery_bucket(directory, "research")
+        return _dispatch_result("completed_lingering")
+
+    monkeypatch.setattr(nodes, "_run_dispatch", fake_dispatch)
+
+    output = nodes.discovery_research_node(
+        NodeInput(node_type=NodeType.DISCOVERY_RESEARCH, epic_id=225, repo_root=tmp_path)
+    )
+
+    assert output.status == NodeStatus.COMPLETED
+    assert output.next_node == NodeType.DISCOVERY_THINKING
+    assert output.paths == [".woof/epics/E225/discovery/research/research.md"]
 
 
 def test_discovery_thinking_node_passes_prior_bucket_artefacts(tmp_path: Path, monkeypatch) -> None:

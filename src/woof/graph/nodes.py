@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -57,6 +58,30 @@ from woof.lib.audit import prepare_commit_audit
 from woof.paths import schema_dir, tool_root
 
 NodeHandler = Callable[[NodeInput], NodeOutput]
+DispatchExitType = str
+
+_DISPATCH_SUCCESS_EXIT_TYPES = {"clean", "completed_lingering"}
+_DISPATCH_FAILURE_EXIT_TYPES = {
+    "nonzero",
+    "idle_kill",
+    "wallclock_timeout",
+    "operator_cancel",
+}
+
+
+@dataclass(frozen=True)
+class DispatchRunResult:
+    process: subprocess.CompletedProcess[str]
+    exit_type: DispatchExitType
+    exit_code: int | None = None
+
+
+@dataclass(frozen=True)
+class DispatchClassification:
+    ok: bool
+    exit_type: DispatchExitType
+    gate_exit_code: int
+    message: str
 
 
 def _now() -> str:
@@ -169,6 +194,105 @@ def _write_prompt_file(text: str) -> Path:
     with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as handle:
         handle.write(text)
         return Path(handle.name)
+
+
+def _dispatch_exit_type_from_returncode(returncode: int) -> DispatchExitType:
+    return "clean" if returncode == 0 else "nonzero"
+
+
+def _dispatch_jsonl_offset(path: Path) -> int:
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0
+
+
+def _read_appended_dispatch_events(path: Path, offset: int) -> list[dict]:
+    try:
+        with path.open("rb") as handle:
+            if offset > 0 and path.stat().st_size >= offset:
+                handle.seek(offset)
+            raw = handle.read()
+    except OSError:
+        return []
+
+    events: list[dict] = []
+    for line in raw.decode("utf-8", errors="replace").splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict):
+            events.append(event)
+    return events
+
+
+def _event_story_matches(event: dict, story_id: str | None) -> bool:
+    if story_id is None:
+        return "story_id" not in event or event.get("story_id") is None
+    return event.get("story_id") == story_id
+
+
+def _dispatch_outcome_from_events(
+    events: list[dict],
+    *,
+    role: str,
+    epic_id: int,
+    story_id: str | None,
+) -> tuple[DispatchExitType | None, int | None]:
+    spawned_pids = {
+        event.get("pid")
+        for event in events
+        if event.get("event") == "subprocess_spawned"
+        and event.get("epic_id") == epic_id
+        and event.get("role") == role
+        and _event_story_matches(event, story_id)
+    }
+    spawned_pids.discard(None)
+
+    for event in reversed(events):
+        if event.get("event") not in {"subprocess_returned", "subprocess_killed"}:
+            continue
+        if event.get("epic_id") != epic_id:
+            continue
+        if spawned_pids and event.get("pid") not in spawned_pids:
+            continue
+        if event.get("event") == "subprocess_returned" and (
+            event.get("role") != role or not _event_story_matches(event, story_id)
+        ):
+            continue
+        exit_type = event.get("exit_type")
+        exit_code = event.get("exit_code")
+        return (
+            exit_type if isinstance(exit_type, str) else None,
+            exit_code if isinstance(exit_code, int) else None,
+        )
+    return None, None
+
+
+def _classify_dispatch_result(
+    result: DispatchRunResult | subprocess.CompletedProcess[str],
+) -> DispatchClassification:
+    if isinstance(result, DispatchRunResult):
+        process = result.process
+        exit_type = result.exit_type
+    else:
+        process = result
+        exit_type = _dispatch_exit_type_from_returncode(process.returncode)
+
+    if exit_type in _DISPATCH_SUCCESS_EXIT_TYPES:
+        ok = True
+    elif exit_type in _DISPATCH_FAILURE_EXIT_TYPES:
+        ok = False
+    else:
+        ok = process.returncode == 0
+
+    return DispatchClassification(
+        ok=ok,
+        exit_type=exit_type,
+        gate_exit_code=process.returncode,
+        message=process.stderr.strip(),
+    )
 
 
 def _prompt_template(path: Path, replacements: dict[str, str]) -> str:
@@ -654,8 +778,10 @@ def _run_dispatch(
     story_id: str | None,
     prompt: str,
     artefacts_loaded: list[str] | None = None,
-) -> subprocess.CompletedProcess[str]:
+) -> DispatchRunResult:
     prompt_file = _write_prompt_file(prompt)
+    dispatch_jsonl = epic_dir(repo_root, epic_id) / "dispatch.jsonl"
+    dispatch_offset = _dispatch_jsonl_offset(dispatch_jsonl)
     try:
         args = [
             *_woof_subprocess_argv(),
@@ -671,12 +797,23 @@ def _run_dispatch(
             args.extend(["--story", story_id])
         for artefact in artefacts_loaded or []:
             args.extend(["--artefact", artefact])
-        return subprocess.run(
+        proc = subprocess.run(
             args,
             cwd=repo_root,
             env=_woof_subprocess_env(),
             capture_output=True,
             text=True,
+        )
+        exit_type, exit_code = _dispatch_outcome_from_events(
+            _read_appended_dispatch_events(dispatch_jsonl, dispatch_offset),
+            role=role,
+            epic_id=epic_id,
+            story_id=story_id,
+        )
+        return DispatchRunResult(
+            process=proc,
+            exit_type=exit_type or _dispatch_exit_type_from_returncode(proc.returncode),
+            exit_code=exit_code,
         )
     finally:
         prompt_file.unlink(missing_ok=True)
@@ -713,11 +850,12 @@ def _discovery_bucket_node(inp: NodeInput, bucket: str) -> NodeOutput:
             prompt=_discovery_bucket_prompt(inp.repo_root, inp.epic_id, bucket),
             artefacts_loaded=_discovery_bucket_artefacts(inp.repo_root, inp.epic_id, bucket),
         )
-        if proc.returncode != 0:
+        dispatch = _classify_dispatch_result(proc)
+        if not dispatch.ok:
             return _planning_halt(
                 inp,
                 stage=1,
-                message=proc.stderr.strip(),
+                message=dispatch.message,
                 triggered_by=["subprocess_crash"],
                 check_count=1,
                 failed_check_count=1,
@@ -809,11 +947,12 @@ def discovery_synthesis_node(inp: NodeInput) -> NodeOutput:
             prompt=_discovery_synthesis_prompt(inp.repo_root, inp.epic_id),
             artefacts_loaded=_discovery_synthesis_artefacts(inp.repo_root, inp.epic_id),
         )
-        if proc.returncode != 0:
+        dispatch = _classify_dispatch_result(proc)
+        if not dispatch.ok:
             return _planning_halt(
                 inp,
                 stage=1,
-                message=proc.stderr.strip(),
+                message=dispatch.message,
                 triggered_by=["subprocess_crash"],
                 check_count=len(paths),
                 failed_check_count=len(paths),
@@ -912,11 +1051,12 @@ def epic_definition_node(inp: NodeInput) -> NodeOutput:
             prompt=_epic_definition_prompt(inp.repo_root, inp.epic_id),
             artefacts_loaded=_epic_definition_artefacts(inp.repo_root, inp.epic_id),
         )
-        if proc.returncode != 0:
+        dispatch = _classify_dispatch_result(proc)
+        if not dispatch.ok:
             return _planning_halt(
                 inp,
                 stage=2,
-                message=proc.stderr.strip(),
+                message=dispatch.message,
                 triggered_by=["subprocess_crash"],
                 check_count=1,
                 failed_check_count=1,
@@ -1032,11 +1172,12 @@ def breakdown_planning_node(inp: NodeInput) -> NodeOutput:
             prompt=_breakdown_planning_prompt(inp.repo_root, inp.epic_id),
             artefacts_loaded=_breakdown_planning_artefacts(inp.repo_root, inp.epic_id),
         )
-        if proc.returncode != 0:
+        dispatch = _classify_dispatch_result(proc)
+        if not dispatch.ok:
             return _planning_halt(
                 inp,
                 stage=3,
-                message=proc.stderr.strip(),
+                message=dispatch.message,
                 triggered_by=["subprocess_crash"],
                 check_count=len(paths),
                 failed_check_count=len(paths),
@@ -1163,11 +1304,12 @@ def plan_critique_node(inp: NodeInput) -> NodeOutput:
             prompt=_plan_critique_prompt(inp.repo_root, inp.epic_id),
             artefacts_loaded=_plan_critique_artefacts(inp.repo_root, inp.epic_id),
         )
-        if proc.returncode != 0:
+        dispatch = _classify_dispatch_result(proc)
+        if not dispatch.ok:
             return _planning_halt(
                 inp,
                 stage=3,
-                message=proc.stderr.strip(),
+                message=dispatch.message,
                 triggered_by=["reviewer_unreachable"],
                 check_count=1,
                 failed_check_count=1,
@@ -1378,12 +1520,13 @@ def executor_dispatch_node(inp: NodeInput) -> NodeOutput:
         prompt=_story_prompt(inp.epic_id, inp.story_id),
         artefacts_loaded=_story_context_artefacts(inp.repo_root, inp.epic_id),
     )
-    if proc.returncode != 0:
+    dispatch = _classify_dispatch_result(proc)
+    if not dispatch.ok:
         write_gate_for_trigger(
             trigger="subprocess_crash",
             epic_dir=epic_dir(inp.repo_root, inp.epic_id),
             story_id=inp.story_id,
-            exit_code=proc.returncode,
+            exit_code=dispatch.gate_exit_code,
             schema_path=schema_dir() / "gate.schema.json",
         )
         return NodeOutput(
@@ -1393,7 +1536,7 @@ def executor_dispatch_node(inp: NodeInput) -> NodeOutput:
             story_id=inp.story_id,
             gate_path=_gate_path(inp.epic_id),
             triggered_by=["subprocess_crash"],
-            message=proc.stderr.strip(),
+            message=dispatch.message,
         )
     return NodeOutput(
         node_type=inp.node_type,
@@ -1424,7 +1567,8 @@ def critique_dispatch_node(inp: NodeInput) -> NodeOutput:
         prompt=prompt,
         artefacts_loaded=_story_context_artefacts(inp.repo_root, inp.epic_id),
     )
-    if proc.returncode != 0:
+    dispatch = _classify_dispatch_result(proc)
+    if not dispatch.ok:
         write_gate_for_trigger(
             trigger="reviewer_unreachable",
             epic_dir=epic_dir(inp.repo_root, inp.epic_id),
@@ -1439,7 +1583,7 @@ def critique_dispatch_node(inp: NodeInput) -> NodeOutput:
             story_id=inp.story_id,
             gate_path=_gate_path(inp.epic_id),
             triggered_by=["reviewer_unreachable"],
-            message=proc.stderr.strip(),
+            message=dispatch.message,
         )
     return NodeOutput(
         node_type=inp.node_type,

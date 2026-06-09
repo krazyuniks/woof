@@ -239,9 +239,10 @@ def test_process_exit_wins_when_grandchild_holds_stdout_pipe_open(tmp_path: Path
     )
     elapsed = time.monotonic() - started
 
-    assert result.exit_type is ExitType.CLEAN
+    assert result.exit_type is ExitType.COMPLETED_LINGERING
     assert result.exit_code == 0
     assert result.terminal_seen is True
+    assert result.signalled == "SIGTERM"
     assert elapsed < 1.5
     _assert_pid_gone(pid_file)
 

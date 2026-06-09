@@ -36,10 +36,28 @@
       "additionalProperties": false,
       "properties": {
         "default_minutes": {
-          "type": "integer",
-          "minimum": 1,
+          "type": "number",
+          "exclusiveMinimum": 0,
           "default": 30,
-          "description": "Per-subprocess timeout. The dispatch adapter wraps public CLI invocations with timeout. Hitting the timeout writes gate.md with triggered_by=['timeout']."
+          "description": "Pre-terminal wall-clock ceiling, in minutes. Fractional values are valid for short eval and integration runs. Once the adapter terminal marker is seen, completion_grace_seconds and completion_tail_cap_seconds take over."
+        },
+        "idle_seconds": {
+          "type": "number",
+          "minimum": 0,
+          "default": 600,
+          "description": "Pre-terminal idle timeout. Resets on stdout or stderr activity; firing classifies the dispatch as idle_kill."
+        },
+        "completion_grace_seconds": {
+          "type": "number",
+          "minimum": 0,
+          "default": 60,
+          "description": "Post-terminal grace timeout. Resets on stdout or stderr activity after the adapter terminal marker; firing classifies the dispatch as completed_lingering."
+        },
+        "completion_tail_cap_seconds": {
+          "type": "number",
+          "minimum": 0,
+          "default": 120,
+          "description": "Absolute post-terminal tail cap. Bounds lingering even if a child keeps emitting output; firing classifies the dispatch as completed_lingering."
         }
       }
     },

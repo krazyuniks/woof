@@ -29,6 +29,7 @@ class ExitType(StrEnum):
 
 @dataclass(frozen=True)
 class SupervisedResult:
+    pid: int
     exit_type: ExitType
     exit_code: int | None
     stdout: str
@@ -119,6 +120,7 @@ def supervise(
     max_captured_bytes: int,
     stdout_path: str | os.PathLike[str] | None = None,
     stderr_path: str | os.PathLike[str] | None = None,
+    on_spawn: Callable[[int], None] | None = None,
     sigkill_grace_seconds: float = 5.0,
     cancel: threading.Event | None = None,
 ) -> SupervisedResult:
@@ -153,6 +155,22 @@ def supervise(
         start_new_session=True,
     )
     pgid = _process_group_id(proc)
+    if on_spawn is not None:
+        try:
+            on_spawn(proc.pid)
+        except Exception:
+            if pgid is not None:
+                with suppress(ProcessLookupError):
+                    os.killpg(pgid, signal.SIGTERM)
+            try:
+                proc.wait(timeout=max(sigkill_grace_seconds, 0.1))
+            except subprocess.TimeoutExpired:
+                if pgid is not None:
+                    with suppress(ProcessLookupError):
+                        os.killpg(pgid, signal.SIGKILL)
+                with suppress(subprocess.TimeoutExpired):
+                    proc.wait(timeout=max(sigkill_grace_seconds, 0.1))
+            raise
 
     signalled: SignalName | None = None
     term_sent = False
@@ -232,12 +250,28 @@ def supervise(
 
     exit_type: ExitType | None = None
     exit_code: int | None = None
+    process_exit_at: float | None = None
     try:
         while True:
             return_code = proc.poll()
             if return_code is not None:
                 exit_code = return_code
-                exit_type = ExitType.CLEAN if return_code == 0 else ExitType.NONZERO
+                if process_exit_at is None:
+                    process_exit_at = time.monotonic()
+                with state_lock:
+                    terminal_seen = state.terminal_seen
+                    streams_done = state.stdout_done and state.stderr_done
+                if (
+                    not terminal_seen
+                    and not streams_done
+                    and time.monotonic() - process_exit_at < 0.1
+                ):
+                    time.sleep(0.01)
+                    continue
+                if return_code == 0 and terminal_seen and not streams_done:
+                    exit_type = ExitType.COMPLETED_LINGERING
+                else:
+                    exit_type = ExitType.CLEAN if return_code == 0 else ExitType.NONZERO
                 break
 
             with state_lock:
@@ -307,6 +341,7 @@ def supervise(
 
     duration_ms = int((time.monotonic() - start) * 1000)
     return SupervisedResult(
+        pid=proc.pid,
         exit_type=exit_type,
         exit_code=exit_code,
         stdout=stdout_capture.text(),

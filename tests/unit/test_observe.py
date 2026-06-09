@@ -118,6 +118,7 @@ No separate reviewer position was available.
         "model": "gpt-5.5",
         "effort": "xhigh",
         "pid": 123,
+        "exit_type": "clean",
         "exit_code": 0,
         "duration_ms": 1400,
         "codex_audit_path": ".woof/epics/E5/audit/codex-primary-run",
@@ -161,6 +162,7 @@ No separate reviewer position was available.
                         "role": "reviewer",
                         "adapter": "claude",
                         "pid": 124,
+                        "exit_type": "clean",
                         "exit_code": 0,
                         "duration_ms": 900,
                         "claude_transcript_path": (
@@ -320,6 +322,10 @@ def test_observe_all_json_reports_status_gate_timeline_and_audit(tmp_path: Path)
     }
     assert payload["status"]["telemetry"] == payload["audit"]["telemetry"]
     returned = payload["audit"]["dispatch"]["returned_events"]
+    assert payload["audit"]["dispatch"]["successful"] == 2
+    assert payload["audit"]["dispatch"]["failed"] == 0
+    assert payload["audit"]["dispatch"]["killed"] == 0
+    assert returned[0]["exit_type"] == "clean"
     assert returned[0]["tokens"] == {
         "tokens_in": 100,
         "tokens_out": 25,
@@ -330,6 +336,63 @@ def test_observe_all_json_reports_status_gate_timeline_and_audit(tmp_path: Path)
     assert returned[0]["command_count"] == 7
     assert "tokens" not in returned[1]
     assert "cost" not in returned[1]
+
+
+def test_observe_counts_completed_lingering_as_success(tmp_path: Path) -> None:
+    project = _write_project(tmp_path, with_usage=False)
+    dispatch_jsonl = project / ".woof" / "epics" / "E5" / "dispatch.jsonl"
+    dispatch_jsonl.write_text(
+        "\n".join(
+            json.dumps(event)
+            for event in [
+                {
+                    "event": "subprocess_spawned",
+                    "at": "2026-05-23T10:01:00Z",
+                    "epic_id": 5,
+                    "role": "primary",
+                    "adapter": "codex",
+                    "pid": 123,
+                },
+                {
+                    "event": "subprocess_killed",
+                    "at": "2026-05-23T10:01:01Z",
+                    "epic_id": 5,
+                    "pid": 123,
+                    "signal": "SIGTERM",
+                    "reason": "completed_lingering",
+                    "exit_type": "completed_lingering",
+                },
+                {
+                    "event": "subprocess_returned",
+                    "at": "2026-05-23T10:01:01Z",
+                    "epic_id": 5,
+                    "role": "primary",
+                    "adapter": "codex",
+                    "pid": 123,
+                    "exit_type": "completed_lingering",
+                    "exit_code": -15,
+                    "duration_ms": 300,
+                },
+            ]
+        )
+        + "\n"
+    )
+
+    proc = _run_observe(project, "--view", "all", "--format", "json")
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    assert payload["status"]["dispatch"] == {
+        "spawned": 1,
+        "returned": 1,
+        "successful": 1,
+        "failed": 0,
+        "killed": 0,
+    }
+    assert payload["audit"]["dispatch"]["successful"] == 1
+    assert payload["audit"]["dispatch"]["failed"] == 0
+    assert payload["audit"]["dispatch"]["killed"] == 0
+    assert payload["timeline"][2]["exit_type"] == "completed_lingering"
 
 
 def test_observe_does_not_invent_usage_when_dispatch_events_do_not_report_it(

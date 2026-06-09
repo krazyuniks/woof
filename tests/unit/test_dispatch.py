@@ -98,8 +98,6 @@ def test_dry_run_reviewer_uses_raw_claude_argv(woof_project: Path) -> None:
     assert proc.returncode == 0, proc.stderr
     payload = json.loads(proc.stdout)
     assert payload["argv"] == [
-        "timeout",
-        "15m",
         "claude",
         "--dangerously-skip-permissions",
         "--strict-mcp-config",
@@ -123,6 +121,12 @@ def test_dry_run_reviewer_uses_raw_claude_argv(woof_project: Path) -> None:
     assert payload["mcp"] == []
     assert payload["mcp_config"] == '{"mcpServers":{}}'
     assert payload["timeout_min"] == 15
+    assert payload["timeouts"] == {
+        "default_minutes": 15,
+        "idle_seconds": 600.0,
+        "completion_grace_seconds": 60.0,
+        "completion_tail_cap_seconds": 120.0,
+    }
     assert payload["runtime_policy"] == EXPECTED_TRUSTED_RUNTIME_POLICY
 
 
@@ -139,8 +143,6 @@ def test_dry_run_primary_uses_raw_codex_argv(woof_project: Path) -> None:
     assert proc.returncode == 0, proc.stderr
     payload = json.loads(proc.stdout)
     assert payload["argv"] == [
-        "timeout",
-        "15m",
         "codex",
         "exec",
         "--json",
@@ -160,6 +162,7 @@ def test_dry_run_primary_uses_raw_codex_argv(woof_project: Path) -> None:
     assert payload["adapter"] == "codex"
     assert payload["harness"] == "codex"
     assert payload["effort"] == "xhigh"
+    assert payload["timeouts"]["default_minutes"] == 15
     assert payload["runtime_policy"] == EXPECTED_TRUSTED_RUNTIME_POLICY
 
 
@@ -687,7 +690,7 @@ default_minutes = 15
     payload = json.loads(proc.stdout)
     assert payload["config_role"] == "story-executor"
     assert payload["adapter"] == "claude"
-    assert payload["argv"][2] == "claude"
+    assert payload["argv"][0] == "claude"
 
 
 def test_named_mcp_generates_strict_claude_config(woof_project: Path) -> None:
@@ -798,6 +801,25 @@ def _make_stub(bin_dir: Path, name: str, payload: str, stdin_path: Path | None =
     script.chmod(0o755)
 
 
+def _make_lingering_stub(bin_dir: Path, name: str, payload: str, stdin_path: Path) -> None:
+    """Write a stub that emits a terminal payload and then lingers."""
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    script = bin_dir / name
+    script.write_text(
+        f"""#!/usr/bin/env python3
+import pathlib
+import sys
+import time
+
+pathlib.Path({str(stdin_path)!r}).write_text(sys.stdin.read(), encoding="utf-8")
+print({payload!r}, flush=True)
+time.sleep(5)
+""",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+
+
 def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: Path) -> None:
     mod = _import_woof_module()
     bin_dir = tmp_path / "bin"
@@ -818,7 +840,6 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
     epic_dir = woof_project / ".woof" / "epics" / "E7"
     epic_dir.mkdir(parents=True)
     (epic_dir / "EPIC.md").write_text("contract\n")
-    # ``timeout`` is needed in PATH too — let it resolve from the original PATH.
     env = {
         "PATH": f"{bin_dir}:{__import__('os').environ['PATH']}",
         "HOME": __import__("os").environ.get("HOME", str(tmp_path)),
@@ -863,7 +884,9 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
     assert meta["story_id"] == "S2"
     assert meta["artefacts_loaded"] == [".woof/epics/E7/EPIC.md"]
     assert meta["runtime_policy"] == EXPECTED_TRUSTED_RUNTIME_POLICY
+    assert meta["exit_type"] == "clean"
     assert meta["exit_code"] == 0
+    assert meta["terminal_seen"] is True
     assert meta["prompt_bytes"] == len(b"run the story\n")
     assert meta["artefact_bytes"] == len(b"contract\n")
     assert meta["output_bytes"] == len(claude_response.encode()) + 1
@@ -891,6 +914,7 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
     assert events[0]["effort"] == "max"
     assert events[0]["mcp"] == []
     assert events[0]["argv"][-1] == "<prompt:stdin>"
+    assert events[0]["argv"][0] == "claude"
     assert events[0]["prompt_transport"] == "stdin"
     assert events[0]["runtime_policy"] == EXPECTED_TRUSTED_RUNTIME_POLICY
     assert events[0]["artefacts_loaded"] == [".woof/epics/E7/EPIC.md"]
@@ -899,6 +923,7 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
     assert events[1]["artefacts_loaded"] == [".woof/epics/E7/EPIC.md"]
     assert events[1]["prompt_transport"] == "stdin"
     assert events[1]["runtime_policy"] == EXPECTED_TRUSTED_RUNTIME_POLICY
+    assert events[1]["exit_type"] == "clean"
     assert events[1]["prompt_bytes"] == len(b"run the story\n")
     assert events[1]["artefact_bytes"] == len(b"contract\n")
     assert events[1]["output_bytes"] == len(claude_response.encode()) + 1
@@ -907,6 +932,81 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
     assert events[1]["tokens_out"] == 11
     assert events[1]["cc_session_id"] == "00000000-0000-0000-0000-000000000001"
     assert events[1]["claude_transcript_path"].startswith("~/.claude/projects/")
+
+    validate = subprocess.run([*WOOF_VALIDATE, str(jsonl)], capture_output=True, text=True)
+    assert validate.returncode == 0, validate.stdout + validate.stderr
+
+
+def test_end_to_end_completed_lingering_counts_as_success(
+    woof_project: Path, tmp_path: Path
+) -> None:
+    agents_path = woof_project / ".woof" / "agents.toml"
+    agents_path.write_text(
+        agents_path.read_text().replace(
+            "[timeouts]\ndefault_minutes = 15\n",
+            "[timeouts]\ndefault_minutes = 1\n"
+            "idle_seconds = 5\n"
+            "completion_grace_seconds = 0.2\n"
+            "completion_tail_cap_seconds = 1\n",
+        )
+    )
+    bin_dir = tmp_path / "bin"
+    claude_response = json.dumps(
+        {
+            "type": "result",
+            "session_id": "00000000-0000-0000-0000-000000000002",
+            "usage": {
+                "input_tokens": 1,
+                "output_tokens": 2,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+            },
+        }
+    )
+    stdin_path = tmp_path / "claude.stdin"
+    _make_lingering_stub(bin_dir, "claude", claude_response, stdin_path)
+    env = {
+        "PATH": f"{bin_dir}:{__import__('os').environ['PATH']}",
+        "HOME": __import__("os").environ.get("HOME", str(tmp_path)),
+    }
+
+    proc = subprocess.run(
+        [
+            str(WOOF_BIN),
+            "dispatch",
+            "--role",
+            "reviewer",
+            "--epic",
+            "8",
+        ],
+        capture_output=True,
+        text=True,
+        input="finish then linger\n",
+        cwd=woof_project,
+        env=env,
+        timeout=3,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert stdin_path.read_text() == "finish then linger\n"
+    jsonl = woof_project / ".woof" / "epics" / "E8" / "dispatch.jsonl"
+    events = [json.loads(ln) for ln in jsonl.read_text().splitlines() if ln.strip()]
+    assert [event["event"] for event in events] == [
+        "subprocess_spawned",
+        "subprocess_killed",
+        "subprocess_returned",
+    ]
+    assert events[1]["exit_type"] == "completed_lingering"
+    assert events[1]["reason"] == "completed_lingering"
+    assert events[2]["exit_type"] == "completed_lingering"
+    assert events[2]["tokens_in"] == 1
+    assert events[2]["tokens_out"] == 2
+
+    meta_file = next((woof_project / ".woof" / "epics" / "E8" / "audit").glob("*.meta"))
+    meta = json.loads(meta_file.read_text())
+    assert meta["exit_type"] == "completed_lingering"
+    assert meta["timed_out"] is False
+    assert meta["terminal_seen"] is True
 
     validate = subprocess.run([*WOOF_VALIDATE, str(jsonl)], capture_output=True, text=True)
     assert validate.returncode == 0, validate.stdout + validate.stderr
@@ -972,8 +1072,10 @@ def test_end_to_end_codex_records_thread_and_audit_path(woof_project: Path, tmp_
     returned = events[1]
     assert returned["effort"] == "xhigh"
     assert returned["argv"][-1] == "<prompt:stdin>"
+    assert returned["argv"][0] == "codex"
     assert returned["prompt_transport"] == "stdin"
     assert returned["runtime_policy"] == EXPECTED_TRUSTED_RUNTIME_POLICY
+    assert returned["exit_type"] == "clean"
     assert returned["tokens_in"] == 50
     assert returned["tokens_out"] == 7  # 5 + 2 reasoning
     assert returned["cache_read_tokens"] == 10
@@ -987,6 +1089,7 @@ def test_end_to_end_codex_records_thread_and_audit_path(woof_project: Path, tmp_
     meta_file = next((woof_project / ".woof" / "epics" / "E9" / "audit").glob("*.meta"))
     meta = json.loads(meta_file.read_text())
     assert meta["command_count"] == 1
+    assert meta["exit_type"] == "clean"
     assert meta["prompt_bytes"] == len(b"critique me\n")
 
     validate = subprocess.run([*WOOF_VALIDATE, str(jsonl)], capture_output=True, text=True)

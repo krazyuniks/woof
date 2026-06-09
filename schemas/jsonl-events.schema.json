@@ -128,6 +128,26 @@
     "exit_code": {
       "type": "integer"
     },
+    "exit_type": {
+      "type": "string",
+      "enum": [
+        "clean",
+        "nonzero",
+        "idle_kill",
+        "wallclock_timeout",
+        "completed_lingering",
+        "operator_cancel"
+      ],
+      "description": "Supervised subprocess outcome classification. completed_lingering means the adapter emitted its terminal marker and Woof reaped a lingering process group; it is a successful dispatch classification."
+    },
+    "timed_out": {
+      "type": "boolean",
+      "description": "True when the supervised subprocess ended through the pre-terminal idle or wall-clock timeout clocks."
+    },
+    "terminal_seen": {
+      "type": "boolean",
+      "description": "True when the adapter-specific terminal marker was observed on stdout."
+    },
     "duration_ms": {
       "type": "integer",
       "minimum": 0
@@ -317,14 +337,14 @@
         "properties": { "event": { "const": "subprocess_returned" } },
         "required": ["event"]
       },
-      "then": { "required": ["pid", "exit_code", "duration_ms"] }
+      "then": { "required": ["pid", "exit_code", "duration_ms", "exit_type"] }
     },
     {
       "if": {
         "properties": { "event": { "const": "subprocess_killed" } },
         "required": ["event"]
       },
-      "then": { "required": ["pid", "signal", "reason"] }
+      "then": { "required": ["pid", "signal", "reason", "exit_type"] }
     },
     {
       "if": {

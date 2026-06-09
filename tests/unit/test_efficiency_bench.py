@@ -196,6 +196,15 @@ Looks fine.
             "artefact_bytes": 50,
         },
         {
+            "event": "subprocess_killed",
+            "at": "2026-05-26T00:00:01Z",
+            "epic_id": 1,
+            "pid": 321,
+            "signal": "SIGTERM",
+            "reason": "completed_lingering",
+            "exit_type": "completed_lingering",
+        },
+        {
             "event": "subprocess_returned",
             "at": "2026-05-26T00:00:01Z",
             "epic_id": 1,
@@ -205,6 +214,8 @@ Looks fine.
             "model": "stub-primary",
             "effort": "low",
             "duration_ms": 250,
+            "exit_type": "completed_lingering",
+            "exit_code": -15,
             "tokens_in": 10,
             "tokens_out": 5,
             "cache_read_tokens": 3,
@@ -224,6 +235,8 @@ Looks fine.
             "model": "stub-reviewer",
             "effort": "low",
             "duration_ms": 100,
+            "exit_type": "clean",
+            "exit_code": 0,
             "tokens_in": 4,
             "tokens_out": 2,
             "cache_write_tokens": 1,
@@ -284,6 +297,9 @@ Looks fine.
         {"id": "S1", "title": "Add helper", "status": "done", "satisfies": ["O1"]}
     ]
     assert manifest["dispatch"]["returned"] == 2
+    assert manifest["dispatch"]["successful"] == 2
+    assert manifest["dispatch"]["failed"] == 0
+    assert manifest["dispatch"]["killed"] == 0
     assert manifest["dispatch"]["tokens"] == {
         "tokens_in": 14,
         "tokens_out": 7,
@@ -292,6 +308,7 @@ Looks fine.
     }
     assert manifest["dispatch"]["telemetry"]["command_count"] == 2
     assert manifest["dispatch"]["events"][0]["model_profile"] == "stub"
+    assert manifest["dispatch"]["events"][0]["exit_type"] == "completed_lingering"
     assert manifest["dispatch"]["events"][0]["tokens"]["tokens_in"] == 10
     assert manifest["dispatch"]["by_route"][0]["model_profile"] == "stub"
     assert manifest["diff"]["committed"]["file_count"] >= 4

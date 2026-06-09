@@ -43,20 +43,26 @@ has not exited.
 
 ## Decision
 
-Dispatch supervision moves in-process, onto three independent clocks and explicit
+Dispatch supervision moves in-process, onto phase-scoped clocks and explicit
 process-group lifecycle.
 
 1. A `supervise()` primitive runs an arbitrary argv with stdin and drains stdout and
    stderr concurrently. It is a trusted in-process utility returning a typed result.
-2. Three clocks, each resetting on output activity:
+2. Phase-scoped clocks:
    - Idle: no output for `idle_seconds` before the terminal marker is seen -> kill,
      fail. Catches a stuck worker early.
-   - Completion-grace: once the terminal marker is seen, a `completion_grace_seconds`
-     window takes over from the idle clock; on expiry the dispatch resolves
-     successfully with the captured output. A clean process exit always wins the race,
-     so healthy runs add no latency.
    - Wall-clock: an absolute ceiling (`default_minutes`) that fails a worker which has
      not reached its terminal marker.
+   - Completion-grace: once the terminal marker is seen, a `completion_grace_seconds`
+     window takes over from the idle clock and resets on post-terminal output; on expiry
+     the dispatch resolves successfully with the captured output.
+   - Tail cap: once the terminal marker is seen, `completion_tail_cap_seconds` is the
+     absolute post-terminal bound; it resolves `completed_lingering` even if a child
+     keeps dribbling output.
+
+   A clean process exit with closed output streams wins the race, so healthy runs add no
+   latency. If the terminal marker has been seen but inherited streams remain open after
+   the worker exits, cleanup is audited as `completed_lingering`.
 3. The terminal marker is detected by an adapter-specific predicate (Claude's final
    `--output-format json` result line; Codex's `turn.completed`). The primitive stays
    agent-agnostic.
@@ -86,8 +92,8 @@ commit-safety remains the boundary on what lands.
   on it).
 - Node consumers branch on `exit_type`: `completed_lingering` proceeds, genuine
   crash/timeout gates as before.
-- `[timeouts]` in `agents.toml` gains `idle_seconds` and `completion_grace_seconds`
-  alongside `default_minutes`.
+- `[timeouts]` in `agents.toml` gains `idle_seconds`, `completion_grace_seconds`, and
+  `completion_tail_cap_seconds` alongside `default_minutes`.
 - Supervision is testable in isolation with real fake-agent scripts (no mocks): the
   fault-injection matrix exercises stdout-held-open, SIGTERM-ignoring, slow-drip,
   zero-output-hang, oversized-output, and double-cancel cases.

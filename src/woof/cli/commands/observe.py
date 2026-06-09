@@ -59,6 +59,7 @@ TELEMETRY_FIELDS = (
     "stderr_bytes",
     "command_count",
 )
+SUCCESS_EXIT_TYPES = {"clean", "completed_lingering"}
 VIEWS = ("status", "timeline", "gate", "audit", "all")
 
 
@@ -694,9 +695,9 @@ def _audit_summary(
                 1 for event in dispatch_events if event.get("event") == "subprocess_spawned"
             ),
             "returned": len(dispatch_returned),
-            "killed": sum(
-                1 for event in dispatch_events if event.get("event") == "subprocess_killed"
-            ),
+            "successful": _successful_return_count(dispatch_events),
+            "failed": _failed_return_count(dispatch_events),
+            "killed": _failed_kill_count(dispatch_events),
             "returned_events": dispatch_returned,
         },
         "usage": usage,
@@ -777,6 +778,7 @@ def _timeline(records: list[JsonlRecord]) -> list[dict[str, Any]]:
             "decision",
             "triggered_by",
             "exit_code",
+            "exit_type",
             "duration_ms",
             "pid",
             "reason",
@@ -850,7 +852,9 @@ def _dispatch_counts(timeline: list[dict[str, Any]]) -> dict[str, int]:
     return {
         "spawned": sum(1 for item in timeline if item["event"] == "subprocess_spawned"),
         "returned": sum(1 for item in timeline if item["event"] == "subprocess_returned"),
-        "killed": sum(1 for item in timeline if item["event"] == "subprocess_killed"),
+        "successful": _successful_return_count(timeline),
+        "failed": _failed_return_count(timeline),
+        "killed": _failed_kill_count(timeline),
     }
 
 
@@ -865,6 +869,7 @@ def _dispatch_return_summary(event: dict[str, Any]) -> dict[str, Any]:
             "model",
             "effort",
             "exit_code",
+            "exit_type",
             "duration_ms",
             "codex_audit_path",
             "claude_transcript_path",
@@ -884,6 +889,38 @@ def _dispatch_return_summary(event: dict[str, Any]) -> dict[str, Any]:
     if costs:
         summary["cost"] = costs
     return summary
+
+
+def _successful_return_count(events: list[dict[str, Any]]) -> int:
+    count = 0
+    for event in events:
+        if event.get("event") != "subprocess_returned":
+            continue
+        exit_type = event.get("exit_type")
+        if exit_type in SUCCESS_EXIT_TYPES or (exit_type is None and event.get("exit_code") == 0):
+            count += 1
+    return count
+
+
+def _failed_return_count(events: list[dict[str, Any]]) -> int:
+    count = 0
+    for event in events:
+        if event.get("event") != "subprocess_returned":
+            continue
+        exit_type = event.get("exit_type")
+        if exit_type in SUCCESS_EXIT_TYPES or (exit_type is None and event.get("exit_code") == 0):
+            continue
+        count += 1
+    return count
+
+
+def _failed_kill_count(events: list[dict[str, Any]]) -> int:
+    return sum(
+        1
+        for event in events
+        if event.get("event") == "subprocess_killed"
+        and event.get("exit_type") != "completed_lingering"
+    )
 
 
 def _read_jsonl(path: Path, source: str) -> tuple[list[JsonlRecord], list[str]]:
@@ -1059,7 +1096,13 @@ def _print_audit(audit: dict[str, Any]) -> None:
     returned = audit["dispatch"]["returned"]
     spawned = audit["dispatch"]["spawned"]
     killed = audit["dispatch"]["killed"]
-    print(f"dispatch: spawned={spawned} returned={returned} killed={killed}")
+    successful = audit["dispatch"].get("successful", 0)
+    failed = audit["dispatch"].get("failed", 0)
+    print(
+        "dispatch: "
+        f"spawned={spawned} returned={returned} successful={successful} "
+        f"failed={failed} killed={killed}"
+    )
 
 
 def _print_current_epic(current: dict[str, Any]) -> None:
@@ -1135,7 +1178,15 @@ def _print_timeline(events: list[dict[str, Any]]) -> None:
             str(event["source"]),
             str(event.get("event") or "-"),
         ]
-        for key in ("story_id", "role", "adapter", "gate_type", "decision", "exit_code"):
+        for key in (
+            "story_id",
+            "role",
+            "adapter",
+            "gate_type",
+            "decision",
+            "exit_code",
+            "exit_type",
+        ):
             if key in event:
                 parts.append(f"{key}={event[key]}")
         tokens = event.get("tokens")

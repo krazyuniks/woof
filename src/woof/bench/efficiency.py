@@ -32,6 +32,7 @@ from woof.trackers.epic_body import split_epic_front_matter
 
 MANIFEST_VERSION = 1
 TERMINAL_STATUSES = {"gate_opened", "halted", "epic_complete"}
+SUCCESS_EXIT_TYPES = {"clean", "completed_lingering"}
 SECRET_KEY_RE = re.compile(
     r"(api[_-]?key|auth|bearer|credential|jwt|oauth|password|secret|token)", re.IGNORECASE
 )
@@ -739,7 +740,9 @@ def _dispatch_summary(dispatch_events: Sequence[Mapping[str, Any]]) -> dict[str,
             1 for event in dispatch_events if event.get("event") == "subprocess_spawned"
         ),
         "returned": len(returned),
-        "killed": sum(1 for event in dispatch_events if event.get("event") == "subprocess_killed"),
+        "successful": _successful_dispatch_count(returned),
+        "failed": _failed_dispatch_count(returned),
+        "killed": _failed_kill_count(dispatch_events),
         "duration_ms": duration_ms,
         "tokens": tokens,
         "telemetry": totals,
@@ -774,6 +777,7 @@ def _compact_dispatch_event(event: Mapping[str, Any]) -> dict[str, Any]:
         "model": event.get("model"),
         "effort": event.get("effort"),
         "mcp": event.get("mcp") or [],
+        "exit_type": event.get("exit_type"),
         "exit_code": event.get("exit_code"),
         "tokens": tokens,
         "telemetry": telemetry,
@@ -826,6 +830,34 @@ def _dispatch_route_totals(events: Sequence[Mapping[str, Any]]) -> list[dict[str
         for telemetry_key in bucket["telemetry"]:
             bucket["telemetry"][telemetry_key] += _int(event.get(telemetry_key))
     return list(buckets.values())
+
+
+def _successful_dispatch_count(events: Sequence[Mapping[str, Any]]) -> int:
+    count = 0
+    for event in events:
+        exit_type = event.get("exit_type")
+        if exit_type in SUCCESS_EXIT_TYPES or (exit_type is None and event.get("exit_code") == 0):
+            count += 1
+    return count
+
+
+def _failed_dispatch_count(events: Sequence[Mapping[str, Any]]) -> int:
+    count = 0
+    for event in events:
+        exit_type = event.get("exit_type")
+        if exit_type in SUCCESS_EXIT_TYPES or (exit_type is None and event.get("exit_code") == 0):
+            continue
+        count += 1
+    return count
+
+
+def _failed_kill_count(events: Sequence[Mapping[str, Any]]) -> int:
+    return sum(
+        1
+        for event in events
+        if event.get("event") == "subprocess_killed"
+        and event.get("exit_type") != "completed_lingering"
+    )
 
 
 def _int(value: object) -> int:

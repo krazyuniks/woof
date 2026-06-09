@@ -12,9 +12,11 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -22,11 +24,17 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from woof.lib.audit_config import load_audit_config
+from woof.lib.supervise import ExitType, supervise
 from woof.paths import schema_dir
 
 ADAPTERS = {"claude", "codex"}
 EFFORTS = {"low", "medium", "high", "xhigh", "max"}
 CODEX_EFFORTS = {"low", "medium", "high", "xhigh"}
+DEFAULT_TIMEOUT_MINUTES = 30
+DEFAULT_IDLE_SECONDS = 600.0
+DEFAULT_COMPLETION_GRACE_SECONDS = 60.0
+DEFAULT_COMPLETION_TAIL_CAP_SECONDS = 120.0
 LEGACY_HARNESS_TO_ADAPTER = {"cld": "claude", "cod": "codex", "in-session": "in-session"}
 LEGACY_ROLE_ALIASES = {
     "planner": "primary",
@@ -57,6 +65,26 @@ class RoleRoute:
     config: dict[str, Any]
     model_profile: str | None = None
     profile_role: str | None = None
+
+
+@dataclass(frozen=True)
+class DispatchTimeouts:
+    default_minutes: int | float = DEFAULT_TIMEOUT_MINUTES
+    idle_seconds: float = DEFAULT_IDLE_SECONDS
+    completion_grace_seconds: float = DEFAULT_COMPLETION_GRACE_SECONDS
+    completion_tail_cap_seconds: float = DEFAULT_COMPLETION_TAIL_CAP_SECONDS
+
+    @property
+    def wallclock_seconds(self) -> float:
+        return float(self.default_minutes) * 60.0
+
+    def as_payload(self) -> dict[str, int | float]:
+        return {
+            "default_minutes": self.default_minutes,
+            "idle_seconds": self.idle_seconds,
+            "completion_grace_seconds": self.completion_grace_seconds,
+            "completion_tail_cap_seconds": self.completion_tail_cap_seconds,
+        }
 
 
 class DispatchConfigError(ValueError):
@@ -114,6 +142,15 @@ def parse_claude_output(stdout: str) -> tuple[dict, str | None]:
     return tokens, data.get("session_id")
 
 
+def is_claude_terminal_line(line: str) -> bool:
+    """Return true for Claude's final ``--output-format json`` result line."""
+    try:
+        data = json.loads(line.strip())
+    except json.JSONDecodeError:
+        return False
+    return data.get("type") == "result"
+
+
 def parse_codex_output(stdout: str) -> tuple[dict, str | None]:
     """Sum token usage across ``turn.completed`` events from ``codex exec --json``."""
     tokens_in = tokens_out = cache_read = 0
@@ -144,6 +181,23 @@ def parse_codex_output(stdout: str) -> tuple[dict, str | None]:
         "tokens_out": tokens_out,
         "cache_read_tokens": cache_read,
     }, thread_id
+
+
+def is_codex_terminal_line(line: str) -> bool:
+    """Return true for Codex's terminal ``turn.completed`` JSON event."""
+    try:
+        data = json.loads(line.strip())
+    except json.JSONDecodeError:
+        return False
+    return data.get("type") == "turn.completed"
+
+
+def terminal_detector(adapter: str):
+    if adapter == "claude":
+        return is_claude_terminal_line
+    if adapter == "codex":
+        return is_codex_terminal_line
+    raise DispatchConfigError(f"cannot detect terminal marker for adapter {adapter!r}")
 
 
 def count_codex_command_executions(stdout: str) -> int:
@@ -338,6 +392,46 @@ def _role_effort(adapter: str, role: dict[str, Any]) -> str | None:
     return effort
 
 
+def dispatch_timeouts(agents: dict[str, Any]) -> DispatchTimeouts:
+    block = agents.get("timeouts") or {}
+    if not isinstance(block, dict):
+        raise DispatchConfigError("timeouts table is not an object")
+
+    try:
+        raw_default_minutes = block.get("default_minutes", DEFAULT_TIMEOUT_MINUTES)
+        default_minutes = float(raw_default_minutes)
+        if isinstance(raw_default_minutes, int):
+            default_minutes = raw_default_minutes
+        idle_seconds = float(block.get("idle_seconds", DEFAULT_IDLE_SECONDS))
+        completion_grace_seconds = float(
+            block.get("completion_grace_seconds", DEFAULT_COMPLETION_GRACE_SECONDS)
+        )
+        completion_tail_cap_seconds = float(
+            block.get("completion_tail_cap_seconds", DEFAULT_COMPLETION_TAIL_CAP_SECONDS)
+        )
+    except (TypeError, ValueError) as exc:
+        raise DispatchConfigError(
+            "timeouts.default_minutes and timeout seconds must be numeric"
+        ) from exc
+
+    if default_minutes <= 0:
+        raise DispatchConfigError("timeouts.default_minutes must be > 0")
+    for name, value in (
+        ("idle_seconds", idle_seconds),
+        ("completion_grace_seconds", completion_grace_seconds),
+        ("completion_tail_cap_seconds", completion_tail_cap_seconds),
+    ):
+        if value < 0:
+            raise DispatchConfigError(f"timeouts.{name} must be >= 0")
+
+    return DispatchTimeouts(
+        default_minutes=default_minutes,
+        idle_seconds=idle_seconds,
+        completion_grace_seconds=completion_grace_seconds,
+        completion_tail_cap_seconds=completion_tail_cap_seconds,
+    )
+
+
 def _mcp_names(role: dict[str, Any]) -> list[str]:
     return [str(name) for name in role.get("mcp") or []]
 
@@ -504,6 +598,22 @@ def audit_argv(wrapped_argv: list[str]) -> list[str]:
     return [*wrapped_argv, "<prompt:stdin>"]
 
 
+def dispatch_return_code(exit_type: ExitType, exit_code: int | None) -> int:
+    if exit_type in {ExitType.CLEAN, ExitType.COMPLETED_LINGERING}:
+        return 0
+    if exit_type is ExitType.NONZERO:
+        return exit_code if exit_code is not None else 1
+    if exit_type is ExitType.OPERATOR_CANCEL:
+        return 130
+    return 124
+
+
+def dispatch_kill_reason(exit_type: ExitType) -> str:
+    if exit_type is ExitType.OPERATOR_CANCEL:
+        return "manual_cancel"
+    return exit_type.value
+
+
 def audit_file_stem(
     adapter: str,
     role: str,
@@ -638,7 +748,13 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         sys.stderr.write("woof: empty prompt\n")
         return 2
 
-    timeout_min = int((agents.get("timeouts") or {}).get("default_minutes", 30))
+    try:
+        timeouts = dispatch_timeouts(agents)
+        audit_config = load_audit_config(agents)
+    except (DispatchConfigError, TypeError, ValueError) as exc:
+        sys.stderr.write(f"woof: {exc} in {agents_path}\n")
+        return 2
+
     mcp_servers = agents.get("mcp_servers") or {}
     try:
         effort = _role_effort(route.adapter, route.config)
@@ -653,9 +769,8 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     prompt_bytes = len(prompt.encode("utf-8"))
 
     if args.dry_run:
-        wrapped = ["timeout", f"{timeout_min}m", *argv]
         payload = {
-            "argv": wrapped,
+            "argv": argv,
             "prompt_transport": "stdin",
             "runtime_policy": trusted_runtime_policy(),
             "epic": args.epic,
@@ -670,7 +785,8 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
             "effort": effort,
             "mcp": mcp_names,
             "flags": route.config.get("flags") or [],
-            "timeout_min": timeout_min,
+            "timeout_min": timeouts.default_minutes,
+            "timeouts": timeouts.as_payload(),
             "artefacts_loaded": artefacts_loaded,
             "prompt_bytes": prompt_bytes,
             "artefact_bytes": artefact_bytes,
@@ -690,74 +806,94 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     meta_file = base.with_suffix(".meta")
 
     dispatch_jsonl = epic_dir / "dispatch.jsonl"
-    wrapped_argv = ["timeout", f"{timeout_min}m", *argv]
-    event_argv = audit_argv(wrapped_argv)
+    event_argv = audit_argv(argv)
 
-    proc = subprocess.Popen(
-        wrapped_argv,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
+    spawned_pid: int | None = None
 
-    spawned_event: dict = {
-        "event": "subprocess_spawned",
-        "at": iso_utc(started_at),
-        "epic_id": args.epic,
-        "role": args.role,
-        "harness": route.adapter,
-        "adapter": route.adapter,
-        "pid": proc.pid,
-        "mcp": mcp_names,
-        "argv": event_argv,
-        "prompt_transport": "stdin",
-        "runtime_policy": trusted_runtime_policy(),
-        "artefacts_loaded": artefacts_loaded,
-        "prompt_bytes": prompt_bytes,
-        "artefact_bytes": artefact_bytes,
-    }
-    if route.config_role != args.role:
-        spawned_event["config_role"] = route.config_role
-    if route.model_profile:
-        spawned_event["model_profile"] = route.model_profile
-    if route.profile_role:
-        spawned_event["profile_role"] = route.profile_role
-    if args.story:
-        spawned_event["story_id"] = args.story
-    if route.config.get("model"):
-        spawned_event["model"] = route.config["model"]
-    if effort:
-        spawned_event["effort"] = effort
-    append_jsonl(dispatch_jsonl, spawned_event)
+    def on_spawn(pid: int) -> None:
+        nonlocal spawned_pid
+        spawned_pid = pid
+        spawned_event: dict = {
+            "event": "subprocess_spawned",
+            "at": iso_utc(started_at),
+            "epic_id": args.epic,
+            "role": args.role,
+            "harness": route.adapter,
+            "adapter": route.adapter,
+            "pid": pid,
+            "mcp": mcp_names,
+            "argv": event_argv,
+            "prompt_transport": "stdin",
+            "runtime_policy": trusted_runtime_policy(),
+            "artefacts_loaded": artefacts_loaded,
+            "prompt_bytes": prompt_bytes,
+            "artefact_bytes": artefact_bytes,
+        }
+        if route.config_role != args.role:
+            spawned_event["config_role"] = route.config_role
+        if route.model_profile:
+            spawned_event["model_profile"] = route.model_profile
+        if route.profile_role:
+            spawned_event["profile_role"] = route.profile_role
+        if args.story:
+            spawned_event["story_id"] = args.story
+        if route.config.get("model"):
+            spawned_event["model"] = route.config["model"]
+        if effort:
+            spawned_event["effort"] = effort
+        append_jsonl(dispatch_jsonl, spawned_event)
 
+    cancel = threading.Event()
+    previous_sigint = signal.getsignal(signal.SIGINT)
+
+    def on_sigint(signum: int, frame: object) -> None:
+        cancel.set()
+
+    signal.signal(signal.SIGINT, on_sigint)
     try:
-        stdout, stderr = proc.communicate(prompt)
-    except KeyboardInterrupt:
-        proc.terminate()
-        stdout, stderr = proc.communicate()
-        ended_at = datetime.now(UTC)
-        append_jsonl(
-            dispatch_jsonl,
-            {
-                "event": "subprocess_killed",
-                "at": iso_utc(ended_at),
-                "epic_id": args.epic,
-                "pid": proc.pid,
-                "signal": "SIGINT",
-                "reason": "manual_cancel",
-            },
+        result = supervise(
+            argv,
+            stdin=prompt,
+            is_terminal=terminal_detector(route.adapter),
+            idle_seconds=timeouts.idle_seconds,
+            wallclock_seconds=timeouts.wallclock_seconds,
+            completion_grace_seconds=timeouts.completion_grace_seconds,
+            completion_tail_cap_seconds=timeouts.completion_tail_cap_seconds,
+            max_captured_bytes=audit_config.max_bytes,
+            stdout_path=output_file,
+            stderr_path=stderr_file,
+            on_spawn=on_spawn,
+            cancel=cancel,
         )
-        output_file.write_text(stdout or "", encoding="utf-8")
-        stderr_file.write_text(stderr or "", encoding="utf-8")
+    except KeyboardInterrupt:
+        ended_at = datetime.now(UTC)
+        if spawned_pid is not None:
+            append_jsonl(
+                dispatch_jsonl,
+                {
+                    "event": "subprocess_killed",
+                    "at": iso_utc(ended_at),
+                    "epic_id": args.epic,
+                    "pid": spawned_pid,
+                    "signal": "SIGINT",
+                    "reason": dispatch_kill_reason(ExitType.OPERATOR_CANCEL),
+                    "exit_type": ExitType.OPERATOR_CANCEL.value,
+                },
+            )
         return 130
+    finally:
+        signal.signal(signal.SIGINT, previous_sigint)
 
     ended_at = datetime.now(UTC)
-    duration_ms = int((ended_at - started_at).total_seconds() * 1000)
-    output_file.write_text(stdout, encoding="utf-8")
-    stderr_file.write_text(stderr, encoding="utf-8")
-    output_bytes = len(stdout.encode("utf-8"))
-    stderr_bytes = len(stderr.encode("utf-8"))
+    stdout = result.stdout
+    stderr = result.stderr
+    duration_ms = result.duration_ms
+    output_bytes = (
+        output_file.stat().st_size if output_file.exists() else len(stdout.encode("utf-8"))
+    )
+    stderr_bytes = (
+        stderr_file.stat().st_size if stderr_file.exists() else len(stderr.encode("utf-8"))
+    )
 
     if route.adapter == "claude":
         tokens, session_id = parse_claude_output(stdout)
@@ -768,17 +904,24 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         session_id = None
         command_count = count_codex_command_executions(stdout)
 
-    timed_out = proc.returncode == 124
-    if timed_out:
+    timed_out = result.exit_type in {ExitType.IDLE_KILL, ExitType.WALLCLOCK_TIMEOUT}
+    reported_exit_code = dispatch_return_code(result.exit_type, result.exit_code)
+    if result.exit_type in {
+        ExitType.IDLE_KILL,
+        ExitType.WALLCLOCK_TIMEOUT,
+        ExitType.COMPLETED_LINGERING,
+        ExitType.OPERATOR_CANCEL,
+    }:
         append_jsonl(
             dispatch_jsonl,
             {
                 "event": "subprocess_killed",
                 "at": iso_utc(ended_at),
                 "epic_id": args.epic,
-                "pid": proc.pid,
-                "signal": "SIGTERM",
-                "reason": "timeout",
+                "pid": result.pid,
+                "signal": result.signalled or "SIGTERM",
+                "reason": dispatch_kill_reason(result.exit_type),
+                "exit_type": result.exit_type.value,
             },
         )
 
@@ -789,9 +932,12 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         "role": args.role,
         "harness": route.adapter,
         "adapter": route.adapter,
-        "pid": proc.pid,
-        "exit_code": proc.returncode,
+        "pid": result.pid,
+        "exit_type": result.exit_type.value,
+        "exit_code": reported_exit_code,
         "duration_ms": duration_ms,
+        "timed_out": timed_out,
+        "terminal_seen": result.terminal_seen,
         "mcp": mcp_names,
         "argv": event_argv,
         "prompt_transport": "stdin",
@@ -841,12 +987,18 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         "prompt_transport": "stdin",
         "runtime_policy": trusted_runtime_policy(),
         "artefacts_loaded": artefacts_loaded,
-        "pid": proc.pid,
+        "pid": result.pid,
         "started_at": iso_utc(started_at),
         "ended_at": iso_utc(ended_at),
         "duration_ms": duration_ms,
-        "exit_code": proc.returncode,
+        "exit_type": result.exit_type.value,
+        "exit_code": reported_exit_code,
         "timed_out": timed_out,
+        "terminal_seen": result.terminal_seen,
+        "stdout_truncated": result.stdout_truncated,
+        "stderr_truncated": result.stderr_truncated,
+        "signal": result.signalled,
+        "timeouts": timeouts.as_payload(),
         "prompt_bytes": prompt_bytes,
         "artefact_bytes": artefact_bytes,
         "output_bytes": output_bytes,
@@ -864,4 +1016,4 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         meta["codex_thread_id"] = thread_id
     meta_file.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
 
-    return proc.returncode
+    return reported_exit_code

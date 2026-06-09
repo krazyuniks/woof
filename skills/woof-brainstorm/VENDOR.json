@@ -2,11 +2,12 @@
   "source": {
     "repo": "agent-toolkit",
     "path": "skills/brainstorm",
-    "commit": "eb82c216444f6a19024a1d6f1c3185d68277e459"
+    "commit": "4c89fc1c35569b752cc3b4d52d352455ab080cb7"
   },
   "generator": "scripts/gen_woof_brainstorm.py",
   "skill_body_sha256": "6fa71ee0357c6d49f8d0adc62e1ef8d5981a02502272551fffddd404e43a73d1",
   "companions": {
+    "README.md": "536e2db40d8bfc9f5e263a212bbb727cb5a46369db17055841ac1bc04cdd1769",
     "TEMPLATE.md": "03a7cb9551ed170e2f243d9b774d64b2db5ce91ecac4a27b86207e4709041659",
     "CONTEXT-FORMAT.md": "d85d3a1d728cad12f07c52c7e5b9df4ed76530a94c44ca59acd3da6f62dfc354",
     "ADR-FORMAT.md": "1144a7f49cedb4e5b6f80cb6e569fd5d5c24c1a32773047945cf989b4193dc39",

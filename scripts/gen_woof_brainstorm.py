@@ -45,8 +45,11 @@ SKILL_MD = SKILL_DIR / "SKILL.md"
 MANIFEST = SKILL_DIR / "VENDOR.json"
 
 # Verbatim companion docs the canonical body references. SKILL.md is composed
-# (wrapper + vendored body) and handled separately.
+# (wrapper + vendored body) and handled separately. README.md is vendored too
+# because the canonical body links to it (the DDD/hex rationale, the diagram, and
+# the full elicitation table); without it those references dangle in the bundle.
 COMPANION_FILES = (
+    "README.md",
     "TEMPLATE.md",
     "CONTEXT-FORMAT.md",
     "ADR-FORMAT.md",

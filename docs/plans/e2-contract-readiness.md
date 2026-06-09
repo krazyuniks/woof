@@ -1,0 +1,175 @@
+# E2. Contract Readiness and Run Resilience
+
+Active per-epic plan for E2 in `docs/backlog.md`. The backlog defines the open
+work; this file sequences it into small, independently-reviewable,
+independently-committable coding-agent prompts. Each prompt is the contract
+between the operator and the coding agent: a tight scope, the files it touches,
+the tests it adds, and a review checkpoint.
+
+E2 adds operational guardrails around the current `woof wf` runner without
+splitting the operator surface (ADR-006, ADR-008). It does not add a `woof graph`
+API, a split-skill suite, confidence-based gating, model-to-model debate, or a
+runtime sandbox. The graph stays graph-led: deterministic Python picks the next
+node; gates surface to the operator and are never auto-approved.
+
+## Goal
+
+After E2, an epic cannot reach Stage-3 planning until a deterministic Stage-2.5
+node has proved the `EPIC.md` contract is machine-checkable, concretely
+referenced, and decomposable; an unready contract opens an operator
+`readiness_gate` and repeated failures escalate instead of looping. Reviewer
+blockers must carry evidence that resolves to a known artefact reference, or the
+blocker is itself blocked. Quality gates run in `strict` or command-level
+`baseline` mode with durable, freshness-stamped, explicitly-recaptured baselines.
+Dispatch telemetry carries the run-resilience and drift signals - normalised
+error signature, rate-limit classification, and HEAD/branch before and after -
+so a deterministic run-resilience policy can open course-correction and
+run-resilience gates on repeated no-progress or same-error patterns, and the
+commit/gate path halts on unexplained git-position movement. Every new artefact
+is a JSON Schema contract; every guardrail is covered by no-mock tests.
+
+## Stories
+
+| ID | Story | Acceptance criteria |
+|---|---|---|
+| S1 | Stage-2.5 readiness node, result schema, and `readiness_gate` | A deterministic `contract_readiness` node runs after `definition_closed` and before `breakdown_planning`. It writes `readiness-result.json` (validated against a new `readiness-result.schema.json`); on pass the graph advances to `breakdown_planning`, on fail it opens a `readiness_gate` and halts. `next_node`, `default_registry`, `gate.schema.json`, `jsonl-events.schema.json`, and `gate/write.py` all know the readiness node and gate. Re-running `woof wf --epic N` resumes correctly from each on-disk state. |
+| S2 | Readiness check matrix + forward-created grammar + non-blocking timeout | The readiness checker enforces the six backlog checks: machine-checkable acceptance signals; non-subjective acceptance prose; contract decisions with exact paths/schema/API refs or explicit forward-created markers; referenced existing paths resolve against `git ls-files`; cited symbols resolve cheaply or require a forward-created marker; Stage-3 decomposition sufficiency. The forward-created grammar is exactly `` `path/or/symbol` (forward-created) `` or `` `path/or/symbol` (created by ticket <id>) ``. A checker timeout produces a non-blocking performance finding and never blocks solely on its own timeout. |
+| S3 | Readiness recycle escalation + audited readiness-gate resolutions | After a configured number of failed readiness cycles, the node opens an escalation-flavoured `readiness_gate` instead of looping revise/fail. `readiness_gate` resolves with `revise_epic_contract`, `approve_with_reason`, or `abandon_epic`, audited through `woof wf --epic N --resolve`. `approve_with_reason` advances the graph past readiness with a recorded reason; `revise_epic_contract` re-enters Stage 2; `abandon_epic` ends the epic. |
+| S4 | Blocker-evidence discipline | `critique.schema.json` requires `evidence` on every `blocker` finding. Evidence must resolve to a known artefact reference (file:line, story id, observable outcome id, contract-decision id, schema ref, or quality-gate id). `check_6_critique_blocker` fails when blocker evidence is missing or unresolvable. Reviewer prompts instruct evidence discipline. No confidence field gates anything. |
+| S5 | Quality-gate strict/baseline modes | `quality-gates.toml` supports `strict` (any failure blocks) and `baseline` (a command already red at capture time is reported but does not block) at command granularity. Baseline is keyed on the configured command identity; an identity change re-arms blocking. A durable, schema-governed baseline record stores the captured state. No per-failure subtraction is claimed. |
+| S6 | Baseline freshness + recapture | Baseline records carry wall-clock age and graph/run-iteration age. A stale (expired) baseline stops suppressing failures. Baselines are recaptured only through an explicit operator action, never silently. |
+| S7 | Dispatch resilience and drift telemetry | `subprocess_returned` records a normalised `error_signature` (volatile paths, line/column spans, ISO timestamps, UUIDs, and excess whitespace stripped; standalone numbers preserved; truncated to a bounded length), a `rate_limit` classification when the adapter exposes it, and `head_before`/`head_after`/`branch_before`/`branch_after`. `jsonl-events.schema.json` declares all four position fields, `error_signature`, and `rate_limit`. |
+| S8 | HEAD/branch drift gate | The commit and gate paths compare the recorded git position; movement not explained by a graph-owned commit halts with a `head_branch_drift` gate rather than committing over it. |
+| S9 | Run-resilience circuit breaker | A deterministic policy over dispatch telemetry tracks separate consecutive-no-progress and consecutive-same-error counters, checks same-error before no-progress, and uses stage-aware progress detection. Repeated constraint/invariant/contract-discovery signatures open a course-correction gate; repeated timeout without expected-artefact progress opens a run-resilience gate; rate-limit waits are classified separately and do not poison the counters. The policy only detects and opens gates through `woof wf`; it never mutates `.woof/` state directly. |
+| S10 | Optional tmux-backed long-run supervision | **Deferred out of E2 (D-TM).** Recorded as a follow-on, not a committed E2 story: `woof wf` long runs may later use tmux for panes, logs, and status only, with no state mutation outside `woof` commands and no second graph/state authority. |
+
+## Prompt sequence
+
+Sequenced by dependency and risk. The readiness node is the natural first prompt
+(self-contained, establishes the Stage-2.5 seam end to end). S7 telemetry
+precedes the drift gate (S8) and the circuit breaker (S9) that consume it.
+
+| # | Prompt summary | Files touched | Tests | Review checkpoint |
+|---|---|---|---|---|
+| 1 | **(S1)** Add `NodeType.CONTRACT_READINESS`; wire `next_node` so `definition_closed` (and no pending revision) routes to `contract_readiness` until a `readiness_passed` event exists, then `breakdown_planning`. Add a deterministic `contract_readiness_node` that runs one minimal structural readiness check, writes `readiness-result.json`, appends `readiness_passed` and advances on pass, opens a `readiness_gate` on fail. Add `readiness-result.schema.json`; extend `gate.schema.json` (`readiness_gate` type, stage value, allOf coupling, `readiness_unready` trigger), `jsonl-events.schema.json` (`readiness_gate_opened`, `readiness_passed`, `readiness_gate` gate_type), and `gate/write.py` mappings. Register the new schema with `woof validate`. | `src/woof/graph/state.py`, `src/woof/graph/transitions.py`, `src/woof/graph/nodes.py`, `src/woof/graph/readiness.py` (new), `schemas/readiness-result.schema.json` (new), `schemas/gate.schema.json`, `schemas/jsonl-events.schema.json`, `src/woof/gate/write.py`, `src/woof/cli/main.py`, this plan | `tests/unit/test_contract_readiness.py` (new): pass routes to breakdown; fail opens `readiness_gate`; result schema-valid; resume from each state. Update gate-enum snapshot in `tests/unit/test_check_stage_5_subcommand.py`; `tests/unit/test_validate.py` | Readiness node is reachable end to end; a deliberately thin `EPIC.md` opens the gate and a concrete one advances; `just check` green. (Settle D-ST: `readiness_gate.stage` integer.) |
+| 2 | **(S2)** Build the full readiness matrix in `readiness.py`: machine-checkable acceptance signals on outcomes/criteria; non-subjective acceptance prose (placeholder-prose detection paired-assertion exempt); contract-decision concreteness; existing-path resolution against `git ls-files`; cheap symbol resolution (file + `ast` class presence, mirroring `contract_refs.py` but existence-only); Stage-3 decomposition sufficiency. Parse the exact forward-created grammar from `EPIC.md` body and CD `notes` to whitelist non-resolving refs. Wrap checks in a bounded timeout that emits a non-blocking performance finding. | `src/woof/graph/readiness.py`, `schemas/readiness-result.schema.json` (per-check entries, finding refs, `warn`/performance severity), `playbooks/discovery/definition.md` (producer emits machinable criteria + forward-created annotations) | `tests/unit/test_contract_readiness.py`: each check pass/fail; forward-created grammar accepted/rejected; unannotated missing ref fails; timeout yields non-blocking finding | Each readiness check fails closed on its own concern and passes when satisfied; checker timeout never blocks alone; `just check` green. |
+| 3 | **(S3)** Add readiness recycle escalation: count failed readiness cycles since the last `definition_closed` from `epic.jsonl`; past the configured threshold open an escalation-flavoured `readiness_gate` (`readiness_escalation` trigger). Add `approve_with_reason` to `GateDecision`, the `wf --resolve` choices, and `jsonl-events` `decision`. Branch `_apply_gate_resolution_effects` for `readiness_gate`: `revise_epic_contract` (re-enter Stage 2), `approve_with_reason` (record reason; mark readiness satisfied), `abandon_epic`. Make the `next_node` readiness detector honour an `approve_with_reason` resolution recorded after the latest `definition_closed`. | `src/woof/cli/commands/wf.py`, `src/woof/graph/state.py`, `src/woof/graph/transitions.py`, `src/woof/graph/nodes.py` (or `readiness.py`), `schemas/jsonl-events.schema.json`, `schemas/gate.schema.json` (`readiness_escalation` trigger) | `tests/unit/test_contract_readiness.py` / `test_wf_*`: escalation after N cycles; each resolution effect; `approve_with_reason` advances; `revise_epic_contract` re-enters Stage 2 | A looping unready contract escalates rather than thrashing; each audited resolution moves the graph correctly and is recorded; `just check` green. |
+| 4 | **(S4)** Require `evidence` on `blocker` findings in `critique.schema.json` (conditional: severity=blocker implies evidence present and non-empty). Define the resolvable-reference grammar and extend `check_6_critique_blocker` so a blocker whose evidence does not resolve to a known artefact reference (file:line, story id, outcome id, CD id, schema ref, quality-gate id) is itself a blocker. Add evidence-discipline wording to the reviewer playbooks. Do not add a confidence field. | `schemas/critique.schema.json`, `src/woof/checks/runners/check_6_critique_blocker.py`, `src/woof/graph/dispositions.py` (if evidence resolution is shared), `playbooks/critique/story.md`, `playbooks/critique/plan.md` | `tests/unit/test_check_6_critique_blocker.py`: blocker without evidence fails; blocker with unresolvable evidence fails; resolvable evidence passes; each reference kind resolves | A blocker without resolvable evidence cannot pass Check 6; non-blocking critiques unaffected; `just check` green. |
+| 5 | **(S5)** Add `mode` (`strict`\|`baseline`) to `quality-gates.schema.json` at command granularity (with a project default). Add a durable baseline record (new `quality-gates-baseline.schema.json` under `.woof/`) capturing per-command red/green state and command identity. Extend `check_1_quality_gates` so a `baseline` command red at capture is reported, not blocking, until its command identity changes; `strict` blocks on any failure. No per-failure subtraction. | `schemas/quality-gates.schema.json`, `schemas/quality-gates-baseline.schema.json` (new), `src/woof/checks/runners/check_1_quality_gates.py`, `src/woof/cli/main.py` (schema registration) | `tests/unit/test_check_1_quality_gates.py`: strict blocks; baseline suppresses a pre-existing red; identity change re-arms blocking; new failure beyond baseline blocks | Baseline suppresses only known reds and only while command identity is unchanged; strict is unchanged default behaviour; `just check` green. (Default mode set by D-QG.) |
+| 6 | **(S6)** Add freshness metadata to the baseline record: wall-clock age and graph/run-iteration age, with explicit expiry. An expired baseline stops suppressing. Add an explicit operator recapture path (a `woof` verb/flag); never recapture implicitly. | `schemas/quality-gates-baseline.schema.json`, `src/woof/checks/runners/check_1_quality_gates.py`, `src/woof/cli/commands/` (recapture verb/flag), `src/woof/cli/main.py` | `tests/unit/test_check_1_quality_gates.py`: fresh baseline suppresses; expired baseline blocks; recapture only via explicit action | A stale baseline cannot hide a regression; recapture is operator-explicit and audited; `just check` green. |
+| 7 | **(S7)** Record run-resilience and drift signals on `subprocess_returned`: a normalised `error_signature` (strip volatile paths, line/column spans, ISO timestamps, UUIDs, excess whitespace; preserve standalone numbers; truncate to a bounded length), a `rate_limit` classification when the adapter exposes it, and `head_before`/`head_after`/`branch_before`/`branch_after` read around the supervised run. Declare all in `jsonl-events.schema.json`. Pure functions live in a dedicated module. | `src/woof/cli/dispatcher.py`, `src/woof/graph/git.py` (HEAD/branch readers), `src/woof/lib/error_signature.py` (new), `src/woof/lib/rate_limit.py` (new, or in dispatcher), `schemas/jsonl-events.schema.json` | `tests/unit/test_error_signature.py` (new): normalisation cases; `tests/unit/test_dispatch.py`: position + rate_limit fields recorded | Telemetry carries all six signals; normalisation is deterministic and bounded; `just check` green. |
+| 8 | **(S8)** Detect HEAD/branch drift at the commit and gate boundary: compare the recorded before/after position; movement not explained by a graph-owned commit halts with a `head_branch_drift` gate instead of committing. Add the trigger to `gate.schema.json` and the `gate/write.py` mapping. | `src/woof/graph/nodes.py` (commit/gate boundary), `src/woof/graph/git.py` (drift predicate), `schemas/gate.schema.json` (`head_branch_drift` trigger), `src/woof/gate/write.py` | `tests/unit/test_graph.py` / new: graph-owned commit does not trip; unexplained movement opens `head_branch_drift` | Unexplained git movement halts rather than landing; graph-owned commits pass cleanly; `just check` green. |
+| 9 | **(S9)** Add the deterministic run-resilience policy over dispatch telemetry: stage-aware progress detection; separate consecutive-no-progress and consecutive-same-error counters; same-error checked before no-progress; rate-limit waits classified out of the counters. Repeated constraint/invariant/contract-discovery signatures open a `course_correction` gate; repeated timeout without expected-artefact progress opens a `run_resilience` gate. The policy detects and opens gates through `woof wf` only. | `src/woof/graph/resilience.py` (new), `src/woof/graph/runner.py` (consult between nodes), `schemas/gate.schema.json` (`course_correction`, `run_resilience` triggers), `src/woof/gate/write.py` | `tests/unit/test_resilience.py` (new): counter logic; same-error-before-no-progress ordering; course-correction vs run-resilience selection; rate-limit excluded; circuit-breaker decision matrix | Counters and gate selection match the decision matrix; the policy never writes `.woof/` state directly; `just check` green. |
+| 10 | **(S10, deferred from E2 by D-TM)** Not part of committed E2 scope. If later picked up as a follow-on: tmux-backed long-run supervision for `woof wf` (panes, logs, status only; no state mutation outside `woof` commands; documented in the `/woof` umbrella references). | `skills/woof/references/` (run-supervision reference), small `woof` helper if needed | tmux command-construction test: no graph bypass, no `.woof/` writes | tmux supervises only; no second state authority; `just check` green. |
+
+## Risk register
+
+- Readiness gate blocks on subjective quality: keep every readiness check deterministic - machinability, concrete refs, path/symbol resolution against `git ls-files`, decomposition sufficiency - and treat placeholder prose only when unpaired with a measurable assertion. (Echoes the implementation-plan risk register.)
+- Readiness loops revise/fail forever: S3 escalation opens an operator gate after a bounded number of cycles instead of re-dispatching indefinitely.
+- Readiness checker cost becomes a hidden gate: a checker timeout is a non-blocking performance finding; a gate never blocks solely because its own checker timed out.
+- Baseline mode overpromises per-failure subtraction: S5 is command-level only; structured per-failure subtraction is explicitly out of scope until a gate declares a parser. A stale baseline is prevented from hiding regressions by S6 freshness/expiry and operator-only recapture.
+- Dispatched worker changes branch or HEAD unexpectedly: S7 records position before and after; S8 opens a drift gate on unexplained movement.
+- Error-signature normalisation hides real differences or leaks volatile noise: keep the normalisation rules exactly as specified (preserve standalone numbers, strip spans/timestamps/UUIDs/paths) and cover them with explicit fixture tests.
+- Circuit breaker mutates state or fights the graph: S9 only detects and opens gates through `woof wf`; the graph still owns durable state and gate records. Rate-limit waits are classified out so they do not poison counters.
+- tmux grows into a second workflow: S10 supervises panes/logs/status only; state still changes through `woof` commands. (Why it is the deferral candidate - D-TM.)
+- Blocker evidence discipline drifts toward confidence gating: evidence must resolve to a concrete artefact reference; no confidence field is added, consistent with ADR-006 point 5.
+
+## Decisions resolved during the epic
+
+| ID | Decision | Resolution |
+|---|---|---|
+| D-RD | How does `next_node` detect that readiness is satisfied without re-running the node each invocation? | Event-based, matching `definition_closed`/`breakdown_planned`: a `readiness_passed` event (or an `approve_with_reason` readiness-gate resolution) recorded after the latest `definition_closed` satisfies readiness; otherwise route to `contract_readiness`. Settled in P1/P3. |
+| D-ST | What integer does `readiness_gate.stage` carry, given the enum is `[4,5,6]` and readiness is "Stage 2.5"? | Recommend adding `2` to the enum and setting `readiness_gate.stage = 2` (the gate validates the Stage-2 contract; integers cannot express 2.5), documented as the post-definition readiness boundary. Settled in P1. |
+| D-FC | Where is the forward-created grammar parsed from? | The `EPIC.md` free-form body and contract-decision `notes`, using the exact two annotation forms. The annotation whitelists the adjacent path/symbol from path/symbol resolution. Settled in P2. |
+| D-BL | Where do quality-gate baselines live and what is command identity? | A durable `.woof/`-side baseline record governed by `quality-gates-baseline.schema.json`; command identity is the exact configured command string (plus gate name). An identity change re-arms blocking. Settled in P5. |
+| D-ES | Exact error-signature normalisation contract. | Strip volatile absolute/relative paths, line/column spans, ISO-8601 timestamps, UUIDs, and excess whitespace; preserve standalone integers; truncate to a bounded length. Pinned by fixture tests in P7. |
+| D-DR | What movement counts as "explained by a graph-owned commit" for drift? | A HEAD advance whose new commit is the graph's own Stage-5 transaction commit for the active story; any other branch switch or HEAD move is drift. Settled in P8. |
+| D-QG | Default quality-gate mode when `quality-gates.toml` declares none. | `strict` (operator-confirmed 2026-06-09). Baseline is opt-in per command for brownfield repos with known reds; a silent default-to-baseline would be a quiet bypass. Governs P5. |
+| D-TM | Is tmux long-run supervision in E2 scope or deferred? | Deferred out of E2 (operator-confirmed 2026-06-09). It is the one optional backlog item and the clean cut line; revisit as a follow-on after the readiness/telemetry/drift work lands. P10/S10 are not part of the committed E2 scope. |
+
+## Out of scope
+
+- A `woof graph` command API, a split-skill suite, or any new peer skill (withdrawn directions; ADR-007).
+- Confidence-based gating or any model-to-model debate loop (ADR-006).
+- A preventive runtime sandbox or command allow-list; the safety boundary stays at commit time (Settled Choices; OD-1).
+- Per-failure subtraction in baseline mode; only command-level baselines until a gate declares a structured parser.
+- The structural cartography index and `woof cartography` query surface (E12), Stage-5 impact context (E13), run lineage `run_id` threading (E8), and producer-output recovery (E9). E2 records `error_signature`/`rate_limit`/positions and `exit_type`, but does not build the eval manifest (E4) or replay (E8).
+- Parallel story dispatch and git-worktree isolation (deferred Settled Choice).
+- Cross-repo edits to any consumer; E2 changes Woof itself.
+
+## Done definition
+
+- All stories' acceptance criteria met.
+- All review checkpoints passed.
+- All decisions in the table resolved (including operator decisions D-QG and D-TM).
+- Tests cover readiness pass/fail, readiness timeout non-blocking behaviour, readiness escalation, readiness gate resolution, blocker evidence resolution, command-level baseline behaviour, baseline freshness/recapture, HEAD/branch drift, circuit-breaker decision logic, and (if in scope) tmux command construction without graph bypass.
+- `just check` green.
+
+## Prompt 1 (full text, ready to run)
+
+> You are implementing prompt 1 of Woof epic E2 (`docs/plans/e2-contract-readiness.md`,
+> story S1). Read that plan, `docs/architecture.md` sections 3 (Stage 2.5), 10
+> (Gates), and 11.5, and ADR-006 before starting. Do not implement later prompts.
+>
+> Goal: add the deterministic Stage-2.5 contract-readiness node and its
+> `readiness_gate` as a working graph seam, with one minimal structural check. The
+> full readiness check matrix lands in prompt 2; keep this prompt to the topology
+> plus one real check so the node is reviewable end to end.
+>
+> Implement:
+> 1. `src/woof/graph/state.py`: add `NodeType.CONTRACT_READINESS = "contract_readiness"`.
+> 2. `src/woof/graph/transitions.py`: in `next_node`, where `EPIC.md` exists and
+>    `definition_closed` is recorded with no pending `definition_revision_requested`,
+>    route to `CONTRACT_READINESS` until a `readiness_passed` event exists after the
+>    latest `definition_closed`; once it does, route to `BREAKDOWN_PLANNING`. Add a
+>    small `readiness_satisfied(repo_root, epic_id)` helper that reads `epic.jsonl`
+>    via `iter_epic_events` (so it respects `epic_reset`).
+> 3. `src/woof/graph/readiness.py` (new): a deterministic
+>    `evaluate_readiness(repo_root, epic_id, epic_path) -> ReadinessResult` mirroring
+>    `planning_contracts.py`. For this prompt, implement exactly one check: every
+>    non-deprecated `observable_outcome` whose `verification` is `automated` or
+>    `hybrid` must have a machine-checkable acceptance signal - it is realised by at
+>    least one `contract_decision` (an entry whose `related_outcomes` includes the
+>    outcome id), or it is named by an `acceptance_criteria` entry that includes a
+>    command or assertion. Return a structured result with
+>    `ok`, per-check entries, and findings carrying the offending id. Load EPIC
+>    front-matter with the same pattern as `planning_contracts._load_epic_front_matter`.
+> 4. `src/woof/graph/nodes.py`: add `contract_readiness_node(inp)` (deterministic,
+>    no dispatch, modelled on `plan_gate_open_node`/`verification_node`). It calls
+>    `evaluate_readiness`, writes `readiness-result.json` into the epic dir, and
+>    validates it with `woof validate --schema readiness-result`. On pass: append a
+>    `readiness_passed` event and return `COMPLETED` with
+>    `next_node=BREAKDOWN_PLANNING`. On fail: `write_gate(... gate_type="readiness_gate",
+>    triggered_by=["readiness_unready"] ...)` and return `GATE_OPENED`. Register
+>    `NodeType.CONTRACT_READINESS: contract_readiness_node` in `default_registry`.
+> 5. `schemas/readiness-result.schema.json` (new): contract for `readiness-result.json`
+>    - `epic_id`, `ok`, `timestamp`, `checks[]` (each `id`, `ok`, `severity`,
+>    `summary`, optional `findings[]` with a resolvable reference). `additionalProperties:false`.
+> 6. `schemas/gate.schema.json`: add `readiness_gate` to the `type` enum; add the
+>    `readiness_gate.stage` integer (extend the `stage` enum to include `2` and set
+>    the readiness coupling in `allOf`: `story_id` null); add `readiness_unready` to
+>    the `triggered_by` enum.
+> 7. `schemas/jsonl-events.schema.json`: add `readiness_gate_opened` and
+>    `readiness_passed` to the event enum; add `readiness_gate` to the `gate_type`
+>    enum. Add a conditional requiring `epic_id` on `readiness_passed`.
+> 8. `src/woof/gate/write.py`: teach `_gate_type_for_triggers`,
+>    `_stage_for_gate_type`, and `_opened_event_for_gate_type` about
+>    `readiness_gate` / `readiness_unready` / `readiness_gate_opened`.
+> 9. `src/woof/cli/main.py`: register `readiness-result.schema.json` wherever
+>    `woof validate` discovers schemas (mirror how `freshness.json` was added in E1).
+>
+> Tests (no mocks, real fixtures):
+> - `tests/unit/test_contract_readiness.py`: a concrete `EPIC.md` makes the node
+>   advance to `breakdown_planning` and append `readiness_passed`; a thin `EPIC.md`
+>   (an automated outcome with no acceptance signal) opens a `readiness_gate` and
+>   halts; `readiness-result.json` validates; re-running resumes from each state
+>   (gate present -> human_review; `readiness_passed` present -> breakdown).
+> - Update the gate `triggered_by`/type enum snapshot in
+>   `tests/unit/test_check_stage_5_subcommand.py`, and any `tests/unit/test_validate.py`
+>   schema-catalogue assertion.
+>
+> Constraints: the woof worktree may carry concurrent uncommitted work from other
+> sessions - stage only the explicit paths you changed, never `git add -A`, do not
+> switch or rewrite the branch HEAD, and do not run `woof wf` against any epic.
+> Run `just check` (lint + tests) and report the result. Stop after this prompt for
+> review; do not start prompt 2.

@@ -189,7 +189,6 @@ Convert the MP engineering-skill comparison into Woof improvements without inter
 Open work:
 - **P0.1 live hygiene and onboarding correctness:**
   - Fix the generated `woof-brainstorm` bundle's dangling `README.md` references. Re-establish a live agent-toolkit source/pin, add the referenced `README.md` to the generated companion set (or remove the references upstream), regenerate with `just gen-brainstorm`, and keep drift tests green. Do not hand-edit the generated body.
-  - Align `skills/woof/references/setup.md` with current `woof init` behaviour: init infers the tracker default and repo slug from the git remote (an `origin`/`upstream` github remote yields a github tracker with `repo` pre-filled, otherwise local), so the doc must stop implying the GitHub `repo` placeholder always needs manual replacement. The CLI behaviour and next-steps wording are in place; only the reference doc lags.
 - **P0.3 new inner-loop capability:**
   - Add a human-supervised "build a throwaway to learn" escape hatch to `woof-brainstorm`, preferably upstream in agent-toolkit. The probe must be named throwaway, answer a stated design question, feed the answer into the brainstorm bundle, and be deleted or absorbed.
   - Design a scoped bug-diagnosis lifecycle: a `kind: bug` spark path, a diagnosis playbook for reproduce/minimise/hypothesise/instrument, and a handoff into the existing Stage-5 red-green-refactor fix flow.
@@ -197,7 +196,7 @@ Open work:
   - Review whether to build a standalone codebase-deepening review flow off the `CURRENT-ARCHITECTURE.md` / `TARGET-ARCHITECTURE.md` delta. Treat it as a small subsystem, not a prompt tweak; defer until the cheap heuristics or baseline eval data justify it.
   - Review an on-demand "zoom out this neighbourhood" operator gesture and the lifecycle for binding repo-durable cartography to per-epic `CONTEXT.md` glossary terms.
 
-Sequencing: preserve the current E1/E2 chain. The P0.2 prompt-doctrine imports have landed across the producer/reviewer playbooks; the remaining P0.1 item (setup.md alignment) and the dangling-README fix may be pulled forward when they touch active files; P0.3 starts after the readiness and structural-cartography paths are stable; P0.4 is explicitly deferred for later review.
+Sequencing: preserve the current E1/E2 chain. The P0.2 prompt-doctrine imports have landed across the producer/reviewer playbooks, and the `woof init` onboarding alignment is done; the remaining P0.1 dangling-README fix may be pulled forward when it touches active files; P0.3 starts after the readiness and structural-cartography paths are stable; P0.4 is explicitly deferred for later review.
 
 ### E12. Structural Cartography Index
 

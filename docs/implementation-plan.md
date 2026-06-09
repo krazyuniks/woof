@@ -13,10 +13,6 @@ Do not use this document to preserve speculative architecture. If a direction is
 ## Sequence
 
 ```text
-E7 Dispatch process supervision   (active; refines E2/E4 telemetry, blocks nothing in the chain)
-        |
-E1 Cartography prerequisite       (prompts 4-5 deferred, not dropped)
-        |
 E2 Contract readiness and run resilience
         |
 E3 Specwright bootstrap
@@ -25,20 +21,35 @@ E4 Eval instrumentation
         |
 E5 Baseline eval run
         |
+E12 Structural cartography index
+        |
+E13 Stage-5 impact context integration
+        |
 E6 Contract conformance audit
 
-Follow-on (sequenced after E7, off the critical chain):
+Completed prerequisite:
+E7 Dispatch process supervision   (complete; ADR-008; per-epic plan removed)
+E1 Cartography prerequisite       (complete; prompts 1-5 landed)
+
+Follow-on (off the critical chain):
 E8 Run lineage  ->  E9 Producer-output recovery
 E10 Plan-graph algorithms   (independent; gated only by a real consumer need, not by E8/E9)
+E11 MP engineering review imports (P0.1/P0.2 pull-forward only; P0.4 deferred review)
+E14 Ranked and semantic cartography retrieval
+E15 Structural onboarding and mapper grounding
 ```
 
-E7 corrects per-dispatch outcome classification (the hanging-but-done -> timeout bug) so that E2's run-resilience counters and E4's eval summaries consume trustworthy `exit_type` signal; it depends on nothing and was chosen as the active epic ahead of E1's remaining prompts. E1 gives dispatched work stable codebase context. E2 hardens the current `woof wf` runner with readiness, gate, telemetry, and drift controls. E3 proves a real consumer can be prepared without extra operator ceremony. E4 and E5 measure the production shape before new optimisation work. E6 is post-baseline, so the first eval can show whether the conformance audit is the right next lever. E8 threads run lineage; E9 builds producer-output recovery on top of lineage and E7; E10 swaps the hand-rolled plan-DAG check for graph-library algorithms and is independent of E8/E9.
+E7 is complete: per-dispatch supervision now classifies hanging-but-done workers as `completed_lingering`, emits trustworthy `exit_type` telemetry, and leaves the detailed behaviour in ADR-008 plus architecture s11.5. E1 is complete: prompts 1-5 give dispatched work stable codebase context, including a hard onboarding error for legacy consumers without `[cartography]`. E2 is the next active line and hardens the current `woof wf` runner with readiness, gate, telemetry, and drift controls. E3 proves a real consumer can be prepared without extra operator ceremony. E4 and E5 measure the production shape before new optimisation work.
+
+After E5, the next planned optimisation pivot is structural cartography. E12 builds the ADR-009 local files/symbols/edges index, starting with an audit of any concurrent tree-sitter/parser work so Woof does not grow two extraction paths. E13 uses that index first in the Stage-5 reviewer path as bounded impact context. E6 then runs with structural evidence available for conformance checks, rather than trying to infer callers and affected surfaces from prose alone.
+
+E8 threads run lineage; E9 builds producer-output recovery on top of lineage and completed E7 process supervision; E10 swaps the hand-rolled plan-DAG check for graph-library algorithms and is independent of E8/E9. E11 captures the MP engineering review imports; its P0.1/P0.2 items may be batched into active prompts when they touch the same files, but P0.3 starts only after the readiness and structural-cartography paths are stable and P0.4 is a lower-priority review item. E14 and E15 carry the remaining code-mapping research recommendations - ranking/semantic retrieval and onboarding/mapper grounding - and should start only after E12/E13 produce measured value or E5 shows they are the stronger bottleneck.
 
 The old `woof graph` API plan and split-skill suite are withdrawn. New work builds against `woof wf`, `/woof`, and `/woof:brainstorm`.
 
 ## Historical: E1 first prompt
 
-E1's first prompt (the smallest useful cartography contract: schema fields, preflight missing/stub reporting, `/woof` reference updates, focused tests) has landed, along with prompts 2-3. See Active Per-Epic Plan Pointers for the current active epic.
+E1's first prompt (the smallest useful cartography contract: schema fields, preflight missing/stub reporting, `/woof` reference updates, focused tests) landed, along with prompts 2-5. See Active Per-Epic Plan Pointers for the current active epic.
 
 ## Per-Epic Plan Template
 
@@ -81,7 +92,12 @@ Current decisions are already recorded in the backlog's Settled Choices. The seq
 | Where | Decision |
 |---|---|
 | Before E3 starts | Confirm specwright is still the first production-shape consumer. |
-| After E5 baseline | Decide whether E6 conformance audit is the first optimisation target or whether eval data points elsewhere. |
+| After E5 baseline | Confirm structural cartography remains the first optimisation target; if eval data points elsewhere, reorder E12/E13 explicitly. |
+| Before E12 starts | Audit the concurrent tree-sitter/parser work and decide whether E12 reuses it, finishes it, or starts with a Python `ast` extractor behind the same adapter boundary. |
+| Before E14 starts | Decide whether semantic retrieval needs embeddings or whether BM25 plus structural ranking is enough for the first pass. |
+| Before E15 starts | Confirm there is a real onboarding target large enough to justify mapper grounding and community/hub analysis. |
+| Before E11 P0.3 starts | Decide whether prototype/diagnose should be a dedicated epic or folded into the next readiness/recovery pass. |
+| Before E11 P0.4 starts | Review whether codebase-deepening and zoom-out flows are still worth building, based on cheap-heuristic results and eval data. |
 
 ## Risk Register
 
@@ -93,21 +109,29 @@ Current decisions are already recorded in the backlog's Settled Choices. The seq
 | Dispatched worker changes branch or HEAD unexpectedly | E2 records HEAD/branch before and after dispatch and opens a drift gate on unexplained movement. |
 | tmux grows into a second workflow | tmux may supervise panes, logs, and child processes only. State still changes through Woof commands. |
 | Eval result shows a different bottleneck than expected | Use the E5 manifest to choose the next optimisation; do not pre-commit to context-scoping changes. |
+| Concurrent tree-sitter work conflicts with E12 | E12 starts with an audit and reuse decision; no second parser/indexer path lands without an ADR-009 update. |
+| Structural index looks precise but is heuristic | Store provenance/confidence on every edge; prompts and gates treat heuristic/ambiguous edges as leads requiring source evidence. |
+| Structural cartography becomes a parallel graph surface | Only `woof cartography` reads the index. It does not mutate workflow state, expose MCP, or create a `woof graph` API. |
+| MP comparison imports expand into a second skill suite | Keep imports inside `/woof`, `/woof:brainstorm`, playbooks, schemas, and deterministic checks. Do not add parallel tracker or split-skill surfaces. |
 
 ## Active Per-Epic Plan Pointers
 
-**E7 (Dispatch Process Supervision) is active.** Its plan is `docs/plans/e7-process-supervision.md` and its decision is ADR-008. It was chosen as the next epic ahead of E1's remaining prompts because it corrects a per-dispatch outcome-classification bug (hanging-but-done worker reported as a timeout and gated as a crash) that all downstream telemetry consumers depend on.
+**E1 (Cartography Prerequisite) is complete.** Its plan is `docs/plans/e1-cartography.md`; prompts 1-5 have landed (the `[cartography]` contract plus missing/stub preflight enforcement, the non-blocking stale-`freshness.json` warning, the per-language `refresh-cartography` composition with the `ts`-authoritative reader, the fail-loud post-commit hook, and the onboarding preflight error for cartography-less consumers).
 
-E1 (Cartography Prerequisite) is **parked: deferred, not dropped**. Its plan is `docs/plans/e1-cartography.md`; prompts 1-3 have landed (the `[cartography]` contract plus missing/stub preflight enforcement, the non-blocking stale-`freshness.json` warning, and the per-language `refresh-cartography` composition with the `ts`-authoritative reader). E1 prompts 4-5 (fail-loud post-commit hook; blanket enforcement for cartography-less consumers) resume after E7 completes.
+**E7 (Dispatch Process Supervision) is complete.** ADR-008 and architecture s11.5 describe the landed terminal-seen, inherited-stream, and `completed_lingering` semantics. Its per-epic plan was removed because `docs/plans/` only keeps active epic plans.
 
 ## What Happens Next
 
-Confirmed E7-first ordering (operator-approved):
+Current ordering:
 
-1. Sequencing patch (this doc): E7 active, E1 prompts 4-5 parked. **Landed.**
-2. E7 prompt 0: ADR-008 + architecture cross-reference. **Landed.**
-3. E7 prompt 1: the `supervise()` primitive - phase-scoped clocks (idle and wall-clock pre-terminal; completion-grace and tail cap post-terminal), process-group reaping, bounded streamed capture - with fault-injection unit tests against real fake-agent scripts.
-4. E7 prompts 2-4: wire `cmd_dispatch` (and update `observe`/bench), add the shared node-layer dispatch-result classifier, then the end-to-end fault-injection integration matrix.
-5. Return to E1 prompts 4-5 (fail-loud post-commit hook; cartography-less onboarding error).
+1. E7 closeout: mark dispatch process supervision complete and remove its active plan. **Landed.**
+2. E1 prompt 4: fail-loud post-commit hook for the mechanical cartography layer. **Landed.**
+3. E1 prompt 5: clear preflight error for cartography-less consumers. **Landed.**
+4. E2 starts now that E1 is complete.
+5. E3/E4/E5 produce the first production-shape baseline.
+6. E12 starts the structural cartography pivot, beginning with the concurrent tree-sitter work audit.
+7. E13 wires bounded impact context into the Stage-5 reviewer path.
+8. E6 conformance audit follows with structural evidence available.
+9. E11 P0.1/P0.2 items may be batched only when they touch the same active files; otherwise they remain follow-on backlog work.
 
 Review the diff and targeted tests before each next prompt runs. This document is updated only when sequencing or active plan pointers change.

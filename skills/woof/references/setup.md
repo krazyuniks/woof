@@ -17,6 +17,11 @@ Bring a consumer repository under Woof from the `/woof` umbrella.
    enforcement; see step 4. Add `--with-docs-paths` to also scaffold the Stage-5 docs-drift
    mappings.
 
+   With `--tracker` omitted, `woof init` infers the tracker from the project's git remote: a
+   github `origin`/`upstream` remote scaffolds the github tracker with `repo` pre-filled from its
+   `owner/name`, otherwise it scaffolds the local tracker. Pass `--tracker github` or
+   `--tracker local` to choose explicitly.
+
    Pass `--language <lang>` (repeatable; `python`, `go`, `typescript`, `rust`) to record the
    cartography languages in `[cartography].languages` and compose the consumer-owned
    `scripts/refresh-cartography` from the per-language fragments. Re-running `woof init` is
@@ -25,14 +30,14 @@ Bring a consumer repository under Woof from the `/woof` umbrella.
    script is not composed - re-run with `--language` (or author `scripts/refresh-cartography` by
    hand).
 
-2. Replace every `<replace>` placeholder in `.woof/*.toml`. In particular set the project test
-   command in `quality-gates.toml` and, for the GitHub tracker, the `repo` in
-   `prerequisites.toml`.
+2. Replace any remaining `<replace>` placeholders in `.woof/*.toml` - in particular the project
+   test command in `quality-gates.toml`. For the GitHub tracker the `repo` is pre-filled from the
+   git remote when one is reachable; set it by hand only if it still reads `<replace>/<replace>`.
 
 3. Authenticate the model CLIs once: `claude /login` and `codex login`.
 
-4. Author cartography under `.woof/codebase/`. While the `[cartography]` block is present,
-   `woof preflight` fails closed until all of the following exist (see `map-codebase.md`):
+4. Author cartography under `.woof/codebase/`. `woof preflight` requires the `[cartography]`
+   block and fails closed until all of the following exist (see `map-codebase.md`):
 
    - the two human-authored design docs, `TARGET-ARCHITECTURE.md` and `PRINCIPLES.md`, with
      real content. A doc that still carries the stub marker (`<!-- woof:stub -->` by default),
@@ -42,8 +47,8 @@ Bring a consumer repository under Woof from the `/woof` umbrella.
    - the consumer-owned, executable `scripts/refresh-cartography` and the mechanical layer it
      generates (`tags`, `files.txt`, `freshness.json`).
 
-   To opt a repository out of cartography enforcement entirely, delete the `[cartography]`
-   block from `prerequisites.toml`.
+   Existing consumers whose `prerequisites.toml` has no `[cartography]` block should re-run
+   `woof init --language <lang>` and then complete this setup and map-codebase path.
 
 5. Install the post-commit cartography hook (see `map-codebase.md`):
 
@@ -61,7 +66,7 @@ Bring a consumer repository under Woof from the `/woof` umbrella.
    woof preflight
    ```
 
-   With `[cartography]` declared, preflight reports a missing or stub design doc, a missing
+   Preflight reports a missing `[cartography]` block, a missing or stub design doc, a missing
    mechanical-layer file, or a missing/non-executable `scripts/refresh-cartography` as hard
    failures.
 
@@ -77,7 +82,8 @@ Bring a consumer repository under Woof from the `/woof` umbrella.
 ## Tracker choice
 
 - `github`: epics are GitHub issues. Woof creates, hydrates, and syncs them; this is Woof's only
-  external integration. Needs `gh` authenticated and `repo` set.
+  external integration. Needs `gh` authenticated and `repo` set; `woof init` pre-fills `repo` from
+  the git remote when one is reachable.
 - `local`: epics live under `.woof/epics/E<N>/` with no remote. A Kanban board is `local` from
   Woof's point of view - it lives a layer out and drives `woof wf new`; Woof never knows about it.
 

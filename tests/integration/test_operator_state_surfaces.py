@@ -68,8 +68,28 @@ ajv-formats = "any"
 
 [tracker]
 kind = "local"
+
+[cartography]
+summary_min_chars = 40
 """
     )
+    codebase = root / ".woof" / "codebase"
+    codebase.mkdir()
+    design_doc = (
+        "# Target Architecture\n\n"
+        "The consumer keeps operator state on disk, exposes the current gate "
+        "and next action, and keeps dispatched work resumable through Woof."
+    )
+    (codebase / "TARGET-ARCHITECTURE.md").write_text(design_doc)
+    (codebase / "PRINCIPLES.md").write_text(design_doc)
+    (codebase / "tags").write_text("main\tsrc/main.py\t1\n")
+    (codebase / "files.txt").write_text("src/main.py\n")
+    (codebase / "freshness.json").write_text(
+        json.dumps({"git_ref": "abc", "age_s": 0, "generator_version": 1}) + "\n"
+    )
+    scripts = root / "scripts"
+    scripts.mkdir()
+    _write_exe(scripts / "refresh-cartography", "echo refresh\n")
     (root / ".woof" / "agents.toml").write_text(
         """\
 [roles.primary]

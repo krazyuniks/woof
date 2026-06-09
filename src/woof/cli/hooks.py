@@ -14,7 +14,19 @@ from pathlib import Path
 HOOK_BLOCK_NAME = "woof-cartography"
 HOOK_BEGIN = f"# >>> {HOOK_BLOCK_NAME}"
 HOOK_END = f"# <<< {HOOK_BLOCK_NAME}"
-HOOK_BODY = "[ -x ./scripts/refresh-cartography ] && ./scripts/refresh-cartography"
+HOOK_BODY = """\
+if [ ! -x ./scripts/refresh-cartography ]; then
+  echo "woof post-commit: ./scripts/refresh-cartography is missing or not executable" >&2
+  echo "woof post-commit: run 'woof init --language <lang>' or chmod +x scripts/refresh-cartography" >&2
+  exit 1
+fi
+
+./scripts/refresh-cartography
+woof_refresh_status=$?
+if [ "$woof_refresh_status" -ne 0 ]; then
+  echo "woof post-commit: ./scripts/refresh-cartography failed with exit status $woof_refresh_status" >&2
+  exit "$woof_refresh_status"
+fi"""
 HOOK_BLOCK = f"{HOOK_BEGIN}\n{HOOK_BODY}\n{HOOK_END}\n"
 HOOK_BLOCK_RE = re.compile(rf"(?ms)^{re.escape(HOOK_BEGIN)}\n.*?^{re.escape(HOOK_END)}\n?")
 

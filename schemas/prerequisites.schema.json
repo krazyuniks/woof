@@ -128,7 +128,7 @@
     "cartography": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Cartography contract (ADR-004). When this block is present, `woof preflight` enforces the cartography artefact group at .woof/codebase/: the consumer-owned scripts/refresh-cartography script (present and executable), the human-authored design docs (TARGET-ARCHITECTURE.md and PRINCIPLES.md, present and not stubs), and the mechanical layer (tags, files.txt, freshness.json, present). `woof init` scaffolds this block so new consumers are enforced by default; omit it only to opt a repository out of cartography enforcement.",
+      "description": "Cartography contract (ADR-004). `woof preflight` requires this block and enforces the cartography artefact group at .woof/codebase/: the consumer-owned scripts/refresh-cartography script (present and executable), the human-authored design docs (TARGET-ARCHITECTURE.md and PRINCIPLES.md, present and not stubs), and the mechanical layer (tags, files.txt, freshness.json, present). `woof init` scaffolds this block so new consumers are enforced by default; older consumers without it must re-run the /woof setup and map-codebase onboarding path.",
       "properties": {
         "staleness_floor_hours": {
           "type": "integer",

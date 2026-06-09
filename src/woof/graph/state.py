@@ -15,6 +15,7 @@ class NodeType(StrEnum):
     DISCOVERY_IDEATE = "discovery_ideate"
     DISCOVERY_SYNTHESIS = "discovery_synthesis"
     EPIC_DEFINITION = "epic_definition"
+    CONTRACT_READINESS = "contract_readiness"
     BREAKDOWN_PLANNING = "breakdown_planning"
     PLAN_CRITIQUE = "plan_critique"
     PLAN_GATE_OPEN = "plan_gate_open"

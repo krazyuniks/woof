@@ -17,6 +17,8 @@
         "discovery_synthesised",
         "definition_started",
         "definition_closed",
+        "readiness_passed",
+        "readiness_gate_opened",
         "plan_generated",
         "breakdown_planned",
         "plan_critiqued",
@@ -46,7 +48,7 @@
         "cartography_refreshed",
         "token_usage"
       ],
-      "description": "Event kind. Stage events (epic.jsonl): spark_created, current_epic_selected, discovery_*, definition_*, plan_*, breakdown_planned, story_*, *_gate_*, gate_resolved, epic_completed, executor_result_recorded, check_run, story_committed, transaction_manifest_verified. Dispatch events (dispatch.jsonl): subprocess_*. Operational events (either): preflight_run, tracker_synced, tracker_sync_conflict, wf_lock_stale_removed, cartography_refreshed, token_usage. The github_synced and github_sync_conflict values are retained as legacy aliases so epic.jsonl logs written before the ADR-003 issue-tracker abstraction still validate."
+      "description": "Event kind. Stage events (epic.jsonl): spark_created, current_epic_selected, discovery_*, definition_*, readiness_passed, plan_*, breakdown_planned, story_*, *_gate_*, gate_resolved, epic_completed, executor_result_recorded, check_run, story_committed, transaction_manifest_verified. Dispatch events (dispatch.jsonl): subprocess_*. Operational events (either): preflight_run, tracker_synced, tracker_sync_conflict, wf_lock_stale_removed, cartography_refreshed, token_usage. The github_synced and github_sync_conflict values are retained as legacy aliases so epic.jsonl logs written before the ADR-003 issue-tracker abstraction still validate."
     },
     "at": {
       "type": "string",
@@ -216,7 +218,7 @@
     },
     "gate_type": {
       "type": "string",
-      "enum": ["plan_gate", "story_gate", "review_gate"]
+      "enum": ["plan_gate", "story_gate", "review_gate", "readiness_gate"]
     },
     "bucket": {
       "type": "string",
@@ -380,6 +382,20 @@
         "required": ["event"]
       },
       "then": { "required": ["triggered_by"] }
+    },
+    {
+      "if": {
+        "properties": { "event": { "const": "readiness_gate_opened" } },
+        "required": ["event"]
+      },
+      "then": { "required": ["epic_id", "triggered_by"] }
+    },
+    {
+      "if": {
+        "properties": { "event": { "const": "readiness_passed" } },
+        "required": ["event"]
+      },
+      "then": { "required": ["epic_id"] }
     },
     {
       "if": {

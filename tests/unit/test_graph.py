@@ -374,7 +374,7 @@ observable_outcomes:
     verification: automated
 contract_decisions: []
 acceptance_criteria:
-  - Outcome verified.
+  - O1 verified by the unit suite.
 ---
 Test epic intent.
 """
@@ -1280,7 +1280,7 @@ def test_epic_definition_node_dispatches_primary_validates_epic_and_continues(
         nodes._epic_definition_payload(tmp_path, 24),
     )
     assert output.status == NodeStatus.COMPLETED
-    assert output.next_node == NodeType.BREAKDOWN_PLANNING
+    assert output.next_node == NodeType.CONTRACT_READINESS
     assert output.validation_summary and output.validation_summary.stage == 2
     assert output.validation_summary.ok is True
     assert output.paths == [".woof/epics/E24/EPIC.md"]
@@ -1340,7 +1340,7 @@ def test_epic_definition_node_accepts_resolved_open_question(tmp_path: Path) -> 
     )
 
     assert output.status == NodeStatus.COMPLETED
-    assert output.next_node == NodeType.BREAKDOWN_PLANNING
+    assert output.next_node == NodeType.CONTRACT_READINESS
 
 
 def test_epic_definition_node_halts_on_invalid_existing_epic(tmp_path: Path) -> None:
@@ -1570,6 +1570,7 @@ def test_graph_runs_discovery_definition_breakdown_and_opens_plan_gate(
         NodeType.DISCOVERY_IDEATE,
         NodeType.DISCOVERY_SYNTHESIS,
         NodeType.EPIC_DEFINITION,
+        NodeType.CONTRACT_READINESS,
         NodeType.BREAKDOWN_PLANNING,
         NodeType.PLAN_CRITIQUE,
         NodeType.PLAN_GATE_OPEN,
@@ -2721,6 +2722,13 @@ def test_wf_resolve_revise_plan_reenters_breakdown(tmp_path: Path) -> None:
                 json.dumps(
                     {
                         "event": "definition_closed",
+                        "at": "2026-01-01T00:00:00Z",
+                        "epic_id": 31,
+                    }
+                ),
+                json.dumps(
+                    {
+                        "event": "readiness_passed",
                         "at": "2026-01-01T00:00:00Z",
                         "epic_id": 31,
                     }

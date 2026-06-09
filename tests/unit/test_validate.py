@@ -58,6 +58,7 @@ def test_shipped_schema_count() -> None:
         "docs-paths.schema.json",
         "check-result.schema.json",
         "executor-result.schema.json",
+        "readiness-result.schema.json",
         "node-input.schema.json",
         "node-output.schema.json",
         "planning-node-input.schema.json",
@@ -410,6 +411,45 @@ def test_validate_epic_no_front_matter_fails(tmp_path: Path, run_woof) -> None:
     proc = run_woof("validate", str(path))
     assert proc.returncode == 1
     assert "no YAML front-matter" in proc.stdout + proc.stderr
+
+
+# ---------------------------------------------------------------------------
+# Readiness result (JSON)
+# ---------------------------------------------------------------------------
+
+
+def _readiness_result(ok: bool = True) -> dict:
+    return {
+        "epic_id": 1,
+        "ok": ok,
+        "timestamp": "2026-06-09T10:00:00Z",
+        "checks": [
+            {
+                "id": "readiness_acceptance_signal",
+                "ok": ok,
+                "severity": "info" if ok else "blocker",
+                "summary": "demo readiness check",
+            }
+        ],
+    }
+
+
+def test_validate_readiness_result_valid(tmp_path: Path, run_woof) -> None:
+    path = tmp_path / "readiness-result.json"
+    path.write_text(json.dumps(_readiness_result()))
+    proc = run_woof("validate", str(path))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "valid (readiness-result)" in proc.stdout
+
+
+def test_validate_readiness_result_unknown_field_fails(tmp_path: Path, run_woof) -> None:
+    payload = _readiness_result()
+    payload["unexpected"] = True
+    path = tmp_path / "readiness-result.json"
+    path.write_text(json.dumps(payload))
+    proc = run_woof("validate", str(path))
+    assert proc.returncode == 1
+    assert "INVALID" in proc.stdout
 
 
 # ---------------------------------------------------------------------------

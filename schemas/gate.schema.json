@@ -9,13 +9,13 @@
   "properties": {
     "type": {
       "type": "string",
-      "enum": ["plan_gate", "story_gate", "review_gate"],
-      "description": "plan_gate (Stage 4, always opens). story_gate (Stage 5 halt, conditional on check failure or executor halt). review_gate (periodic; opens every-N stories or before epic close to surface accumulated minor critique findings)."
+      "enum": ["plan_gate", "story_gate", "review_gate", "readiness_gate"],
+      "description": "plan_gate (Stage 4, always opens). story_gate (Stage 5 halt, conditional on check failure or executor halt). review_gate (periodic; opens every-N stories or before epic close to surface accumulated minor critique findings). readiness_gate (Stage 2.5; opens when the deterministic contract-readiness node finds EPIC.md not concrete enough for planning)."
     },
     "stage": {
       "type": "integer",
-      "enum": [4, 5, 6],
-      "description": "Stage that wrote the gate. Target shape: plan_gate=4, story_gate=5, review_gate=5. Legacy stage=6 artefacts remain read-tolerated for migration."
+      "enum": [2, 4, 5, 6],
+      "description": "Stage that wrote the gate. Target shape: readiness_gate=2 (the post-definition Stage-2.5 readiness boundary; integers cannot express 2.5, so the gate carries the stage of the contract it validates), plan_gate=4, story_gate=5, review_gate=5. Legacy stage=6 artefacts remain read-tolerated for migration."
     },
     "story_id": {
       "oneOf": [
@@ -32,6 +32,7 @@
         "type": "string",
         "enum": [
           "plan_review",
+          "readiness_unready",
           "check_1_quality_gates",
           "check_2_outcome_markers",
           "check_3_scope",
@@ -56,7 +57,7 @@
           "manual"
         ]
       },
-      "description": "Reasons the gate opened. plan_review fires automatically at Stage 4. check_1_quality_gates..check_9_review_valve map to Stage-5 registry check IDs (canonical names; these replace the legacy check_1_quality_gate etc.). empty_diff_review opens when a story finishes with no diff. Graph-level: subprocess_crash (producer process exited non-zero), subprocess_aborted (SIGTERM/timeout), executor_aborted (producer wrote outcome=aborted_with_position), reviewer_unreachable (reviewer route exited before producing critique), incomplete_stage_state (required Stage-5 handoff artefact is missing or malformed). schema_validation_failed when Stage 3 self-validation exhausts the 2-attempt cap. tracker_sync_conflict when an issue-tracker push detects remote changes (github_sync_conflict retained as a legacy alias). manual for human-opened gates."
+      "description": "Reasons the gate opened. plan_review fires automatically at Stage 4. readiness_unready opens the Stage-2.5 readiness gate when the deterministic contract-readiness node finds EPIC.md not ready for planning. check_1_quality_gates..check_9_review_valve map to Stage-5 registry check IDs (canonical names; these replace the legacy check_1_quality_gate etc.). empty_diff_review opens when a story finishes with no diff. Graph-level: subprocess_crash (producer process exited non-zero), subprocess_aborted (SIGTERM/timeout), executor_aborted (producer wrote outcome=aborted_with_position), reviewer_unreachable (reviewer route exited before producing critique), incomplete_stage_state (required Stage-5 handoff artefact is missing or malformed). schema_validation_failed when Stage 3 self-validation exhausts the 2-attempt cap. tracker_sync_conflict when an issue-tracker push detects remote changes (github_sync_conflict retained as a legacy alias). manual for human-opened gates."
     },
     "timestamp": {
       "type": "string",
@@ -94,6 +95,18 @@
         "properties": {
           "stage": { "const": 6 },
           "story_id": { "type": "string", "pattern": "^S[1-9]\\d*$" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "type": { "const": "readiness_gate" } },
+        "required": ["type"]
+      },
+      "then": {
+        "properties": {
+          "stage": { "const": 2 },
+          "story_id": { "type": "null" }
         }
       }
     },

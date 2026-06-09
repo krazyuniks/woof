@@ -34,6 +34,7 @@ from woof.graph.planning_contracts import (
     validate_discovery_synthesis_contract,
     validate_stage3_plan_contract,
 )
+from woof.graph.readiness import ReadinessResult, evaluate_readiness
 from woof.graph.state import NodeInput, NodeOutput, NodeStatus, NodeType, Plan, ValidationSummary
 from woof.graph.transitions import (
     StageStateError,
@@ -1120,7 +1121,7 @@ def epic_definition_node(inp: NodeInput) -> NodeOutput:
         node_type=inp.node_type,
         status=NodeStatus.COMPLETED,
         epic_id=inp.epic_id,
-        next_node=NodeType.BREAKDOWN_PLANNING,
+        next_node=NodeType.CONTRACT_READINESS,
         validation_summary=_planning_validation(
             ok=True,
             stage=2,
@@ -1128,6 +1129,146 @@ def epic_definition_node(inp: NodeInput) -> NodeOutput:
             failed_check_count=0,
         ),
         paths=[epic_relpath],
+    )
+
+
+def _validate_readiness_result(repo_root: Path, result_path: Path) -> tuple[bool, str]:
+    proc = subprocess.run(
+        [*_woof_subprocess_argv(), "validate", "--schema", "readiness-result", str(result_path)],
+        cwd=repo_root,
+        env=_woof_subprocess_env(),
+        capture_output=True,
+        text=True,
+    )
+    return proc.returncode == 0, (proc.stdout + proc.stderr).strip()
+
+
+def _readiness_gate_body(epic_id: int, epic_relpath: str, result: ReadinessResult) -> str:
+    finding_lines: list[str] = []
+    for check in result.checks:
+        if check.ok:
+            continue
+        finding_lines.append(f"- {check.id} [{check.severity}]: {check.summary}")
+        for finding in check.findings:
+            ref = f"{finding.ref}: " if finding.ref else ""
+            finding_lines.append(f"  - {ref}{finding.detail}")
+    if not finding_lines:
+        finding_lines.append("- Readiness failed but no findings were recorded.")
+    return (
+        "## Context\n\n"
+        f"Stage 2.5 contract readiness for E{epic_id}. The deterministic readiness checker "
+        f"found `{epic_relpath}` not ready for planning.\n\n"
+        "## Findings\n\n" + "\n".join(finding_lines) + "\n\n"
+        "## Primary position\n\n"
+        f"Source: `{epic_relpath}`\n\n"
+        "Revise the epic contract so each finding resolves - add the machine-checkable "
+        "acceptance signal, concrete reference, or forward-created marker the checker asked "
+        f"for - then re-run `woof wf --epic {epic_id}`.\n\n"
+        "## Reviewer position\n\n"
+        "The deterministic Stage-2.5 readiness checker produced the findings above; no model "
+        "critique is involved in this gate.\n"
+    )
+
+
+def contract_readiness_node(inp: NodeInput) -> NodeOutput:
+    if inp.story_id:
+        raise ValueError("contract_readiness does not accept story_id")
+    directory = epic_dir(inp.repo_root, inp.epic_id)
+    epic_path = directory / "EPIC.md"
+    epic_relpath = _relpath(inp.repo_root, epic_path)
+    result_path = directory / "readiness-result.json"
+    result_relpath = _relpath(inp.repo_root, result_path)
+
+    if not epic_path.exists():
+        return _planning_halt(
+            inp,
+            stage=2,
+            message=f"Required Stage-2.5 input missing: {epic_relpath}",
+            triggered_by=["incomplete_stage_state"],
+            check_count=1,
+            failed_check_count=1,
+            paths=[epic_relpath],
+        )
+
+    epic_ok, epic_message = _validate_epic(inp.repo_root, epic_path)
+    if not epic_ok:
+        return _planning_halt(
+            inp,
+            stage=2,
+            message=epic_message,
+            triggered_by=["schema_validation_failed"],
+            check_count=1,
+            failed_check_count=1,
+            paths=[epic_relpath],
+        )
+
+    result = evaluate_readiness(inp.repo_root, inp.epic_id, epic_path)
+    result_path.write_text(json.dumps(result.to_payload(_now()), indent=2) + "\n", encoding="utf-8")
+
+    valid, validate_message = _validate_readiness_result(inp.repo_root, result_path)
+    if not valid:
+        return _planning_halt(
+            inp,
+            stage=2,
+            message=f"readiness-result.json failed schema validation: {validate_message}",
+            triggered_by=["schema_validation_failed"],
+            check_count=1,
+            failed_check_count=1,
+            paths=[result_relpath],
+        )
+
+    if result.ok:
+        append_epic_event(
+            inp.repo_root,
+            inp.epic_id,
+            {
+                "event": "readiness_passed",
+                "at": _now(),
+                "epic_id": inp.epic_id,
+                "paths": [result_relpath],
+            },
+        )
+        return NodeOutput(
+            node_type=inp.node_type,
+            status=NodeStatus.COMPLETED,
+            epic_id=inp.epic_id,
+            next_node=NodeType.BREAKDOWN_PLANNING,
+            validation_summary=_planning_validation(
+                ok=True,
+                stage=2,
+                check_count=len(result.checks),
+                failed_check_count=0,
+            ),
+            paths=[result_relpath],
+        )
+
+    gate = graph_gate_path(inp.repo_root, inp.epic_id)
+    if not gate.exists():
+        write_gate(
+            epic_dir=directory,
+            story_id=None,
+            triggered_by=["readiness_unready"],
+            position_text=_readiness_gate_body(inp.epic_id, epic_relpath, result),
+            schema_path=schema_dir() / "gate.schema.json",
+            validate=True,
+            gate_type="readiness_gate",
+        )
+    failed = sum(1 for check in result.checks if not check.ok and check.severity != "warn")
+    return NodeOutput(
+        node_type=inp.node_type,
+        status=NodeStatus.GATE_OPENED,
+        epic_id=inp.epic_id,
+        gate_path=_gate_path(inp.epic_id),
+        validation_summary=_planning_validation(
+            ok=False,
+            stage=2,
+            triggered_by=["readiness_unready"],
+            check_count=len(result.checks),
+            failed_check_count=failed,
+        ),
+        triggered_by=["readiness_unready"],
+        message="contract readiness gate opened: EPIC.md is not ready for planning",
+        paths=[epic_relpath, result_relpath, _gate_path(inp.epic_id)],
     )
 
 
@@ -2118,6 +2259,7 @@ def default_registry() -> dict[NodeType, NodeHandler]:
         NodeType.DISCOVERY_IDEATE: discovery_ideate_node,
         NodeType.DISCOVERY_SYNTHESIS: discovery_synthesis_node,
         NodeType.EPIC_DEFINITION: epic_definition_node,
+        NodeType.CONTRACT_READINESS: contract_readiness_node,
         NodeType.BREAKDOWN_PLANNING: breakdown_planning_node,
         NodeType.PLAN_CRITIQUE: plan_critique_node,
         NodeType.PLAN_GATE_OPEN: plan_gate_open_node,

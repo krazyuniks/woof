@@ -191,6 +191,8 @@ def write_gate_for_trigger(
 def _gate_type_for_triggers(triggered_by: list[str]) -> str:
     if triggered_by == ["plan_review"]:
         return "plan_gate"
+    if triggered_by == ["readiness_unready"]:
+        return "readiness_gate"
     if triggered_by == ["check_9_review_valve"]:
         return "review_gate"
     if triggered_by in (["tracker_sync_conflict"], ["github_sync_conflict"]):
@@ -199,6 +201,8 @@ def _gate_type_for_triggers(triggered_by: list[str]) -> str:
 
 
 def _stage_for_gate_type(gate_type: str, story_id: str | None) -> int:
+    if gate_type == "readiness_gate":
+        return 2
     if gate_type == "review_gate":
         return 5 if story_id else 6
     if gate_type == "plan_gate":
@@ -207,6 +211,8 @@ def _stage_for_gate_type(gate_type: str, story_id: str | None) -> int:
 
 
 def _opened_event_for_gate_type(gate_type: str) -> str:
+    if gate_type == "readiness_gate":
+        return "readiness_gate_opened"
     if gate_type == "review_gate":
         return "review_gate_opened"
     if gate_type == "plan_gate":

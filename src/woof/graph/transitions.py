@@ -268,6 +268,27 @@ def definition_revision_requested(repo_root: Path, epic_id: int) -> bool:
     return requested
 
 
+def readiness_satisfied(repo_root: Path, epic_id: int) -> bool:
+    """Return whether Stage-2.5 contract readiness is satisfied for this contract.
+
+    Satisfied iff a ``readiness_passed`` event was recorded after the most recent
+    ``definition_closed`` - a revised or re-closed contract must pass readiness
+    again before planning. ``iter_epic_events`` already drops events superseded by
+    an ``epic_reset`` marker.
+    """
+
+    events = iter_epic_events(repo_root, epic_id)
+    last_definition_closed = -1
+    for index, event in enumerate(events):
+        if event.get("event") == "definition_closed":
+            last_definition_closed = index
+    if last_definition_closed < 0:
+        return False
+    return any(
+        event.get("event") == "readiness_passed" for event in events[last_definition_closed + 1 :]
+    )
+
+
 def _load_json(path: Path) -> dict:
     try:
         return json.loads(path.read_text())
@@ -349,7 +370,9 @@ def next_node(repo_root: Path, epic_id: int) -> tuple[NodeType | None, str | Non
             if epic_event_exists(
                 repo_root, epic_id, event="definition_closed"
             ) and not definition_revision_requested(repo_root, epic_id):
-                return NodeType.BREAKDOWN_PLANNING, None
+                if readiness_satisfied(repo_root, epic_id):
+                    return NodeType.BREAKDOWN_PLANNING, None
+                return NodeType.CONTRACT_READINESS, None
             return NodeType.EPIC_DEFINITION, None
         if discovery_synthesis_complete(repo_root, epic_id):
             return NodeType.EPIC_DEFINITION, None

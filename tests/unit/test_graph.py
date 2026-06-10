@@ -374,7 +374,7 @@ observable_outcomes:
     verification: automated
 contract_decisions: []
 acceptance_criteria:
-  - O1 verified by the unit suite.
+  - O1 verified by `just test`.
 ---
 Test epic intent.
 """

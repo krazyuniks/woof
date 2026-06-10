@@ -102,6 +102,7 @@ contract_decisions:
     related_outcomes: [O1]
     title: Acceptance artefact schema
     json_schema_ref: schemas/acceptance.schema.json
+    notes: Realised by `schemas/acceptance.schema.json` (forward-created) during story S1.
 acceptance_criteria:
   - The story commit contains application code, a test marker, and the schema contract.
 open_questions: []

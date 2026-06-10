@@ -102,6 +102,7 @@ contract_decisions:
     related_outcomes: [O1]
     title: Gate acceptance artefact schema
     json_schema_ref: schemas/acceptance.schema.json
+    notes: Realised by `schemas/acceptance.schema.json` (forward-created) during story S1.
 acceptance_criteria:
   - The CLI exposes recoverable gates for failed story execution paths.
 open_questions: []

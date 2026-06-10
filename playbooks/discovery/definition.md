@@ -24,10 +24,10 @@ Read the declared synthesis directory and produce only `EPIC.md` at the declared
 Author a planning-ready contract:
 
 - observable outcomes include concrete verification signals;
-- acceptance criteria are machine-checkable, or name the command / artefact / observable state that would prove them;
+- acceptance criteria are machine-checkable: name the relevant `O<n>` or `CD<n>` plus a command, test marker, repo path, `module.py:Symbol`, comparison, number+unit, or concrete observable assertion;
 - contract decisions cite exact paths, schema refs, API refs, or explicitly mark forward-created surfaces;
 - references to existing paths and symbols are real in the current repository;
-- forward-created references use an exact annotation outside the backticks, for example `` `path/to/file` (forward-created) `` or `` `path/to/file` (created by ticket <id>) ``;
+- forward-created references use an exact annotation outside the backticks, for example `` `path/to/file` (forward-created) `` or `` `path/to/file` (created by ticket <id>) ``. Put this marker in the contract-decision `notes` or EPIC body next to the exact path or symbol token; loose prose such as "future surface" is not enough;
 - subjective terms such as "good UX", "robust", or "performant" are paired with measurable assertions.
 
 Advisory (prose body, not a required front-matter field): for each outcome where it helps, name the highest existing test seam at which the outcome could be verified - the public function, CLI command, HTTP route, or module boundary a test would target. Decide these seams while writing the contract rather than leaving them to be discovered during the build; they orient breakdown and execution without locking implementation. Keep this in the prose body unless and until E2 adds an optional seam field to `epic.schema.json`.

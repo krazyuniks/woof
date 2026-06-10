@@ -1,23 +1,43 @@
-"""Tests for the Stage-2.5 contract-readiness node and its graph wiring (E2 S1).
+"""Tests for the Stage-2.5 contract-readiness checks and node wiring (E2 S1+S2).
 
 The node is deterministic (no dispatch): it reads EPIC.md, writes
 readiness-result.json, and either records readiness_passed and advances to
-breakdown_planning or opens a readiness_gate. These tests build an epic on disk
-and call the node and next_node directly, mirroring tests/unit/test_graph.py.
+breakdown_planning or opens a readiness_gate. The node tests build an epic on
+disk and call the node and next_node directly, mirroring tests/unit/test_graph.py.
+
+The S2 matrix tests call ``evaluate_readiness`` directly against a real git repo
+(no mocks): referenced files are created and ``git add``-ed so path and symbol
+resolution run against ``git ls-files``.
 """
 
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
 import yaml
 
 from woof.graph import nodes, transitions
+from woof.graph.readiness import (
+    ACCEPTANCE_PROSE_CHECK_ID,
+    ACCEPTANCE_SIGNAL_CHECK_ID,
+    CHECKER_BUDGET_CHECK_ID,
+    CONTRACT_CONCRETENESS_CHECK_ID,
+    DECOMPOSITION_SUFFICIENCY_CHECK_ID,
+    PATH_RESOLUTION_CHECK_ID,
+    SYMBOL_RESOLUTION_CHECK_ID,
+    ReadinessCheck,
+    ReadinessResult,
+    evaluate_readiness,
+    has_concrete_signal,
+)
 from woof.graph.state import NodeInput, NodeStatus, NodeType
 
 pytestmark = pytest.mark.host_only
+
+_DEMO_SCHEMA = '{"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object"}\n'
 
 
 READY_EPIC = """\
@@ -53,14 +73,38 @@ observable_outcomes:
     verification: automated
 contract_decisions: []
 acceptance_criteria:
-  - the system works well
+  - the system works
 ---
 
 Free-form prose below the front-matter.
 """
 
 
-def _setup_epic(root: Path, epic_md: str, epic_id: int = 1) -> Path:
+# --------------------------------------------------------------------------- #
+# Fixtures and helpers
+# --------------------------------------------------------------------------- #
+
+
+def _git_init(root: Path) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+
+
+def _track(root: Path, relpath: str, content: str) -> None:
+    if not (root / ".git").exists():
+        _git_init(root)
+    target = root / relpath
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
+    subprocess.run(["git", "add", "--", relpath], cwd=root, check=True)
+
+
+def _setup_epic(
+    root: Path,
+    epic_md: str,
+    epic_id: int = 1,
+    tracked_files: dict[str, str] | None = None,
+) -> Path:
+    _git_init(root)
     directory = root / ".woof" / "epics" / f"E{epic_id}"
     directory.mkdir(parents=True)
     (directory / "EPIC.md").write_text(epic_md)
@@ -68,6 +112,8 @@ def _setup_epic(root: Path, epic_md: str, epic_id: int = 1) -> Path:
         json.dumps({"event": "definition_closed", "at": "2026-06-09T10:00:00Z", "epic_id": epic_id})
         + "\n"
     )
+    for relpath, content in (tracked_files or {}).items():
+        _track(root, relpath, content)
     return directory
 
 
@@ -93,6 +139,46 @@ def _epic_events(directory: Path) -> list[dict]:
     ]
 
 
+def _epic_text(front: dict, body: str = "") -> str:
+    dumped = yaml.safe_dump(front, sort_keys=False, allow_unicode=True, width=1000)
+    return f"---\n{dumped}---\n\n{body}\n"
+
+
+def _evaluate(root: Path, front: dict, body: str = "", **kwargs) -> ReadinessResult:
+    epic_path = root / ".woof" / "epics" / "E1" / "EPIC.md"
+    epic_path.parent.mkdir(parents=True, exist_ok=True)
+    epic_path.write_text(_epic_text(front, body), encoding="utf-8")
+    return evaluate_readiness(root, 1, epic_path, **kwargs)
+
+
+def _check(result: ReadinessResult, check_id: str) -> ReadinessCheck:
+    return next(check for check in result.checks if check.id == check_id)
+
+
+def _check_ids(result: ReadinessResult) -> set[str]:
+    return {check.id for check in result.checks}
+
+
+def _outcome(outcome_id: str, verification: str = "automated", **extra) -> dict:
+    return {
+        "id": outcome_id,
+        "statement": f"{outcome_id} statement",
+        "verification": verification,
+        **extra,
+    }
+
+
+def _cd(cd_id: str, outcomes: list[str], **extra) -> dict:
+    base = {"id": cd_id, "related_outcomes": outcomes, "title": f"{cd_id} title"}
+    base.update(extra)
+    return base
+
+
+# --------------------------------------------------------------------------- #
+# Prompt-1 node wiring (now against real git repos)
+# --------------------------------------------------------------------------- #
+
+
 def test_next_node_routes_definition_closed_to_readiness(tmp_path: Path) -> None:
     """A closed definition with no readiness_passed yet routes to contract_readiness."""
     _setup_epic(tmp_path, READY_EPIC)
@@ -104,7 +190,9 @@ def test_next_node_routes_definition_closed_to_readiness(tmp_path: Path) -> None
 
 
 def test_ready_epic_passes_and_advances_to_breakdown(tmp_path: Path) -> None:
-    directory = _setup_epic(tmp_path, READY_EPIC)
+    directory = _setup_epic(
+        tmp_path, READY_EPIC, tracked_files={"schemas/demo.schema.json": _DEMO_SCHEMA}
+    )
 
     output = nodes.contract_readiness_node(_readiness_input(tmp_path))
 
@@ -114,7 +202,9 @@ def test_ready_epic_passes_and_advances_to_breakdown(tmp_path: Path) -> None:
     result = json.loads((directory / "readiness-result.json").read_text())
     assert result["ok"] is True
     assert result["epic_id"] == 1
-    assert any(c["id"] == "readiness_acceptance_signal" and c["ok"] for c in result["checks"])
+    assert any(c["id"] == ACCEPTANCE_SIGNAL_CHECK_ID and c["ok"] for c in result["checks"])
+    # The full matrix ran and every blocking check passed.
+    assert all(c["ok"] for c in result["checks"])
 
     events = _epic_events(directory)
     assert any(e["event"] == "readiness_passed" for e in events)
@@ -135,7 +225,7 @@ def test_unready_epic_opens_readiness_gate(tmp_path: Path) -> None:
     result = json.loads((directory / "readiness-result.json").read_text())
     assert result["ok"] is False
     failing = [c for c in result["checks"] if not c["ok"]]
-    assert failing and failing[0]["id"] == "readiness_acceptance_signal"
+    assert failing and failing[0]["id"] == ACCEPTANCE_SIGNAL_CHECK_ID
     assert any(f["ref"] == "O1" for f in failing[0]["findings"])
 
     gate_path = directory / "gate.md"
@@ -174,3 +264,470 @@ def test_readiness_node_rejects_story_id(tmp_path: Path) -> None:
                 repo_root=tmp_path,
             )
         )
+
+
+# --------------------------------------------------------------------------- #
+# Check 1: acceptance signal (tightened)
+# --------------------------------------------------------------------------- #
+
+
+def test_acceptance_signal_fails_on_deprecated_cd_and_bare_mention(tmp_path: Path) -> None:
+    """A deprecated CD does not realise an outcome and a bare O<n> mention is no signal."""
+    _git_init(tmp_path)
+    front = {
+        "epic_id": 1,
+        "title": "demo",
+        "observable_outcomes": [_outcome("O1", "automated")],
+        "contract_decisions": [
+            _cd("CD1", ["O1"], json_schema_ref="schemas/demo.schema.json", deprecated=True)
+        ],
+        "acceptance_criteria": ["see O1 in the suite"],
+    }
+    result = _evaluate(tmp_path, front)
+
+    check = _check(result, ACCEPTANCE_SIGNAL_CHECK_ID)
+    assert check.ok is False
+    assert any(finding.ref == "O1" for finding in check.findings)
+    assert result.ok is False
+
+
+def test_acceptance_signal_passes_via_machinable_criterion(tmp_path: Path) -> None:
+    """No contract decision, but a criterion names O1 with a concrete signal."""
+    _git_init(tmp_path)
+    front = {
+        "epic_id": 1,
+        "title": "demo",
+        "observable_outcomes": [_outcome("O1", "automated")],
+        "contract_decisions": [],
+        "acceptance_criteria": ["O1 verified by `pytest tests/test_thing.py::test_o1`"],
+    }
+    result = _evaluate(tmp_path, front)
+
+    assert _check(result, ACCEPTANCE_SIGNAL_CHECK_ID).ok is True
+    assert _check(result, DECOMPOSITION_SUFFICIENCY_CHECK_ID).ok is True
+
+
+# --------------------------------------------------------------------------- #
+# Check 2: acceptance prose
+# --------------------------------------------------------------------------- #
+
+
+def test_acceptance_prose_blocks_subjective_without_signal(tmp_path: Path) -> None:
+    _track(tmp_path, "schemas/demo.schema.json", _DEMO_SCHEMA)
+    front = {
+        "epic_id": 1,
+        "title": "demo",
+        "observable_outcomes": [_outcome("O1", "automated")],
+        "contract_decisions": [_cd("CD1", ["O1"], json_schema_ref="schemas/demo.schema.json")],
+        "acceptance_criteria": [
+            "O1 covered by `just test`",
+            "the UI should feel intuitive and clean",
+        ],
+    }
+    result = _evaluate(tmp_path, front)
+
+    check = _check(result, ACCEPTANCE_PROSE_CHECK_ID)
+    assert check.ok is False
+    assert any(finding.ref == "acceptance_criteria[1]" for finding in check.findings)
+    # The signal check is satisfied by CD1, so prose is the isolated failure.
+    assert _check(result, ACCEPTANCE_SIGNAL_CHECK_ID).ok is True
+
+
+def test_acceptance_prose_passes_when_subjective_is_paired_with_signal(tmp_path: Path) -> None:
+    _track(tmp_path, "schemas/demo.schema.json", _DEMO_SCHEMA)
+    front = {
+        "epic_id": 1,
+        "title": "demo",
+        "observable_outcomes": [_outcome("O1", "automated")],
+        "contract_decisions": [_cd("CD1", ["O1"], json_schema_ref="schemas/demo.schema.json")],
+        "acceptance_criteria": ["responses feel fast: p95 of `GET /x` under 200ms"],
+    }
+    result = _evaluate(tmp_path, front)
+
+    assert _check(result, ACCEPTANCE_PROSE_CHECK_ID).ok is True
+
+
+# --------------------------------------------------------------------------- #
+# Check 3: contract-decision concreteness
+# --------------------------------------------------------------------------- #
+
+
+def test_contract_concreteness_blocks_placeholder_ref(tmp_path: Path) -> None:
+    _git_init(tmp_path)
+    front = {
+        "epic_id": 1,
+        "title": "demo",
+        "observable_outcomes": [_outcome("O1", "automated")],
+        "contract_decisions": [_cd("CD1", ["O1"], json_schema_ref="TODO")],
+        "acceptance_criteria": ["O1 covered by `just test`"],
+    }
+    result = _evaluate(tmp_path, front)
+
+    check = _check(result, CONTRACT_CONCRETENESS_CHECK_ID)
+    assert check.ok is False
+    assert any(finding.ref == "CD1" for finding in check.findings)
+
+
+def test_contract_concreteness_passes_on_concrete_ref(tmp_path: Path) -> None:
+    _track(tmp_path, "schemas/demo.schema.json", _DEMO_SCHEMA)
+    front = {
+        "epic_id": 1,
+        "title": "demo",
+        "observable_outcomes": [_outcome("O1", "automated")],
+        "contract_decisions": [_cd("CD1", ["O1"], json_schema_ref="schemas/demo.schema.json")],
+        "acceptance_criteria": ["O1 covered by `just test`"],
+    }
+    result = _evaluate(tmp_path, front)
+
+    assert _check(result, CONTRACT_CONCRETENESS_CHECK_ID).ok is True
+
+
+# --------------------------------------------------------------------------- #
+# Check 4: path resolution + forward-created grammar
+# --------------------------------------------------------------------------- #
+
+
+def test_path_resolution_blocks_unannotated_missing_path(tmp_path: Path) -> None:
+    _git_init(tmp_path)
+    front = {
+        "epic_id": 1,
+        "title": "demo",
+        "observable_outcomes": [_outcome("O1", "automated")],
+        "contract_decisions": [_cd("CD1", ["O1"], json_schema_ref="schemas/missing.schema.json")],
+        "acceptance_criteria": ["O1 covered by `just test`"],
+    }
+    result = _evaluate(tmp_path, front)
+
+    check = _check(result, PATH_RESOLUTION_CHECK_ID)
+    assert check.ok is False
+    assert any(finding.ref == "schemas/missing.schema.json" for finding in check.findings)
+    # The missing path is concrete prose, so concreteness still passes.
+    assert _check(result, CONTRACT_CONCRETENESS_CHECK_ID).ok is True
+
+
+def test_path_resolution_blocks_unannotated_backtick_body_path(tmp_path: Path) -> None:
+    _track(tmp_path, "schemas/demo.schema.json", _DEMO_SCHEMA)
+    front = {
+        "epic_id": 1,
+        "title": "demo",
+        "observable_outcomes": [_outcome("O1", "automated")],
+        "contract_decisions": [_cd("CD1", ["O1"], json_schema_ref="schemas/demo.schema.json")],
+        "acceptance_criteria": ["O1 covered by `just test`"],
+    }
+    result = _evaluate(tmp_path, front, body="The handler lives in `src/ghost.py` today.")
+
+    check = _check(result, PATH_RESOLUTION_CHECK_ID)
+    assert check.ok is False
+    assert any(finding.ref == "src/ghost.py" for finding in check.findings)
+
+
+def test_path_resolution_passes_when_tracked(tmp_path: Path) -> None:
+    _track(tmp_path, "schemas/demo.schema.json", _DEMO_SCHEMA)
+    front = {
+        "epic_id": 1,
+        "title": "demo",
+        "observable_outcomes": [_outcome("O1", "automated")],
+        "contract_decisions": [_cd("CD1", ["O1"], json_schema_ref="schemas/demo.schema.json")],
+        "acceptance_criteria": ["O1 covered by `just test`"],
+    }
+    result = _evaluate(tmp_path, front)
+
+    assert _check(result, PATH_RESOLUTION_CHECK_ID).ok is True
+
+
+def test_forward_created_annotation_exempts_missing_path(tmp_path: Path) -> None:
+    _git_init(tmp_path)
+    front = {
+        "epic_id": 1,
+        "title": "demo",
+        "observable_outcomes": [_outcome("O1", "automated")],
+        "contract_decisions": [
+            _cd(
+                "CD1",
+                ["O1"],
+                json_schema_ref="schemas/future.schema.json",
+                notes="Realised by `schemas/future.schema.json` (forward-created).",
+            )
+        ],
+        "acceptance_criteria": ["O1 covered by `just test`"],
+    }
+    result = _evaluate(tmp_path, front)
+
+    assert _check(result, PATH_RESOLUTION_CHECK_ID).ok is True
+    assert _check(result, CONTRACT_CONCRETENESS_CHECK_ID).ok is True
+    assert result.ok is True
+
+
+def test_forward_created_created_by_ticket_form_exempts_missing_path(tmp_path: Path) -> None:
+    _git_init(tmp_path)
+    front = {
+        "epic_id": 1,
+        "title": "demo",
+        "observable_outcomes": [_outcome("O1", "automated")],
+        "contract_decisions": [_cd("CD1", ["O1"], json_schema_ref="schemas/future.schema.json")],
+        "acceptance_criteria": ["O1 covered by `just test`"],
+    }
+    body = "Schema `schemas/future.schema.json` (created by ticket WOOF-42) lands next sprint."
+    result = _evaluate(tmp_path, front, body=body)
+
+    assert _check(result, PATH_RESOLUTION_CHECK_ID).ok is True
+
+
+def test_malformed_forward_created_annotation_does_not_exempt(tmp_path: Path) -> None:
+    _git_init(tmp_path)
+    front = {
+        "epic_id": 1,
+        "title": "demo",
+        "observable_outcomes": [_outcome("O1", "automated")],
+        "contract_decisions": [
+            _cd(
+                "CD1",
+                ["O1"],
+                json_schema_ref="schemas/future.schema.json",
+                # "forward created" (no hyphen) is not the exact grammar.
+                notes="Realised by `schemas/future.schema.json` (forward created).",
+            )
+        ],
+        "acceptance_criteria": ["O1 covered by `just test`"],
+    }
+    result = _evaluate(tmp_path, front)
+
+    check = _check(result, PATH_RESOLUTION_CHECK_ID)
+    assert check.ok is False
+    assert any(finding.ref == "schemas/future.schema.json" for finding in check.findings)
+
+
+# --------------------------------------------------------------------------- #
+# Check 5: symbol resolution
+# --------------------------------------------------------------------------- #
+
+
+def test_symbol_resolution_passes_for_defined_top_level_class(tmp_path: Path) -> None:
+    _track(
+        tmp_path,
+        "app/models.py",
+        "from pydantic import BaseModel\n\n\nclass Thing(BaseModel):\n    name: str\n",
+    )
+    front = {
+        "epic_id": 1,
+        "title": "demo",
+        "observable_outcomes": [_outcome("O1", "automated")],
+        "contract_decisions": [_cd("CD1", ["O1"], pydantic_ref="app/models.py:Thing")],
+        "acceptance_criteria": ["O1 covered by `just test`"],
+    }
+    result = _evaluate(tmp_path, front)
+
+    assert _check(result, SYMBOL_RESOLUTION_CHECK_ID).ok is True
+
+
+def test_symbol_resolution_blocks_missing_symbol(tmp_path: Path) -> None:
+    _track(
+        tmp_path,
+        "app/models.py",
+        "from pydantic import BaseModel\n\n\nclass Other(BaseModel):\n    name: str\n",
+    )
+    front = {
+        "epic_id": 1,
+        "title": "demo",
+        "observable_outcomes": [_outcome("O1", "automated")],
+        "contract_decisions": [_cd("CD1", ["O1"], pydantic_ref="app/models.py:Missing")],
+        "acceptance_criteria": ["O1 covered by `just test`"],
+    }
+    result = _evaluate(tmp_path, front)
+
+    check = _check(result, SYMBOL_RESOLUTION_CHECK_ID)
+    assert check.ok is False
+    assert any(finding.ref == "app/models.py:Missing" for finding in check.findings)
+
+
+def test_symbol_resolution_blocks_untracked_file(tmp_path: Path) -> None:
+    _git_init(tmp_path)
+    # File exists on disk but is not git-tracked.
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "models.py").write_text("class Thing:\n    pass\n", encoding="utf-8")
+    front = {
+        "epic_id": 1,
+        "title": "demo",
+        "observable_outcomes": [_outcome("O1", "automated")],
+        "contract_decisions": [_cd("CD1", ["O1"], pydantic_ref="app/models.py:Thing")],
+        "acceptance_criteria": ["O1 covered by `just test`"],
+    }
+    result = _evaluate(tmp_path, front)
+
+    assert _check(result, SYMBOL_RESOLUTION_CHECK_ID).ok is False
+
+
+def test_symbol_resolution_module_ref_requires_forward_created(tmp_path: Path) -> None:
+    _git_init(tmp_path)
+    front = {
+        "epic_id": 1,
+        "title": "demo",
+        "observable_outcomes": [_outcome("O1", "automated")],
+        "contract_decisions": [_cd("CD1", ["O1"], pydantic_ref="app.models:Thing")],
+        "acceptance_criteria": ["O1 covered by `just test`"],
+    }
+    blocked = _evaluate(tmp_path, front)
+    assert _check(blocked, SYMBOL_RESOLUTION_CHECK_ID).ok is False
+
+    front_marked = dict(front)
+    front_marked["contract_decisions"] = [
+        _cd(
+            "CD1",
+            ["O1"],
+            pydantic_ref="app.models:Thing",
+            notes="Imported from `app.models:Thing` (created by ticket WOOF-9).",
+        )
+    ]
+    exempt = _evaluate(tmp_path, front_marked)
+    assert _check(exempt, SYMBOL_RESOLUTION_CHECK_ID).ok is True
+
+
+def test_symbol_resolution_file_token_forward_created_exempts(tmp_path: Path) -> None:
+    _git_init(tmp_path)
+    front = {
+        "epic_id": 1,
+        "title": "demo",
+        "observable_outcomes": [_outcome("O1", "automated")],
+        "contract_decisions": [
+            _cd(
+                "CD1",
+                ["O1"],
+                pydantic_ref="app/new_models.py:Thing",
+                notes="Model file `app/new_models.py` (forward-created).",
+            )
+        ],
+        "acceptance_criteria": ["O1 covered by `just test`"],
+    }
+    result = _evaluate(tmp_path, front)
+
+    assert _check(result, SYMBOL_RESOLUTION_CHECK_ID).ok is True
+
+
+# --------------------------------------------------------------------------- #
+# Check 6: decomposition sufficiency
+# --------------------------------------------------------------------------- #
+
+
+def test_decomposition_sufficiency_blocks_uncovered_manual_outcome(tmp_path: Path) -> None:
+    """A manual outcome is exempt from the signal check but still needs decomposition."""
+    _git_init(tmp_path)
+    front = {
+        "epic_id": 1,
+        "title": "demo",
+        "observable_outcomes": [_outcome("O1", "manual")],
+        "contract_decisions": [],
+        "acceptance_criteria": ["O1 is reviewed by a human"],
+    }
+    result = _evaluate(tmp_path, front)
+
+    assert _check(result, ACCEPTANCE_SIGNAL_CHECK_ID).ok is True
+    check = _check(result, DECOMPOSITION_SUFFICIENCY_CHECK_ID)
+    assert check.ok is False
+    assert any(finding.ref == "O1" for finding in check.findings)
+
+
+def test_decomposition_sufficiency_blocks_orphan_contract_decision(tmp_path: Path) -> None:
+    _track(tmp_path, "schemas/demo.schema.json", _DEMO_SCHEMA)
+    front = {
+        "epic_id": 1,
+        "title": "demo",
+        "observable_outcomes": [_outcome("O1", "automated")],
+        "contract_decisions": [
+            _cd("CD1", ["O1"], json_schema_ref="schemas/demo.schema.json"),
+            # CD2 relates only to O2, which is not a declared outcome.
+            _cd("CD2", ["O2"], json_schema_ref="schemas/demo.schema.json"),
+        ],
+        "acceptance_criteria": ["O1 covered by `just test`"],
+    }
+    result = _evaluate(tmp_path, front)
+
+    check = _check(result, DECOMPOSITION_SUFFICIENCY_CHECK_ID)
+    assert check.ok is False
+    assert any(finding.ref == "CD2" for finding in check.findings)
+
+
+def test_decomposition_sufficiency_passes_when_mutually_realised(tmp_path: Path) -> None:
+    _track(tmp_path, "schemas/demo.schema.json", _DEMO_SCHEMA)
+    front = {
+        "epic_id": 1,
+        "title": "demo",
+        "observable_outcomes": [_outcome("O1", "automated"), _outcome("O2", "manual")],
+        "contract_decisions": [
+            _cd("CD1", ["O1", "O2"], json_schema_ref="schemas/demo.schema.json")
+        ],
+        "acceptance_criteria": ["O1 covered by `just test`"],
+    }
+    result = _evaluate(tmp_path, front)
+
+    assert _check(result, DECOMPOSITION_SUFFICIENCY_CHECK_ID).ok is True
+    assert result.ok is True
+
+
+# --------------------------------------------------------------------------- #
+# Timeout: non-blocking warn
+# --------------------------------------------------------------------------- #
+
+
+def test_zero_budget_skips_resolution_with_nonblocking_warn(tmp_path: Path) -> None:
+    _track(tmp_path, "schemas/demo.schema.json", _DEMO_SCHEMA)
+    front = {
+        "epic_id": 1,
+        "title": "demo",
+        "observable_outcomes": [_outcome("O1", "automated")],
+        "contract_decisions": [_cd("CD1", ["O1"], json_schema_ref="schemas/demo.schema.json")],
+        "acceptance_criteria": ["O1 covered by `just test`"],
+    }
+    result = _evaluate(tmp_path, front, time_budget_s=0)
+
+    # Resolution checks were skipped, not run.
+    assert PATH_RESOLUTION_CHECK_ID not in _check_ids(result)
+    assert SYMBOL_RESOLUTION_CHECK_ID not in _check_ids(result)
+
+    budget = _check(result, CHECKER_BUDGET_CHECK_ID)
+    assert budget.severity == "warn"
+    assert budget.ok is True
+    assert PATH_RESOLUTION_CHECK_ID in budget.summary
+    assert SYMBOL_RESOLUTION_CHECK_ID in budget.summary
+
+    # A checker timeout never makes the result unready on its own.
+    assert result.ok is True
+
+
+def test_zero_budget_warn_does_not_mask_a_real_blocker(tmp_path: Path) -> None:
+    """The cheap checks still run under a zero budget; only resolution is skipped."""
+    _git_init(tmp_path)
+    front = {
+        "epic_id": 1,
+        "title": "demo",
+        "observable_outcomes": [_outcome("O1", "automated")],
+        "contract_decisions": [],
+        "acceptance_criteria": ["the system works"],
+    }
+    result = _evaluate(tmp_path, front, time_budget_s=0)
+
+    assert _check(result, CHECKER_BUDGET_CHECK_ID).severity == "warn"
+    assert _check(result, ACCEPTANCE_SIGNAL_CHECK_ID).ok is False
+    assert result.ok is False
+
+
+# --------------------------------------------------------------------------- #
+# has_concrete_signal lexicon
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("O1", False),
+        ("see O1 and CD2", False),
+        ("the system is robust", False),
+        ("O1 verified by `just test`", True),
+        ("CD1 realised by `schemas/x.schema.json`", True),
+        ("p95 latency < 200ms", True),
+        ("returns exactly 3 rows", True),
+        ("module `app/models.py:Thing` exists", True),
+        ("covered by tests/test_x.py::test_y", True),
+    ],
+)
+def test_has_concrete_signal(text: str, expected: bool) -> None:
+    assert has_concrete_signal(text) is expected

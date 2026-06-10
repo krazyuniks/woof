@@ -73,9 +73,9 @@ def changed_paths(repo_root: Path) -> list[str]:
         status = entry[:2]
         path = entry[3:]
         if status.startswith("R") or status.startswith("C"):
+            # Porcelain -z emits "XY dst\0src\0" for renames/copies. Keep the
+            # changed destination path and skip the source field.
             index += 1
-            if index < len(raw):
-                path = raw[index]
         paths.append(path)
         index += 1
     return sorted(set(paths))

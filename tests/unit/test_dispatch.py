@@ -261,6 +261,16 @@ default_minutes = 15
     assert "claude-sonnet-4-6" in payload["argv"]
 
 
+def test_dispatch_timeouts_reject_boolean_values() -> None:
+    mod = _import_woof_module()
+
+    with pytest.raises(mod.DispatchConfigError, match=r"timeouts\.default_minutes"):
+        mod.dispatch_timeouts({"timeouts": {"default_minutes": True}})
+
+    with pytest.raises(mod.DispatchConfigError, match=r"timeouts\.idle_seconds"):
+        mod.dispatch_timeouts({"timeouts": {"idle_seconds": False}})
+
+
 def test_prompt_file_overrides_stdin(woof_project: Path, tmp_path: Path) -> None:
     prompt_file = tmp_path / "p.txt"
     prompt_file.write_text("from file")
@@ -513,6 +523,17 @@ def test_parse_claude_output_empty() -> None:
     assert session is None
 
 
+def test_claude_terminal_and_parser_ignore_json_non_objects() -> None:
+    mod = _import_woof_module()
+
+    for line in ("42", '"ok"', "[]"):
+        assert mod.is_claude_terminal_line(line) is False
+
+    tokens, session = mod.parse_claude_output("[]\n")
+    assert tokens == {}
+    assert session is None
+
+
 def test_parse_codex_output() -> None:
     mod = _import_woof_module()
     stream = "\n".join(
@@ -582,6 +603,26 @@ def test_count_codex_command_executions_counts_completed_items_once() -> None:
     )
 
     assert mod.count_codex_command_executions(stream) == 1
+
+
+def test_codex_terminal_and_parsers_ignore_json_non_objects() -> None:
+    mod = _import_woof_module()
+
+    for line in ("42", '"ok"', "[]"):
+        assert mod.is_codex_terminal_line(line) is False
+
+    stream = "\n".join(
+        [
+            "42",
+            '"ok"',
+            "[]",
+            json.dumps({"type": "thread.started", "thread_id": "abc"}),
+        ]
+    )
+    tokens, thread = mod.parse_codex_output(stream)
+    assert tokens == {}
+    assert thread == "abc"
+    assert mod.count_codex_command_executions(stream) == 0
 
 
 def test_parse_codex_output_no_turns() -> None:

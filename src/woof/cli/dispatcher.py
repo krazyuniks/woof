@@ -132,6 +132,8 @@ def parse_claude_output(stdout: str) -> tuple[dict, str | None]:
         data = json.loads(lines[-1])
     except json.JSONDecodeError:
         return {}, None
+    if not isinstance(data, dict):
+        return {}, None
     usage = data.get("usage") or {}
     tokens = {
         "tokens_in": int(usage.get("input_tokens", 0) or 0),
@@ -148,6 +150,8 @@ def is_claude_terminal_line(line: str) -> bool:
         data = json.loads(line.strip())
     except json.JSONDecodeError:
         return False
+    if not isinstance(data, dict):
+        return False
     return data.get("type") == "result"
 
 
@@ -163,6 +167,8 @@ def parse_codex_output(stdout: str) -> tuple[dict, str | None]:
         try:
             evt = json.loads(line)
         except json.JSONDecodeError:
+            continue
+        if not isinstance(evt, dict):
             continue
         kind = evt.get("type")
         if kind == "thread.started":
@@ -189,6 +195,8 @@ def is_codex_terminal_line(line: str) -> bool:
         data = json.loads(line.strip())
     except json.JSONDecodeError:
         return False
+    if not isinstance(data, dict):
+        return False
     return data.get("type") == "turn.completed"
 
 
@@ -211,6 +219,8 @@ def count_codex_command_executions(stdout: str) -> int:
         try:
             evt = json.loads(line)
         except json.JSONDecodeError:
+            continue
+        if not isinstance(evt, dict):
             continue
         if evt.get("type") != "item.completed":
             continue
@@ -397,18 +407,28 @@ def dispatch_timeouts(agents: dict[str, Any]) -> DispatchTimeouts:
     if not isinstance(block, dict):
         raise DispatchConfigError("timeouts table is not an object")
 
+    timeout_fields = {
+        "default_minutes": block.get("default_minutes", DEFAULT_TIMEOUT_MINUTES),
+        "idle_seconds": block.get("idle_seconds", DEFAULT_IDLE_SECONDS),
+        "completion_grace_seconds": block.get(
+            "completion_grace_seconds", DEFAULT_COMPLETION_GRACE_SECONDS
+        ),
+        "completion_tail_cap_seconds": block.get(
+            "completion_tail_cap_seconds", DEFAULT_COMPLETION_TAIL_CAP_SECONDS
+        ),
+    }
+    for name, value in timeout_fields.items():
+        if isinstance(value, bool):
+            raise DispatchConfigError(f"timeouts.{name} must be numeric, not boolean")
+
     try:
-        raw_default_minutes = block.get("default_minutes", DEFAULT_TIMEOUT_MINUTES)
+        raw_default_minutes = timeout_fields["default_minutes"]
         default_minutes = float(raw_default_minutes)
         if isinstance(raw_default_minutes, int):
             default_minutes = raw_default_minutes
-        idle_seconds = float(block.get("idle_seconds", DEFAULT_IDLE_SECONDS))
-        completion_grace_seconds = float(
-            block.get("completion_grace_seconds", DEFAULT_COMPLETION_GRACE_SECONDS)
-        )
-        completion_tail_cap_seconds = float(
-            block.get("completion_tail_cap_seconds", DEFAULT_COMPLETION_TAIL_CAP_SECONDS)
-        )
+        idle_seconds = float(timeout_fields["idle_seconds"])
+        completion_grace_seconds = float(timeout_fields["completion_grace_seconds"])
+        completion_tail_cap_seconds = float(timeout_fields["completion_tail_cap_seconds"])
     except (TypeError, ValueError) as exc:
         raise DispatchConfigError(
             "timeouts.default_minutes and timeout seconds must be numeric"

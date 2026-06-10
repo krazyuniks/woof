@@ -71,6 +71,16 @@ def _write_tracker_prerequisites(root: Path) -> None:
     )
 
 
+def test_mark_story_status_raises_for_unknown_story(tmp_path: Path) -> None:
+    directory = _write_plan(tmp_path, 1)
+
+    with pytest.raises(StageStateError, match="story S404 not found"):
+        mark_story_status(tmp_path, 1, "S404", "done")
+
+    plan = json.loads((directory / "plan.json").read_text(encoding="utf-8"))
+    assert plan["stories"][0]["status"] == "pending"
+
+
 def test_story_prompt_is_portable_playbook_prompt() -> None:
     prompt = nodes._story_prompt(7, "S3")
 

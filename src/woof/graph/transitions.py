@@ -170,6 +170,8 @@ def next_ready_story(plan: Plan) -> StorySpec | None:
 
 def mark_story_status(repo_root: Path, epic_id: int, story_id: str, status: str) -> None:
     plan = load_plan(repo_root, epic_id)
+    if all(story.id != story_id for story in plan.stories):
+        raise StageStateError(f"story {story_id} not found in E{epic_id} plan")
     stories = []
     for story in plan.stories:
         if story.id == story_id:

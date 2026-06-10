@@ -104,6 +104,11 @@ because the readiness slice (P1 + P2) is what unblocks E3. P1 is pure
 consolidation with no behaviour change; P2 makes readiness gates resolvable; P3-P5
 deepen the story/epic verbs; P6 locks advertised-equals-implemented.
 
+Landed on `main`: prompt 1 (S1) — `src/woof/graph/decisions.py` is canonical;
+the `--resolve` choices, `GateDecision` literal, and `jsonl-events` decision enum
+all match its union; `split_story` is removed from every surface it touched.
+Prompts 2-6 remain.
+
 | # | Prompt summary | Files touched | Tests | Review checkpoint |
 |---|---|---|---|---|
 | 1 | **(S1)** Add `src/woof/graph/decisions.py`: a `GATE_DECISIONS` table mapping each gate type to its allowed verbs and a per-verb effect tag, plus helpers `allowed_decisions(gate_type)` and `validate_decision(gate_type, decision)` raising a `StageStateError` naming the valid set. Refactor `_apply_gate_resolution_effects` and `_resolve_gate` to validate through the table instead of inline `if decision not in {...}` blocks; derive `argparse --resolve choices` from the table union; derive the `GateDecision` literal from the table (or assert equality in a test). Remove `split_story` from the table, the literal, the argparse choices, and the jsonl enum. No effect-behaviour change for surviving verbs. | `src/woof/graph/decisions.py` (new), `src/woof/cli/commands/wf.py`, `src/woof/graph/state.py`, `schemas/jsonl-events.schema.json`, this plan | `tests/unit/test_gate_decisions.py` (new): table-derived argparse choices; invalid verb per gate type raises naming the valid set; `split_story` rejected; surviving verbs unchanged. Update any decision-enum snapshot. | One table is canonical; an invalid verb is a structured error; `split_story` is gone everywhere; `just check` green. |

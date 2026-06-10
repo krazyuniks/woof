@@ -24,18 +24,18 @@ woof wf --epic N --resolve <decision>
 The valid decisions depend on the gate type:
 
 - plan gate: `approve` | `revise_epic_contract` | `revise_plan` | `abandon_epic`
-- story gate / review gate: `approve` | `revise_story_scope` | `split_story` | `revise_plan` |
+- story gate / review gate: `approve` | `revise_story_scope` | `revise_plan` |
   `abandon_story` | `abandon_epic`
 - tracker sync conflict: `keep_local` | `accept_remote` | `hand_merge`
 
-Current limitation: the CLI accepts several verbs whose effects are incomplete. E17 owns the canonical decision table and conformance tests. Until then, treat `revise_epic_contract`, `split_story`, and `abandon_epic` as hazardous unless you have checked the current implementation path.
+Current limitation: the CLI accepts several verbs whose effects are incomplete. E17 owns the canonical decision table and conformance tests. Until then, treat `revise_epic_contract` and `abandon_epic` as hazardous unless you have checked the current implementation path.
 
 What each does:
 
 - `approve`: accept the work and let the graph continue.
 - `revise_epic_contract`: target behaviour is to re-open Stage 2 Definition; current behaviour does not provide a real revision channel.
 - `revise_plan`: discard the plan and re-run Breakdown.
-- `revise_story_scope` / `split_story`: target behaviour is to re-scope or split the story; current `split_story` duplicates the re-scope path.
+- `revise_story_scope`: re-scope the current story's paths or acceptance criteria. (`split_story` was removed in E17; split guidance now re-enters planning through `revise_plan`.)
 - `abandon_story` / `abandon_epic`: target behaviour is to stop the story or the whole epic; current `abandon_story` records the story as completed, and current `abandon_epic` is not a terminal path.
 - `keep_local` / `accept_remote` / `hand_merge`: resolve a divergence between the local epic and the
   tracker issue (GitHub tracker only).

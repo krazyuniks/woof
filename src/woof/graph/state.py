@@ -37,12 +37,16 @@ class NodeStatus(StrEnum):
     EPIC_COMPLETE = "epic_complete"
 
 
+# The legal verb set is canonical in woof.graph.decisions.GATE_DECISIONS; this
+# literal is the union of that table and is conformance-checked against it in
+# tests/unit/test_gate_decisions.py (it is asserted-equal rather than derived to
+# avoid a state -> decisions -> transitions -> state import cycle). split_story
+# was dropped in E17 P1 (D-SS).
 GateDecision = Literal[
     "approve",
     "revise_epic_contract",
     "revise_plan",
     "revise_story_scope",
-    "split_story",
     "abandon_story",
     "abandon_epic",
     "keep_local",

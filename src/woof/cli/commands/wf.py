@@ -11,6 +11,7 @@ from pathlib import Path
 
 import yaml
 
+from woof.graph.decisions import all_decisions, validate_decision
 from woof.graph.dispositions import (
     NON_BLOCKING_SEVERITIES,
     FrontMatterError,
@@ -130,11 +131,7 @@ def _apply_gate_resolution_effects(
     changed: list[str] = []
 
     if any(trigger in CONFLICT_TRIGGERS for trigger in triggered_by):
-        if decision not in CONFLICT_DECISIONS:
-            raise StageStateError(
-                "tracker_sync_conflict gates require one of: "
-                + ", ".join(sorted(CONFLICT_DECISIONS))
-            )
+        validate_decision("tracker_sync_conflict", decision)
         result = tracker.resolve_conflict(epic_id, decision)
         changed.append(_display_path(repo_root, result.last_sync_path))
         if result.epic_path is not None:
@@ -145,8 +142,7 @@ def _apply_gate_resolution_effects(
         raise StageStateError(f"{decision} is only valid for tracker_sync_conflict gates")
 
     if gate_type == "plan_gate":
-        if decision not in {"approve", "revise_epic_contract", "revise_plan", "abandon_epic"}:
-            raise StageStateError(f"{decision} is not valid for plan_gate")
+        validate_decision("plan_gate", decision)
         if decision == "approve":
             tracker.push_plan_summary(epic_id)
             return changed
@@ -163,15 +159,7 @@ def _apply_gate_resolution_effects(
         return changed
 
     if gate_type in {"story_gate", "review_gate"}:
-        if decision not in {
-            "approve",
-            "revise_story_scope",
-            "split_story",
-            "revise_plan",
-            "abandon_story",
-            "abandon_epic",
-        }:
-            raise StageStateError(f"{decision} is not valid for {gate_type}")
+        validate_decision(gate_type, decision)
         check_result = directory / "check-result.json"
         executor_result = directory / "executor_result.json"
         if decision == "approve":
@@ -213,7 +201,7 @@ def _apply_gate_resolution_effects(
                     story_id=story_id,
                 )
             return changed
-        if decision in {"revise_story_scope", "split_story", "revise_plan"}:
+        if decision in {"revise_story_scope", "revise_plan"}:
             changed.extend(_remove_paths(repo_root, check_result))
             if decision == "revise_plan":
                 changed.extend(
@@ -548,18 +536,7 @@ def setup_wf_parser(sub: argparse._SubParsersAction) -> None:  # type: ignore[ty
     )
     wf.add_argument(
         "--resolve",
-        choices=[
-            "approve",
-            "revise_epic_contract",
-            "revise_plan",
-            "revise_story_scope",
-            "split_story",
-            "abandon_story",
-            "abandon_epic",
-            "keep_local",
-            "accept_remote",
-            "hand_merge",
-        ],
+        choices=list(all_decisions()),
         help="resolve the currently open gate with a structured decision",
     )
     wf.add_argument("--format", choices=["text", "json"], default="text")

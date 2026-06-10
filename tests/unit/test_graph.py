@@ -2851,7 +2851,7 @@ def test_wf_resolve_approve_clears_stale_failed_check_result(tmp_path: Path) -> 
     assert next_node(tmp_path, 32) == (NodeType.VERIFICATION, "S1")
 
 
-def test_wf_resolve_split_story_clears_stale_failed_check_result(tmp_path: Path) -> None:
+def test_wf_resolve_revise_story_scope_clears_stale_failed_check_result(tmp_path: Path) -> None:
     _write_tracker_prerequisites(tmp_path)
     directory = _write_plan(tmp_path, 33)
     _write_last_sync(directory, 33)
@@ -2894,7 +2894,7 @@ def test_wf_resolve_split_story_clears_stale_failed_check_result(tmp_path: Path)
     )
     env = _make_gh_rate_limit_stub(tmp_path / "bin")
 
-    proc = _run_woof(tmp_path, "wf", "--epic", "33", "--resolve", "split_story", env=env)
+    proc = _run_woof(tmp_path, "wf", "--epic", "33", "--resolve", "revise_story_scope", env=env)
 
     assert proc.returncode == 0, proc.stderr
     assert not (directory / "check-result.json").exists()

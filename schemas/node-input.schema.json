@@ -56,7 +56,6 @@
             "revise_epic_contract",
             "revise_plan",
             "revise_story_scope",
-            "split_story",
             "abandon_story",
             "abandon_epic",
             "keep_local",

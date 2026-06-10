@@ -86,11 +86,11 @@ woof audit-bundle E<N>               # copy referenced Claude transcripts into t
 ### Gate decisions (for `woof wf --epic N --resolve`)
 
 - plan gate: `approve` | `revise_epic_contract` | `revise_plan` | `abandon_epic`
-- story / review gate: `approve` | `revise_story_scope` | `split_story` | `revise_plan` |
+- story / review gate: `approve` | `revise_story_scope` | `revise_plan` |
   `abandon_story` | `abandon_epic`
 - tracker sync conflict: `keep_local` | `accept_remote` | `hand_merge`
 
-Current limitation: the accepted gate verb set is wider than the implemented effect set. Until E17 lands, inspect `gate.md` and prefer the smallest known-progress resolution; do not assume `revise_epic_contract`, `split_story`, or `abandon_epic` performs the future documented behaviour.
+Current limitation: the accepted gate verb set is wider than the implemented effect set. Until E17 lands, inspect `gate.md` and prefer the smallest known-progress resolution; do not assume `revise_epic_contract` or `abandon_epic` performs the future documented behaviour.
 
 ## Specific flows
 

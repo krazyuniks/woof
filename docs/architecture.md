@@ -98,7 +98,7 @@ Forward-created references use an exact annotation outside the cited path or sym
 
 Readiness checker timeouts are reported as non-blocking performance findings; a gate that fails only because the checker exhausted its own budget does not block the epic. Repeated failed readiness cycles escalate to the operator instead of creating an indefinite revise/fail loop.
 
-If readiness passes, the graph proceeds to Stage 3. If readiness fails, the graph opens a `readiness_gate` and halts until the operator revises the epic contract, explicitly approves with a recorded reason, or abandons the epic.
+Current E2 rollout: S1 and S2 are shipped - readiness evaluation, the full check matrix (machine-checkable acceptance signals, non-subjective acceptance prose, contract-decision concreteness, path and file-based symbol resolution against `git ls-files`, and decomposition sufficiency), the forward-created annotation grammar, and the non-blocking checker timeout, on top of `readiness_gate` opening. S3 adds the audited readiness-gate resolution effects and recycle escalation. Until S3 lands, a readiness gate is an operator halt point and should not be treated as having special resolution semantics beyond the generic gate record. Target steady state: if readiness passes, the graph proceeds to Stage 3; if readiness fails, the graph opens a `readiness_gate` and halts until the operator revises the epic contract, explicitly approves with a recorded reason, or abandons the epic.
 
 ### Stage 3 — Breakdown / Plan
 

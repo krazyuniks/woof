@@ -32,17 +32,7 @@ Per-epic plans live under `docs/plans/` only when an epic is active. Do not keep
 
 Make the cartography artefact group mandatory infrastructure with preflight enforcement and per-language refresh templates.
 
-The contract and missing/stub enforcement landed in prompt 1 (`docs/plans/e1-cartography.md`): the `[cartography]` schema shape (`staleness_floor_hours`, `summary_min_chars`, `languages`, `stub_marker`); enforcement keyed on the block's presence and scaffolded by `woof init`; `woof preflight` failing closed on a missing/non-executable `scripts/refresh-cartography`, a missing or stub `TARGET-ARCHITECTURE.md`/`PRINCIPLES.md`, or a missing mechanical-layer file (`tags`, `files.txt`, `freshness.json`); exact stub detection (removable stub marker, or body below `summary_min_chars` unless front matter marks it complete); and the `tree.txt` -> `files.txt` rename.
-
-Prompt 2 landed the staleness warning: a `cartography.freshness` floor check reads the mechanical `freshness.json`, derives its age, and warns (non-blocking, refresh-prompt carrying) past `staleness_floor_hours`. `PreflightFinding` gained a `warn` severity (an `ok=True` finding printed `WARN`, kept out of `failed`/exit code). A missing stamp stays the mechanical check's blocking concern; a malformed stamp warns non-blockingly.
-
-Prompt 3 landed the per-language templates and `woof init` composition: `refresh-cartography` fragments for Python, Go, TypeScript, Rust under `languages/refresh-cartography/`, referenced from each `languages/<lang>.toml` via `[cartography].refresh_fragment`. `woof init --language <lang>` (repeatable) records `[cartography].languages` and composes `scripts/refresh-cartography` (mode 0o755) from a shared scaffold (git ls-files -> files.txt; one ctags pass -> tags; freshness.json) plus the fragments, idempotently via a managed block, falling back to an existing `prerequisites.toml` on re-run. `freshness.json` is defined as `{ ts, git_ref, age_s, generator_version }` with `schemas/freshness.schema.json`; `ts` is the authoritative staleness signal and `age_s` the deterministic test fallback (the prompt-2 reader was inverted accordingly so a frozen `age_s` cannot mask production staleness).
-
-Prompt 4 landed the fail-loud post-commit hook path: the Woof-managed hook runs `./scripts/refresh-cartography` on every commit, emits a `woof post-commit:` diagnostic when the script is missing, non-executable, or exits non-zero, and preserves a failing refresh script's exit status from the hook.
-
-Prompt 5 landed the legacy-consumer onboarding error: `woof preflight` now fails a project whose `.woof/prerequisites.toml` has no `[cartography]` block with a `cartography.contract` finding that points at `/woof` setup, the map-codebase flow, `skills/woof/references/setup.md`, and `skills/woof/references/map-codebase.md`. The finding explains the expected path: re-run `woof init --language <lang>`, author the design docs, run map-codebase for the AS-IS layer, refresh the mechanical files, and install the post-commit hook. The preflight cache version was bumped so a stale green floor cache cannot mask the migration error.
-
-Status: complete. E2 and E3 are no longer blocked on E1.
+Status: complete. Unblocks E2, E3. It established the `[cartography]` prerequisite contract (`staleness_floor_hours`, `summary_min_chars`, `languages`, `stub_marker`); `woof preflight` failing closed on a missing/non-executable `scripts/refresh-cartography`, missing or stub design docs, or a missing mechanical-layer file (`tags`, `files.txt`, `freshness.json`); a non-blocking `cartography.freshness` staleness warning derived from `freshness.json`; per-language `refresh-cartography` templates composed idempotently by `woof init --language <lang>`; the fail-loud post-commit refresh hook; and a legacy-consumer onboarding error pointing at the `/woof` setup and map-codebase flows.
 
 Depends on: nothing. Completed prerequisite for: E2, E3.
 
@@ -50,18 +40,11 @@ Depends on: nothing. Completed prerequisite for: E2, E3.
 
 Add operational guardrails around the current `woof wf` runner without splitting the operator surface.
 
-Open work:
-- Add a deterministic Stage-2.5 readiness node after `EPIC.md` exists and before `breakdown_planning`.
-- Add `readiness-result.schema.json` and gate support for `readiness_gate`.
-- Readiness checks:
-  - every observable outcome has a machine-checkable acceptance signal;
-  - acceptance criteria avoid pure subjective prose unless paired with concrete assertions or commands;
-  - contract decisions include exact paths, schema refs, API refs, or explicit forward-created markers;
-  - referenced existing paths resolve against `git ls-files`;
-  - cited symbols resolve where Woof can cheaply prove them, otherwise require explicit operator-marked forward creation;
-  - Stage 3 receives enough information to decompose without inventing interfaces.
-- Define the forward-created annotation grammar exactly: `` `path/or/symbol` (forward-created) `` or `` `path/or/symbol` (created by ticket <id>) ``.
-- Readiness checker timeouts produce non-blocking performance findings. A readiness gate must not block solely because its own checker timed out.
+Shipped:
+- S1: the deterministic Stage-2.5 readiness seam - `NodeType.CONTRACT_READINESS`, `next_node` routing after `definition_closed`, `readiness-result.schema.json`, and `readiness_gate` schema/event/write support.
+- S2: the full readiness matrix in `src/woof/graph/readiness.py` - machine-checkable acceptance signals (a non-deprecated contract decision related to the outcome, or an acceptance criterion that names it with a concrete signal; a bare `O<n>`/`CD<n>` mention is not a signal), non-subjective acceptance prose, contract-decision concreteness, path resolution against `git ls-files`, cheap file-based symbol resolution, and Stage-3 decomposition sufficiency. The forward-created grammar (`` `path/or/symbol` (forward-created) `` or `` `path/or/symbol` (created by ticket <id>) ``) whitelists not-yet-existing refs from the EPIC body and contract-decision notes. A deterministic checker timeout emits a non-blocking `readiness_checker_budget` warning that never blocks the gate on its own.
+
+Remaining open work:
 - Add readiness recycle escalation: after a configured number of failed readiness cycles, open an escalation-flavoured readiness gate rather than looping revise/fail indefinitely.
 - Add audited readiness-gate resolutions: `revise_epic_contract`, `approve_with_reason`, `abandon_epic`.
 - Add blocker-evidence discipline to `critique.schema.json`, prompts, and checks:
@@ -84,8 +67,8 @@ Open work:
 - Add HEAD/branch drift detection:
   - record `head_before`, `branch_before`, `head_after`, and `branch_after` for dispatched work;
   - halt commit/gate paths if HEAD or branch moved unexpectedly and not through a graph-owned commit.
-- Add optional tmux-backed long-run supervision for `woof wf`: panes/logs/status only; no direct state mutation outside Woof commands.
-- Tests covering readiness pass/fail, readiness timeout non-blocking behaviour, readiness escalation, readiness gate resolution, blocker evidence resolution, command-level baseline behaviour, baseline freshness/recapture, HEAD/branch drift, circuit-breaker decision logic, and tmux command construction without graph bypass.
+- tmux-backed long-run supervision is deferred out of E2. If revisited later, it is panes/logs/status only with no direct state mutation outside Woof commands.
+- Tests covering readiness pass/fail, readiness timeout non-blocking behaviour, readiness escalation, readiness gate resolution, blocker evidence resolution, command-level baseline behaviour, baseline freshness/recapture, HEAD/branch drift, and circuit-breaker decision logic.
 
 Depends on: E1. Blocks: E3, E4, E5.
 

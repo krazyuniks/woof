@@ -1,0 +1,10 @@
+{
+  "include": ["src", "tests"],
+  "exclude": [".venv", "**/__pycache__", "**/.pytest_cache", ".woof"],
+  "venvPath": ".",
+  "venv": ".venv",
+  "pythonVersion": "3.11",
+  "extraPaths": ["src"],
+  "reportMissingImports": "warning",
+  "reportMissingModuleSource": "none"
+}

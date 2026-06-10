@@ -28,13 +28,15 @@ The valid decisions depend on the gate type:
   `abandon_story` | `abandon_epic`
 - tracker sync conflict: `keep_local` | `accept_remote` | `hand_merge`
 
+Current limitation: the CLI accepts several verbs whose effects are incomplete. E17 owns the canonical decision table and conformance tests. Until then, treat `revise_epic_contract`, `split_story`, and `abandon_epic` as hazardous unless you have checked the current implementation path.
+
 What each does:
 
 - `approve`: accept the work and let the graph continue.
-- `revise_epic_contract`: re-open Stage 2 Definition to change the locked surface.
+- `revise_epic_contract`: target behaviour is to re-open Stage 2 Definition; current behaviour does not provide a real revision channel.
 - `revise_plan`: discard the plan and re-run Breakdown.
-- `revise_story_scope` / `split_story`: send the story back to be re-scoped or split.
-- `abandon_story` / `abandon_epic`: stop the story or the whole epic.
+- `revise_story_scope` / `split_story`: target behaviour is to re-scope or split the story; current `split_story` duplicates the re-scope path.
+- `abandon_story` / `abandon_epic`: target behaviour is to stop the story or the whole epic; current `abandon_story` records the story as completed, and current `abandon_epic` is not a terminal path.
 - `keep_local` / `accept_remote` / `hand_merge`: resolve a divergence between the local epic and the
   tracker issue (GitHub tracker only).
 

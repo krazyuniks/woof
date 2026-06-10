@@ -27,9 +27,10 @@ parallel MCP surfaces add operational weight and compete with Woof's topology. T
 useful transfer is a local, deterministic, queryable structural artefact that the
 Python engine can regenerate and read.
 
-There is concurrent tree-sitter-oriented work in flight outside this ADR. This decision
-does not assume that work has landed. The first implementation epic must audit and
-reuse any existing parser/indexing substrate before adding a second one.
+The 2026-06-07 spike and `docs/research/code-mapping-landscape.md` settled the
+V1 extraction direction: tree-sitter is the primary substrate. Python `ast` remains
+available only as an adapter-compatible fallback when the tree-sitter substrate is
+unavailable, not as a co-equal first path.
 
 ## Decision
 
@@ -72,9 +73,10 @@ the module and qualified name are unchanged.
 
 ### Scope
 
-V1 is Python-first so Woof can dogfood on itself. The implementation may use an
-already-landed tree-sitter substrate if one exists; otherwise it may start with a
-Python `ast`-backed extractor and leave the tree-sitter adapter boundary explicit.
+V1 is Python-first in language scope so Woof can dogfood on itself, but the extractor
+substrate is tree-sitter-first. If a local environment cannot supply the tree-sitter
+substrate, the implementation may fall back to Python `ast` behind the same adapter
+boundary; that fallback must not become a second parser/indexer path.
 
 V1 targets:
 
@@ -91,6 +93,10 @@ with the one repo method named `append` - and must be suppressed or heavily down
 Resolving a method call on a non-`self` receiver (`obj.method()`) needs type information,
 which is the LSP-backed executor's domain rather than the parser's; V1 labels these
 rather than guessing.
+
+The spike's LSP-assisted resolution pass over unresolved `obj.method()` sites is
+deferred. It is a candidate `HEURISTIC` -> `EXTRACTED` upgrade pass to decide during
+E13 with eval data, not part of the E12 V1 extractor contract.
 
 ### Freshness and reproducibility
 

@@ -38,21 +38,31 @@ Mapper subagents are Claude. LSP improves accuracy when writing `CURRENT-ARCHITE
 
 The graph continues after reviewer `info` or `minor` findings. For non-blocking story findings, the graph records a deterministic covering disposition rather than dispatching another producer turn. Reviewer `blocker` findings open a human gate. There is no model-to-model debate loop.
 
-### Dispatch mechanism
+### Route configuration
+
+Default scaffolded routes are declared in `.woof/agents.toml` per consumer repo. The
+canonical config keys remain `primary` and `reviewer`; they are graph-owned route
+defaults, not provider names. Per-node-group route overlays refine those defaults,
+with Stage 5 overriding the producer/reviewer adapters so Claude writes code and
+Codex reviews it. E20 implements the overlay table and records `route_key` in the
+dispatch audit.
+
+### Historical dispatch mechanism
 
 | Target | Transport |
 |---|---|
 | Claude subagent | `Task` tool with a Woof-defined subagent type (`woof-producer`, `woof-reviewer`, `woof-mapper`). Each subagent receives only the scoped prompt and explicit artefact references. |
 | Codex CLI | `Bash` invocation of `codex exec` with the prompt on stdin and the JSON output captured. No MCP exposure of the operator session. |
 
-Producer-reviewer separation is by construction: each subagent dispatch is a fresh context with isolated working memory.
-
-Default scaffolded routes are declared in `.woof/agents.toml` per consumer repo. The schema exposes a route table keyed by node group. Defaults match the table above; Stage 5 declares an explicit override. `woof wf` resolves the route internally and records the selected adapter in dispatch audit.
+This table records the original role-routing decision. ADR-008 supersedes the transport
+mechanism with public-CLI subprocess supervision for both providers. Producer-reviewer
+separation still holds by construction: every dispatch is a fresh subprocess/session
+with scoped prompt input and explicit artefact references.
 
 ## Consequences
 
 - Per-stage route policy is data in `.woof/agents.toml`, not code in the graph.
-- `primary` and `critiquer` are migration aliases only. Canonical prompt prose, schemas, and docs use `producer`, `reviewer`, `mapper`, and `gate-resolver`.
+- `primary` and `reviewer` are the canonical config keys for graph-owned route defaults. Prompt prose and architecture may use `producer`/`reviewer` semantically, but the schema does not need a migration to `producer`.
 - Stage 5 is the only stage where the producer is Claude. The default policy makes this explicit.
 - Adding a stage or role is a schema change plus a routing-policy update, not a prompt change.
 - Producer-reviewer separation does not depend on a process boundary. It depends on Woof giving each subagent a fresh context.

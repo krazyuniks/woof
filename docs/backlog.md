@@ -15,7 +15,7 @@ Woof is an inner-loop SDLC tool for AI-assisted development.
 - **State on disk.** `spark.md`, `EPIC.md`, `plan.json`, JSONL audit, dispositions, gate files, and cartography artefacts are the authoritative state. Re-running `woof wf --epic N` resumes from disk.
 - **Dispatch supervision.** `woof dispatch` supervises workers in process groups on phase-scoped clocks: idle and wall-clock before the terminal marker, completion-grace and tail cap after it. Dispatch telemetry carries `exit_type`; `completed_lingering` is a successful outcome, not a timeout. See ADR-008.
 - **Interactive design.** `/woof:brainstorm` hydrates an existing spark by writing an accepted bundle into `.woof/epics/E<N>/discovery/brainstorm/`. Woof ingests that bundle as discovery source material; it does not mechanically map `work_units[]` to stories.
-- **Cartography prerequisite.** Every consumer repo has `.woof/codebase/` containing human-authored design docs, mapper-authored AS-IS docs, and a mechanical index.
+- **Cartography prerequisite.** Every consumer repo has `.woof/codebase/` containing human-authored design docs, mapper-authored AS-IS docs, and a mechanical index. Dispatched nodes consume the mapped documents per the architecture loading map (E19 wires this).
 - **Structural cartography.** ADR-009 accepts a queryable structural index under `.woof/codebase/structural/` as the next cartography pivot: files, symbols, and typed edges regenerated locally and consumed through `woof cartography`, not through a graph DB, daemon, MCP server, or `woof graph` API.
 - **Evidence over confidence.** Reviewer blockers must carry resolvable evidence. Confidence scores, if ever added, are advisory eval metadata and never gate-affecting.
 - **Expert workstation posture.** Woof assumes explicit local prerequisites. tmux may supervise long runs, but it must not become a second graph or state authority.
@@ -46,7 +46,6 @@ Shipped:
 
 Remaining open work:
 - Add readiness recycle escalation: after a configured number of failed readiness cycles, open an escalation-flavoured readiness gate rather than looping revise/fail indefinitely.
-- Add audited readiness-gate resolutions: `revise_epic_contract`, `approve_with_reason`, `abandon_epic`.
 - Add blocker-evidence discipline to `critique.schema.json`, prompts, and checks:
   - blocker findings require `evidence`;
   - evidence must resolve to a known artefact reference: file:line, story id, observable outcome id, contract-decision id, schema ref, or quality-gate id;
@@ -68,9 +67,9 @@ Remaining open work:
   - record `head_before`, `branch_before`, `head_after`, and `branch_after` for dispatched work;
   - halt commit/gate paths if HEAD or branch moved unexpectedly and not through a graph-owned commit.
 - tmux-backed long-run supervision is deferred out of E2. If revisited later, it is panes/logs/status only with no direct state mutation outside Woof commands.
-- Tests covering readiness pass/fail, readiness timeout non-blocking behaviour, readiness escalation, readiness gate resolution, blocker evidence resolution, command-level baseline behaviour, baseline freshness/recapture, HEAD/branch drift, and circuit-breaker decision logic.
+- Tests covering readiness pass/fail, readiness timeout non-blocking behaviour, readiness escalation, blocker evidence resolution, command-level baseline behaviour, baseline freshness/recapture, HEAD/branch drift, and circuit-breaker decision logic.
 
-Depends on: E1. Blocks: E3, E4, E5.
+Depends on: E1. Gate-resolution semantics live in E17, which consumes the shipped S1/S2 readiness seam and is not blocked by E2's remaining work. E16 items may batch with E2 when they touch the same files. Blocks: E3, E4, E5.
 
 ### E3. Specwright Bootstrap
 
@@ -84,7 +83,7 @@ Open work:
 - Install the Woof post-commit hook.
 - Verify preflight and Stage-2.5 readiness pass against specwright.
 
-Depends on: E1, E2.
+Depends on: E1, E2 Stage-2.5 readiness (shipped), and E17's readiness-resolution slice — a readiness failure during consumer bootstrap must be legally resolvable, not a reset-or-stuck loop. E19 and E20 gate E5, not E3; running them before E3 is the recommended order so the bootstrap smoke run exercises the production shape.
 
 ### E4. Eval Instrumentation
 
@@ -92,7 +91,7 @@ Measure the production shape: `/woof` as the operator surface, `woof wf` as the 
 
 Open work:
 - Add `node_type` to every dispatch event so per-node attribution is possible.
-- Include dispatch-return outcome fields in the manifest: `exit_type`, `exit_code`, `error_signature`, expected artefact presence/schema status, rate-limit classification, and HEAD/branch before/after.
+- Include dispatch-return outcome fields in the manifest that are not already shipped: `error_signature`, expected artefact presence/schema status, rate-limit classification, and HEAD/branch before/after. `exit_type` and `exit_code` are already required on `subprocess_returned` and already flow into the compacted manifest.
 - Include run-resilience rows for circuit-breaker decisions, no-progress/same-error counters, readiness outcomes, baseline-gate mode/outcome, blocker-evidence resolution outcomes, and drift events.
 - Retain `artefacts_loaded[]` per event in any compacted manifest produced by the eval harness.
 - Persist prompt and output bodies into the eval output directory at run teardown.
@@ -100,7 +99,7 @@ Open work:
 - Add an artefact-reload section to the manifest: `{artefact_path: [(call_index, node_type, bytes)]}`.
 - Keep the Python bench as the eval harness; `/woof` may run it through Bash, but evals do not require a separate skill.
 
-Depends on: E2.
+Depends on: E2 for run-resilience and drift fields; E20 for route attribution. Node type, retained `artefacts_loaded[]`, prompt persistence, per-node rows, and artefact reload accounting can land independently.
 
 ### E5. Baseline Eval Run
 
@@ -110,8 +109,9 @@ Open work:
 - Single-variant run against specwright at HEAD.
 - Inspect the per-node manifest; confirm `node_type` correlation works and artefact reloads surface duplication.
 - Decide the first optimisation target from the data.
+- The baseline is valid only over the intended production shape: per-stage roles routable and correctly configured (E20), cartography consumption wired (E19), and the fixed discovery prompt/token shape from E21 S1-S3.
 
-Depends on: E3, E4.
+Depends on: E3, E4, E19, E20, E21 S1-S3.
 
 ### E6. Deterministic Contract Conformance Audit
 
@@ -149,11 +149,11 @@ Depends on: completed E7 process supervision. Refines: E4 (telemetry lineage).
 Add a bounded recovery ladder so producer-output failures do not jump straight to a human gate.
 
 Open work:
-- Add resume-to-correct: when a producer artefact fails schema validation or a deterministic check, resume the producer's captured session (the `cc_session_id` / transcript reference in dispatch telemetry) with the deterministic failure evidence as feedback, instead of a cold re-dispatch. Bounded retry budget.
+- Add resume-to-correct: when a producer artefact fails schema validation or a deterministic check, resume the producer's captured session (the shipped `cc_session_id` / transcript reference in dispatch telemetry) with the deterministic failure evidence as feedback, instead of a cold re-dispatch. Bounded retry budget.
 - Add a graded recovery ladder ahead of gate-open: narrow deterministic salvage of a recoverable-but-malformed payload (trim unfinished trailing value, drop dangling comma, close open containers; never invent values); normalisation with safe defaults (missing optional -> default, missing required -> hard fail); bounded retry (compacted payload or resume-to-correct); gate only when exhausted. Salvage and normalisation fail loud; they are not a tolerant parser.
 - Tests: resume-to-correct happy path and retry-budget exhaustion; salvage of truncated payloads and hard-fail on unrecoverable ones.
 
-Depends on: completed E7 process supervision, E8 (session-join via run lineage).
+Depends on: completed E7 process supervision. E8 remains a dependency for lineage-joined recovery reporting, not for the basic resume-to-correct session reference.
 
 ### E10. Plan-Graph Algorithms
 
@@ -171,20 +171,22 @@ Convert the MP engineering-skill comparison into Woof improvements without inter
 
 Open work:
 - **P0.3 new inner-loop capability:**
-  - Add a human-supervised "build a throwaway to learn" escape hatch to `woof-brainstorm`, preferably upstream in agent-toolkit. The probe must be named throwaway, answer a stated design question, feed the answer into the brainstorm bundle, and be deleted or absorbed.
-  - Design a scoped bug-diagnosis lifecycle: a `kind: bug` spark path, a diagnosis playbook for reproduce/minimise/hypothesise/instrument, and a handoff into the existing Stage-5 red-green-refactor fix flow.
+  - Add a human-supervised "build a throwaway to learn" escape hatch to `woof-brainstorm`, preferably upstream in agent-toolkit. The probe must be named throwaway, answer a stated design question, feed the answer into the brainstorm bundle, and be deleted or absorbed. Acceptance signal: the bundle records the question, probe path, result, disposition, and deletion/absorption evidence.
+  - Design a scoped bug-diagnosis lifecycle: a `kind: bug` spark path, a diagnosis playbook for reproduce/minimise/hypothesise/instrument, and a handoff into the existing Stage-5 red-green-refactor fix flow. Acceptance signal: a bug spark produces a diagnosis artefact with reproduction status, minimal failing command or fixture, hypotheses, instrumentation notes, and the chosen Stage-5 story handoff.
 - **P0.4 review later, lower on the backlog:**
   - Review whether to build a standalone codebase-deepening review flow off the `CURRENT-ARCHITECTURE.md` / `TARGET-ARCHITECTURE.md` delta. Treat it as a small subsystem, not a prompt tweak; defer until the cheap heuristics or baseline eval data justify it.
   - Review an on-demand "zoom out this neighbourhood" operator gesture and the lifecycle for binding repo-durable cartography to per-epic `CONTEXT.md` glossary terms.
 
 Sequencing: preserve the current E1/E2 chain. The P0.1 hygiene items (onboarding alignment, vendored-README fix) and the P0.2 prompt-doctrine imports are complete; P0.3 starts after the readiness and structural-cartography paths are stable, and P0.4 is explicitly deferred for later review.
 
+Depends on: E2 readiness guardrails and the structural-cartography path for P0.3; otherwise follow-on.
+
 ### E12. Structural Cartography Index
 
 Build the ADR-009 mechanical structural index as the foundation for impact queries and later context optimisation.
 
 Open work:
-- Start with a tree-sitter work audit: inspect any concurrent tree-sitter/parser branch or landed code, decide whether it is the extraction substrate, and avoid creating a second parser path. If no reusable substrate exists, implement the V1 Python extractor with a clear adapter boundary so tree-sitter can replace or extend it later.
+- Use tree-sitter as the V1 extraction substrate, per the 2026-06-07 spike and `docs/research/code-mapping-landscape.md`. Keep a Python `ast` fallback behind the same adapter boundary only for environments where the tree-sitter substrate is unavailable; do not build a second co-equal parser path.
 - Add `.woof/codebase/structural/index.sqlite` as a gitignored mechanical artefact regenerated by `scripts/refresh-cartography` once the generator exists.
 - Define the SQLite schema and migration/versioning strategy for `files`, `symbols`, `edges`, and `meta`. Keep line numbers as metadata, not primary symbol identity.
 - Define stable symbol IDs for Python v1: module path + qualified name + kind, with overload/disambiguation rules where needed. Do not use line-sensitive IDs for durable audit references.
@@ -198,6 +200,7 @@ Open work:
 - Add `woof cartography` read-only CLI verbs: `symbols`, `callers`, `callees`, `impact`, `context`, and `stats`, each with JSON and token-bounded text output.
 - Add `cartography-structural-query-result.schema.json` for JSON query output and focused fixtures for a small Python repo.
 - Add an eval harness and a Woof-on-Woof gold set (the 2026-06-07 spike under vault `research/code-mapping/spikes/` seeds both): hand-labelled true callers/callees for a sample of symbols, plus one larger external Python repo for scale. Measure extraction coverage, per-tier edge precision (`EXTRACTED` target >= 0.95, observed ~1.0 on the seed sample; `HEURISTIC` measured and thresholded, with common-name method edges suppressed), caller/callee precision and recall, changed-file -> affected-symbol impact recall, and structural-context token cost. These metrics gate E13 producer wiring and any completeness claim.
+- Record the spike's LSP-assisted resolution pass disposition: deferred as a candidate `HEURISTIC` -> `EXTRACTED` upgrade pass for unresolved `obj.method()` sites; decide during E13 with eval data.
 - Update `woof preflight`, `woof init`, `skills/woof/references/map-codebase.md`, and architecture docs so structural indexing is opt-in until the generator is present, then enforced by the declared cartography capability.
 - Tests: extractor fixtures for outlines/imports/calls; stable-ID resilience to line shifts; ambiguous-edge labelling; query CLI output; refresh idempotency; gitignore coverage; preflight behaviour when structural indexing is declared but stale/missing.
 
@@ -246,12 +249,134 @@ Open work:
 
 Depends on: E12. Best started when a real large inherited repo or specwright-scale onboarding run exists.
 
+### E16. Defect Sweep: Silent-Wrong-Result Fixes
+
+Close the verified small defects where Woof silently produces a wrong result, masks a failure, or blocks itself. Every item is independently shippable; none changes a contract shape.
+
+Shipped:
+- Interim rename/copy fix: `changed_paths` keeps the porcelain destination path so staged renames no longer wedge the commit transaction, with a staged `git mv` regression test. Superseded by the open centralisation item below, which makes both rename ends scope-visible.
+- Terminal-marker predicates and dispatch token parsers now ignore valid JSON non-objects (`42`, `"ok"`, `[]`) instead of crashing.
+- Dogfood gate parity: `.woof/quality-gates.toml` now includes `just lint` and gives `just test` a 360s timeout. Type-checker adoption is still deferred to baseline-mode gate work.
+- Boolean timeout values in `[timeouts]` are rejected instead of being accepted as `1`/`0`.
+- `mark_story_status` raises `StageStateError` on an unknown story id and leaves `plan.json` unchanged.
+
+Open work:
+- Centralise git path listing and force `--no-renames` as the path-set contract. `graph/git.py` becomes the only module that lists staged/changed paths: `changed_paths`, `staged_paths`, `staged_paths_matching` (pathspec), check 2's path listing, check 7 (delete its private `_git_z`/`_staged_paths`/`_status_entries`; consume a central `status_entries()`), and check 8 all route through it with explicit `--no-renames`, so a rename is always delete + add and both ends are scope-checked. The central parser raises on R/C entries: the flag makes them impossible, so one appearing means the contract broke. Carve-out: check 2's `--unified=0` content diff keeps rename detection so a moved test file cannot satisfy `tests.count` with re-added lines; record this in the module docstring. Add an enforcement test banning raw `git status --porcelain` / `git diff --cached --name-only` invocations outside `graph/git.py` across `src/woof/graph/` and `src/woof/checks/`, and flip the rename regression test to assert both ends appear. `bench/efficiency.py` may migrate for uniformity; it is measurement, not enforcement.
+- Check 6 unknown critique severity fails closed as a validation blocker; it never maps to `info`.
+- Check 9 review-valve event windowing respects `epic_reset` markers; pre-reset review gates cannot suppress the valve.
+- Route checks 2/7/8 through the scrubbed `graph.git` environment; remove test masking that deletes `GIT_INDEX_FILE`/`GIT_DIR` before the bug can surface; add a regression with those variables set.
+- Tighten supervision cleanup and idle detection: skip `terminate_group()` after a clean exit with closed streams; reset idle on byte progress, not only completed lines.
+- `woof wf --resolve` refuses when no local epic dir exists instead of cold-starting from the tracker.
+- `EPIC_COMPLETE` with tracker network failure prints node outputs before the non-zero exit.
+- Remove dead contract surface: `NodeType.PLAN_GATE_RESOLVE`, `NodeType.GATE_RESOLVE`, unconsumed `NodeInput.decision`, empty `playbooks/disposition/`, and the dead disposition playbook read.
+- `audit.enabled=false` means no audit artefacts are committed; capture may remain in gitignored `raw/`, but unredacted output never lands in a commit.
+- Codify discovery output filenames per bucket instead of accepting any non-empty `.md`.
+- Move `test_trackers.py` away from in-process `subprocess.run` monkeypatching to a stub `gh` on PATH.
+
+Depends on: nothing. Start immediately; items may batch into E2 prompts when they touch the same files.
+
+### E17. Gate Decision Semantics
+
+Make every accepted gate decision verb produce its documented effect, and make the advertised decision surface provably equal to the implemented one. This owns the readiness-gate resolution work moved out of E2.
+
+Open work:
+- Single canonical per-gate-type decision table as data: CLI `--resolve` choices, `_apply_gate_resolution_effects`, `gate.md` rendered options, schemas, and docs all derive from it. Resolving with a verb not valid for the open gate is a structured error naming the valid set.
+- Adopt this table: plan gate `{approve, revise_plan, revise_epic_contract, abandon_epic}`; story/review gate `{approve, retry_story, revise_story_scope, revise_plan, abandon_story, abandon_epic}`; readiness gate `{approve_with_reason, revise_epic_contract, abandon_epic}`; tracker-conflict decisions unchanged. Drop `split_story` everywhere; resolution payloads carry optional guidance notes instead.
+- Add a decision-surface conformance test like the check-matrix conformance test: every advertised verb has observable effects and tests.
+- Add `abandoned` terminal status for stories and epics. `abandon_story` marks `abandoned`, not `done`; `abandon_epic` marks the epic abandoned, closes the tracker issue as not delivered, and `next_node` becomes terminal for abandoned epics.
+- Add a real `revise_epic_contract` channel: archive the prior `EPIC.md`, re-dispatch definition with prior epic plus critique/readiness findings as declared inputs, and keep hand-editing forbidden.
+- Add `retry_story` for crashed/aborted executors: reset the story to `pending`, clear that story's executor/check/critique artefacts, and audit the reset.
+- Add audited readiness-gate resolutions: `approve_with_reason` records readiness approval so the unchanged epic does not re-gate; `revise_epic_contract` and `abandon_epic` use the same canonical effects.
+- Tests: per-verb forward-progress property, revision-channel round trip, abandoned-epic terminality, retry-story re-dispatch.
+
+Depends on: E2 S1/S2 (shipped). The readiness-resolution slice also blocks E3, so the per-epic plan front-loads the decision table and readiness verbs ahead of the story/plan-gate verbs and abandoned-status semantics. Blocks the first unattended run, with E18 and E22.
+
+### E18. Artefact Integrity And The Commit Boundary
+
+Enforce contracts on the read side of durable artefacts and pin what verification verified to what commit commits.
+
+Open work:
+- Add strict read-side loaders for `plan.json`, `executor_result.json`, `check-result.json`, and `gate.md` front-matter. Schema-validate on read and halt structurally on violation; Pydantic models match schema constraints, including `plan.stories` min length 1. Add a conformance test banning raw durable-artefact `json.loads` outside the loader module.
+- Require `epic_id` and `story_id` in `executor-result.schema.json`; cross-check both against the active story before use. Validate commit subject/body for length, line shape, and control characters.
+- Split approved plan from runtime story state: `plan.json` becomes immutable after plan-gate approval; graph-owned `story-state.json` carries `status` and `empty_diff`. Approval records the plan hash; Stage-5 nodes, verification, and commit verify it byte for byte. Drift opens a `plan_drift` gate.
+- Record a verified staged tree hash (`git write-tree`) plus HEAD/branch in `check-result.json`; `commit_node` recomputes before commit and invalidates stale checks on mismatch.
+- Move story done/completed events after the commit exists. Resume reconciles the commit window from the commit trailer back to story state. Replace hand-built crash state tests with a real kill-based mid-commit crash-resume integration test.
+- Document the trusted-local residual: `epic.jsonl` and check inputs remain producer-writable; pins close accidental and over-helpful-agent classes, not malicious local tampering.
+
+Depends on: E16 rename fix and E17 gate semantics. Blocks the first unattended run.
+
+### E19. Cartography Consumption
+
+Wire the architecture's per-node loading map into dispatch payloads and playbooks, and onboard Woof itself. E1 shipped the supply side; this epic makes dispatched work actually receive the required context.
+
+Open work:
+- Add per-node payload wiring: each dispatch-shaped node's `inputs` and `artefacts_loaded[]` carry the mapped `.woof/codebase/` documents. Executor additionally receives the story-scoped `files.txt` slice through the shared pathspec module. Missing mapped docs halt as `incomplete_stage_state`.
+- Add playbook context discipline: every producer/reviewer playbook starts from the payload's context-document list and reads those documents first.
+- Dogfood Woof: author Woof's own `TARGET-ARCHITECTURE.md` and `PRINCIPLES.md`, run map-codebase for AS-IS docs, add the `[cartography]` block, `scripts/refresh-cartography`, and post-commit hook, then make `woof preflight` pass in the Woof repo.
+- Tests: per-node payload contains exactly the mapped refs; integration telemetry includes cartography paths in `artefacts_loaded[]`; missing-doc halt path.
+
+Depends on: E1. Must land before E3/E5 because the baseline otherwise measures a workflow that ignores its own context system.
+
+### E20. Per-Stage Role Routing
+
+Implement ADR-002's route table so the documented per-stage producer/reviewer policy is expressible, and fix Woof's own inverted Stage-5 configuration.
+
+Open work:
+- Add `[routes.<node_group>.<role>]` overlays to `agents.schema.json` over existing `[roles.primary]`/`[roles.reviewer]` defaults. Node groups: `discovery`, `definition`, `planning`, `execution`. `model_profiles` compose with route overlays; `in-session` remains invalid for dispatchable routes.
+- Graph node handlers pass their node group as `route_key`; route resolution is override-then-default. `RoleRoute` and dispatch audit record `route_key` and resolved adapter.
+- Update `woof init` templates and `.woof/agents.toml` in this repo to the ADR-002 default policy: Stages 1-3 producer=Codex/reviewer=Claude; Stage 5 producer=Claude/reviewer=Codex. Preflight validates that every node group resolves.
+- Tests: per-stage resolution, profile overlay, audit recording, preflight failure on unresolvable routes.
+
+Depends on: nothing. Must land before E5.
+
+### E21. Dispatch Token Economy And Solo-Operator Affordances
+
+Cut measured dispatch overhead and add small-epic affordances without weakening the gates. S1-S3 change the measured dispatch shape and land before E5; S4-S6 are independent policy work.
+
+Open work:
+- S1 playbook menu: discovery research/thinking prompts carry a name + one-line-description menu with absolute playbook paths instead of embedding all playbook bodies. Record before/after `prompt_bytes`.
+- S2 dispatch overhead: cache `agents.toml` schema validation per runner invocation; record the trusted-runtime policy block once per dispatch; cache repeated plan validation by content hash.
+- S3 single denial epilogue: the graph appends the canonical "do not run graph commands" epilogue to every dispatch prompt; delete divergent playbook copies.
+- S4 trivial-epic tier: `woof wf new --trivial` records `tier: trivial`; `next_node` skips Stage 1 and definition reads `spark.md`. Stage 2.5 readiness and plan gate remain unchanged.
+- S5 plan-gate auto-approve: opt-in `[gates] plan_auto_approve = "info"` auto-resolves plan gates whose critique severity ceiling is `info` with zero findings, recorded as audited `auto_approved`. Default remains always-gate.
+- S6 brainstorm bundle reaches breakdown as guidance: breakdown payload lists the accepted brainstorm bundle paths, including `work_units[]`, without mechanically mapping work units to stories.
+
+Depends on: S1-S3 before E5. S4-S6 can wait until after the first baseline if comparability matters.
+
+### E22. Runner Seam Hardening
+
+Close the weak engine seams around lock discipline, parent-side liveness, malformed-state error boundaries, and duplicated state derivation.
+
+Open work:
+- `wf reset` and `wf --resolve` acquire the same per-epic lock as `run_graph`; reset refuses while the lock is held; stale-lock takeover is atomic; add a real two-process race test.
+- Add a parent-side dispatch timeout above the child supervision budget. A wedged `woof dispatch` cannot block the runner indefinitely; timeout opens a `supervisor_hang` gate.
+- Add a CLI error boundary: malformed `gate.md` YAML, non-JSON check stdout, undecodable artefacts, and unexpected handler exceptions produce structured halts; `--debug` can re-raise.
+- Purify `next_node` by moving `_resumable_commit_story` side effects into execution, then derive `observe` from the same runner derivation instead of maintaining a parallel state machine.
+
+Depends on: E16 by convention. Blocks the first unattended run, with E17 and E18.
+
+### E23. Architecture Doc Truth Pass
+
+Finish making architecture and operator docs state-honest. The rollout-note marking pass (sections 8, 9, 10, 11.5, 13, and 14, plus the implementation-plan and vault Overview wording) landed with the 2026-06-10 review follow-up; this epic carries what remains.
+
+Open work:
+- Purge ADR-005-era playbook prose ("through `woof graph next-node`", "the skill performs the producer dispatch") and consumer-unresolvable schema paths from the critique, planning, and discovery playbooks and READMEs.
+- Document known limits in the architecture: Check 1 validates the worktree, not the committed tree; Check 2 proves assertion-text presence, not executed assertion identity.
+- After E17 lands: finish the verb-table reconciliation — write story gates as `stage: 5` with legacy `stage: 6` read-tolerated (the schema/code migration rides E17), replace the interim "target decisions"/"current limitation" wording in section 10, `SKILL.md`, and `references/gates.md` with the settled table, and re-check section 3, section 10, and schema agreement.
+
+Depends on: E17 for the final verb table. Mostly docs; the story-gate schema migration rides E17.
+
 ## Settled Choices
 
 - Runtime action safety is trusted-local plus commit-safety, audit, and drift detection. Woof does not add a preventive sandbox unless real usage proves detection is insufficient. External sandbox-orchestration tooling (e.g. sandcastle) treats the sandbox as the product; Woof deliberately places the safety boundary at commit time instead. Git worktrees, if adopted for parallel dispatch, give collision avoidance but not the isolation boundary.
+- Runtime story state splits from the approved plan. `plan.json` is immutable after plan-gate approval; graph-owned runtime state belongs in `story-state.json`.
 - Woof owns the graph authority in deterministic Python. LangGraph and Temporal are not adopted; their transferable concepts (explicit conditional edges, reducer-based state merge, checkpoint/interrupt/replay vocabulary) are mined into Woof's own engine rather than ceding control flow to a framework. NetworkX is adopted only as a plan-graph algorithm library (cycle and topological analysis), because it is a data structure, not an orchestrator.
 - Structural cartography is an embedded mechanical index, not an orchestration graph. Default storage is SQLite under `.woof/codebase/structural/`; the only public surface is `woof cartography`. Woof does not adopt Neo4j, LadybugDB, always-on code-intel daemons, or MCP graph tools.
 - Structural-index confidence is advisory. Reviewer blockers still need resolvable evidence; an `AMBIGUOUS` or `HEURISTIC` edge can point a reviewer to source, but cannot block on its own.
+- Gate decisions are owned by one canonical verb table. `split_story` is dropped; split guidance travels in the resolution payload and re-enters planning through `revise_plan`.
+- Enforcement git path listings (scope, manifest, transaction, drift) use explicit `--no-renames` and are centralised in `graph/git.py`: a rename is delete + add, and both ends are scope-checked. Content diffs that measure added text (Check 2) keep rename detection so moved code does not count as new.
+- `audit.enabled=false` means no commit-bound audit artefacts. Raw unredacted output may be captured only under gitignored raw retention.
+- E5 is a measurement of the intended production shape, not the current flawed one; E19, E20, and E21 S1-S3 precede the baseline.
 - Parallel story dispatch via git worktrees is deferred, not rejected. It is sequenced after the completed E7 process-supervision work plus E8/E9 (lineage and recovery), because running multiple trusted-local full-access workers concurrently turns the commit-safety boundary into a concurrency-safety boundary: concurrent transaction manifests, shared non-worktree state, shared MCP and credentials. It is not an active epic.
 - The eval harness stays in Python. `/woof` can launch it, but there is no `/woof:eval` skill.
 - tmux is optional for long runs and only supervises `woof wf`; it does not own workflow state.

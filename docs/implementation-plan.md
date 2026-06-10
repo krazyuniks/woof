@@ -147,6 +147,8 @@ E1 did not wire cartography into dispatch payloads. E19 owns that demand-side co
 
 **E7 (Dispatch Process Supervision) is complete.** ADR-008 and architecture s11.5 describe the landed terminal-seen, inherited-stream, and `completed_lingering` semantics. Its per-epic plan was removed because `docs/plans/` only keeps active epic plans.
 
+**E17 (Gate Decision Semantics) is active.** Its plan is `docs/plans/e17-gate-decision-semantics.md`. It is the next critical-path epic: the recommended single-operator order runs it first, and its readiness-resolution slice (plan prompts P1 + P2) unblocks E3. The plan front-loads the canonical decision table (P1) and the readiness verbs (P2, the E3 unblocker) ahead of `retry_story` (P3), the `abandoned` terminal status (P4), the real `revise_epic_contract` channel (P5), and the decision-surface conformance test (P6). E16 defect-sweep items continue to batch beside it where they touch the same files. E2's remaining run-resilience/baseline/drift work is independent and not blocked by E17.
+
 ## What Happens Next
 
 Current ordering:
@@ -155,7 +157,7 @@ Current ordering:
 2. E1 prompt 4: fail-loud post-commit hook for the mechanical cartography layer. **Landed.**
 3. E1 prompt 5: clear preflight error for cartography-less consumers. **Landed.**
 4. E2 continues; E16 defect-sweep items batch with it where they touch the same files.
-5. E17 lands its decision table and readiness-resolution verbs first; that slice unblocks E3.
+5. E17 is active (plan landed at `docs/plans/e17-gate-decision-semantics.md`). It lands its canonical decision table (P1) and readiness-resolution verbs (P2) first; that slice unblocks E3.
 6. E20, E19, and E21 S1-S3 land before E5 (recommended: after E17, before E3).
 7. E3/E4/E5 produce the first production-shape baseline.
 8. E17/E18/E22 must complete before the first unattended overnight run.

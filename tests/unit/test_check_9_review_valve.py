@@ -6,7 +6,10 @@ import json
 from pathlib import Path
 
 from woof.checks import CheckContext
-from woof.checks.runners.check_9_review_valve import check_9_review_valve_runner
+from woof.checks.runners.check_9_review_valve import (
+    _is_end_of_epic,
+    check_9_review_valve_runner,
+)
 from woof.gate.write import write_gate_from_check_result
 
 
@@ -86,6 +89,46 @@ def test_end_of_epic_due_with_minor_findings_fails(tmp_path: Path) -> None:
     assert not outcome.ok
     assert outcome.severity == "minor"
     assert "end of epic" in outcome.summary
+
+
+def test_end_of_epic_due_when_only_later_stories_are_abandoned(tmp_path: Path) -> None:
+    # A later story that is `abandoned` is terminal and will never be worked, so
+    # the current story is still end-of-epic. The valve must fire on its minor
+    # findings rather than be suppressed by the abandoned tail. every_n is set
+    # high so only the end-of-epic trigger can fire.
+    _write_agents(tmp_path, every_n=5, end_of_epic=True)
+    ctx = _ctx(
+        tmp_path,
+        [_story("S1", "done"), _story("S2", "in_progress"), _story("S3", "abandoned")],
+    )
+    _write_critique(
+        ctx.epic_dir,
+        "S2",
+        [{"id": "F1", "severity": "minor", "summary": "End-of-epic polish note"}],
+    )
+
+    outcome = check_9_review_valve_runner(ctx)
+
+    assert not outcome.ok
+    assert outcome.severity == "minor"
+    assert "end of epic" in outcome.summary
+
+
+def test_is_end_of_epic_treats_abandoned_tail_as_terminal() -> None:
+    # An abandoned tail story is terminal: the current story is still end-of-epic.
+    abandoned_tail = [
+        _story("S1", "done"),
+        _story("S2", "in_progress"),
+        _story("S3", "abandoned"),
+    ]
+    assert _is_end_of_epic(abandoned_tail, "S2") is True
+    # A pending tail story still needs work: not end-of-epic.
+    pending_tail = [
+        _story("S1", "done"),
+        _story("S2", "in_progress"),
+        _story("S3", "pending"),
+    ]
+    assert _is_end_of_epic(pending_tail, "S2") is False
 
 
 def test_due_boundary_with_no_minor_findings_passes(tmp_path: Path) -> None:

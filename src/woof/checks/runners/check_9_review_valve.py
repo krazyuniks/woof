@@ -18,6 +18,7 @@ from typing import Any
 import yaml
 
 from woof.checks import CheckContext, CheckOutcome
+from woof.graph.state import TERMINAL_STORY_STATUSES
 
 CHECK_ID = "check_9_review_valve"
 CONFIG_PATH = ".woof/agents.toml"
@@ -219,7 +220,7 @@ def _is_end_of_epic(stories: list[Any], current_story_id: str) -> bool:
         if story.get("id") == current_story_id:
             seen_current = True
             continue
-        if seen_current and story.get("status") != "done":
+        if seen_current and story.get("status") not in TERMINAL_STORY_STATUSES:
             return False
     return seen_current
 

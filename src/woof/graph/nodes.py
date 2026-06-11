@@ -35,7 +35,15 @@ from woof.graph.planning_contracts import (
     validate_stage3_plan_contract,
 )
 from woof.graph.readiness import ReadinessResult, evaluate_readiness
-from woof.graph.state import NodeInput, NodeOutput, NodeStatus, NodeType, Plan, ValidationSummary
+from woof.graph.state import (
+    TERMINAL_STORY_STATUSES,
+    NodeInput,
+    NodeOutput,
+    NodeStatus,
+    NodeType,
+    Plan,
+    ValidationSummary,
+)
 from woof.graph.transitions import (
     StageStateError,
     append_epic_event,
@@ -2085,7 +2093,7 @@ def commit_node(inp: NodeInput) -> NodeOutput:
         story_id=inp.story_id,
     )
     completed_plan = load_plan(inp.repo_root, inp.epic_id)
-    if all(candidate.status == "done" for candidate in completed_plan.stories):
+    if all(candidate.status in TERMINAL_STORY_STATUSES for candidate in completed_plan.stories):
         append_epic_event_once(
             inp.repo_root,
             inp.epic_id,

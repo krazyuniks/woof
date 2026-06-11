@@ -593,6 +593,38 @@ def test_retry_story_on_done_story_is_rejected(tmp_path: Path) -> None:
         assert path.exists()
 
 
+def test_retry_story_on_abandoned_story_is_rejected(tmp_path: Path) -> None:
+    # abandoned is the other terminal status (E17 P4): like done, it is out of the
+    # crashed/aborted-executor domain retry_story recovers. Resetting it to pending
+    # would strand its prior story_abandoned event, so an abandoned target is a
+    # structured error naming the actual terminal status, not a silent reset.
+    directory = _write_epic(tmp_path, 67, story_status="abandoned")
+    artefacts = _write_story_artefacts(directory, "S1")
+    tracker = _RecordingTracker(directory)
+
+    with pytest.raises(StageStateError, match=r"S1.*already abandoned"):
+        _apply_gate_resolution_effects(
+            tmp_path,
+            67,
+            decision="retry_story",
+            gate_type="review_gate",
+            story_id="S1",
+            triggered_by=["check_7_commit_transaction"],
+            tracker=cast(Tracker, tracker),
+        )
+
+    # The guard fires before any effect: status stays abandoned, no audit ran, and
+    # the per-story artefacts a successful retry would clear are all still present.
+    plan = json.loads((directory / "plan.json").read_text())
+    assert plan["stories"][0]["status"] == "abandoned"
+    events = [
+        json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines() if line
+    ]
+    assert not any(e["event"] == "story_retried" for e in events)
+    for path in artefacts.values():
+        assert path.exists()
+
+
 def test_resolve_gate_retry_story_on_done_story_keeps_gate(tmp_path: Path) -> None:
     # End-to-end through _resolve_gate: retrying a done story exits 2, the gate
     # stays open on disk, and neither a story_retried nor a gate-resolved event is

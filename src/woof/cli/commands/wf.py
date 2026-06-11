@@ -22,7 +22,13 @@ from woof.graph.dispositions import (
 )
 from woof.graph.lock import WorkflowLockError
 from woof.graph.runner import run_graph
-from woof.graph.state import GateDecision, NodeStatus, Plan, StorySpec
+from woof.graph.state import (
+    TERMINAL_STORY_STATUSES,
+    GateDecision,
+    NodeStatus,
+    Plan,
+    StorySpec,
+)
 from woof.graph.transitions import (
     StageStateError,
     append_epic_event,
@@ -267,21 +273,22 @@ def _apply_gate_resolution_effects(
                     "retry_story requires a targeted story, but the open "
                     f"{gate_type} carries no story_id"
                 )
-            # retry_story recovers a crashed or aborted executor; a story already
-            # marked done is out of that domain (a crashed executor never reaches
-            # done). Resetting it to pending here would strand the prior
-            # story_completed event in the audit log - append_epic_event_once would
-            # dedupe the rerun's re-emitted completion - so the timeline would show
-            # the story completing before the retry and never for the rerun. Reject
-            # it before any mutation; post-completion recovery semantics belong to
-            # E18's completion-event reconciliation, not this verb.
+            # retry_story recovers a crashed or aborted executor; a terminal story
+            # (done or abandoned) is out of that domain (a crashed executor never
+            # reaches a terminal status). Resetting it to pending here would strand
+            # the prior story_completed/story_abandoned event in the audit log -
+            # append_epic_event_once would dedupe the rerun's re-emitted terminal
+            # event - so the timeline would show the story finishing before the
+            # retry and never for the rerun. Reject it before any mutation;
+            # post-completion recovery semantics belong to E18's completion-event
+            # reconciliation, not this verb.
             plan = load_plan(repo_root, epic_id)
             target_story = next((s for s in plan.stories if s.id == story_id), None)
-            if target_story is not None and target_story.status == "done":
+            if target_story is not None and target_story.status in TERMINAL_STORY_STATUSES:
                 raise StageStateError(
-                    f"retry_story targets {story_id}, but it is already done; "
-                    "retry_story resets crashed or aborted executors, not "
-                    "completed stories"
+                    f"retry_story targets {story_id}, but it is already "
+                    f"{target_story.status}; retry_story resets crashed or aborted "
+                    "executors, not finished stories"
                 )
             # A crashed or aborted executor: reset the story to pending and clear
             # its per-story executor/check/critique/disposition artefacts so

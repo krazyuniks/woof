@@ -143,7 +143,13 @@ reconstruction from disk keeps `abandoned` distinct from `done`; the read-only
 status consumers were aligned to the terminal-status set so they agree with
 `next_node` (observe summarises the `abandoned` count and derives the
 `epic_abandoned` terminal, and the bench harness treats `epic_abandoned` as a
-terminal stop and a distinct non-delivery outcome). Prompts 5-6 remain.
+terminal stop and a distinct non-delivery outcome); a follow-up sweep aligned the
+remaining finished-epic seams with `TERMINAL_STORY_STATUSES` so `commit_node`'s
+in-commit `epic_completed` gate and `check_9`'s end-of-epic detection now treat
+`abandoned` as finished (a mixed done+abandoned epic stages its completion marker
+inside the final commit, and the end-of-epic review valve still fires when only
+abandoned stories remain), and the `retry_story` guard rejects any terminal status
+rather than `done` alone. Prompts 5-6 remain.
 
 | # | Prompt summary | Files touched | Tests | Review checkpoint |
 |---|---|---|---|---|

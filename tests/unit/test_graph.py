@@ -2056,6 +2056,63 @@ def test_graph_resumes_interrupted_commit_transaction(tmp_path: Path) -> None:
     assert subject.stdout.strip() == "feat: E1 S1 - first"
 
 
+def test_commit_writes_epic_completed_into_commit_for_mixed_done_abandoned_epic(
+    tmp_path: Path,
+) -> None:
+    # Completing the final story of an epic whose other stories are `abandoned`
+    # still completes the epic: every story is terminal. commit_node must stage
+    # `epic_completed` INTO the final commit (the in-commit gate now uses the
+    # terminal-status set, not done-only), leaving no dangling/uncommitted marker.
+    _init_git_repo(tmp_path)
+    directory = _write_ready_commit_state(tmp_path, 1)
+    plan = json.loads((directory / "plan.json").read_text())
+    plan["stories"] = [
+        {**plan["stories"][0], "id": "S1", "status": "done"},
+        {**plan["stories"][0], "id": "S2", "title": "second", "status": "abandoned"},
+    ]
+    (directory / "plan.json").write_text(json.dumps(plan))
+
+    assert next_node(tmp_path, 1) == (NodeType.COMMIT, "S1")
+
+    outputs = run_graph(tmp_path, 1)
+
+    assert outputs[0].node_type == NodeType.COMMIT
+    assert outputs[-1].status == NodeStatus.EPIC_COMPLETE
+
+    # epic_completed is written exactly once, by commit_node, before the commit.
+    events = [
+        json.loads(line)
+        for line in (directory / "epic.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    assert [event["event"] for event in events].count("epic_completed") == 1
+
+    # The post-commit tree is clean: the marker landed inside the commit rather
+    # than being appended after it.
+    status = _git(
+        tmp_path,
+        "status",
+        "--porcelain=v1",
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert status.stdout == ""
+
+    # HEAD's epic.jsonl already carries the marker - proof it was committed, not
+    # left dangling in the working tree.
+    committed = _git(
+        tmp_path,
+        "show",
+        "HEAD:.woof/epics/E1/epic.jsonl",
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    committed_events = [json.loads(line) for line in committed.stdout.splitlines() if line.strip()]
+    assert any(event["event"] == "epic_completed" for event in committed_events)
+
+
 def test_commit_resume_git_failure_preserves_resume_artefacts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

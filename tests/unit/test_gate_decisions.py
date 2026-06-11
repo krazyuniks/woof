@@ -16,7 +16,7 @@ from typing import cast, get_args
 
 import pytest
 
-from woof.cli.commands.wf import _apply_gate_resolution_effects, setup_wf_parser
+from woof.cli.commands.wf import _apply_gate_resolution_effects, _resolve_gate, setup_wf_parser
 from woof.graph.decisions import (
     GATE_DECISIONS,
     all_decisions,
@@ -73,6 +73,16 @@ def _jsonl_decision_enum() -> list[str]:
     return schema["properties"]["decision"]["enum"]
 
 
+def _node_input_decision_enum() -> list[str]:
+    schema = json.loads(
+        (REPO_ROOT / "schemas" / "node-input.schema.json").read_text(encoding="utf-8")
+    )
+    (string_branch,) = [
+        branch for branch in schema["properties"]["decision"]["oneOf"] if "enum" in branch
+    ]
+    return string_branch["enum"]
+
+
 # --- The decision surface derives from the table -------------------------------
 
 
@@ -88,6 +98,13 @@ def test_gate_decision_literal_matches_table_union() -> None:
 
 def test_jsonl_decision_enum_matches_table_union() -> None:
     assert set(_jsonl_decision_enum()) == set(all_decisions())
+
+
+def test_node_input_decision_enum_matches_table_union() -> None:
+    # The published node-input I/O contract must carry every verb the typed
+    # GateDecision literal does, or a NodeInput.decision using a new verb fails
+    # `woof validate --schema node-input`.
+    assert set(_node_input_decision_enum()) == set(all_decisions())
 
 
 def test_table_allowed_sets_are_the_surviving_sets() -> None:
@@ -489,3 +506,53 @@ def test_retry_story_leaves_sibling_stories_untouched(tmp_path: Path) -> None:
     assert not target["disposition"].exists()
     assert sibling["critique"].exists()
     assert sibling["disposition"].exists()
+
+
+def test_retry_story_without_story_id_is_rejected(tmp_path: Path) -> None:
+    # End-of-epic review_gates carry story_id: null (the schema permits it), yet
+    # retry_story is a valid review_gate verb. With no story to target it must be a
+    # structured error, not a silent successful retry that mutates nothing.
+    directory = _write_epic(tmp_path, 63, story_status="in_progress")
+    tracker = _RecordingTracker(directory)
+
+    with pytest.raises(StageStateError, match="retry_story requires a targeted story"):
+        _apply_gate_resolution_effects(
+            tmp_path,
+            63,
+            decision="retry_story",
+            gate_type="review_gate",
+            story_id=None,
+            triggered_by=["epic_review"],
+            tracker=cast(Tracker, tracker),
+        )
+
+    # The guard fires before any effect: the story is untouched and no audit ran.
+    plan = json.loads((directory / "plan.json").read_text())
+    assert plan["stories"][0]["status"] == "in_progress"
+    events = [
+        json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines() if line
+    ]
+    assert not any(e["event"] == "story_retried" for e in events)
+
+
+def test_resolve_gate_retry_story_without_story_keeps_gate(tmp_path: Path) -> None:
+    # End-to-end through _resolve_gate: a story-less review_gate resolved with
+    # retry_story exits 2, the gate stays open on disk, and neither a story_retried
+    # nor a gate-resolved event is written.
+    directory = _write_epic(tmp_path, 64, story_status="in_progress")
+    gate = directory / "gate.md"
+    gate.write_text(
+        "---\ntype: review_gate\ntriggered_by:\n- epic_review\n---\n\nReview gate body.\n",
+        encoding="utf-8",
+    )
+    tracker = _RecordingTracker(directory)
+
+    rc = _resolve_gate(tmp_path, 64, "retry_story", cast(Tracker, tracker))
+
+    assert rc == 2
+    assert gate.exists()  # the gate stays open and unresolved
+    events = [
+        json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines() if line
+    ]
+    assert not any(e["event"] == "story_retried" for e in events)
+    assert not any(e["event"] in {"gate_resolved", "review_gate_resolved"} for e in events)

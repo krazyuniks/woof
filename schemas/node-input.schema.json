@@ -53,6 +53,8 @@
           "type": "string",
           "enum": [
             "approve",
+            "approve_with_reason",
+            "retry_story",
             "revise_epic_contract",
             "revise_plan",
             "revise_story_scope",

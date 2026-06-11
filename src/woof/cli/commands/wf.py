@@ -223,7 +223,17 @@ def _apply_gate_resolution_effects(
                     story_id=story_id,
                 )
             return changed
-        if decision == "retry_story" and story_id:
+        if decision == "retry_story":
+            if not story_id:
+                # End-of-epic review_gates carry story_id: null. retry_story has
+                # no story to reset there, so it is a structured error rather than
+                # a silent "successful retry". Raising before any effect runs keeps
+                # the gate open (_resolve_gate maps StageStateError to exit 2 and
+                # neither records the gate resolved nor deletes gate.md).
+                raise StageStateError(
+                    "retry_story requires a targeted story, but the open "
+                    f"{gate_type} carries no story_id"
+                )
             # A crashed or aborted executor: reset the story to pending and clear
             # its per-story executor/check/critique/disposition artefacts so
             # next_node re-dispatches it cleanly. Sibling stories and their

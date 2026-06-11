@@ -165,6 +165,7 @@ class GhCommandStub:
         title: str | None = None,
         updated_at: str = "2026-01-01T00:00:00Z",
         state: str = "open",
+        state_reason: str | None = None,
     ) -> None:
         self.issue.update(
             {
@@ -175,6 +176,8 @@ class GhCommandStub:
         )
         if title is not None:
             self.issue["title"] = title
+        if state_reason is not None:
+            self.issue["state_reason"] = state_reason
 
     def run(self, argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         assert argv[0] == "gh"
@@ -223,6 +226,11 @@ class GhCommandStub:
 
         if argv[1:3] == ["issue", "close"]:
             self.issue["state"] = "closed"
+            if "--reason" in argv:
+                reason = argv[argv.index("--reason") + 1]
+                self.issue["state_reason"] = (
+                    "not_planned" if reason == "not planned" else "completed"
+                )
             self.issue["updated_at"] = self._next_updated_at()
             self.close_count += 1
             return subprocess.CompletedProcess(argv, 0, "", "")
@@ -537,6 +545,62 @@ def test_tracker_contract_close_not_delivered_abandons_without_done_guard(
     else:
         assert result.changed is False
         assert not result.last_sync_path.exists()
+
+
+def _github_close_tracker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, gh: GhCommandStub
+) -> GitHubTracker:
+    monkeypatch.setattr(github_module.subprocess, "run", gh.run)
+    (tmp_path / ".woof" / "epics" / f"E{gh.issue_number}").mkdir(parents=True)
+    return GitHubTracker(tmp_path, gh.repo)
+
+
+def test_close_not_delivered_corrects_already_closed_wrong_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An epic issue already closed as "completed" must be re-closed as
+    # not-planned so the tracker stops reading as delivered once the local
+    # epic_abandoned terminal is recorded.
+    gh = GhCommandStub()
+    gh.set_remote(body="Remote body.\n", state="closed", state_reason="completed")
+    tracker = _github_close_tracker(tmp_path, monkeypatch, gh)
+
+    result = tracker.close_not_delivered(gh.issue_number)
+
+    close_calls = [c for c in gh.calls if c[:2] == ["issue", "close"]]
+    assert len(close_calls) == 1
+    assert close_calls[-1][close_calls[-1].index("--reason") + 1] == "not planned"
+    assert gh.issue["state_reason"] == "not_planned"
+    assert result.changed is True
+    assert result.closed is True
+    assert result.last_sync_path.is_file()
+
+
+def test_close_not_delivered_idempotent_when_already_not_planned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Already closed as not-planned: no redundant API write, but the local
+    # not-delivered sync is still recorded.
+    gh = GhCommandStub()
+    gh.set_remote(body="Remote body.\n", state="closed", state_reason="not_planned")
+    tracker = _github_close_tracker(tmp_path, monkeypatch, gh)
+
+    result = tracker.close_not_delivered(gh.issue_number)
+
+    assert gh.close_count == 0
+    assert [c for c in gh.calls if c[:2] == ["issue", "close"]] == []
+    assert gh.issue["state_reason"] == "not_planned"
+    assert result.changed is False
+    assert result.closed is False
+    assert result.last_sync_path.is_file()
+    events = [
+        json.loads(line)
+        for line in (tmp_path / ".woof" / "epics" / f"E{gh.issue_number}" / "epic.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert events[-1]["event"] == "tracker_synced"
+    assert events[-1]["not_delivered"] is True
 
 
 # ---------------------------------------------------------------------------

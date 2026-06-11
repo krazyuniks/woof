@@ -49,6 +49,11 @@ from woof.trackers.epic_body import (
 GITHUB_RATE_LIMIT_SAFETY_MARGIN = 100
 GITHUB_COMMAND_TIMEOUT_SECONDS = 20
 
+# GitHub's REST API `state_reason` for an issue closed as "not planned" - the
+# value produced by `gh issue close --reason "not planned"`. close_not_delivered
+# uses it to detect an already-closed issue carrying the wrong close reason.
+GITHUB_NOT_PLANNED_REASON = "not_planned"
+
 
 def github_core_remaining(output: str) -> int | None:
     try:
@@ -273,8 +278,18 @@ class GitHubTracker:
         remote = self._fetch_issue(epic_id)
         epic_dir = epic_directory(self.repo_root, epic_id)
         last_sync_path = epic_dir / ".last-sync"
+        # Correct the close reason unless the issue is already closed as
+        # not-planned. An open issue is closed with that reason; an issue closed
+        # for a different reason (e.g. someone closed it manually as "completed")
+        # is re-closed so GitHub's PATCH resets state_reason to not_planned - else
+        # the tracker would read as delivered while the local terminal records an
+        # abandon. An already-not-planned issue needs no API write (idempotent).
+        already_not_planned = (
+            remote.get("state") == "closed"
+            and remote.get("state_reason") == GITHUB_NOT_PLANNED_REASON
+        )
         closed = False
-        if remote.get("state") != "closed":
+        if not already_not_planned:
             self._close_issue(epic_id, reason="not planned")
             closed = True
             remote = self._fetch_issue(epic_id)

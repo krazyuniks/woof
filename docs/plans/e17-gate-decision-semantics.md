@@ -133,8 +133,10 @@ the story `abandoned` (not `done`) and appends a `story_abandoned` event instead
 completes on its remaining stories; `abandon_epic` is now one shared effect routed
 from every gate type that offers it (readiness/plan/story/review) — it closes the
 tracker issue as not delivered (`Tracker.close_not_delivered`, with GitHub using the
-`not planned` close reason, and `complete_epic`'s done-guard now accepting the
-terminal `abandoned` status) and appends a graph-owned `epic_abandoned` marker that
+`not planned` close reason and re-closing an already-closed issue to correct a wrong
+`state_reason` so the tracker cannot read as delivered, and `complete_epic`'s
+done-guard now accepting the terminal `abandoned` status) and appends a graph-owned
+`epic_abandoned` marker that
 `transitions.next_node` consults to return a distinct `NodeStatus.EPIC_ABANDONED`
 terminal (surfaced by the runner, never conflated with `EPIC_COMPLETE`), and
 reconstruction from disk keeps `abandoned` distinct from `done`; the read-only

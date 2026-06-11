@@ -107,7 +107,15 @@ deepen the story/epic verbs; P6 locks advertised-equals-implemented.
 Landed on `main`: prompt 1 (S1) — `src/woof/graph/decisions.py` is canonical;
 the `--resolve` choices, `GateDecision` literal, and `jsonl-events` decision enum
 all match its union; `split_story` is removed from every surface it touched.
-Prompts 2-6 remain.
+Prompt 2 (S2, the E3 unblocker) — `decisions.py` now carries a `readiness_gate`
+row (`approve_with_reason`, `revise_epic_contract`, `abandon_epic`),
+`_apply_gate_resolution_effects` validates and resolves readiness gates,
+`_gate_resolved_event_name` maps `readiness_gate -> readiness_gate_resolved`, and
+`transitions.readiness_satisfied` now treats a `readiness_gate_resolved` event
+with `decision=approve_with_reason` after the latest `definition_closed` as
+satisfying, so an operator-approved unready contract advances to planning without
+re-gating (D-RA settled); readiness `revise_epic_contract`/`abandon_epic` are
+wired as legal seams that P5/P4 deepen. Prompts 3-6 remain.
 
 | # | Prompt summary | Files touched | Tests | Review checkpoint |
 |---|---|---|---|---|

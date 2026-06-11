@@ -15,10 +15,12 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
+from typing import cast
 
 import pytest
 import yaml
 
+from woof.cli.commands.wf import _resolve_gate
 from woof.graph import nodes, transitions
 from woof.graph.readiness import (
     ACCEPTANCE_PROSE_CHECK_ID,
@@ -34,6 +36,7 @@ from woof.graph.readiness import (
     has_concrete_signal,
 )
 from woof.graph.state import NodeInput, NodeStatus, NodeType
+from woof.trackers.base import Tracker
 
 pytestmark = pytest.mark.host_only
 
@@ -264,6 +267,86 @@ def test_readiness_node_rejects_story_id(tmp_path: Path) -> None:
                 repo_root=tmp_path,
             )
         )
+
+
+# --------------------------------------------------------------------------- #
+# Prompt-2 readiness-gate resolution verbs (E17 P2 / D-RA)
+# --------------------------------------------------------------------------- #
+
+
+class _NoopTracker:
+    """Readiness resolution verbs touch no tracker method; this stub records nothing."""
+
+
+def _open_readiness_gate(root: Path) -> Path:
+    """Build an unready epic and run the node so a readiness_gate is open on disk."""
+    directory = _setup_epic(root, UNREADY_EPIC)
+    output = nodes.contract_readiness_node(_readiness_input(root))
+    assert output.status == NodeStatus.GATE_OPENED
+    assert (directory / "gate.md").exists()
+    return directory
+
+
+def test_approve_with_reason_advances_unready_epic_to_planning(tmp_path: Path) -> None:
+    directory = _open_readiness_gate(tmp_path)
+
+    rc = _resolve_gate(tmp_path, 1, "approve_with_reason", cast(Tracker, _NoopTracker()))
+    assert rc == 0
+    assert not (directory / "gate.md").exists()
+
+    resolved = [e for e in _epic_events(directory) if e["event"] == "readiness_gate_resolved"]
+    assert resolved and resolved[-1]["decision"] == "approve_with_reason"
+    assert resolved[-1]["gate_type"] == "readiness_gate"
+
+    # The unchanged contract is now readiness-satisfied and advances to planning
+    # without re-running the readiness node (no re-gate).
+    assert transitions.readiness_satisfied(tmp_path, 1) is True
+    assert transitions.next_node(tmp_path, 1) == (NodeType.BREAKDOWN_PLANNING, None)
+
+
+def test_reclosed_contract_rearms_readiness_after_approve_with_reason(tmp_path: Path) -> None:
+    _open_readiness_gate(tmp_path)
+    _resolve_gate(tmp_path, 1, "approve_with_reason", cast(Tracker, _NoopTracker()))
+    assert transitions.readiness_satisfied(tmp_path, 1) is True
+
+    # A revised+re-closed contract appends a new definition_closed, which re-arms
+    # readiness: the prior approval no longer counts and the graph re-runs the node.
+    transitions.append_epic_event(
+        tmp_path, 1, {"event": "definition_closed", "at": "2026-06-09T11:00:00Z", "epic_id": 1}
+    )
+    assert transitions.readiness_satisfied(tmp_path, 1) is False
+    assert transitions.next_node(tmp_path, 1) == (NodeType.CONTRACT_READINESS, None)
+
+
+def test_readiness_abandon_epic_is_terminal_at_legal_seam(tmp_path: Path) -> None:
+    # P2 wires the legal seam: abandon_epic is a legal readiness verb whose
+    # resolution is recorded, and it does NOT satisfy readiness (it is not an
+    # approval), so the epic does not advance to planning. The epic_abandoned
+    # marker, tracker close, and terminal next_node outcome land in E17 P4.
+    directory = _open_readiness_gate(tmp_path)
+
+    rc = _resolve_gate(tmp_path, 1, "abandon_epic", cast(Tracker, _NoopTracker()))
+    assert rc == 0
+    assert not (directory / "gate.md").exists()
+
+    resolved = [e for e in _epic_events(directory) if e["event"] == "gate_resolved"]
+    assert resolved and resolved[-1]["decision"] == "abandon_epic"
+    assert resolved[-1]["gate_type"] == "readiness_gate"
+
+    # abandon is not approval: readiness stays unsatisfied, so the epic does not
+    # advance to breakdown planning.
+    assert transitions.readiness_satisfied(tmp_path, 1) is False
+
+
+def test_invalid_readiness_verb_resolution_errors_and_keeps_gate(tmp_path: Path) -> None:
+    directory = _open_readiness_gate(tmp_path)
+
+    # `approve` is valid for the plan/story/review gates but not readiness; the
+    # structured StageStateError maps to exit code 2 and the gate stays open.
+    rc = _resolve_gate(tmp_path, 1, "approve", cast(Tracker, _NoopTracker()))
+    assert rc == 2
+    assert (directory / "gate.md").exists()
+    assert not any(e["event"] == "readiness_gate_resolved" for e in _epic_events(directory))
 
 
 # --------------------------------------------------------------------------- #

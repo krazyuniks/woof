@@ -13,9 +13,9 @@ resolution payload and re-enters planning through ``revise_plan``.
 The ``tracker_sync_conflict`` row mirrors the tracker layer's
 :data:`woof.trackers.base.CONFLICT_DECISIONS`, which stays owned there.
 
-P1 is consolidation only: the verbs that already have effects keep them
-unchanged, and the readiness, retry, abandoned, and revise-epic-contract
-effects (and their table rows/verbs) land in later E17 prompts.
+P1 was consolidation only. E17 P2 (D-RA) adds the ``readiness_gate`` row and its
+``approve_with_reason`` verb (the E3 unblocker); the retry, abandoned, and deeper
+revise-epic-contract effects land in later E17 prompts.
 """
 
 from __future__ import annotations
@@ -29,6 +29,11 @@ from woof.trackers.base import CONFLICT_DECISIONS
 # implemented. Verbs that share one effect (the tracker-conflict verbs) share
 # a tag; otherwise the tag is the verb's canonical effect name.
 GATE_DECISIONS: dict[str, dict[str, str]] = {
+    "readiness_gate": {
+        "approve_with_reason": "approve_with_reason",
+        "revise_epic_contract": "revise_epic_contract",
+        "abandon_epic": "abandon_epic",
+    },
     "plan_gate": {
         "approve": "approve",
         "revise_plan": "revise_plan",

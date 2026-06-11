@@ -19,6 +19,7 @@
         "definition_closed",
         "readiness_passed",
         "readiness_gate_opened",
+        "readiness_gate_resolved",
         "plan_generated",
         "breakdown_planned",
         "plan_critiqued",
@@ -48,7 +49,7 @@
         "cartography_refreshed",
         "token_usage"
       ],
-      "description": "Event kind. Stage events (epic.jsonl): spark_created, current_epic_selected, discovery_*, definition_*, readiness_passed, plan_*, breakdown_planned, story_*, *_gate_*, gate_resolved, epic_completed, executor_result_recorded, check_run, story_committed, transaction_manifest_verified. Dispatch events (dispatch.jsonl): subprocess_*. Operational events (either): preflight_run, tracker_synced, tracker_sync_conflict, wf_lock_stale_removed, cartography_refreshed, token_usage. The github_synced and github_sync_conflict values are retained as legacy aliases so epic.jsonl logs written before the ADR-003 issue-tracker abstraction still validate."
+      "description": "Event kind. Stage events (epic.jsonl): spark_created, current_epic_selected, discovery_*, definition_*, readiness_passed, readiness_gate_opened, readiness_gate_resolved, plan_*, breakdown_planned, story_*, *_gate_*, gate_resolved, epic_completed, executor_result_recorded, check_run, story_committed, transaction_manifest_verified. Dispatch events (dispatch.jsonl): subprocess_*. Operational events (either): preflight_run, tracker_synced, tracker_sync_conflict, wf_lock_stale_removed, cartography_refreshed, token_usage. The github_synced and github_sync_conflict values are retained as legacy aliases so epic.jsonl logs written before the ADR-003 issue-tracker abstraction still validate."
     },
     "at": {
       "type": "string",
@@ -172,6 +173,7 @@
       "type": "string",
       "enum": [
         "approve",
+        "approve_with_reason",
         "revise_epic_contract",
         "revise_plan",
         "revise_story_scope",
@@ -181,7 +183,7 @@
         "accept_remote",
         "hand_merge"
       ],
-      "description": "Gate resolution decision. approve = proceed. revise_epic_contract = re-enter Stage 2. revise_plan = re-enter Stage 3. revise_story_scope = edit current story's paths or satisfies. abandon_story = skip and continue. abandon_epic = mark incomplete + close the tracker epic with a note. keep_local, accept_remote, and hand_merge resolve tracker sync-conflict gates."
+      "description": "Gate resolution decision. approve = proceed. approve_with_reason = record audited readiness approval so the unchanged contract advances to planning without re-running the readiness node (readiness_gate only). revise_epic_contract = re-enter Stage 2. revise_plan = re-enter Stage 3. revise_story_scope = edit current story's paths or satisfies. abandon_story = skip and continue. abandon_epic = mark incomplete + close the tracker epic with a note. keep_local, accept_remote, and hand_merge resolve tracker sync-conflict gates."
     },
     "cc_session_id": {
       "type": "string",
@@ -395,6 +397,13 @@
         "required": ["event"]
       },
       "then": { "required": ["epic_id"] }
+    },
+    {
+      "if": {
+        "properties": { "event": { "const": "readiness_gate_resolved" } },
+        "required": ["event"]
+      },
+      "then": { "required": ["decision"] }
     },
     {
       "if": {

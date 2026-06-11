@@ -41,9 +41,11 @@ class NodeStatus(StrEnum):
 # literal is the union of that table and is conformance-checked against it in
 # tests/unit/test_gate_decisions.py (it is asserted-equal rather than derived to
 # avoid a state -> decisions -> transitions -> state import cycle). split_story
-# was dropped in E17 P1 (D-SS).
+# was dropped in E17 P1 (D-SS); approve_with_reason was added for readiness gates
+# in E17 P2 (D-RA).
 GateDecision = Literal[
     "approve",
+    "approve_with_reason",
     "revise_epic_contract",
     "revise_plan",
     "revise_story_scope",

@@ -31,9 +31,10 @@ pytestmark = pytest.mark.host_only
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-# The surviving verb sets after E17 P1 drops split_story. P1 changes no effect
-# behaviour, so these must equal the pre-E17 sets minus split_story.
+# The canonical verb sets per gate type. E17 P1 dropped split_story; E17 P2 added
+# the readiness_gate row and its approve_with_reason verb (D-RA).
 _SURVIVING_SETS = {
+    "readiness_gate": {"approve_with_reason", "revise_epic_contract", "abandon_epic"},
     "plan_gate": {"approve", "revise_plan", "revise_epic_contract", "abandon_epic"},
     "story_gate": {"approve", "revise_story_scope", "revise_plan", "abandon_story", "abandon_epic"},
     "review_gate": {
@@ -131,6 +132,40 @@ def test_surviving_verbs_accepted_by_table() -> None:
     for gate_type, verbs in GATE_DECISIONS.items():
         for verb in verbs:
             validate_decision(gate_type, verb)  # must not raise
+
+
+# --- Readiness-gate verbs (E17 P2 / D-RA) --------------------------------------
+
+
+def test_readiness_gate_allows_its_three_verbs() -> None:
+    assert set(allowed_decisions("readiness_gate")) == {
+        "approve_with_reason",
+        "revise_epic_contract",
+        "abandon_epic",
+    }
+    for verb in ("approve_with_reason", "revise_epic_contract", "abandon_epic"):
+        validate_decision("readiness_gate", verb)  # must not raise
+
+
+def test_approve_with_reason_is_readiness_only() -> None:
+    # approve_with_reason is in the table union (so the CLI/literal/enum carry it)
+    # but is valid for no gate type other than readiness_gate.
+    assert "approve_with_reason" in all_decisions()
+    for gate_type in GATE_DECISIONS:
+        if gate_type == "readiness_gate":
+            continue
+        with pytest.raises(StageStateError, match="approve_with_reason is not valid"):
+            validate_decision(gate_type, "approve_with_reason")
+
+
+def test_invalid_readiness_verb_names_valid_set() -> None:
+    # `approve` is a real verb for the plan/story/review gates but not readiness.
+    with pytest.raises(StageStateError) as excinfo:
+        validate_decision("readiness_gate", "approve")
+    message = str(excinfo.value)
+    assert "approve is not valid for readiness_gate" in message
+    for verb in ("approve_with_reason", "revise_epic_contract", "abandon_epic"):
+        assert verb in message
 
 
 def _write_epic(root: Path, epic_id: int, *, story_status: str = "in_progress") -> Path:
@@ -279,4 +314,45 @@ def test_tracker_conflict_rejects_non_conflict_verb_naming_valid_set(tmp_path: P
     message = str(excinfo.value)
     assert "approve is not valid for tracker_sync_conflict" in message
     for verb in CONFLICT_DECISIONS:
+        assert verb in message
+
+
+def test_readiness_approve_with_reason_applies_no_file_effects(tmp_path: Path) -> None:
+    # The readiness branch validates and applies no file effects at Stage 2.5; the
+    # readiness_gate_resolved event _resolve_gate appends is what advances the epic.
+    directory = _write_epic(tmp_path, 56)
+    tracker = _RecordingTracker(directory)
+
+    changed = _apply_gate_resolution_effects(
+        tmp_path,
+        56,
+        decision="approve_with_reason",
+        gate_type="readiness_gate",
+        story_id=None,
+        triggered_by=["readiness_unready"],
+        tracker=cast(Tracker, tracker),
+    )
+
+    assert changed == []
+    assert tracker.pushed == []
+    assert tracker.conflicts == []
+
+
+def test_readiness_gate_rejects_verb_invalid_for_its_type(tmp_path: Path) -> None:
+    directory = _write_epic(tmp_path, 57)
+    tracker = _RecordingTracker(directory)
+
+    with pytest.raises(StageStateError) as excinfo:
+        _apply_gate_resolution_effects(
+            tmp_path,
+            57,
+            decision="abandon_story",  # valid for story/review gates, not readiness
+            gate_type="readiness_gate",
+            story_id=None,
+            triggered_by=["readiness_unready"],
+            tracker=cast(Tracker, tracker),
+        )
+    message = str(excinfo.value)
+    assert "abandon_story is not valid for readiness_gate" in message
+    for verb in ("approve_with_reason", "revise_epic_contract", "abandon_epic"):
         assert verb in message

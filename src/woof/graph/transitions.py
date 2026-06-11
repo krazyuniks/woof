@@ -273,10 +273,14 @@ def definition_revision_requested(repo_root: Path, epic_id: int) -> bool:
 def readiness_satisfied(repo_root: Path, epic_id: int) -> bool:
     """Return whether Stage-2.5 contract readiness is satisfied for this contract.
 
-    Satisfied iff a ``readiness_passed`` event was recorded after the most recent
-    ``definition_closed`` - a revised or re-closed contract must pass readiness
-    again before planning. ``iter_epic_events`` already drops events superseded by
-    an ``epic_reset`` marker.
+    Satisfied iff, after the most recent ``definition_closed``, either a
+    ``readiness_passed`` event (the deterministic node passed) or a
+    ``readiness_gate_resolved`` event with ``decision == "approve_with_reason"``
+    (the operator approved an unready contract at the readiness gate, E17 P2 /
+    D-RA) was recorded. A revised or re-closed contract appends a new
+    ``definition_closed``, which re-arms readiness - the prior approval no longer
+    counts. ``iter_epic_events`` already drops events superseded by an
+    ``epic_reset`` marker.
     """
 
     events = iter_epic_events(repo_root, epic_id)
@@ -286,9 +290,15 @@ def readiness_satisfied(repo_root: Path, epic_id: int) -> bool:
             last_definition_closed = index
     if last_definition_closed < 0:
         return False
-    return any(
-        event.get("event") == "readiness_passed" for event in events[last_definition_closed + 1 :]
-    )
+    for event in events[last_definition_closed + 1 :]:
+        if event.get("event") == "readiness_passed":
+            return True
+        if (
+            event.get("event") == "readiness_gate_resolved"
+            and event.get("decision") == "approve_with_reason"
+        ):
+            return True
+    return False
 
 
 def _load_json(path: Path) -> dict:

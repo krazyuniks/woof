@@ -65,6 +65,8 @@ def _gate_resolved_event_name(gate_type: str | None) -> str | None:
         return "story_gate_resolved"
     if gate_type == "review_gate":
         return "review_gate_resolved"
+    if gate_type == "readiness_gate":
+        return "readiness_gate_resolved"
     return None
 
 
@@ -140,6 +142,25 @@ def _apply_gate_resolution_effects(
 
     if decision in CONFLICT_DECISIONS:
         raise StageStateError(f"{decision} is only valid for tracker_sync_conflict gates")
+
+    if gate_type == "readiness_gate":
+        validate_decision("readiness_gate", decision)
+        # All three readiness verbs resolve through the shared gate_resolved
+        # event machinery that _resolve_gate appends; this branch only validates
+        # the verb and applies any file effects (there are none yet at Stage 2.5).
+        #
+        # approve_with_reason: the readiness_gate_resolved event _resolve_gate
+        #   appends (decision=approve_with_reason, after the latest
+        #   definition_closed) satisfies transitions.readiness_satisfied, so the
+        #   unchanged contract advances to planning without re-running readiness.
+        # revise_epic_contract: the gate_resolved event drives Stage-2 re-entry
+        #   via transitions.definition_revision_requested (E17 P5 adds the
+        #   EPIC.md archive + definition re-dispatch inputs).
+        # abandon_epic: recorded as the operator's terminal decision; it does not
+        #   satisfy readiness, so the epic does not advance to planning (E17 P4
+        #   adds the epic_abandoned marker, tracker close, and terminal next_node
+        #   outcome).
+        return changed
 
     if gate_type == "plan_gate":
         validate_decision("plan_gate", decision)

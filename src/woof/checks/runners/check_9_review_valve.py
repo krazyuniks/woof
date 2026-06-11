@@ -229,7 +229,12 @@ def _last_review_boundary_index(epic_jsonl: Path, story_ids: list[str]) -> int:
         return -1
 
     index_by_story = {story_id: index for index, story_id in enumerate(story_ids)}
-    last = -1
+    # Replay the audit log in order: a review gate arms its boundary, and a later
+    # story_retried at the same boundary re-arms it (the earlier gate no longer
+    # suppresses the valve, so the retried story's fresh critique can open a new
+    # one). Tracking armed boundaries per story rather than a running max keeps
+    # this generalisable to other re-arming markers.
+    gated_index_by_story: dict[str, int] = {}
     for line in epic_jsonl.read_text().splitlines():
         if not line.strip():
             continue
@@ -237,14 +242,15 @@ def _last_review_boundary_index(epic_jsonl: Path, story_ids: list[str]) -> int:
             event = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if event.get("event") != "review_gate_opened":
-            continue
-        if CHECK_ID not in event.get("triggered_by", []):
-            continue
         story_id = event.get("story_id")
-        if isinstance(story_id, str) and story_id in index_by_story:
-            last = max(last, index_by_story[story_id])
-    return last
+        if not isinstance(story_id, str) or story_id not in index_by_story:
+            continue
+        event_name = event.get("event")
+        if event_name == "review_gate_opened" and CHECK_ID in event.get("triggered_by", []):
+            gated_index_by_story[story_id] = index_by_story[story_id]
+        elif event_name == "story_retried":
+            gated_index_by_story.pop(story_id, None)
+    return max(gated_index_by_story.values(), default=-1)
 
 
 def _open_review_gate_matches(ctx: CheckContext, story_id: str) -> bool:

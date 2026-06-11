@@ -125,6 +125,37 @@ def test_already_review_gated_boundary_passes(tmp_path: Path) -> None:
     assert "already been review-gated" in outcome.summary
 
 
+def test_retried_boundary_re_arms_valve(tmp_path: Path) -> None:
+    _write_agents(tmp_path, every_n=2, end_of_epic=False)
+    ctx = _ctx(tmp_path, [_story("S1", "done"), _story("S2", "in_progress")])
+    _write_critique(
+        ctx.epic_dir,
+        "S2",
+        [{"id": "F2", "severity": "minor", "summary": "Fresh finding after retry"}],
+    )
+    # The valve already fired and opened a review gate at S2, but retry_story
+    # then reset S2 and appended story_retried. The stale review_gate_opened must
+    # not suppress a new gate once the retried story produces a fresh critique.
+    ctx.epic_dir.joinpath("epic.jsonl").write_text(
+        json.dumps(
+            {
+                "event": "review_gate_opened",
+                "story_id": "S2",
+                "triggered_by": ["check_9_review_valve"],
+            }
+        )
+        + "\n"
+        + json.dumps({"event": "story_retried", "story_id": "S2"})
+        + "\n"
+    )
+
+    outcome = check_9_review_valve_runner(ctx)
+
+    assert not outcome.ok
+    assert outcome.severity == "minor"
+    assert "S2/F2: Fresh finding after retry" in (outcome.evidence or "")
+
+
 def test_check_9_gate_is_written_as_review_gate(tmp_path: Path) -> None:
     epic_dir = tmp_path / ".woof" / "epics" / "E1"
     epic_dir.mkdir(parents=True)

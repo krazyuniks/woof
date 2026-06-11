@@ -26,6 +26,8 @@ Each epic is broken into small, reviewable coding-agent prompts when it starts. 
 
 Per-epic plans live under `docs/plans/` only when an epic is active. Do not keep speculative plans for withdrawn directions.
 
+When a per-epic plan introduces a new gate-decision verb or a new audit event, its plan row must carry two explicit clauses: a legality matrix (which gate types accept the verb, against which story or epic states) and an event-log consumer checklist (every reader of the affected status or event - status counters, terminal-state and completion checks, the commit-time completion-event writer, `observe`, the bench harness, and the trackers). E17's `retry_story` and `abandoned`-status slices each needed several adversarial-review rounds because those two clauses were left implicit; stating them at plan time closes the new-state-old-consumer gap before review.
+
 ## Epics
 
 ### E1. Cartography Prerequisite
@@ -344,8 +346,9 @@ Open work:
 - Add a parent-side dispatch timeout above the child supervision budget. A wedged `woof dispatch` cannot block the runner indefinitely; timeout opens a `supervisor_hang` gate.
 - Add a CLI error boundary: malformed `gate.md` YAML, non-JSON check stdout, undecodable artefacts, and unexpected handler exceptions produce structured halts; `--debug` can re-raise.
 - Purify `next_node` by moving `_resumable_commit_story` side effects into execution, then derive `observe` from the same runner derivation instead of maintaining a parallel state machine.
+- Harden test isolation so the suite cannot mutate the developer repo or leak global state. Route every repo-touching test through a `fixture_repo()` seam; supply git identity through a hermetic git-env conftest (`GIT_AUTHOR_*`/`GIT_COMMITTER_*`, `GIT_CONFIG_GLOBAL`, `HOME`) rather than `git config user.*` writes; add a conftest guard asserting the developer repo's `.git/config` is never modified by a test run; set `tmp_path_retention_policy = "failed"`; and add a container-run option for `just check` so the gate runs hermetically. Origin: the 2026-06-11 delivery run found the suite had escaped a tmp fixture and written a `Test`/`test@example.com` git identity into the developer repo's `.git/config`, mis-authoring real commits.
 
-Depends on: E16 by convention. Blocks the first unattended run, with E17 and E18.
+Depends on: E16 by convention. Blocks the first unattended run, with E18 (E17 complete).
 
 ### E23. Architecture Doc Truth Pass
 

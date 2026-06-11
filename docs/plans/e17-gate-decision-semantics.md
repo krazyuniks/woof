@@ -115,7 +115,13 @@ row (`approve_with_reason`, `revise_epic_contract`, `abandon_epic`),
 with `decision=approve_with_reason` after the latest `definition_closed` as
 satisfying, so an operator-approved unready contract advances to planning without
 re-gating (D-RA settled); readiness `revise_epic_contract`/`abandon_epic` are
-wired as legal seams that P5/P4 deepen. Prompts 3-6 remain.
+wired as legal seams that P5/P4 deepen. Prompt 3 (S3) — `retry_story` is now a
+story/review-gate verb: `_apply_gate_resolution_effects` resets the story to
+`pending` via `mark_story_status`, clears that story's `check-result.json`,
+`executor_result.json`, and critique/disposition artefacts, and appends an audited
+`story_retried` event (added to the `decisions.py` story/review rows, the
+`GateDecision` literal, and the `jsonl-events` decision/event enums), so `next_node`
+re-dispatches the crashed story without touching its siblings. Prompts 4-6 remain.
 
 | # | Prompt summary | Files touched | Tests | Review checkpoint |
 |---|---|---|---|---|

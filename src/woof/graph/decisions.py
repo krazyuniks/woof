@@ -14,8 +14,9 @@ The ``tracker_sync_conflict`` row mirrors the tracker layer's
 :data:`woof.trackers.base.CONFLICT_DECISIONS`, which stays owned there.
 
 P1 was consolidation only. E17 P2 (D-RA) adds the ``readiness_gate`` row and its
-``approve_with_reason`` verb (the E3 unblocker); the retry, abandoned, and deeper
-revise-epic-contract effects land in later E17 prompts.
+``approve_with_reason`` verb (the E3 unblocker); E17 P3 (S3) adds ``retry_story``
+to the story/review rows. The abandoned and deeper revise-epic-contract effects
+land in later E17 prompts.
 """
 
 from __future__ import annotations
@@ -42,6 +43,7 @@ GATE_DECISIONS: dict[str, dict[str, str]] = {
     },
     "story_gate": {
         "approve": "approve",
+        "retry_story": "retry_story",
         "revise_story_scope": "revise_story_scope",
         "revise_plan": "revise_plan",
         "abandon_story": "abandon_story",
@@ -49,6 +51,7 @@ GATE_DECISIONS: dict[str, dict[str, str]] = {
     },
     "review_gate": {
         "approve": "approve",
+        "retry_story": "retry_story",
         "revise_story_scope": "revise_story_scope",
         "revise_plan": "revise_plan",
         "abandon_story": "abandon_story",

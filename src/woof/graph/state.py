@@ -42,10 +42,11 @@ class NodeStatus(StrEnum):
 # tests/unit/test_gate_decisions.py (it is asserted-equal rather than derived to
 # avoid a state -> decisions -> transitions -> state import cycle). split_story
 # was dropped in E17 P1 (D-SS); approve_with_reason was added for readiness gates
-# in E17 P2 (D-RA).
+# in E17 P2 (D-RA); retry_story was added for crashed/aborted executors in E17 P3 (S3).
 GateDecision = Literal[
     "approve",
     "approve_with_reason",
+    "retry_story",
     "revise_epic_contract",
     "revise_plan",
     "revise_story_scope",

@@ -29,6 +29,7 @@ from woof.graph.transitions import (
     append_epic_event_once,
     epic_dir,
     load_plan,
+    mark_story_status,
     write_plan,
 )
 from woof.paths import find_project_root
@@ -221,6 +222,33 @@ def _apply_gate_resolution_effects(
                     event="story_completed",
                     story_id=story_id,
                 )
+            return changed
+        if decision == "retry_story" and story_id:
+            # A crashed or aborted executor: reset the story to pending and clear
+            # its per-story executor/check/critique/disposition artefacts so
+            # next_node re-dispatches it cleanly. Sibling stories and their
+            # artefacts are untouched.
+            mark_story_status(repo_root, epic_id, story_id, "pending")
+            changed.append(_display_path(repo_root, directory / "plan.json"))
+            changed.extend(
+                _remove_paths(
+                    repo_root,
+                    check_result,
+                    executor_result,
+                    story_critique_path(directory, story_id),
+                    story_disposition_path(directory, story_id),
+                )
+            )
+            append_epic_event(
+                repo_root,
+                epic_id,
+                {
+                    "event": "story_retried",
+                    "at": _now(),
+                    "epic_id": epic_id,
+                    "story_id": story_id,
+                },
+            )
             return changed
         if decision in {"revise_story_scope", "revise_plan"}:
             changed.extend(_remove_paths(repo_root, check_result))

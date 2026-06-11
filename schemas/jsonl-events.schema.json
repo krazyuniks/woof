@@ -28,6 +28,7 @@
         "gate_resolved",
         "story_started",
         "story_completed",
+        "story_retried",
         "story_gate_opened",
         "story_gate_resolved",
         "review_gate_opened",
@@ -174,6 +175,7 @@
       "enum": [
         "approve",
         "approve_with_reason",
+        "retry_story",
         "revise_epic_contract",
         "revise_plan",
         "revise_story_scope",
@@ -359,6 +361,13 @@
     {
       "if": {
         "properties": { "event": { "const": "story_completed" } },
+        "required": ["event"]
+      },
+      "then": { "required": ["story_id"] }
+    },
+    {
+      "if": {
+        "properties": { "event": { "const": "story_retried" } },
         "required": ["event"]
       },
       "then": { "required": ["story_id"] }

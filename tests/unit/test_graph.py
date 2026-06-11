@@ -2943,6 +2943,71 @@ def test_wf_resolve_abandon_story_skips_to_next_ready_story(tmp_path: Path) -> N
     assert next_node(tmp_path, 34) == (NodeType.EXECUTOR_DISPATCH, "S2")
 
 
+def test_wf_resolve_retry_story_resets_and_re_dispatches_without_redoing_siblings(
+    tmp_path: Path,
+) -> None:
+    _write_tracker_prerequisites(tmp_path)
+    directory = _write_plan(tmp_path, 36)
+    _write_last_sync(directory, 36)
+    plan = json.loads((directory / "plan.json").read_text())
+    plan["stories"] = [
+        {**plan["stories"][0], "id": "S1", "status": "done"},
+        {**plan["stories"][0], "id": "S2", "title": "second", "status": "in_progress"},
+    ]
+    (directory / "plan.json").write_text(json.dumps(plan))
+    # S2 crashed mid-execution, leaving stale executor/check/critique/disposition state.
+    (directory / "executor_result.json").write_text(
+        json.dumps({"epic_id": 36, "story_id": "S2", "outcome": "aborted_with_position"})
+    )
+    (directory / "check-result.json").write_text(json.dumps({"ok": False}))
+    critique_dir = directory / "critique"
+    critique_dir.mkdir()
+    for story_id in ("S1", "S2"):
+        (critique_dir / f"story-{story_id}.md").write_text(
+            f"---\ntarget: story\ntarget_id: {story_id}\nseverity: info\n"
+            "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\nfindings: []\n---\n"
+        )
+    sibling_disposition = _write_disposition(directory, 36, "S1")
+    target_disposition = _write_disposition(directory, 36, "S2")
+    (directory / "gate.md").write_text(
+        "---\n"
+        "type: review_gate\n"
+        "stage: 6\n"
+        "story_id: S2\n"
+        "triggered_by: [executor_aborted]\n"
+        "timestamp: '2026-01-01T00:00:00Z'\n"
+        "---\n"
+        "## Context\n\nCrash gate.\n\n"
+        "## Findings\n\n- retry\n\n"
+        "## Primary position\n\nRetry story.\n\n"
+        "## Reviewer position\n\nRe-run from scratch.\n"
+    )
+    env = _make_gh_rate_limit_stub(tmp_path / "bin")
+
+    proc = _run_woof(tmp_path, "wf", "--epic", "36", "--resolve", "retry_story", env=env)
+
+    assert proc.returncode == 0, proc.stderr
+    by_id = {s["id"]: s for s in json.loads((directory / "plan.json").read_text())["stories"]}
+    assert by_id["S2"]["status"] == "pending"  # the crashed story is reset
+    assert by_id["S1"]["status"] == "done"  # the done sibling is untouched
+    # The crashed story's artefacts are cleared; the sibling's survive.
+    assert not (directory / "executor_result.json").exists()
+    assert not (directory / "check-result.json").exists()
+    assert not (critique_dir / "story-S2.md").exists()
+    assert not target_disposition.exists()
+    assert (critique_dir / "story-S1.md").exists()
+    assert sibling_disposition.exists()
+    assert not (directory / "gate.md").exists()
+    events = [
+        json.loads(line)
+        for line in (directory / "epic.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    assert any(e["event"] == "story_retried" and e["story_id"] == "S2" for e in events)
+    # next_node re-dispatches the reset story, not the done sibling.
+    assert next_node(tmp_path, 36) == (NodeType.EXECUTOR_DISPATCH, "S2")
+
+
 def test_transaction_manifest_requires_audit_and_rejects_extra_staged_file(tmp_path: Path) -> None:
     _git(tmp_path, "init", check=True, capture_output=True)
     _git(tmp_path, "config", "user.email", "test@example.com", check=True)

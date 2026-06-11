@@ -32,13 +32,22 @@ pytestmark = pytest.mark.host_only
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # The canonical verb sets per gate type. E17 P1 dropped split_story; E17 P2 added
-# the readiness_gate row and its approve_with_reason verb (D-RA).
+# the readiness_gate row and its approve_with_reason verb (D-RA); E17 P3 added
+# retry_story to the story/review rows (S3).
 _SURVIVING_SETS = {
     "readiness_gate": {"approve_with_reason", "revise_epic_contract", "abandon_epic"},
     "plan_gate": {"approve", "revise_plan", "revise_epic_contract", "abandon_epic"},
-    "story_gate": {"approve", "revise_story_scope", "revise_plan", "abandon_story", "abandon_epic"},
+    "story_gate": {
+        "approve",
+        "retry_story",
+        "revise_story_scope",
+        "revise_plan",
+        "abandon_story",
+        "abandon_epic",
+    },
     "review_gate": {
         "approve",
+        "retry_story",
         "revise_story_scope",
         "revise_plan",
         "abandon_story",
@@ -356,3 +365,127 @@ def test_readiness_gate_rejects_verb_invalid_for_its_type(tmp_path: Path) -> Non
     assert "abandon_story is not valid for readiness_gate" in message
     for verb in ("approve_with_reason", "revise_epic_contract", "abandon_epic"):
         assert verb in message
+
+
+# --- retry_story for crashed/aborted executors (E17 P3 / S3) -------------------
+
+
+def _write_story_artefacts(directory: Path, story_id: str) -> dict[str, Path]:
+    """Lay down the per-story executor/check/critique/disposition artefacts a
+    crashed executor leaves behind. The check/executor results are epic-level
+    (shared) files; the critique/disposition are per-story."""
+    (directory / "check-result.json").write_text(json.dumps({"ok": False}))
+    (directory / "executor_result.json").write_text(
+        json.dumps({"story_id": story_id, "outcome": "aborted_with_position"})
+    )
+    critique = directory / "critique" / f"story-{story_id}.md"
+    critique.parent.mkdir(exist_ok=True)
+    critique.write_text("---\ntarget: story\nseverity: minor\n---\nbody\n")
+    disposition = directory / "dispositions" / f"story-{story_id}.md"
+    disposition.parent.mkdir(exist_ok=True)
+    disposition.write_text("---\ntarget: story\n---\nbody\n")
+    return {
+        "check_result": directory / "check-result.json",
+        "executor_result": directory / "executor_result.json",
+        "critique": critique,
+        "disposition": disposition,
+    }
+
+
+def test_retry_story_resets_to_pending_and_clears_artefacts(tmp_path: Path) -> None:
+    directory = _write_epic(tmp_path, 60, story_status="in_progress")
+    artefacts = _write_story_artefacts(directory, "S1")
+    tracker = _RecordingTracker(directory)
+
+    changed = _apply_gate_resolution_effects(
+        tmp_path,
+        60,
+        decision="retry_story",
+        gate_type="story_gate",
+        story_id="S1",
+        triggered_by=["executor_aborted"],
+        tracker=cast(Tracker, tracker),
+    )
+
+    plan = json.loads((directory / "plan.json").read_text())
+    assert plan["stories"][0]["status"] == "pending"
+    for path in artefacts.values():
+        assert not path.exists()
+    # The reset rewrites plan.json and reports every removed artefact as changed.
+    assert any("plan.json" in path for path in changed)
+    for name in ("check-result.json", "executor_result.json", "story-S1.md"):
+        assert any(name in path for path in changed)
+    assert tracker.pushed == []  # retry never touches the tracker
+
+
+def test_retry_story_audits_the_reset(tmp_path: Path) -> None:
+    directory = _write_epic(tmp_path, 61, story_status="in_progress")
+    _write_story_artefacts(directory, "S1")
+    tracker = _RecordingTracker(directory)
+
+    _apply_gate_resolution_effects(
+        tmp_path,
+        61,
+        decision="retry_story",
+        gate_type="review_gate",
+        story_id="S1",
+        triggered_by=["executor_crash"],
+        tracker=cast(Tracker, tracker),
+    )
+
+    events = [
+        json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines() if line
+    ]
+    retried = [e for e in events if e["event"] == "story_retried"]
+    assert retried and retried[-1]["story_id"] == "S1"
+    assert retried[-1]["epic_id"] == 61
+
+
+def test_retry_story_leaves_sibling_stories_untouched(tmp_path: Path) -> None:
+    epic_id = 62
+    directory = tmp_path / ".woof" / "epics" / f"E{epic_id}"
+    directory.mkdir(parents=True)
+
+    def _story(story_id: str, status: str, depends_on: list[str]) -> dict:
+        return {
+            "id": story_id,
+            "title": story_id,
+            "intent": "do work",
+            "paths": ["src/*.py"],
+            "satisfies": ["O1"],
+            "implements_contract_decisions": [],
+            "uses_contract_decisions": [],
+            "depends_on": depends_on,
+            "tests": {"count": 1, "types": ["unit"]},
+            "status": status,
+        }
+
+    plan = {
+        "epic_id": epic_id,
+        "goal": "two stories",
+        "stories": [_story("S1", "done", []), _story("S2", "in_progress", ["S1"])],
+    }
+    (directory / "plan.json").write_text(json.dumps(plan))
+    (directory / "epic.jsonl").write_text("")
+    sibling = _write_story_artefacts(directory, "S1")  # the completed sibling
+    target = _write_story_artefacts(directory, "S2")  # the crashed story (retried)
+    tracker = _RecordingTracker(directory)
+
+    _apply_gate_resolution_effects(
+        tmp_path,
+        epic_id,
+        decision="retry_story",
+        gate_type="review_gate",
+        story_id="S2",
+        triggered_by=["executor_crash"],
+        tracker=cast(Tracker, tracker),
+    )
+
+    by_id = {s["id"]: s for s in json.loads((directory / "plan.json").read_text())["stories"]}
+    assert by_id["S2"]["status"] == "pending"
+    assert by_id["S1"]["status"] == "done"  # sibling status untouched
+    # Only the retried story's per-story artefacts are cleared.
+    assert not target["critique"].exists()
+    assert not target["disposition"].exists()
+    assert sibling["critique"].exists()
+    assert sibling["disposition"].exists()

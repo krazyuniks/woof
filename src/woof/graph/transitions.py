@@ -16,7 +16,7 @@ from woof.graph.dispositions import (
 )
 from woof.graph.git import changed_paths, staged_paths
 from woof.graph.manifest import build_story_manifest
-from woof.graph.state import NodeType, Plan, StorySpec
+from woof.graph.state import TERMINAL_STORY_STATUSES, NodeStatus, NodeType, Plan, StorySpec
 from woof.trackers.base import CONFLICT_TRIGGERS
 
 
@@ -301,6 +301,19 @@ def readiness_satisfied(repo_root: Path, epic_id: int) -> bool:
     return False
 
 
+def epic_abandoned(repo_root: Path, epic_id: int) -> bool:
+    """Return whether the epic has been abandoned (E17 P4 / D-AB).
+
+    The ``abandon_epic`` gate verb appends a graph-owned ``epic_abandoned`` event;
+    ``next_node`` consults this to return an abandoned-terminal outcome distinct
+    from ``EPIC_COMPLETE``. ``epic_event_exists`` reads through ``iter_epic_events``,
+    so a ``woof wf reset`` (which appends an ``epic_reset`` marker) un-abandons the
+    epic by superseding the prior ``epic_abandoned`` event.
+    """
+
+    return epic_event_exists(repo_root, epic_id, event="epic_abandoned")
+
+
 def _load_json(path: Path) -> dict:
     try:
         return json.loads(path.read_text())
@@ -369,10 +382,21 @@ def _resumable_commit_story(repo_root: Path, epic_id: int, plan: Plan) -> str | 
     return story.id
 
 
-def next_node(repo_root: Path, epic_id: int) -> tuple[NodeType | None, str | None]:
-    """Return the next node and story id from filesystem state."""
+def next_node(repo_root: Path, epic_id: int) -> tuple[NodeType | NodeStatus | None, str | None]:
+    """Return the next node and story id from filesystem state.
+
+    Terminal outcomes use the first slot for a :class:`NodeStatus` sentinel:
+    ``(None, None)`` means the epic is complete, while
+    ``(NodeStatus.EPIC_ABANDONED, None)`` means the epic was abandoned
+    (E17 P4 / D-AB) - a terminal outcome the runner maps to a distinct
+    ``NodeOutput`` status, never to ``EPIC_COMPLETE``.
+    """
 
     directory = epic_dir(repo_root, epic_id)
+    # An abandoned epic is unconditionally terminal: short-circuit before any
+    # other state read so a lingering gate or plan cannot mask the outcome.
+    if epic_abandoned(repo_root, epic_id):
+        return NodeStatus.EPIC_ABANDONED, None
     if gate_path(repo_root, epic_id).exists():
         return NodeType.HUMAN_REVIEW, None
 
@@ -406,7 +430,7 @@ def next_node(repo_root: Path, epic_id: int) -> tuple[NodeType | None, str | Non
     if resumable_story is not None:
         return NodeType.COMMIT, resumable_story
 
-    if all(story.status == "done" for story in plan.stories):
+    if all(story.status in TERMINAL_STORY_STATUSES for story in plan.stories):
         return None, None
 
     in_progress = next((story for story in plan.stories if story.status == "in_progress"), None)

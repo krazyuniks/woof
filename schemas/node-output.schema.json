@@ -42,7 +42,7 @@
     },
     "status": {
       "type": "string",
-      "enum": ["completed", "gate_opened", "halted", "epic_complete"]
+      "enum": ["completed", "gate_opened", "halted", "epic_complete", "epic_abandoned"]
     },
     "epic_id": {
       "type": "integer",

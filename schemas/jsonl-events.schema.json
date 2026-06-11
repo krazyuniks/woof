@@ -29,6 +29,8 @@
         "story_started",
         "story_completed",
         "story_retried",
+        "story_abandoned",
+        "epic_abandoned",
         "story_gate_opened",
         "story_gate_resolved",
         "review_gate_opened",
@@ -50,7 +52,7 @@
         "cartography_refreshed",
         "token_usage"
       ],
-      "description": "Event kind. Stage events (epic.jsonl): spark_created, current_epic_selected, discovery_*, definition_*, readiness_passed, readiness_gate_opened, readiness_gate_resolved, plan_*, breakdown_planned, story_*, *_gate_*, gate_resolved, epic_completed, executor_result_recorded, check_run, story_committed, transaction_manifest_verified. Dispatch events (dispatch.jsonl): subprocess_*. Operational events (either): preflight_run, tracker_synced, tracker_sync_conflict, wf_lock_stale_removed, cartography_refreshed, token_usage. The github_synced and github_sync_conflict values are retained as legacy aliases so epic.jsonl logs written before the ADR-003 issue-tracker abstraction still validate."
+      "description": "Event kind. Stage events (epic.jsonl): spark_created, current_epic_selected, discovery_*, definition_*, readiness_passed, readiness_gate_opened, readiness_gate_resolved, plan_*, breakdown_planned, story_* (including story_abandoned), *_gate_*, gate_resolved, epic_completed, epic_abandoned, executor_result_recorded, check_run, story_committed, transaction_manifest_verified. story_abandoned records a story skipped via the abandon_story gate verb; epic_abandoned is the graph-owned terminal marker the abandon_epic verb writes, consulted by next_node to return an abandoned-terminal outcome (E17 P4 / D-AB). Dispatch events (dispatch.jsonl): subprocess_*. Operational events (either): preflight_run, tracker_synced, tracker_sync_conflict, wf_lock_stale_removed, cartography_refreshed, token_usage. The github_synced and github_sync_conflict values are retained as legacy aliases so epic.jsonl logs written before the ADR-003 issue-tracker abstraction still validate."
     },
     "at": {
       "type": "string",
@@ -371,6 +373,20 @@
         "required": ["event"]
       },
       "then": { "required": ["story_id"] }
+    },
+    {
+      "if": {
+        "properties": { "event": { "const": "story_abandoned" } },
+        "required": ["event"]
+      },
+      "then": { "required": ["story_id"] }
+    },
+    {
+      "if": {
+        "properties": { "event": { "const": "epic_abandoned" } },
+        "required": ["event"]
+      },
+      "then": { "required": ["epic_id"] }
     },
     {
       "if": {

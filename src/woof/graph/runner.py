@@ -75,7 +75,20 @@ def run_graph(
                     outputs.append(_open_stage_state_gate(repo_root, epic_id, exc))
                     return outputs
                 raise
-            if node_type is None:
+            if node_type is NodeStatus.EPIC_ABANDONED:
+                # next_node returns the abandoned-terminal sentinel (E17 P4 / D-AB);
+                # surface it as a distinct NodeOutput status, never EPIC_COMPLETE.
+                outputs.append(
+                    NodeOutput(
+                        node_type=NodeType.HUMAN_REVIEW,
+                        status=NodeStatus.EPIC_ABANDONED,
+                        epic_id=epic_id,
+                        message=f"E{epic_id} abandoned",
+                    )
+                )
+                return outputs
+            if not isinstance(node_type, NodeType):
+                # The only remaining non-NodeType sentinel is None: epic complete.
                 outputs.append(
                     NodeOutput(
                         node_type=NodeType.HUMAN_REVIEW,

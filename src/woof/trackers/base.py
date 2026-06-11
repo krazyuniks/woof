@@ -112,6 +112,16 @@ class Tracker(Protocol):
         """Push the closing summary and mark the epic complete."""
         ...
 
+    def close_not_delivered(self, epic_id: int) -> LifecycleSyncResult:
+        """Close the tracker issue as abandoned/not delivered (E17 P4 / D-AB).
+
+        Distinct from :meth:`complete_epic`: this is the terminal side of the
+        ``abandon_epic`` gate verb. It does not require the plan to be done -
+        the epic is being abandoned with work outstanding - and marks the issue
+        as not delivered rather than completed.
+        """
+        ...
+
     def resolve_conflict(self, epic_id: int, decision: str) -> ConflictResolutionResult:
         """Apply the structured resolution for an open sync-conflict gate."""
         ...

@@ -8,11 +8,12 @@ import shlex
 import socket
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import yaml
 
+from woof.cli.commands.wf import _resolve_gate
 from woof.graph import nodes, transitions
 from woof.graph.git import git_env
 from woof.graph.lock import LOCK_FILENAME, WorkflowLockError
@@ -20,6 +21,7 @@ from woof.graph.manifest import build_story_manifest, verify_staged_manifest
 from woof.graph.runner import run_graph
 from woof.graph.state import NodeInput, NodeOutput, NodeStatus, NodeType, StorySpec
 from woof.graph.transitions import StageStateError, epic_dir, mark_story_status, next_node
+from woof.trackers.base import LifecycleSyncResult, Tracker
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WOOF_BIN = REPO_ROOT / "bin" / "woof"
@@ -2939,7 +2941,16 @@ def test_wf_resolve_abandon_story_skips_to_next_ready_story(tmp_path: Path) -> N
 
     assert proc.returncode == 0, proc.stderr
     plan_after = json.loads((directory / "plan.json").read_text())
-    assert plan_after["stories"][0]["status"] == "done"
+    # abandon_story is now honest: the story is terminal-abandoned, not done.
+    assert plan_after["stories"][0]["status"] == "abandoned"
+    events = [
+        json.loads(line)
+        for line in (directory / "epic.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    assert any(e["event"] == "story_abandoned" and e["story_id"] == "S1" for e in events)
+    assert not any(e["event"] == "story_completed" for e in events)
+    # The abandoned story is skipped; the graph advances to the next ready story.
     assert next_node(tmp_path, 34) == (NodeType.EXECUTOR_DISPATCH, "S2")
 
 
@@ -3006,6 +3017,144 @@ def test_wf_resolve_retry_story_resets_and_re_dispatches_without_redoing_sibling
     assert any(e["event"] == "story_retried" and e["story_id"] == "S2" for e in events)
     # next_node re-dispatches the reset story, not the done sibling.
     assert next_node(tmp_path, 36) == (NodeType.EXECUTOR_DISPATCH, "S2")
+
+
+class _RecordingTracker:
+    """Stub tracker that records the abandon_epic close_not_delivered call.
+
+    abandon_epic is the only gate verb that touches the tracker here; every other
+    method is unused, so the stub need not implement them (it is cast to Tracker).
+    """
+
+    def __init__(self) -> None:
+        self.closed_not_delivered: list[int] = []
+
+    def close_not_delivered(self, epic_id: int) -> LifecycleSyncResult:
+        self.closed_not_delivered.append(epic_id)
+        return LifecycleSyncResult(
+            epic_id=epic_id,
+            body="",
+            updated_at="2026-01-01T00:00:00Z",
+            last_sync_path=Path(f".woof/epics/E{epic_id}/.last-sync"),
+            changed=True,
+            closed=True,
+        )
+
+
+def _write_story_gate(directory: Path, story_id: str, *, gate_type: str = "story_gate") -> None:
+    (directory / "gate.md").write_text(
+        f"---\n"
+        f"type: {gate_type}\n"
+        "stage: 6\n"
+        f"story_id: {story_id}\n"
+        "triggered_by: [executor_aborted]\n"
+        "timestamp: '2026-01-01T00:00:00Z'\n"
+        "---\n"
+        "## Context\n\nAbort gate.\n\n"
+        "## Findings\n\n- abandon\n\n"
+        "## Primary position\n\nAbandon.\n\n"
+        "## Reviewer position\n\nStop.\n"
+    )
+
+
+def test_wf_resolve_abandon_epic_closes_tracker_and_is_terminal(tmp_path: Path) -> None:
+    directory = _write_plan(tmp_path, 40)
+    plan = json.loads((directory / "plan.json").read_text())
+    plan["stories"] = [
+        {**plan["stories"][0], "id": "S1", "status": "in_progress"},
+        {**plan["stories"][0], "id": "S2", "title": "second", "status": "pending"},
+    ]
+    (directory / "plan.json").write_text(json.dumps(plan))
+    (directory / "executor_result.json").write_text(
+        json.dumps(
+            {
+                "epic_id": 40,
+                "story_id": "S1",
+                "outcome": "aborted_with_position",
+                "position": "Cannot continue.",
+            }
+        )
+    )
+    _write_story_gate(directory, "S1")
+    tracker = _RecordingTracker()
+
+    rc = _resolve_gate(tmp_path, 40, "abandon_epic", cast(Tracker, tracker))
+
+    assert rc == 0
+    assert not (directory / "gate.md").exists()
+    # The tracker issue is closed as not delivered.
+    assert tracker.closed_not_delivered == [40]
+
+    events = [
+        json.loads(line)
+        for line in (directory / "epic.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    # The graph-owned terminal marker is written; the epic is not "completed".
+    assert any(e["event"] == "epic_abandoned" and e["epic_id"] == 40 for e in events)
+    assert not any(e["event"] == "epic_completed" for e in events)
+    # abandon_epic abandons the whole epic; it does not selectively complete or
+    # abandon the targeted story, which stays as it was.
+    plan_after = json.loads((directory / "plan.json").read_text())
+    assert plan_after["stories"][0]["status"] == "in_progress"
+
+    # next_node returns the abandoned-terminal outcome, distinct from EPIC_COMPLETE.
+    assert transitions.epic_abandoned(tmp_path, 40) is True
+    assert next_node(tmp_path, 40) == (NodeStatus.EPIC_ABANDONED, None)
+    outputs = run_graph(tmp_path, 40)
+    assert outputs[-1].status == NodeStatus.EPIC_ABANDONED
+    assert outputs[-1].status != NodeStatus.EPIC_COMPLETE
+
+
+def test_abandon_epic_keeps_gate_when_tracker_close_fails(tmp_path: Path) -> None:
+    # The tracker close runs before the epic_abandoned marker: if it fails, the
+    # gate stays open and the epic is never marked abandoned.
+    directory = _write_plan(tmp_path, 44)
+    plan = json.loads((directory / "plan.json").read_text())
+    plan["stories"][0]["status"] = "in_progress"
+    (directory / "plan.json").write_text(json.dumps(plan))
+    _write_story_gate(directory, "S1")
+
+    class _FailingTracker:
+        def close_not_delivered(self, epic_id: int) -> LifecycleSyncResult:
+            from woof.trackers.base import TrackerError
+
+            raise TrackerError("remote unreachable")
+
+    rc = _resolve_gate(tmp_path, 44, "abandon_epic", cast(Tracker, _FailingTracker()))
+
+    assert rc == 2
+    assert (directory / "gate.md").exists()
+    assert transitions.epic_abandoned(tmp_path, 44) is False
+    events_path = directory / "epic.jsonl"
+    events = (
+        [json.loads(line) for line in events_path.read_text().splitlines() if line.strip()]
+        if events_path.exists()
+        else []
+    )
+    assert not any(e.get("event") == "epic_abandoned" for e in events)
+
+
+def test_reconstruction_distinguishes_abandoned_story_from_done(tmp_path: Path) -> None:
+    directory = _write_plan(tmp_path, 41)
+    plan = json.loads((directory / "plan.json").read_text())
+    plan["stories"] = [
+        {**plan["stories"][0], "id": "S1", "status": "done"},
+        {**plan["stories"][0], "id": "S2", "title": "second", "status": "abandoned"},
+    ]
+    (directory / "plan.json").write_text(json.dumps(plan))
+
+    # The plan reloads with distinct statuses: abandoned is not coerced to done.
+    reloaded = transitions.load_plan(tmp_path, 41)
+    assert {s.id: s.status for s in reloaded.stories} == {"S1": "done", "S2": "abandoned"}
+
+    # Every story is terminal (one done, one abandoned) and there is no
+    # epic_abandoned marker: the epic completes - the abandoned story neither
+    # strands it nor turns it into the abandoned-epic terminal.
+    assert transitions.epic_abandoned(tmp_path, 41) is False
+    assert next_node(tmp_path, 41) == (None, None)
+    outputs = run_graph(tmp_path, 41)
+    assert outputs[-1].status == NodeStatus.EPIC_COMPLETE
 
 
 def test_transaction_manifest_requires_audit_and_rejects_extra_staged_file(tmp_path: Path) -> None:

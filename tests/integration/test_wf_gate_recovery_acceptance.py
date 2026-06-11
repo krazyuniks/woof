@@ -72,7 +72,12 @@ def test_executor_subprocess_crash_gate_can_abandon_story(tmp_path: Path) -> Non
 
     assert completed[-1]["status"] == "epic_complete"
     plan = json.loads((epic_dir(consumer) / "plan.json").read_text(encoding="utf-8"))
-    assert plan["stories"][0]["status"] == "done"
+    # E17 P4 / D-AB: abandon_story is honest - the story is terminal-abandoned,
+    # not done, and the epic completes on its (here, only) remaining work.
+    assert plan["stories"][0]["status"] == "abandoned"
+    epic_events = jsonl(epic_dir(consumer) / "epic.jsonl")
+    assert any(event.get("event") == "story_abandoned" for event in epic_events)
+    assert not any(event.get("event") == "story_completed" for event in epic_events)
     assert not (epic_dir(consumer) / "gate.md").exists()
 
 

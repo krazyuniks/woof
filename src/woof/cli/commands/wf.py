@@ -120,6 +120,34 @@ def _update_story(repo_root: Path, epic_id: int, story_id: str, **updates: objec
     write_plan(repo_root, Plan(epic_id=plan.epic_id, goal=plan.goal, stories=stories))
 
 
+def _abandon_epic(repo_root: Path, epic_id: int, tracker: Tracker) -> list[str]:
+    """Apply the shared abandon_epic effect (E17 P4 / D-AB).
+
+    Closes the tracker issue as not delivered, then appends the graph-owned
+    ``epic_abandoned`` marker that ``transitions.next_node`` consults to return an
+    abandoned-terminal outcome distinct from ``EPIC_COMPLETE``. The tracker close
+    runs first: if it raises ``TrackerError`` the caller maps that to exit 2 and
+    the gate stays open, so the epic is never marked abandoned without its issue
+    being closed. abandon_epic is valid at the readiness, plan, story, and review
+    gates and routes through this one path from every one of them.
+    """
+
+    changed: list[str] = []
+    result = tracker.close_not_delivered(epic_id)
+    changed.append(_display_path(repo_root, result.last_sync_path))
+    append_epic_event_once(
+        repo_root,
+        epic_id,
+        {
+            "event": "epic_abandoned",
+            "at": _now(),
+            "epic_id": epic_id,
+        },
+        event="epic_abandoned",
+    )
+    return changed
+
+
 def _apply_gate_resolution_effects(
     repo_root: Path,
     epic_id: int,
@@ -144,11 +172,20 @@ def _apply_gate_resolution_effects(
     if decision in CONFLICT_DECISIONS:
         raise StageStateError(f"{decision} is only valid for tracker_sync_conflict gates")
 
+    if decision == "abandon_epic":
+        # abandon_epic is one shared terminal effect across every gate type that
+        # offers it; validate it against this gate's allowed set, then route to the
+        # canonical path. An invalid gate type (no abandon_epic) raises here.
+        validate_decision(gate_type, decision)
+        return _abandon_epic(repo_root, epic_id, tracker)
+
     if gate_type == "readiness_gate":
         validate_decision("readiness_gate", decision)
-        # All three readiness verbs resolve through the shared gate_resolved
-        # event machinery that _resolve_gate appends; this branch only validates
-        # the verb and applies any file effects (there are none yet at Stage 2.5).
+        # abandon_epic already returned via the shared _abandon_epic path above,
+        # so this branch handles only approve_with_reason and revise_epic_contract.
+        # Both resolve through the shared gate_resolved event machinery that
+        # _resolve_gate appends; this branch only validates the verb and applies
+        # any file effects (there are none yet at Stage 2.5).
         #
         # approve_with_reason: the readiness_gate_resolved event _resolve_gate
         #   appends (decision=approve_with_reason, after the latest
@@ -157,10 +194,6 @@ def _apply_gate_resolution_effects(
         # revise_epic_contract: the gate_resolved event drives Stage-2 re-entry
         #   via transitions.definition_revision_requested (E17 P5 adds the
         #   EPIC.md archive + definition re-dispatch inputs).
-        # abandon_epic: recorded as the operator's terminal decision; it does not
-        #   satisfy readiness, so the epic does not advance to planning (E17 P4
-        #   adds the epic_abandoned marker, tracker close, and terminal next_node
-        #   outcome).
         return changed
 
     if gate_type == "plan_gate":
@@ -289,20 +322,25 @@ def _apply_gate_resolution_effects(
                 )
             return changed
         if decision == "abandon_story" and story_id:
-            _update_story(repo_root, epic_id, story_id, status="done")
+            # Honest terminal: mark the story abandoned (not done) and record a
+            # story_abandoned event, never story_completed. next_node treats an
+            # abandoned story as terminal and skips it; the epic still completes
+            # on its remaining stories ("skip and continue"). The status is
+            # distinct from done so reconstruction never conflates the two.
+            _update_story(repo_root, epic_id, story_id, status="abandoned")
             changed.append(_display_path(repo_root, directory / "plan.json"))
             changed.extend(_remove_paths(repo_root, check_result, executor_result))
             append_epic_event_once(
                 repo_root,
                 epic_id,
                 {
-                    "event": "story_completed",
+                    "event": "story_abandoned",
                     "at": _now(),
                     "epic_id": epic_id,
                     "story_id": story_id,
                     "decision": "abandon_story",
                 },
-                event="story_completed",
+                event="story_abandoned",
                 story_id=story_id,
             )
             return changed

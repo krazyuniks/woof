@@ -35,6 +35,18 @@ class NodeStatus(StrEnum):
     GATE_OPENED = "gate_opened"
     HALTED = "halted"
     EPIC_COMPLETE = "epic_complete"
+    # Terminal outcome for an operator-abandoned epic (E17 P4 / D-AB). Distinct
+    # from EPIC_COMPLETE: the epic stopped without delivering and its tracker
+    # issue is closed as not delivered, rather than completing successfully.
+    EPIC_ABANDONED = "epic_abandoned"
+
+
+# Story statuses that are terminal: the story will never be dispatched again.
+# "done" delivered the story; "abandoned" skipped it at a gate (E17 P4 / D-AB).
+# Both let the epic reach a terminal outcome; neither is re-run. Dependency
+# satisfaction still keys on "done" alone - depending on an abandoned story
+# leaves the dependent unschedulable, which is the honest result of skipping it.
+TERMINAL_STORY_STATUSES = ("done", "abandoned")
 
 
 # The legal verb set is canonical in woof.graph.decisions.GATE_DECISIONS; this
@@ -68,7 +80,7 @@ class StorySpec(BaseModel):
     uses_contract_decisions: list[str] = Field(default_factory=list)
     depends_on: list[str] = Field(default_factory=list)
     tests: dict = Field(default_factory=dict)
-    status: Literal["pending", "in_progress", "done"]
+    status: Literal["pending", "in_progress", "done", "abandoned"]
     empty_diff: bool = False
 
 

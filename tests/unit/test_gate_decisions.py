@@ -280,9 +280,9 @@ def test_story_gate_revise_story_scope_effect_unchanged(tmp_path: Path) -> None:
     assert tracker.pushed == []  # no tracker interaction for story-scope revision
 
 
-def test_abandon_story_effect_unchanged(tmp_path: Path) -> None:
-    # P1 deliberately leaves abandon_story's pre-E17 behaviour intact: it marks
-    # the story "done" and appends story_completed. P4 makes it honest.
+def test_abandon_story_marks_abandoned_and_records_story_abandoned(tmp_path: Path) -> None:
+    # E17 P4 / D-AB: abandon_story is now honest - it marks the story "abandoned"
+    # (not "done") and appends story_abandoned, never story_completed.
     directory = _write_epic(tmp_path, 53)
     tracker = _RecordingTracker(directory)
 
@@ -297,12 +297,14 @@ def test_abandon_story_effect_unchanged(tmp_path: Path) -> None:
     )
 
     plan = json.loads((directory / "plan.json").read_text())
-    assert plan["stories"][0]["status"] == "done"
+    assert plan["stories"][0]["status"] == "abandoned"
     events = [
         json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines() if line
     ]
-    completed = [e for e in events if e["event"] == "story_completed"]
-    assert completed and completed[-1]["decision"] == "abandon_story"
+    abandoned = [e for e in events if e["event"] == "story_abandoned"]
+    assert abandoned and abandoned[-1]["decision"] == "abandon_story"
+    assert not any(e["event"] == "story_completed" for e in events)
+    assert tracker.pushed == []  # story-level abandon touches no tracker method
 
 
 def test_tracker_conflict_keep_local_validates_through_table(tmp_path: Path) -> None:

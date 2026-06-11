@@ -125,7 +125,19 @@ re-dispatches the crashed story without touching its siblings; the verb is guard
 to its domain, rejecting both a story-less gate and an already-`done` story with a
 structured error (it resets crashed/aborted executors, never completed stories, so
 it cannot strand a `story_completed` event), with post-completion completion-event
-reconciliation deferred to E18. Prompts 4-6 remain.
+reconciliation deferred to E18. Prompt 4 (S4) — stories and epics gain an
+`abandoned` terminal status (D-AB settled): `StorySpec.status` and the
+`plan.schema.json` story-status enum now include `abandoned`; `abandon_story` marks
+the story `abandoned` (not `done`) and appends a `story_abandoned` event instead of
+`story_completed`, so `next_node` treats it as terminal-skipped and the epic still
+completes on its remaining stories; `abandon_epic` is now one shared effect routed
+from every gate type that offers it (readiness/plan/story/review) — it closes the
+tracker issue as not delivered (`Tracker.close_not_delivered`, with GitHub using the
+`not planned` close reason, and `complete_epic`'s done-guard now accepting the
+terminal `abandoned` status) and appends a graph-owned `epic_abandoned` marker that
+`transitions.next_node` consults to return a distinct `NodeStatus.EPIC_ABANDONED`
+terminal (surfaced by the runner, never conflated with `EPIC_COMPLETE`), and
+reconstruction from disk keeps `abandoned` distinct from `done`. Prompts 5-6 remain.
 
 | # | Prompt summary | Files touched | Tests | Review checkpoint |
 |---|---|---|---|---|

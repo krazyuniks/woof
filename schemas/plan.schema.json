@@ -108,7 +108,8 @@
         },
         "status": {
           "type": "string",
-          "enum": ["pending", "in_progress", "done"]
+          "enum": ["pending", "in_progress", "done", "abandoned"],
+          "description": "Lifecycle status. pending/in_progress/done are the normal path; abandoned is the terminal status set by the abandon_story gate verb (skipped, never delivered, distinct from done)."
         },
         "empty_diff": {
           "type": "boolean",

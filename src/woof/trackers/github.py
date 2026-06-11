@@ -19,7 +19,7 @@ from typing import Any
 import yaml
 
 from woof.gate.write import write_gate
-from woof.graph.state import Plan
+from woof.graph.state import TERMINAL_STORY_STATUSES, Plan
 from woof.paths import schema_dir
 from woof.trackers.base import (
     ColdStartResult,
@@ -250,7 +250,7 @@ class GitHubTracker:
     def complete_epic(self, epic_id: int) -> LifecycleSyncResult:
         front, prose = self._load_epic_markdown(epic_id)
         plan = self._load_plan(epic_id)
-        if any(story.status != "done" for story in plan.stories):
+        if any(story.status not in TERMINAL_STORY_STATUSES for story in plan.stories):
             raise TrackerError(f"E{epic_id} cannot be closed until all plan stories are done")
         return self._sync_lifecycle_body(
             epic_id,
@@ -262,6 +262,49 @@ class GitHubTracker:
                 completed=True,
             ),
             close=True,
+        )
+
+    def close_not_delivered(self, epic_id: int) -> LifecycleSyncResult:
+        # The abandon_epic terminal: close the issue with the "not planned" close
+        # reason so it reads as abandoned, not delivered. No plan/EPIC.md load and
+        # no all-done guard - the epic is abandoned with work outstanding, possibly
+        # before plan.json exists (a readiness-gate abandon). The body is left as
+        # the current remote; the close reason carries the not-delivered semantics.
+        remote = self._fetch_issue(epic_id)
+        epic_dir = epic_directory(self.repo_root, epic_id)
+        last_sync_path = epic_dir / ".last-sync"
+        closed = False
+        if remote.get("state") != "closed":
+            self._close_issue(epic_id, reason="not planned")
+            closed = True
+            remote = self._fetch_issue(epic_id)
+        updated_at = _issue_updated_at(remote)
+        remote_body = _issue_body(remote)
+        write_last_sync(
+            last_sync_path,
+            {
+                "issue_number": epic_id,
+                "updated_at": updated_at,
+                "body_sha256": sha256_text(remote_body),
+                "body": remote_body,
+            },
+        )
+        append_jsonl(
+            epic_dir / "epic.jsonl",
+            {
+                "event": "tracker_synced",
+                "at": iso_utc(),
+                "epic_id": epic_id,
+                "not_delivered": True,
+            },
+        )
+        return LifecycleSyncResult(
+            epic_id=epic_id,
+            body=remote_body,
+            updated_at=updated_at,
+            last_sync_path=last_sync_path,
+            changed=closed,
+            closed=closed,
         )
 
     def resolve_conflict(self, epic_id: int, decision: str) -> ConflictResolutionResult:
@@ -410,8 +453,11 @@ class GitHubTracker:
             detail = (proc.stderr or proc.stdout).strip()
             raise TrackerError(f"gh issue edit {epic_id} --repo {self.repo} failed:\n{detail}")
 
-    def _close_issue(self, epic_id: int) -> None:
-        proc = self._run_gh(["issue", "close", str(epic_id), "--repo", self.repo])
+    def _close_issue(self, epic_id: int, *, reason: str | None = None) -> None:
+        args = ["issue", "close", str(epic_id), "--repo", self.repo]
+        if reason is not None:
+            args += ["--reason", reason]
+        proc = self._run_gh(args)
         if proc.returncode != 0:
             detail = (proc.stderr or proc.stdout).strip()
             raise TrackerError(f"gh issue close {epic_id} --repo {self.repo} failed:\n{detail}")

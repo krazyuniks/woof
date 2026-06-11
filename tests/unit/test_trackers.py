@@ -514,6 +514,31 @@ def test_tracker_contract_epic_completion_renders_and_closes(
         assert not result.last_sync_path.exists()
 
 
+def test_tracker_contract_close_not_delivered_abandons_without_done_guard(
+    tracker_contract: TrackerContractCase,
+) -> None:
+    # abandon_epic's terminal (E17 P4 / D-AB): close the issue as not delivered.
+    # Unlike complete_epic there is no all-done guard - the plan still has work.
+    epic_id = _prepare_contract_epic(tracker_contract)
+
+    result = tracker_contract.tracker.close_not_delivered(epic_id)
+
+    assert result.epic_id == epic_id
+    assert result.closed is True
+    if tracker_contract.kind == "github":
+        assert tracker_contract.gh is not None
+        assert tracker_contract.gh.close_count == 1
+        assert tracker_contract.gh.issue["state"] == "closed"
+        # Closed with the not-delivered reason, never a successful completion.
+        close_calls = [c for c in tracker_contract.gh.calls if c[:2] == ["issue", "close"]]
+        assert close_calls and "--reason" in close_calls[-1]
+        assert close_calls[-1][close_calls[-1].index("--reason") + 1] == "not planned"
+        assert result.last_sync_path.is_file()
+    else:
+        assert result.changed is False
+        assert not result.last_sync_path.exists()
+
+
 # ---------------------------------------------------------------------------
 # local adapter
 # ---------------------------------------------------------------------------

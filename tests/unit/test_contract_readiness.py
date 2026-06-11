@@ -36,7 +36,7 @@ from woof.graph.readiness import (
     has_concrete_signal,
 )
 from woof.graph.state import NodeInput, NodeStatus, NodeType
-from woof.trackers.base import Tracker
+from woof.trackers.base import LifecycleSyncResult, Tracker
 
 pytestmark = pytest.mark.host_only
 
@@ -275,7 +275,26 @@ def test_readiness_node_rejects_story_id(tmp_path: Path) -> None:
 
 
 class _NoopTracker:
-    """Readiness resolution verbs touch no tracker method; this stub records nothing."""
+    """Stub tracker for readiness resolution verbs.
+
+    approve_with_reason and revise_epic_contract touch no tracker method;
+    abandon_epic calls close_not_delivered (E17 P4 / D-AB), which this stub
+    records so tests can assert the issue was closed as not delivered.
+    """
+
+    def __init__(self) -> None:
+        self.closed_not_delivered: list[int] = []
+
+    def close_not_delivered(self, epic_id: int) -> LifecycleSyncResult:
+        self.closed_not_delivered.append(epic_id)
+        return LifecycleSyncResult(
+            epic_id=epic_id,
+            body="",
+            updated_at="2026-06-09T10:00:00Z",
+            last_sync_path=Path(f".woof/epics/E{epic_id}/.last-sync"),
+            changed=True,
+            closed=True,
+        )
 
 
 def _open_readiness_gate(root: Path) -> Path:
@@ -318,24 +337,33 @@ def test_reclosed_contract_rearms_readiness_after_approve_with_reason(tmp_path: 
     assert transitions.next_node(tmp_path, 1) == (NodeType.CONTRACT_READINESS, None)
 
 
-def test_readiness_abandon_epic_is_terminal_at_legal_seam(tmp_path: Path) -> None:
-    # P2 wires the legal seam: abandon_epic is a legal readiness verb whose
-    # resolution is recorded, and it does NOT satisfy readiness (it is not an
-    # approval), so the epic does not advance to planning. The epic_abandoned
-    # marker, tracker close, and terminal next_node outcome land in E17 P4.
+def test_readiness_abandon_epic_closes_tracker_and_is_terminal(tmp_path: Path) -> None:
+    # E17 P4 / D-AB: abandon_epic at the readiness gate closes the tracker issue
+    # as not delivered, appends the graph-owned epic_abandoned marker, and makes
+    # next_node terminal for the epic - even before plan.json exists.
     directory = _open_readiness_gate(tmp_path)
+    tracker = _NoopTracker()
 
-    rc = _resolve_gate(tmp_path, 1, "abandon_epic", cast(Tracker, _NoopTracker()))
+    rc = _resolve_gate(tmp_path, 1, "abandon_epic", cast(Tracker, tracker))
     assert rc == 0
     assert not (directory / "gate.md").exists()
+
+    # The tracker issue is closed as not delivered.
+    assert tracker.closed_not_delivered == [1]
 
     resolved = [e for e in _epic_events(directory) if e["event"] == "gate_resolved"]
     assert resolved and resolved[-1]["decision"] == "abandon_epic"
     assert resolved[-1]["gate_type"] == "readiness_gate"
+    # The graph-owned terminal marker was written.
+    assert any(
+        e["event"] == "epic_abandoned" and e["epic_id"] == 1 for e in _epic_events(directory)
+    )
 
-    # abandon is not approval: readiness stays unsatisfied, so the epic does not
-    # advance to breakdown planning.
+    # abandon is not approval: readiness stays unsatisfied.
     assert transitions.readiness_satisfied(tmp_path, 1) is False
+    # next_node is terminal for the abandoned epic, distinct from EPIC_COMPLETE.
+    assert transitions.epic_abandoned(tmp_path, 1) is True
+    assert transitions.next_node(tmp_path, 1) == (NodeStatus.EPIC_ABANDONED, None)
 
 
 def test_invalid_readiness_verb_resolution_errors_and_keeps_gate(tmp_path: Path) -> None:

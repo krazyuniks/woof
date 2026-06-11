@@ -14,7 +14,7 @@ from typing import Any
 
 import yaml
 
-from woof.graph.state import Plan
+from woof.graph.state import TERMINAL_STORY_STATUSES, Plan
 from woof.trackers.base import (
     CONFLICT_DECISIONS,
     ColdStartResult,
@@ -128,7 +128,7 @@ class LocalTracker:
     def complete_epic(self, epic_id: int) -> LifecycleSyncResult:
         front, prose = self._load_epic_markdown(epic_id)
         plan = self._load_plan(epic_id)
-        if any(story.status != "done" for story in plan.stories):
+        if any(story.status not in TERMINAL_STORY_STATUSES for story in plan.stories):
             raise TrackerError(f"E{epic_id} cannot be closed until all plan stories are done")
         body = render_epic_issue_body(
             front,
@@ -138,6 +138,13 @@ class LocalTracker:
             completed=True,
         )
         return self._lifecycle_result(epic_id, body=body, closed=True)
+
+    def close_not_delivered(self, epic_id: int) -> LifecycleSyncResult:
+        # No remote to close: abandoning an epic is a local-only terminal marker.
+        # Unlike complete_epic there is no all-done guard - the epic is abandoned
+        # with work outstanding - and no plan/EPIC.md load, so it works at any
+        # stage (including a readiness gate, before plan.json exists).
+        return self._lifecycle_result(epic_id, body="", closed=True)
 
     def resolve_conflict(self, epic_id: int, decision: str) -> ConflictResolutionResult:
         if decision not in CONFLICT_DECISIONS:

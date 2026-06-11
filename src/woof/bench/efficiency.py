@@ -28,10 +28,19 @@ from typing import Any
 
 from woof.cli.commands.observe import ObserveError, build_observe_report
 from woof.cli.dispatcher import MODEL_PROFILE_ENV
+from woof.graph.state import NodeStatus
 from woof.trackers.epic_body import split_epic_front_matter
 
 MANIFEST_VERSION = 1
-TERMINAL_STATUSES = {"gate_opened", "halted", "epic_complete"}
+# Node-output statuses that end the run loop. EPIC_ABANDONED is terminal like
+# EPIC_COMPLETE (E17 P4 / D-AB): without it a deliberately-abandoned epic reruns
+# until max_cycles and is misrecorded as a timeout.
+TERMINAL_STATUSES = {
+    "gate_opened",
+    "halted",
+    NodeStatus.EPIC_COMPLETE,
+    NodeStatus.EPIC_ABANDONED,
+}
 SUCCESS_EXIT_TYPES = {"clean", "completed_lingering"}
 SECRET_KEY_RE = re.compile(
     r"(api[_-]?key|auth|bearer|credential|jwt|oauth|password|secret|token)", re.IGNORECASE
@@ -1031,6 +1040,15 @@ def _quality_outcome(
     ):
         status = "passed"
         reason = "epic_complete"
+    elif final_state.get("last_status") == NodeStatus.EPIC_ABANDONED or (
+        isinstance(final_state.get("next"), Mapping)
+        and final_state.get("next", {}).get("node") == NodeStatus.EPIC_ABANDONED
+    ):
+        # A deliberately-abandoned epic terminated correctly but delivered nothing
+        # (E17 P4 / D-AB). Its own distinct terminal status - not "passed" (no
+        # delivery), not "failed"/"incomplete" (the run reached a valid terminal).
+        status = "abandoned"
+        reason = "epic_abandoned"
     else:
         status = "incomplete"
         reason = "workflow_not_complete"

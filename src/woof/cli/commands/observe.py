@@ -8,7 +8,7 @@ import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import yaml
 
@@ -28,11 +28,12 @@ from woof.graph.dispositions import (
     story_disposition_path,
     validate_story_disposition,
 )
-from woof.graph.state import Plan
+from woof.graph.state import TERMINAL_STORY_STATUSES, Plan, StorySpec
 from woof.graph.transitions import (
     definition_revision_requested,
     discovery_bucket_complete,
     discovery_synthesis_complete,
+    epic_abandoned,
     epic_event_exists,
     interactive_brainstorm_bundle_present,
     next_ready_story,
@@ -61,6 +62,10 @@ TELEMETRY_FIELDS = (
 )
 SUCCESS_EXIT_TYPES = {"clean", "completed_lingering"}
 VIEWS = ("status", "timeline", "gate", "audit", "all")
+# Every legal StorySpec.status value, derived from the graph's Literal so the
+# plan summary can never KeyError on a valid status nor silently drop a future
+# one (E17 P4 added "abandoned"). Declaration order is preserved for rendering.
+STORY_STATUSES: tuple[str, ...] = get_args(StorySpec.model_fields["status"].annotation)
 
 
 class ObserveError(RuntimeError):
@@ -260,6 +265,11 @@ def _derive_next_step(
     plan: Plan | None,
     gate: dict[str, Any],
 ) -> dict[str, Any]:
+    # Mirror transitions.next_node: an abandoned epic is unconditionally terminal
+    # and short-circuits before any gate or plan read, so observe agrees with the
+    # graph instead of reporting a lingering gate/plan as the next step (E17 P4 / D-AB).
+    if epic_abandoned(repo_root, epic_id):
+        return {"node": "epic_abandoned", "story_id": None}
     if gate["open"]:
         return {"node": "human_review", "story_id": None, "reason": "gate_open"}
 
@@ -294,7 +304,7 @@ def _derive_next_step(
         }
 
     in_progress = next((story for story in plan.stories if story.status == "in_progress"), None)
-    if all(story.status == "done" for story in plan.stories):
+    if all(story.status in TERMINAL_STORY_STATUSES for story in plan.stories):
         if (directory / "executor_result.json").exists() and (
             directory / "check-result.json"
         ).exists():
@@ -366,11 +376,11 @@ def _next_action(epic_id: int, next_step: dict[str, Any], gate: dict[str, Any]) 
             "description": "Inspect the gate, then resolve it with a structured decision.",
         }
     node = str(next_step.get("node") or "")
-    if node == "epic_complete":
+    if node in {"epic_complete", "epic_abandoned"}:
         return {
             "action": "none",
             "command": None,
-            "reason": "epic_complete",
+            "reason": node,
             "description": "No workflow action remains for this epic.",
         }
     return {
@@ -591,7 +601,7 @@ def _plan_summary(repo_root: Path, directory: Path) -> tuple[dict[str, Any], Pla
             "path": _display_path(repo_root, path),
             "error": str(exc),
         }, None
-    counts = {"pending": 0, "in_progress": 0, "done": 0}
+    counts = {status: 0 for status in STORY_STATUSES}
     stories = []
     for story in plan.stories:
         counts[story.status] += 1
@@ -1052,7 +1062,8 @@ def _print_status(status: dict[str, Any]) -> None:
         counts = plan["story_counts"]
         print(
             "stories: "
-            f"pending={counts['pending']} in_progress={counts['in_progress']} done={counts['done']}"
+            f"pending={counts['pending']} in_progress={counts['in_progress']} "
+            f"done={counts['done']} abandoned={counts['abandoned']}"
         )
     else:
         print(f"stories: unavailable plan_valid={plan['valid']}")

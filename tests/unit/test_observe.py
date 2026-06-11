@@ -446,3 +446,88 @@ def test_observe_status_text_reports_operator_state(tmp_path: Path) -> None:
         "audit_dir=.woof/epics/E5/audit"
     ) in proc.stdout
     assert "primary: adapter=codex model=gpt-5.5 effort=xhigh" in proc.stdout
+
+
+def _write_plan_stories(epic_dir: Path, stories: list[tuple[str, str]]) -> None:
+    (epic_dir / "plan.json").write_text(
+        json.dumps(
+            {
+                "epic_id": 5,
+                "goal": "Expose workflow state.",
+                "stories": [
+                    {
+                        "id": story_id,
+                        "title": f"Story {story_id}",
+                        "intent": "",
+                        "paths": [],
+                        "satisfies": [],
+                        "implements_contract_decisions": [],
+                        "uses_contract_decisions": [],
+                        "depends_on": [],
+                        "tests": {},
+                        "status": status,
+                    }
+                    for story_id, status in stories
+                ],
+            }
+        )
+    )
+
+
+def _append_epic_event(epic_dir: Path, event: dict[str, object]) -> None:
+    with (epic_dir / "epic.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(event) + "\n")
+
+
+def test_observe_plan_summary_counts_abandoned_stories(tmp_path: Path) -> None:
+    project = _write_project(tmp_path, with_usage=False)
+    epic_dir = project / ".woof" / "epics" / "E5"
+    _write_plan_stories(epic_dir, [("S1", "done"), ("S2", "abandoned"), ("S3", "in_progress")])
+
+    proc = _run_observe(project, "--view", "status", "--format", "json")
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    assert payload["plan"]["story_counts"] == {
+        "pending": 0,
+        "in_progress": 1,
+        "done": 1,
+        "abandoned": 1,
+    }
+
+    text = _run_observe(project, "--view", "status")
+
+    assert text.returncode == 0, text.stderr
+    assert "stories: pending=0 in_progress=1 done=1 abandoned=1" in text.stdout
+
+
+def test_observe_next_step_is_epic_complete_when_all_stories_terminal(tmp_path: Path) -> None:
+    project = _write_project(tmp_path, with_usage=False)
+    epic_dir = project / ".woof" / "epics" / "E5"
+    (epic_dir / "gate.md").unlink()
+    _write_plan_stories(epic_dir, [("S1", "done"), ("S2", "abandoned")])
+
+    proc = _run_observe(project, "--view", "status", "--format", "json")
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    assert payload["next"] == {"node": "epic_complete", "story_id": None}
+    assert payload["next_action"]["action"] == "none"
+    assert payload["next_action"]["reason"] == "epic_complete"
+
+
+def test_observe_next_step_reports_epic_abandoned_terminal(tmp_path: Path) -> None:
+    project = _write_project(tmp_path, with_usage=False)
+    epic_dir = project / ".woof" / "epics" / "E5"
+    (epic_dir / "gate.md").unlink()
+    _append_epic_event(
+        epic_dir, {"event": "epic_abandoned", "at": "2026-05-23T10:05:00Z", "epic_id": 5}
+    )
+
+    proc = _run_observe(project, "--view", "status", "--format", "json")
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    assert payload["next"] == {"node": "epic_abandoned", "story_id": None}
+    assert payload["next_action"]["action"] == "none"
+    assert payload["next_action"]["reason"] == "epic_abandoned"

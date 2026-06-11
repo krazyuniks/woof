@@ -9,6 +9,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from woof.bench.efficiency import (
+    TERMINAL_STATUSES,
+    _quality_outcome,
     collect_run_manifest,
     comparison_rows,
     create_worktree,
@@ -417,3 +419,49 @@ def test_manifest_redaction_covers_sensitive_fields_and_known_patterns() -> None
     assert "plain-value" not in text
     assert "live-secret" not in text
     assert redacted["metadata"]["tokens_in"] == 42
+
+
+def test_epic_abandoned_final_state_is_terminal_and_classified(tmp_path: Path) -> None:
+    # The run loop stops once the final node-output status is terminal; an
+    # abandoned epic emits status "epic_abandoned" (E17 P4 / D-AB).
+    assert "epic_abandoned" in TERMINAL_STATUSES
+
+    # Runner path: the abandoned terminal surfaces as last_status=epic_abandoned.
+    by_last_status = _quality_outcome(
+        final_state={
+            "last_node": "human_review",
+            "last_status": "epic_abandoned",
+            "next": None,
+            "gate_open": False,
+        },
+        checks={},
+        diff={},
+        run_exit_code=0,
+        epic_events=[],
+        repo_root=tmp_path,
+        epic_id=1,
+        operator_notes=None,
+    )
+    assert by_last_status["reason"] == "epic_abandoned"
+    assert by_last_status["status"] == "abandoned"
+    assert by_last_status["status"] not in {"failed", "incomplete"}
+
+    # Observe path: the derived next-node is epic_abandoned; the classifier honours
+    # it via the same branch (mirroring the epic_complete next-node case).
+    by_next_node = _quality_outcome(
+        final_state={
+            "last_node": "human_review",
+            "last_status": "completed",
+            "next": {"node": "epic_abandoned", "story_id": None},
+            "gate_open": False,
+        },
+        checks={},
+        diff={},
+        run_exit_code=0,
+        epic_events=[],
+        repo_root=tmp_path,
+        epic_id=1,
+        operator_notes=None,
+    )
+    assert by_next_node["reason"] == "epic_abandoned"
+    assert by_next_node["status"] == "abandoned"

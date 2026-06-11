@@ -137,7 +137,11 @@ tracker issue as not delivered (`Tracker.close_not_delivered`, with GitHub using
 terminal `abandoned` status) and appends a graph-owned `epic_abandoned` marker that
 `transitions.next_node` consults to return a distinct `NodeStatus.EPIC_ABANDONED`
 terminal (surfaced by the runner, never conflated with `EPIC_COMPLETE`), and
-reconstruction from disk keeps `abandoned` distinct from `done`. Prompts 5-6 remain.
+reconstruction from disk keeps `abandoned` distinct from `done`; the read-only
+status consumers were aligned to the terminal-status set so they agree with
+`next_node` (observe summarises the `abandoned` count and derives the
+`epic_abandoned` terminal, and the bench harness treats `epic_abandoned` as a
+terminal stop and a distinct non-delivery outcome). Prompts 5-6 remain.
 
 | # | Prompt summary | Files touched | Tests | Review checkpoint |
 |---|---|---|---|---|

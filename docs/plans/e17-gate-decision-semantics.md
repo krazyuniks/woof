@@ -162,7 +162,17 @@ clears the now-stale plan artefacts while the readiness-gate path re-enters defi
 rather than just deleting plan files; a pending revision dispatches even when discovery
 synthesis was never produced (a cold-start tracker epic whose only contract was the
 archived `EPIC.md`), so the missing-synthesis precondition no longer strands it, while
-the non-revision cold-discovery halt is preserved. Prompt 6 remains.
+the non-revision cold-discovery halt is preserved. Prompt 6 (S6) — `advertised equals
+implemented` is now locked by `tests/unit/test_decision_surface_conformance.py`: the
+argparse `--resolve` choices, the `GateDecision` literal, the `jsonl-events` decision
+enum, and the per-gate-type verb lists in `skills/woof/references/gates.md` and
+`skills/woof/SKILL.md` all equal the canonical `GATE_DECISIONS` table, every advertised
+verb has a registered forward-progress test (asserted to exist) while resolving a gate
+with an unadvertised verb is a structured error that performs no effect, and `split_story`
+appears on no surface. The two operator docs were updated to the real per-gate-type set
+(the missing `readiness_gate` row and `retry_story` added, the "current limitation" hedges
+that E17 resolves dropped); the deeper section-10/section-3 prose reconciliation stays with
+E23. E17 is complete.
 
 | # | Prompt summary | Files touched | Tests | Review checkpoint |
 |---|---|---|---|---|

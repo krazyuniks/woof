@@ -23,20 +23,26 @@ woof wf --epic N --resolve <decision>
 
 The valid decisions depend on the gate type:
 
-- plan gate: `approve` | `revise_epic_contract` | `revise_plan` | `abandon_epic`
-- story gate / review gate: `approve` | `revise_story_scope` | `revise_plan` |
-  `abandon_story` | `abandon_epic`
+- readiness gate: `approve_with_reason` | `revise_epic_contract` | `abandon_epic`
+- plan gate: `approve` | `revise_plan` | `revise_epic_contract` | `abandon_epic`
+- story gate / review gate: `approve` | `retry_story` | `revise_story_scope` |
+  `revise_plan` | `abandon_story` | `abandon_epic`
 - tracker sync conflict: `keep_local` | `accept_remote` | `hand_merge`
 
-Current limitation: the CLI accepts several verbs whose effects are incomplete. E17 owns the canonical decision table and conformance tests. Until then, treat `revise_epic_contract` and `abandon_epic` as hazardous unless you have checked the current implementation path.
+The valid set per gate type is the canonical table in `src/woof/graph/decisions.py`. Every accepted
+verb has an implemented effect that moves the graph, and a conformance test fails if any surface
+(this list included) drifts from the table.
 
 What each does:
 
 - `approve`: accept the work and let the graph continue.
-- `revise_epic_contract`: target behaviour is to re-open Stage 2 Definition; current behaviour does not provide a real revision channel.
+- `approve_with_reason`: record an audited readiness approval (with the operator's reason) so an unready-but-accepted contract advances to planning without re-gating. Readiness gate only.
+- `retry_story`: reset a crashed or aborted story to `pending` and clear its executor, check, and critique artefacts so the graph re-dispatches it cleanly without redoing its siblings. Story / review gate only.
+- `revise_epic_contract`: archive the prior `EPIC.md` to `definition/EPIC.<n>.archived.md`, snapshot the gate findings, and re-enter Stage 2 Definition with the prior epic plus findings as inputs. Hand-editing the contract stays forbidden.
 - `revise_plan`: discard the plan and re-run Breakdown.
 - `revise_story_scope`: re-scope the current story's paths or acceptance criteria. (`split_story` was removed in E17; split guidance now re-enters planning through `revise_plan`.)
-- `abandon_story` / `abandon_epic`: target behaviour is to stop the story or the whole epic; current `abandon_story` records the story as completed, and current `abandon_epic` is not a terminal path.
+- `abandon_story`: mark the story `abandoned` - a terminal status distinct from `done` - and skip it; the epic still completes on its remaining stories.
+- `abandon_epic`: mark the epic abandoned, close the tracker issue as not delivered, and make the epic terminal (distinct from a completed epic).
 - `keep_local` / `accept_remote` / `hand_merge`: resolve a divergence between the local epic and the
   tracker issue (GitHub tracker only).
 

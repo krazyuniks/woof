@@ -43,6 +43,7 @@ E6 Contract conformance audit
 Completed prerequisite:
 E7 Dispatch process supervision   (complete; ADR-008; per-epic plan removed)
 E1 Cartography prerequisite       (complete; prompts 1-5 landed)
+E17 Gate decision semantics       (complete; prompts 1-6 landed; per-epic plan removed)
 
 Follow-on (off the critical chain):
 E8 Run lineage  ->  E9 Producer-output recovery
@@ -56,9 +57,9 @@ E15 Structural onboarding and mapper grounding
 
 E7 is complete: per-dispatch supervision now classifies hanging-but-done workers as `completed_lingering`, emits trustworthy `exit_type` telemetry, and leaves the detailed behaviour in ADR-008 plus architecture s11.5. E1 is complete on the supply side: prompts 1-5 enforce the cartography prerequisite and onboard legacy consumers that lack `[cartography]`. E19 is still required before dispatched work actually consumes the mapped cartography documents.
 
-E2 remains the active hardening line for readiness, blocker evidence, quality-gate modes, run resilience, and drift detection. E16 runs immediately beside it for small silent-wrong-result defects. The ordering constraints form a DAG, not one chain. E17's readiness-resolution slice precedes E3 because a readiness failure during consumer bootstrap must be legally resolvable rather than a reset-or-stuck loop. E20, E19, and E21 S1-S3 precede E5 so the first baseline measures the intended production shape: Stage-5 roles routable and correctly configured, cartography consumed by dispatches, and the discovery prompt free of the known removable playbook bulk. Those four work items do not depend on each other; the recommended single-operator order runs E17 first, then E20, E19, and E21 S1-S3, then the eval line.
+E2 remains the active hardening line for readiness, blocker evidence, quality-gate modes, run resilience, and drift detection. E16 runs immediately beside it for small silent-wrong-result defects. The ordering constraints form a DAG, not one chain. E17 is complete: it made a readiness failure during consumer bootstrap legally resolvable rather than a reset-or-stuck loop, so E3's readiness-resolution dependency is satisfied. E20, E19, and E21 S1-S3 precede E5 so the first baseline measures the intended production shape: Stage-5 roles routable and correctly configured, cartography consumed by dispatches, and the discovery prompt free of the known removable playbook bulk. Those four work items do not depend on each other; with E17 complete, the recommended single-operator order continues with E20, E19, and E21 S1-S3, then the eval line.
 
-E17, E18, and E22 are the unattended-safety gate. They may overlap the eval chain if the baseline is needed sooner, but no overnight unattended run should happen until gate semantics, artefact integrity, and runner seam hardening are complete.
+E17, E18, and E22 are the unattended-safety gate; E17 (gate semantics) is now complete, leaving E18 (artefact integrity) and E22 (runner seam hardening). They may overlap the eval chain if the baseline is needed sooner, but no overnight unattended run should happen until E18 and E22 are complete too.
 
 After E5, the next planned optimisation pivot is structural cartography. E12 builds the ADR-009 local files/symbols/edges index using tree-sitter as the required V1 extraction substrate. Python `ast` is not a generation fallback; missing tree-sitter is an infrastructure failure. E13 uses that index first in the Stage-5 reviewer path as bounded impact context. E6 then runs with structural evidence available for conformance checks, rather than trying to infer callers and affected surfaces from prose alone.
 
@@ -147,7 +148,7 @@ E1 did not wire cartography into dispatch payloads. E19 owns that demand-side co
 
 **E7 (Dispatch Process Supervision) is complete.** ADR-008 and architecture s11.5 describe the landed terminal-seen, inherited-stream, and `completed_lingering` semantics. Its per-epic plan was removed because `docs/plans/` only keeps active epic plans.
 
-**E17 (Gate Decision Semantics) is active.** Its plan is `docs/plans/e17-gate-decision-semantics.md`. It is the next critical-path epic: the recommended single-operator order runs it first, and its readiness-resolution slice (plan prompts P1 + P2) unblocks E3. The plan front-loads the canonical decision table (P1) and the readiness verbs (P2, the E3 unblocker) ahead of `retry_story` (P3), the `abandoned` terminal status (P4), the real `revise_epic_contract` channel (P5), and the decision-surface conformance test (P6). E16 defect-sweep items continue to batch beside it where they touch the same files. E2's remaining run-resilience/baseline/drift work is independent and not blocked by E17.
+**E17 (Gate Decision Semantics) is complete.** Its per-epic plan was removed because `docs/plans/` only keeps active epic plans. Prompts 1-6 landed: the canonical decision table (`src/woof/graph/decisions.py`, P1) with structured invalid-verb errors and `split_story` dropped everywhere; readiness-gate resolution verbs (P2, `approve_with_reason` the E3 unblocker); `retry_story` for crashed executors guarded to non-terminal stories (P3); the honest `abandoned`/`epic_abandoned` terminal propagated to every terminal-status consumer (P4); the real `revise_epic_contract` channel that archives `EPIC.md` and re-dispatches Definition with the prior epic plus findings, including cold-start tracker epics (P5); and the decision-surface conformance test pinning advertised-equals-implemented (P6). E3's readiness-resolution dependency is satisfied; E16 defect-sweep items and E2's run-resilience/baseline/drift work were independent of E17.
 
 ## What Happens Next
 
@@ -157,10 +158,10 @@ Current ordering:
 2. E1 prompt 4: fail-loud post-commit hook for the mechanical cartography layer. **Landed.**
 3. E1 prompt 5: clear preflight error for cartography-less consumers. **Landed.**
 4. E2 continues; E16 defect-sweep items batch with it where they touch the same files.
-5. E17 is active (plan landed at `docs/plans/e17-gate-decision-semantics.md`). It lands its canonical decision table (P1) and readiness-resolution verbs (P2) first; that slice unblocks E3.
-6. E20, E19, and E21 S1-S3 land before E5 (recommended: after E17, before E3).
+5. E17 is complete (prompts 1-6 landed; per-epic plan removed). Its canonical decision table (P1) and readiness-resolution verbs (P2) unblocked E3. **Landed.**
+6. E20, E19, and E21 S1-S3 land before E5 (recommended next, now that E17 is complete; before E3).
 7. E3/E4/E5 produce the first production-shape baseline.
-8. E17/E18/E22 must complete before the first unattended overnight run.
+8. E18 and E22 must complete (E17 is done) before the first unattended overnight run.
 9. E12 starts the structural cartography pivot using the recorded tree-sitter-first decision.
 10. E13 wires bounded impact context into the Stage-5 reviewer path.
 11. E6 conformance audit follows with structural evidence available.

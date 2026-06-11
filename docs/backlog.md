@@ -279,17 +279,9 @@ Depends on: nothing. Start immediately; items may batch into E2 prompts when the
 
 Make every accepted gate decision verb produce its documented effect, and make the advertised decision surface provably equal to the implemented one. This owns the readiness-gate resolution work moved out of E2.
 
-Open work:
-- Single canonical per-gate-type decision table as data: CLI `--resolve` choices, `_apply_gate_resolution_effects`, `gate.md` rendered options, schemas, and docs all derive from it. Resolving with a verb not valid for the open gate is a structured error naming the valid set.
-- Adopt this table: plan gate `{approve, revise_plan, revise_epic_contract, abandon_epic}`; story/review gate `{approve, retry_story, revise_story_scope, revise_plan, abandon_story, abandon_epic}`; readiness gate `{approve_with_reason, revise_epic_contract, abandon_epic}`; tracker-conflict decisions unchanged. Drop `split_story` everywhere; resolution payloads carry optional guidance notes instead.
-- Add a decision-surface conformance test like the check-matrix conformance test: every advertised verb has observable effects and tests.
-- Add `abandoned` terminal status for stories and epics. `abandon_story` marks `abandoned`, not `done`; `abandon_epic` marks the epic abandoned, closes the tracker issue as not delivered, and `next_node` becomes terminal for abandoned epics.
-- Add a real `revise_epic_contract` channel: archive the prior `EPIC.md`, re-dispatch definition with prior epic plus critique/readiness findings as declared inputs, and keep hand-editing forbidden.
-- Add `retry_story` for crashed/aborted executors: reset the story to `pending`, clear that story's executor/check/critique artefacts, and audit the reset.
-- Add audited readiness-gate resolutions: `approve_with_reason` records readiness approval so the unchanged epic does not re-gate; `revise_epic_contract` and `abandon_epic` use the same canonical effects.
-- Tests: per-verb forward-progress property, revision-channel round trip, abandoned-epic terminality, retry-story re-dispatch.
+Status: complete. Unblocked E3 (the readiness-resolution slice). A single canonical per-gate-type decision table (`src/woof/graph/decisions.py`) now drives the CLI `--resolve` choices, `_apply_gate_resolution_effects`, the `GateDecision` literal, the jsonl decision enum, and the operator docs; resolving with a verb not valid for the open gate is a structured error naming the valid set, and `split_story` is dropped from every surface. Readiness gates resolve through `approve_with_reason` (the unchanged epic advances to planning without re-gating), `revise_epic_contract`, and `abandon_epic`. `retry_story` resets a crashed or aborted story to `pending` and clears its executor/check/critique artefacts, guarded against story-less gates and already-terminal stories. Stories and epics gained an honest `abandoned`/`epic_abandoned` terminal, distinct from `done`/`EPIC_COMPLETE` and closing the tracker issue as not delivered, propagated to every terminal-status consumer (commit-time completion event, `observe`, the bench harness, end-of-epic detection). `revise_epic_contract` is a real channel that archives the prior `EPIC.md` and re-dispatches Definition with the prior epic plus findings as declared inputs, including cold-start tracker epics with no discovery synthesis. A decision-surface conformance test pins advertised-equals-implemented across all six surfaces.
 
-Depends on: E2 S1/S2 (shipped). The readiness-resolution slice also blocks E3, so the per-epic plan front-loads the decision table and readiness verbs ahead of the story/plan-gate verbs and abandoned-status semantics. Blocks the first unattended run, with E18 and E22.
+Depends on: E2 S1/S2 (shipped). Completed; unblocked E3. Was a member of the unattended-safety gate with E18 and E22, which remain open.
 
 ### E18. Artefact Integrity And The Commit Boundary
 

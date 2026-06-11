@@ -180,7 +180,9 @@
           "type": "array",
           "items": { "type": "string", "minLength": 1 },
           "uniqueItems": true
-        }
+        },
+        "prior_epic_path": { "$ref": "#/$defs/path" },
+        "revision_findings_path": { "$ref": "#/$defs/path" }
       }
     },
     "breakdown_planning_input": {

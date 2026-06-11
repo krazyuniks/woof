@@ -377,6 +377,35 @@ def test_invalid_readiness_verb_resolution_errors_and_keeps_gate(tmp_path: Path)
     assert not any(e["event"] == "readiness_gate_resolved" for e in _epic_events(directory))
 
 
+def test_readiness_revise_epic_contract_archives_and_reenters_definition(tmp_path: Path) -> None:
+    # E17 P5 / D-RC: revise_epic_contract at the readiness gate archives the prior
+    # EPIC.md with the readiness findings and re-enters definition rather than just
+    # deleting plan files (there is no plan yet at Stage 2.5).
+    directory = _open_readiness_gate(tmp_path)
+
+    rc = _resolve_gate(tmp_path, 1, "revise_epic_contract", cast(Tracker, _NoopTracker()))
+    assert rc == 0
+    assert not (directory / "gate.md").exists()
+
+    # The prior EPIC.md is archived out of place (hand-editing stays forbidden) with
+    # its readiness findings snapshot beside it.
+    assert not (directory / "EPIC.md").exists()
+    archived = directory / "definition" / "EPIC.1.archived.md"
+    findings = directory / "definition" / "EPIC.1.findings.md"
+    assert archived.exists()
+    assert "Findings" in findings.read_text()
+
+    resolved = [e for e in _epic_events(directory) if e["event"] == "gate_resolved"]
+    assert resolved and resolved[-1]["decision"] == "revise_epic_contract"
+    assert resolved[-1]["gate_type"] == "readiness_gate"
+
+    # revise is not approval: readiness stays unsatisfied, and the graph re-enters
+    # definition with the revision pending.
+    assert transitions.readiness_satisfied(tmp_path, 1) is False
+    assert transitions.definition_revision_requested(tmp_path, 1) is True
+    assert transitions.next_node(tmp_path, 1) == (NodeType.EPIC_DEFINITION, None)
+
+
 # --------------------------------------------------------------------------- #
 # Check 1: acceptance signal (tightened)
 # --------------------------------------------------------------------------- #

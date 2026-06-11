@@ -3405,3 +3405,165 @@ def test_transaction_manifest_honours_recursive_pathspec(tmp_path: Path) -> None
 
     assert "src/pkg/subpkg/deep.py" in manifest.story_paths
     assert "src/pkg/subpkg/deep.py" in manifest.expected_paths
+
+
+# --- revise_epic_contract re-opens definition with evidence (E17 P5 / D-RC) -----
+
+
+def _seed_pending_contract_revision(directory: Path, epic_id: int) -> dict[str, Path]:
+    """Lay down the on-disk state left by a resolved revise_epic_contract.
+
+    The prior EPIC.md is archived under definition/ and its findings snapshot sits
+    beside it; the event log records definition_closed then a revise_epic_contract
+    gate resolution with no later definition_closed, so definition_revision_requested
+    is True and next_node re-enters definition.
+    """
+
+    definition_dir = directory / "definition"
+    definition_dir.mkdir(exist_ok=True)
+    archived = definition_dir / "EPIC.1.archived.md"
+    archived.write_text(
+        f"---\nepic_id: {epic_id}\ntitle: prior contract\n---\n\nThe prior contract body.\n"
+    )
+    findings = definition_dir / "EPIC.1.findings.md"
+    findings.write_text("## Findings\n\n- O1 lacks a machine-checkable signal.\n")
+    (directory / "epic.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {"event": "definition_closed", "at": "2026-01-01T00:00:00Z", "epic_id": epic_id}
+                ),
+                json.dumps(
+                    {
+                        "event": "gate_resolved",
+                        "at": "2026-01-01T00:00:01Z",
+                        "epic_id": epic_id,
+                        "decision": "revise_epic_contract",
+                        "gate_type": "plan_gate",
+                    }
+                ),
+            ]
+        )
+        + "\n"
+    )
+    return {"archived": archived, "findings": findings}
+
+
+def test_epic_definition_payload_declares_prior_contract_revision_inputs(tmp_path: Path) -> None:
+    directory = _write_spark(tmp_path, 70)
+    _write_discovery_synthesis(directory)
+    _seed_pending_contract_revision(directory, 70)
+
+    payload = nodes._epic_definition_payload(tmp_path, 70)
+
+    assert payload["inputs"]["prior_epic_path"] == ".woof/epics/E70/definition/EPIC.1.archived.md"
+    assert (
+        payload["inputs"]["revision_findings_path"]
+        == ".woof/epics/E70/definition/EPIC.1.findings.md"
+    )
+    # The revision-shaped payload stays valid against the planning-node-input schema.
+    _assert_planning_node_input_schema(tmp_path, payload)
+
+
+def test_epic_definition_node_redispatches_revision_with_prior_contract_and_findings(
+    tmp_path: Path, monkeypatch
+) -> None:
+    directory = _write_spark(tmp_path, 71)
+    _write_discovery_synthesis(directory)
+    _seed_pending_contract_revision(directory, 71)
+    captured: dict[str, Any] = {}
+
+    def fake_dispatch(
+        repo_root: Path,
+        role: str,
+        epic_id: int,
+        story_id: str | None,
+        prompt: str,
+        artefacts_loaded: list[str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        captured["prompt"] = prompt
+        captured["artefacts_loaded"] = artefacts_loaded
+        _write_minimal_epic(directory, epic_id)
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setattr(nodes, "_run_dispatch", fake_dispatch)
+
+    # next_node re-enters definition while the revision is pending and EPIC.md is
+    # archived (absent), forbidding a hand-edit.
+    assert not (directory / "EPIC.md").exists()
+    assert next_node(tmp_path, 71) == (NodeType.EPIC_DEFINITION, None)
+
+    output = nodes.epic_definition_node(
+        NodeInput(node_type=NodeType.EPIC_DEFINITION, epic_id=71, repo_root=tmp_path)
+    )
+
+    assert output.status == NodeStatus.COMPLETED, output.message
+    # The re-dispatch declares the prior epic + findings as inputs and loads them as
+    # artefacts, so the revision is evidence-driven.
+    assert (
+        '"prior_epic_path": ".woof/epics/E71/definition/EPIC.1.archived.md"' in captured["prompt"]
+    )
+    assert (
+        '"revision_findings_path": ".woof/epics/E71/definition/EPIC.1.findings.md"'
+        in captured["prompt"]
+    )
+    assert ".woof/epics/E71/definition/EPIC.1.archived.md" in captured["artefacts_loaded"]
+    assert ".woof/epics/E71/definition/EPIC.1.findings.md" in captured["artefacts_loaded"]
+    # The node re-closes definition; the request clears and a fresh EPIC.md exists.
+    assert (directory / "EPIC.md").exists()
+    events = [json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines()]
+    assert events[-1]["event"] == "definition_closed"
+    assert transitions.definition_revision_requested(tmp_path, 71) is False
+
+
+def test_wf_resolve_revise_epic_contract_reenters_definition_from_plan_gate(tmp_path: Path) -> None:
+    directory = _write_spark(tmp_path, 73)
+    _write_discovery_synthesis(directory)
+    _write_minimal_epic(directory, 73)
+    _write_stage3_plan(directory, 73)
+    (directory / "PLAN.md").write_text(nodes._render_plan_markdown(nodes.load_plan(tmp_path, 73)))
+    _write_plan_critique(directory, "info")
+    (directory / "epic.jsonl").write_text(
+        "\n".join(
+            json.dumps({"event": event, "at": f"2026-01-01T00:00:0{i}Z", "epic_id": 73})
+            for i, event in enumerate(
+                ["definition_closed", "readiness_passed", "breakdown_planned", "plan_critiqued"]
+            )
+        )
+        + "\n"
+    )
+    (directory / "gate.md").write_text(
+        "---\n"
+        "type: plan_gate\n"
+        "stage: 4\n"
+        "story_id: null\n"
+        "triggered_by: [plan_review]\n"
+        "timestamp: '2026-01-01T00:00:03Z'\n"
+        "---\n"
+        "## Context\n\nPlan gate.\n\n"
+        "## Findings\n\n- The contract under-specifies O1.\n\n"
+        "## Primary position\n\nRevise the contract.\n\n"
+        "## Reviewer position\n\nReviewer agrees.\n"
+    )
+
+    rc = _resolve_gate(tmp_path, 73, "revise_epic_contract", cast(Tracker, _RecordingTracker()))
+
+    assert rc == 0
+    assert not (directory / "gate.md").exists()
+    # The prior EPIC.md is archived (not hand-editable in place) with its findings.
+    assert not (directory / "EPIC.md").exists()
+    archived = directory / "definition" / "EPIC.1.archived.md"
+    findings = directory / "definition" / "EPIC.1.findings.md"
+    assert archived.exists()
+    assert "under-specifies O1" in findings.read_text()
+    # The stale plan artefacts are cleared.
+    assert not (directory / "plan.json").exists()
+    assert not (directory / "PLAN.md").exists()
+    assert not (directory / "critique" / "plan.md").exists()
+    # The resolution is audited and re-enters definition rather than just deleting
+    # plan files.
+    events = [json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines()]
+    resolved = [e for e in events if e["event"] == "gate_resolved"]
+    assert resolved and resolved[-1]["decision"] == "revise_epic_contract"
+    assert transitions.definition_revision_requested(tmp_path, 73) is True
+    assert next_node(tmp_path, 73) == (NodeType.EPIC_DEFINITION, None)

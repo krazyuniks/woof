@@ -41,6 +41,41 @@ def epic_dir(repo_root: Path, epic_id: int) -> Path:
     return repo_root / ".woof" / "epics" / f"E{epic_id}"
 
 
+def epic_definition_dir(repo_root: Path, epic_id: int) -> Path:
+    """Directory holding archived epic contracts and their revision findings.
+
+    ``revise_epic_contract`` (E17 P5 / D-RC) archives the prior ``EPIC.md`` here as
+    ``EPIC.<n>.archived.md`` and snapshots the resolving gate's findings as
+    ``EPIC.<n>.findings.md`` before re-dispatching the definition node, so a
+    contract revision is evidence-driven and never silently overwrites the prior
+    contract.
+    """
+
+    return epic_dir(repo_root, epic_id) / "definition"
+
+
+def archived_epic_contract_path(repo_root: Path, epic_id: int, index: int) -> Path:
+    return epic_definition_dir(repo_root, epic_id) / f"EPIC.{index}.archived.md"
+
+
+def archived_epic_findings_path(repo_root: Path, epic_id: int, index: int) -> Path:
+    return epic_definition_dir(repo_root, epic_id) / f"EPIC.{index}.findings.md"
+
+
+def archived_epic_contracts(repo_root: Path, epic_id: int) -> list[tuple[int, Path]]:
+    """Return ``(index, path)`` for each archived epic contract, ascending by index."""
+
+    directory = epic_definition_dir(repo_root, epic_id)
+    if not directory.is_dir():
+        return []
+    archives: list[tuple[int, Path]] = []
+    for path in directory.glob("EPIC.*.archived.md"):
+        parts = path.name.split(".")
+        if len(parts) == 4 and parts[1].isdigit():
+            archives.append((int(parts[1]), path))
+    return sorted(archives)
+
+
 def discovery_synthesis_dir(repo_root: Path, epic_id: int) -> Path:
     return epic_dir(repo_root, epic_id) / "discovery" / "synthesis"
 
@@ -402,10 +437,14 @@ def next_node(repo_root: Path, epic_id: int) -> tuple[NodeType | NodeStatus | No
 
     plan_path = directory / "plan.json"
     if not plan_path.exists():
+        # A pending contract revision re-enters definition (E17 P5 / D-RC): the
+        # prior EPIC.md was archived to definition/EPIC.<n>.archived.md, so EPIC.md
+        # is absent and the definition node re-dispatches with the prior epic plus
+        # findings as declared inputs rather than re-validating an edited file.
+        if definition_revision_requested(repo_root, epic_id):
+            return NodeType.EPIC_DEFINITION, None
         if (directory / "EPIC.md").exists():
-            if epic_event_exists(
-                repo_root, epic_id, event="definition_closed"
-            ) and not definition_revision_requested(repo_root, epic_id):
+            if epic_event_exists(repo_root, epic_id, event="definition_closed"):
                 if readiness_satisfied(repo_root, epic_id):
                     return NodeType.BREAKDOWN_PLANNING, None
                 return NodeType.CONTRACT_READINESS, None

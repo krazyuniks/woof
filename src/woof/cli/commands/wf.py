@@ -33,6 +33,10 @@ from woof.graph.transitions import (
     StageStateError,
     append_epic_event,
     append_epic_event_once,
+    archived_epic_contract_path,
+    archived_epic_contracts,
+    archived_epic_findings_path,
+    epic_definition_dir,
     epic_dir,
     load_plan,
     mark_story_status,
@@ -154,6 +158,52 @@ def _abandon_epic(repo_root: Path, epic_id: int, tracker: Tracker) -> list[str]:
     return changed
 
 
+def _gate_body(gate_path: Path) -> str:
+    """Return the open gate's body (front matter stripped), or ``""`` if absent."""
+    try:
+        text = gate_path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    if text.startswith("---\n"):
+        end = text.find("\n---\n", 4)
+        if end >= 0:
+            text = text[end + len("\n---\n") :]
+    return text.strip()
+
+
+def _revise_epic_contract(repo_root: Path, epic_id: int) -> list[str]:
+    """Apply the shared revise_epic_contract archive effect (E17 P5 / D-RC).
+
+    Archive the prior ``EPIC.md`` to ``definition/EPIC.<n>.archived.md`` and snapshot
+    the resolving gate's findings to ``definition/EPIC.<n>.findings.md`` so the
+    re-dispatched definition node revises an evidence-backed contract instead of
+    silently overwriting a lost one. Moving ``EPIC.md`` out of place forces the
+    definition node to re-dispatch rather than re-validate an operator-edited file,
+    keeping hand-editing forbidden; the ``gate_resolved`` event ``_resolve_gate``
+    appends drives ``transitions.definition_revision_requested``, which re-enters
+    definition. revise_epic_contract is valid at the readiness and plan gates and
+    routes through this one path from both.
+    """
+
+    directory = epic_dir(repo_root, epic_id)
+    epic_path = directory / "EPIC.md"
+    changed: list[str] = []
+    if not epic_path.exists():
+        return changed
+    epic_definition_dir(repo_root, epic_id).mkdir(parents=True, exist_ok=True)
+    archives = archived_epic_contracts(repo_root, epic_id)
+    index = (archives[-1][0] + 1) if archives else 1
+    archived = archived_epic_contract_path(repo_root, epic_id, index)
+    epic_path.replace(archived)
+    changed.append(_display_path(repo_root, archived))
+    body = _gate_body(directory / "gate.md")
+    if body:
+        findings = archived_epic_findings_path(repo_root, epic_id, index)
+        findings.write_text(body + "\n", encoding="utf-8")
+        changed.append(_display_path(repo_root, findings))
+    return changed
+
+
 def _apply_gate_resolution_effects(
     repo_root: Path,
     epic_id: int,
@@ -189,17 +239,17 @@ def _apply_gate_resolution_effects(
         validate_decision("readiness_gate", decision)
         # abandon_epic already returned via the shared _abandon_epic path above,
         # so this branch handles only approve_with_reason and revise_epic_contract.
-        # Both resolve through the shared gate_resolved event machinery that
-        # _resolve_gate appends; this branch only validates the verb and applies
-        # any file effects (there are none yet at Stage 2.5).
-        #
-        # approve_with_reason: the readiness_gate_resolved event _resolve_gate
-        #   appends (decision=approve_with_reason, after the latest
-        #   definition_closed) satisfies transitions.readiness_satisfied, so the
-        #   unchanged contract advances to planning without re-running readiness.
-        # revise_epic_contract: the gate_resolved event drives Stage-2 re-entry
-        #   via transitions.definition_revision_requested (E17 P5 adds the
-        #   EPIC.md archive + definition re-dispatch inputs).
+        if decision == "revise_epic_contract":
+            # Archive the prior EPIC.md + readiness findings and re-enter definition
+            # (E17 P5 / D-RC). The gate_resolved event _resolve_gate appends drives
+            # transitions.definition_revision_requested, which routes next_node back
+            # to the definition node; the node re-dispatches with the prior epic +
+            # findings as declared inputs.
+            return _revise_epic_contract(repo_root, epic_id)
+        # approve_with_reason: no file effects at Stage 2.5. The readiness_gate_resolved
+        # event _resolve_gate appends (decision=approve_with_reason, after the latest
+        # definition_closed) satisfies transitions.readiness_satisfied, so the unchanged
+        # contract advances to planning without re-running readiness.
         return changed
 
     if gate_type == "plan_gate":
@@ -207,7 +257,21 @@ def _apply_gate_resolution_effects(
         if decision == "approve":
             tracker.push_plan_summary(epic_id)
             return changed
-        if decision in {"revise_plan", "revise_epic_contract"}:
+        if decision == "revise_epic_contract":
+            # Archive the prior EPIC.md + plan-gate findings and re-enter definition
+            # (E17 P5 / D-RC), then clear the now-stale plan artefacts the prior
+            # contract produced.
+            changed.extend(_revise_epic_contract(repo_root, epic_id))
+            changed.extend(
+                _remove_paths(
+                    repo_root,
+                    directory / "plan.json",
+                    directory / "PLAN.md",
+                    directory / "critique" / "plan.md",
+                )
+            )
+            return changed
+        if decision == "revise_plan":
             changed.extend(
                 _remove_paths(
                     repo_root,

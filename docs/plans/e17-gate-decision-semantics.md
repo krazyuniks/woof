@@ -149,7 +149,17 @@ in-commit `epic_completed` gate and `check_9`'s end-of-epic detection now treat
 `abandoned` as finished (a mixed done+abandoned epic stages its completion marker
 inside the final commit, and the end-of-epic review valve still fires when only
 abandoned stories remain), and the `retry_story` guard rejects any terminal status
-rather than `done` alone. Prompts 5-6 remain.
+rather than `done` alone. Prompt 5 (S5, D-RC settled) — `revise_epic_contract` is now
+a real channel at the plan and readiness gates: a shared `_revise_epic_contract`
+effect archives the prior `EPIC.md` to `definition/EPIC.<n>.archived.md` and snapshots
+the resolving gate's findings to `definition/EPIC.<n>.findings.md`, moving `EPIC.md`
+out of place so the definition node must re-dispatch (hand-editing stays forbidden);
+`transitions.next_node` routes a pending revision back to the definition node, which
+re-dispatches with the archived prior epic plus findings declared as `inputs` (a new
+`epic_definition_input` `prior_epic_path`/`revision_findings_path` pair in
+`planning-node-input.schema.json`) and loaded as artefacts; the plan-gate path still
+clears the now-stale plan artefacts while the readiness-gate path re-enters definition
+rather than just deleting plan files. Prompt 6 remains.
 
 | # | Prompt summary | Files touched | Tests | Review checkpoint |
 |---|---|---|---|---|

@@ -48,6 +48,9 @@ from woof.graph.transitions import (
     StageStateError,
     append_epic_event,
     append_epic_event_once,
+    archived_epic_contracts,
+    archived_epic_findings_path,
+    definition_revision_requested,
     discovery_bucket_complete,
     discovery_bucket_dir,
     discovery_synthesis_complete,
@@ -486,24 +489,57 @@ def _discovery_synthesis_artefacts(repo_root: Path, epic_id: int) -> list[str]:
     return _existing_prompt_artefacts(repo_root, [directory / "spark.md", *source_paths])
 
 
+def _epic_contract_revision_paths(repo_root: Path, epic_id: int) -> list[Path]:
+    """Return the prior epic (and its findings) feeding a pending contract revision.
+
+    Empty unless a ``revise_epic_contract`` resolution is awaiting re-definition
+    (E17 P5 / D-RC). When pending, the definition node re-dispatch declares these as
+    inputs and loads them as artefacts so the revision is evidence-driven; once the
+    node re-closes definition the request clears and this returns ``[]`` again. The
+    list is ``[prior_epic]`` or ``[prior_epic, findings]`` when the findings snapshot
+    exists.
+    """
+
+    if not definition_revision_requested(repo_root, epic_id):
+        return []
+    archives = archived_epic_contracts(repo_root, epic_id)
+    if not archives:
+        return []
+    index, archived = archives[-1]
+    paths = [archived]
+    findings = archived_epic_findings_path(repo_root, epic_id, index)
+    if findings.is_file():
+        paths.append(findings)
+    return paths
+
+
 def _epic_definition_payload(repo_root: Path, epic_id: int) -> dict:
     directory = epic_dir(repo_root, epic_id)
+    inputs: dict[str, str] = {
+        "synthesis_dir": _relpath(repo_root, discovery_synthesis_dir(repo_root, epic_id)),
+        "epic_path": _relpath(repo_root, directory / "EPIC.md"),
+    }
+    revision_paths = _epic_contract_revision_paths(repo_root, epic_id)
+    if revision_paths:
+        inputs["prior_epic_path"] = _relpath(repo_root, revision_paths[0])
+        if len(revision_paths) > 1:
+            inputs["revision_findings_path"] = _relpath(repo_root, revision_paths[1])
     return {
         "node_type": NodeType.EPIC_DEFINITION.value,
         "epic_id": epic_id,
         "repo_root": str(repo_root),
         "epic_dir": _relpath(repo_root, directory),
-        "inputs": {
-            "synthesis_dir": _relpath(repo_root, discovery_synthesis_dir(repo_root, epic_id)),
-            "epic_path": _relpath(repo_root, directory / "EPIC.md"),
-        },
+        "inputs": inputs,
     }
 
 
 def _epic_definition_artefacts(repo_root: Path, epic_id: int) -> list[str]:
     return _existing_prompt_artefacts(
         repo_root,
-        list(discovery_synthesis_paths(repo_root, epic_id).values()),
+        [
+            *discovery_synthesis_paths(repo_root, epic_id).values(),
+            *_epic_contract_revision_paths(repo_root, epic_id),
+        ],
     )
 
 

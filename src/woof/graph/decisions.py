@@ -15,8 +15,12 @@ The ``tracker_sync_conflict`` row mirrors the tracker layer's
 
 P1 was consolidation only. E17 P2 (D-RA) adds the ``readiness_gate`` row and its
 ``approve_with_reason`` verb (the E3 unblocker); E17 P3 (S3) adds ``retry_story``
-to the story/review rows. The abandoned and deeper revise-epic-contract effects
-land in later E17 prompts.
+to the story/review rows; E17 P4 (D-AB) deepens the ``abandon_story``/``abandon_epic``
+effects to the ``abandoned`` terminal status; E17 P5 (D-RC) makes
+``revise_epic_contract`` a real channel for the plan and readiness gates (archive the
+prior ``EPIC.md`` and re-dispatch definition with the prior epic plus findings as
+declared inputs). The effect tags here are unchanged by P4/P5; the verb-to-gate
+mapping is already complete.
 """
 
 from __future__ import annotations

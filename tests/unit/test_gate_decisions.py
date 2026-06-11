@@ -650,3 +650,128 @@ def test_resolve_gate_retry_story_on_done_story_keeps_gate(tmp_path: Path) -> No
     ]
     assert not any(e["event"] == "story_retried" for e in events)
     assert not any(e["event"] in {"gate_resolved", "review_gate_resolved"} for e in events)
+
+
+# --- revise_epic_contract archives the prior contract (E17 P5 / D-RC) ----------
+
+
+def _write_epic_md(directory: Path, epic_id: int) -> Path:
+    epic_path = directory / "EPIC.md"
+    epic_path.write_text(
+        f"---\nepic_id: {epic_id}\ntitle: prior contract\n---\n\nThe prior contract body.\n",
+        encoding="utf-8",
+    )
+    return epic_path
+
+
+def test_plan_gate_revise_epic_contract_archives_and_clears_plan(tmp_path: Path) -> None:
+    # The plan-gate revise_epic_contract channel archives the prior EPIC.md to
+    # definition/EPIC.1.archived.md, snapshots the gate findings, and still clears
+    # the now-stale plan artefacts.
+    directory = _write_epic(tmp_path, 70)
+    epic_path = _write_epic_md(directory, 70)
+    (directory / "PLAN.md").write_text("# Plan\n")
+    critique = directory / "critique" / "plan.md"
+    critique.parent.mkdir()
+    critique.write_text("---\ntarget: plan\n---\nbody\n")
+    (directory / "gate.md").write_text(
+        "---\ntype: plan_gate\nstory_id: null\ntriggered_by:\n- plan_review\n---\n\n"
+        "## Findings\n\n- The contract under-specifies O1.\n",
+        encoding="utf-8",
+    )
+    tracker = _RecordingTracker(directory)
+
+    changed = _apply_gate_resolution_effects(
+        tmp_path,
+        70,
+        decision="revise_epic_contract",
+        gate_type="plan_gate",
+        story_id=None,
+        triggered_by=["plan_review"],
+        tracker=cast(Tracker, tracker),
+    )
+
+    # Hand-editing stays forbidden: the prior EPIC.md is moved out of place (so the
+    # definition node must re-dispatch) and archived under definition/.
+    assert not epic_path.exists()
+    archived = directory / "definition" / "EPIC.1.archived.md"
+    assert archived.exists()
+    assert "prior contract body" in archived.read_text()
+    findings = directory / "definition" / "EPIC.1.findings.md"
+    assert findings.exists()
+    assert "under-specifies O1" in findings.read_text()
+    # The stale plan artefacts are cleared.
+    assert not (directory / "plan.json").exists()
+    assert not (directory / "PLAN.md").exists()
+    assert not critique.exists()
+    # Every effect is reported as a changed path.
+    assert any("definition/EPIC.1.archived.md" in path for path in changed)
+    assert any("definition/EPIC.1.findings.md" in path for path in changed)
+    assert any("plan.json" in path for path in changed)
+    assert tracker.pushed == []  # contract revision touches no tracker method
+
+
+def test_readiness_gate_revise_epic_contract_archives_prior_contract(tmp_path: Path) -> None:
+    # The readiness-gate revise_epic_contract channel archives the prior EPIC.md and
+    # snapshots the readiness findings; there is no plan to clear pre-planning.
+    directory = _write_epic(tmp_path, 71)
+    epic_path = _write_epic_md(directory, 71)
+    (directory / "readiness-result.json").write_text(json.dumps({"ok": False}))
+    (directory / "gate.md").write_text(
+        "---\ntype: readiness_gate\nstory_id: null\ntriggered_by:\n- readiness_unready\n---\n\n"
+        "## Findings\n\n- O1 lacks a machine-checkable signal.\n",
+        encoding="utf-8",
+    )
+    tracker = _RecordingTracker(directory)
+
+    changed = _apply_gate_resolution_effects(
+        tmp_path,
+        71,
+        decision="revise_epic_contract",
+        gate_type="readiness_gate",
+        story_id=None,
+        triggered_by=["readiness_unready"],
+        tracker=cast(Tracker, tracker),
+    )
+
+    assert not epic_path.exists()
+    archived = directory / "definition" / "EPIC.1.archived.md"
+    findings = directory / "definition" / "EPIC.1.findings.md"
+    assert archived.exists()
+    assert findings.exists()
+    assert "machine-checkable signal" in findings.read_text()
+    # The persistent readiness result is left in place; only EPIC.md is archived.
+    assert (directory / "readiness-result.json").exists()
+    assert any("definition/EPIC.1.archived.md" in path for path in changed)
+    assert any("definition/EPIC.1.findings.md" in path for path in changed)
+    assert tracker.pushed == []
+
+
+def test_revise_epic_contract_increments_archive_index(tmp_path: Path) -> None:
+    # A second revision archives to definition/EPIC.2.archived.md, never clobbering
+    # the first archived contract.
+    directory = _write_epic(tmp_path, 72)
+    archived_dir = directory / "definition"
+    archived_dir.mkdir()
+    (archived_dir / "EPIC.1.archived.md").write_text("first archive\n")
+    _write_epic_md(directory, 72)
+    (directory / "gate.md").write_text(
+        "---\ntype: readiness_gate\nstory_id: null\ntriggered_by:\n- readiness_unready\n---\n\n"
+        "## Findings\n\n- second pass.\n",
+        encoding="utf-8",
+    )
+    tracker = _RecordingTracker(directory)
+
+    _apply_gate_resolution_effects(
+        tmp_path,
+        72,
+        decision="revise_epic_contract",
+        gate_type="readiness_gate",
+        story_id=None,
+        triggered_by=["readiness_unready"],
+        tracker=cast(Tracker, tracker),
+    )
+
+    assert (archived_dir / "EPIC.1.archived.md").read_text() == "first archive\n"
+    assert (archived_dir / "EPIC.2.archived.md").exists()
+    assert "prior contract body" in (archived_dir / "EPIC.2.archived.md").read_text()

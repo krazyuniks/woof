@@ -234,6 +234,22 @@ def _apply_gate_resolution_effects(
                     "retry_story requires a targeted story, but the open "
                     f"{gate_type} carries no story_id"
                 )
+            # retry_story recovers a crashed or aborted executor; a story already
+            # marked done is out of that domain (a crashed executor never reaches
+            # done). Resetting it to pending here would strand the prior
+            # story_completed event in the audit log - append_epic_event_once would
+            # dedupe the rerun's re-emitted completion - so the timeline would show
+            # the story completing before the retry and never for the rerun. Reject
+            # it before any mutation; post-completion recovery semantics belong to
+            # E18's completion-event reconciliation, not this verb.
+            plan = load_plan(repo_root, epic_id)
+            target_story = next((s for s in plan.stories if s.id == story_id), None)
+            if target_story is not None and target_story.status == "done":
+                raise StageStateError(
+                    f"retry_story targets {story_id}, but it is already done; "
+                    "retry_story resets crashed or aborted executors, not "
+                    "completed stories"
+                )
             # A crashed or aborted executor: reset the story to pending and clear
             # its per-story executor/check/critique/disposition artefacts so
             # next_node re-dispatches it cleanly. Sibling stories and their

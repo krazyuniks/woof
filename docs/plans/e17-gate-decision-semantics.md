@@ -121,7 +121,11 @@ story/review-gate verb: `_apply_gate_resolution_effects` resets the story to
 `executor_result.json`, and critique/disposition artefacts, and appends an audited
 `story_retried` event (added to the `decisions.py` story/review rows, the
 `GateDecision` literal, and the `jsonl-events` decision/event enums), so `next_node`
-re-dispatches the crashed story without touching its siblings. Prompts 4-6 remain.
+re-dispatches the crashed story without touching its siblings; the verb is guarded
+to its domain, rejecting both a story-less gate and an already-`done` story with a
+structured error (it resets crashed/aborted executors, never completed stories, so
+it cannot strand a `story_completed` event), with post-completion completion-event
+reconciliation deferred to E18. Prompts 4-6 remain.
 
 | # | Prompt summary | Files touched | Tests | Review checkpoint |
 |---|---|---|---|---|

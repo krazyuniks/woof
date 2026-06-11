@@ -357,9 +357,9 @@ Finish making architecture and operator docs state-honest. The rollout-note mark
 Open work:
 - Purge ADR-005-era playbook prose ("through `woof graph next-node`", "the skill performs the producer dispatch") and consumer-unresolvable schema paths from the critique, planning, and discovery playbooks and READMEs.
 - Document known limits in the architecture: Check 1 validates the worktree, not the committed tree; Check 2 proves assertion-text presence, not executed assertion identity.
-- After E17 lands: finish the verb-table reconciliation — write story gates as `stage: 5` with legacy `stage: 6` read-tolerated (the schema/code migration rides E17), replace the interim "target decisions"/"current limitation" wording in section 10, `SKILL.md`, and `references/gates.md` with the settled table, and re-check section 3, section 10, and schema agreement.
+- Now that E17 has settled the verb table: finish the verb-table reconciliation — write story gates as `stage: 5` with legacy `stage: 6` read-tolerated (this schema/code migration is E23's own work, explicitly deferred out of E17), and re-check section 3, section 10, and schema agreement. E17 P6 already replaced the "current limitation" wording in `SKILL.md` and `references/gates.md` with the settled table; section 10's deeper prose reconciliation remains.
 
-Depends on: E17 for the final verb table. Mostly docs; the story-gate schema migration rides E17.
+Depends on: E17 for the final verb table (now settled). Mostly docs; the story-gate `stage: 5` schema migration is E23's own work, explicitly deferred out of E17.
 
 ## Settled Choices
 

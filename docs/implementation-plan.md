@@ -16,22 +16,21 @@ Do not use this document to preserve speculative architecture. If a direction is
 E2 Contract readiness and run resilience   (active)
   + E16 Defect sweep              (immediate; batch with E2 where files overlap)
 
-Hard ordering constraints (a DAG, not one chain - E17, E20, E19, and E21 S1-S3 are
+Hard ordering constraints (a DAG, not one chain - E20, E19, and E21 S1-S3 are
 mutually independent):
-  E17 readiness-resolution slice   -> before E3
+  E17 readiness-resolution slice   -> complete (E3's readiness dependency satisfied)
   E20, E19, E21 S1-S3              -> before E5
-  E17 + E18 + E22 complete         -> before the first unattended overnight run
+  E18 + E22 complete               -> before the first unattended overnight run (E17 done)
 
 Eval line:
 E3 Specwright bootstrap -> E4 Eval instrumentation -> E5 Baseline eval run
 
-Recommended single-operator order: E17 -> E20 -> E19 -> E21 S1-S3 -> E3 -> E4 -> E5.
+Recommended single-operator order (E17 complete): E20 -> E19 -> E21 S1-S3 -> E3 -> E4 -> E5.
 E19's Woof self-onboarding rehearses E3's mapper flow, and a post-E20/E19 bootstrap
 smoke run exercises the production shape. Preference, not dependency.
 
-Unattended-safety set (sequence within the set is free):
-E17 Gate decision semantics, E18 Artefact integrity and commit boundary,
-E22 Runner seam hardening
+Unattended-safety set (sequence within the set is free; E17 complete):
+E18 Artefact integrity and commit boundary, E22 Runner seam hardening
 
 Post-baseline optimisation chain:
 E12 Structural cartography index

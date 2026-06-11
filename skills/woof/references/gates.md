@@ -36,7 +36,7 @@ verb has an implemented effect that moves the graph, and a conformance test fail
 What each does:
 
 - `approve`: accept the work and let the graph continue.
-- `approve_with_reason`: record an audited readiness approval (with the operator's reason) so an unready-but-accepted contract advances to planning without re-gating. Readiness gate only.
+- `approve_with_reason`: record an audited readiness approval so an unready-but-accepted contract advances to planning without re-gating. The audited record is the approval decision itself; no separate operator reason is captured (the `--note` channel is deferred). Readiness gate only.
 - `retry_story`: reset a crashed or aborted story to `pending` and clear its executor, check, and critique artefacts so the graph re-dispatches it cleanly without redoing its siblings. Story / review gate only.
 - `revise_epic_contract`: archive the prior `EPIC.md` to `definition/EPIC.<n>.archived.md`, snapshot the gate findings, and re-enter Stage 2 Definition with the prior epic plus findings as inputs. Hand-editing the contract stays forbidden.
 - `revise_plan`: discard the plan and re-run Breakdown.

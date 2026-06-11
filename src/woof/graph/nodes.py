@@ -1078,7 +1078,9 @@ def epic_definition_node(inp: NodeInput) -> NodeOutput:
             )
 
     if not epic_path.exists():
-        if not discovery_synthesis_complete(inp.repo_root, inp.epic_id):
+        if not discovery_synthesis_complete(
+            inp.repo_root, inp.epic_id
+        ) and not definition_revision_requested(inp.repo_root, inp.epic_id):
             missing = _missing_discovery_outputs(inp.repo_root, inp.epic_id)
             return _planning_halt(
                 inp,

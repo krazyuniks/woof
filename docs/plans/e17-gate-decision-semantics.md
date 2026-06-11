@@ -159,7 +159,10 @@ re-dispatches with the archived prior epic plus findings declared as `inputs` (a
 `epic_definition_input` `prior_epic_path`/`revision_findings_path` pair in
 `planning-node-input.schema.json`) and loaded as artefacts; the plan-gate path still
 clears the now-stale plan artefacts while the readiness-gate path re-enters definition
-rather than just deleting plan files. Prompt 6 remains.
+rather than just deleting plan files; a pending revision dispatches even when discovery
+synthesis was never produced (a cold-start tracker epic whose only contract was the
+archived `EPIC.md`), so the missing-synthesis precondition no longer strands it, while
+the non-revision cold-discovery halt is preserved. Prompt 6 remains.
 
 | # | Prompt summary | Files touched | Tests | Review checkpoint |
 |---|---|---|---|---|

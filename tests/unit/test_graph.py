@@ -3516,6 +3516,70 @@ def test_epic_definition_node_redispatches_revision_with_prior_contract_and_find
     assert transitions.definition_revision_requested(tmp_path, 71) is False
 
 
+def test_epic_definition_node_redispatches_cold_start_revision_without_synthesis(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # A cold-start tracker epic: EPIC.md was authored directly with no
+    # discovery/synthesis/*, so a pending revision archives the only contract and
+    # leaves no synthesis inputs behind.
+    directory = _write_spark(tmp_path, 72)
+    _seed_pending_contract_revision(directory, 72)
+    assert not nodes.discovery_synthesis_complete(tmp_path, 72)
+    captured: dict[str, Any] = {}
+
+    def fake_dispatch(
+        repo_root: Path,
+        role: str,
+        epic_id: int,
+        story_id: str | None,
+        prompt: str,
+        artefacts_loaded: list[str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        captured["prompt"] = prompt
+        captured["artefacts_loaded"] = artefacts_loaded
+        _write_minimal_epic(directory, epic_id)
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setattr(nodes, "_run_dispatch", fake_dispatch)
+
+    assert not (directory / "EPIC.md").exists()
+    assert next_node(tmp_path, 72) == (NodeType.EPIC_DEFINITION, None)
+
+    output = nodes.epic_definition_node(
+        NodeInput(node_type=NodeType.EPIC_DEFINITION, epic_id=72, repo_root=tmp_path)
+    )
+
+    # The pending revision dispatches from the archived contract + findings instead
+    # of halting on the absent (never-produced) synthesis inputs.
+    assert output.status == NodeStatus.COMPLETED, output.message
+    assert "synthesis inputs are missing" not in (output.message or "")
+    assert "prompt" in captured, "dispatch did not run; the node halted on missing synthesis"
+    assert (
+        '"prior_epic_path": ".woof/epics/E72/definition/EPIC.1.archived.md"' in captured["prompt"]
+    )
+    assert (
+        '"revision_findings_path": ".woof/epics/E72/definition/EPIC.1.findings.md"'
+        in captured["prompt"]
+    )
+    assert ".woof/epics/E72/definition/EPIC.1.archived.md" in captured["artefacts_loaded"]
+    assert ".woof/epics/E72/definition/EPIC.1.findings.md" in captured["artefacts_loaded"]
+    assert transitions.definition_revision_requested(tmp_path, 72) is False
+
+
+def test_epic_definition_node_halts_cold_discovery_without_revision(tmp_path: Path) -> None:
+    # Regression: a genuine cold-discovery epic that has not produced synthesis and
+    # has NO pending revision still halts on the missing-synthesis precondition.
+    _write_spark(tmp_path, 74)
+
+    output = nodes.epic_definition_node(
+        NodeInput(node_type=NodeType.EPIC_DEFINITION, epic_id=74, repo_root=tmp_path)
+    )
+
+    assert output.status == NodeStatus.HALTED
+    assert output.triggered_by == ["incomplete_stage_state"]
+    assert "Required Stage-2 synthesis inputs are missing" in output.message
+
+
 def test_wf_resolve_revise_epic_contract_reenters_definition_from_plan_gate(tmp_path: Path) -> None:
     directory = _write_spark(tmp_path, 73)
     _write_discovery_synthesis(directory)

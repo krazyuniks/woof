@@ -156,6 +156,76 @@ def test_retried_boundary_re_arms_valve(tmp_path: Path) -> None:
     assert "S2/F2: Fresh finding after retry" in (outcome.evidence or "")
 
 
+def test_retried_boundary_keeps_prior_sibling_gated_when_clean(tmp_path: Path) -> None:
+    _write_agents(tmp_path, every_n=2, end_of_epic=False)
+    ctx = _ctx(tmp_path, [_story("S1", "done"), _story("S2", "in_progress")])
+    # The S2 review gate bundled S1's minor finding. retry_story on S2 reset S2
+    # and deleted its critique; the retried run produced a clean S2 critique. The
+    # already-gated S1 finding must not re-open a gate now that S2 has nothing new.
+    _write_critique(
+        ctx.epic_dir,
+        "S1",
+        [{"id": "F1", "severity": "minor", "summary": "Already gated at the S2 review"}],
+    )
+    _write_critique(ctx.epic_dir, "S2", [])
+    ctx.epic_dir.joinpath("epic.jsonl").write_text(
+        json.dumps(
+            {
+                "event": "review_gate_opened",
+                "story_id": "S2",
+                "triggered_by": ["check_9_review_valve"],
+            }
+        )
+        + "\n"
+        + json.dumps({"event": "story_retried", "story_id": "S2"})
+        + "\n"
+    )
+
+    outcome = check_9_review_valve_runner(ctx)
+
+    assert outcome.ok
+    assert outcome.severity == "info"
+    assert "no minor critique findings" in outcome.summary
+
+
+def test_retried_boundary_gates_only_fresh_finding(tmp_path: Path) -> None:
+    _write_agents(tmp_path, every_n=2, end_of_epic=False)
+    ctx = _ctx(tmp_path, [_story("S1", "done"), _story("S2", "in_progress")])
+    # Same setup as above, but the retried S2 critique surfaces a new minor
+    # finding. The new gate must carry only that fresh finding, not the S1 finding
+    # that was already bundled into the previous review gate.
+    _write_critique(
+        ctx.epic_dir,
+        "S1",
+        [{"id": "F1", "severity": "minor", "summary": "Already gated at the S2 review"}],
+    )
+    _write_critique(
+        ctx.epic_dir,
+        "S2",
+        [{"id": "F3", "severity": "minor", "summary": "New issue from the retried run"}],
+    )
+    ctx.epic_dir.joinpath("epic.jsonl").write_text(
+        json.dumps(
+            {
+                "event": "review_gate_opened",
+                "story_id": "S2",
+                "triggered_by": ["check_9_review_valve"],
+            }
+        )
+        + "\n"
+        + json.dumps({"event": "story_retried", "story_id": "S2"})
+        + "\n"
+    )
+
+    outcome = check_9_review_valve_runner(ctx)
+
+    assert not outcome.ok
+    assert outcome.severity == "minor"
+    assert "S2/F3: New issue from the retried run" in (outcome.evidence or "")
+    assert "F1" not in (outcome.evidence or "")
+    assert "S1" not in (outcome.evidence or "")
+
+
 def test_check_9_gate_is_written_as_review_gate(tmp_path: Path) -> None:
     epic_dir = tmp_path / ".woof" / "epics" / "E1"
     epic_dir.mkdir(parents=True)

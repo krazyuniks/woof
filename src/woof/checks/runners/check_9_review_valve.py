@@ -229,11 +229,16 @@ def _last_review_boundary_index(epic_jsonl: Path, story_ids: list[str]) -> int:
         return -1
 
     index_by_story = {story_id: index for index, story_id in enumerate(story_ids)}
-    # Replay the audit log in order: a review gate arms its boundary, and a later
-    # story_retried at the same boundary re-arms it (the earlier gate no longer
-    # suppresses the valve, so the retried story's fresh critique can open a new
-    # one). Tracking armed boundaries per story rather than a running max keeps
-    # this generalisable to other re-arming markers.
+    # Replay the audit log in order. A review gate at story K bundles every minor
+    # finding from the previous boundary through K, so it arms the boundary at K.
+    # A later story_retried at K re-arms only that story by event order: its fresh
+    # critique (recorded after the retry, on a file the retry deleted) must be able
+    # to open a new gate, while the earlier siblings already bundled into the prior
+    # gate stay suppressed. So a retry lowers K's armed boundary to K-1 rather than
+    # discarding it (which would drop the boundary below the siblings and re-surface
+    # their already-gated findings). Tracking armed boundaries per story rather than
+    # a running max keeps a still-armed later gate from being clobbered by an
+    # earlier-story retry.
     gated_index_by_story: dict[str, int] = {}
     for line in epic_jsonl.read_text().splitlines():
         if not line.strip():
@@ -248,8 +253,11 @@ def _last_review_boundary_index(epic_jsonl: Path, story_ids: list[str]) -> int:
         event_name = event.get("event")
         if event_name == "review_gate_opened" and CHECK_ID in event.get("triggered_by", []):
             gated_index_by_story[story_id] = index_by_story[story_id]
-        elif event_name == "story_retried":
-            gated_index_by_story.pop(story_id, None)
+        elif event_name == "story_retried" and story_id in gated_index_by_story:
+            # Re-arm only the retried story: keep the siblings gated through the
+            # index just before it. (No-op when the story was never review-gated,
+            # e.g. a story_gate retried before any review valve fired.)
+            gated_index_by_story[story_id] = index_by_story[story_id] - 1
     return max(gated_index_by_story.values(), default=-1)
 
 

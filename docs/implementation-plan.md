@@ -60,7 +60,7 @@ E2 remains the active hardening line for readiness, blocker evidence, quality-ga
 
 E17, E18, and E22 are the unattended-safety gate. They may overlap the eval chain if the baseline is needed sooner, but no overnight unattended run should happen until gate semantics, artefact integrity, and runner seam hardening are complete.
 
-After E5, the next planned optimisation pivot is structural cartography. E12 builds the ADR-009 local files/symbols/edges index using tree-sitter as the V1 extraction substrate, with Python `ast` only as a fallback behind the same adapter boundary. E13 uses that index first in the Stage-5 reviewer path as bounded impact context. E6 then runs with structural evidence available for conformance checks, rather than trying to infer callers and affected surfaces from prose alone.
+After E5, the next planned optimisation pivot is structural cartography. E12 builds the ADR-009 local files/symbols/edges index using tree-sitter as the required V1 extraction substrate. Python `ast` is not a generation fallback; missing tree-sitter is an infrastructure failure. E13 uses that index first in the Stage-5 reviewer path as bounded impact context. E6 then runs with structural evidence available for conformance checks, rather than trying to infer callers and affected surfaces from prose alone.
 
 E8 threads run lineage; E9 builds producer-output recovery on top of lineage and completed E7 process supervision; E10 swaps the hand-rolled plan-DAG check for graph-library algorithms and is independent of E8/E9. E11 captures the MP engineering review imports; its P0.1/P0.2 items may be batched into active prompts when they touch the same files, but P0.3 starts only after the readiness and structural-cartography paths are stable and P0.4 is a lower-priority review item. E14 and E15 carry the remaining code-mapping research recommendations - ranking/semantic retrieval and onboarding/mapper grounding - and should start only after E12/E13 produce measured value or E5 shows they are the stronger bottleneck.
 
@@ -134,7 +134,7 @@ Current decisions are already recorded in the backlog's Settled Choices. The seq
 | Runner state mutates outside the workflow lock | E22 makes reset/resolve share the runner lock and derives observe from the same next-node logic. |
 | tmux grows into a second workflow | tmux may supervise panes, logs, and child processes only. State still changes through Woof commands. |
 | Eval result shows a different bottleneck than expected | Use the E5 manifest to choose the next optimisation; do not pre-commit to context-scoping changes. |
-| Tree-sitter and `ast` grow into two parser paths | E12 uses tree-sitter as V1 and keeps `ast` only as an adapter-compatible fallback. |
+| Tree-sitter and `ast` grow into two parser paths | E12 uses tree-sitter only. Missing tree-sitter fails infrastructure checks instead of generating an alternate `ast` index. |
 | Structural index looks precise but is heuristic | Store provenance/confidence on every edge; prompts and gates treat heuristic/ambiguous edges as leads requiring source evidence. |
 | Structural cartography becomes a parallel graph surface | Only `woof cartography` reads the index. It does not mutate workflow state, expose MCP, or create a `woof graph` API. |
 | MP comparison imports expand into a second skill suite | Keep imports inside `/woof`, `/woof:brainstorm`, playbooks, schemas, and deterministic checks. Do not add parallel tracker or split-skill surfaces. |

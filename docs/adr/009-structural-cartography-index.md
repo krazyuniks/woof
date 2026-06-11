@@ -28,9 +28,11 @@ useful transfer is a local, deterministic, queryable structural artefact that th
 Python engine can regenerate and read.
 
 The 2026-06-07 spike and `docs/research/code-mapping-landscape.md` settled the
-V1 extraction direction: tree-sitter is the primary substrate. Python `ast` remains
-available only as an adapter-compatible fallback when the tree-sitter substrate is
-unavailable, not as a co-equal first path.
+V1 extraction direction: tree-sitter is the required substrate. The spike showed
+that Python `ast` can produce equivalent Python output, but Woof controls its
+operator environment and already treats declared language tooling as explicit
+infrastructure. Structural cartography therefore has no Python `ast` generation
+fallback.
 
 ## Decision
 
@@ -47,7 +49,7 @@ The index is:
 - **Queryable, not authoritative orchestration.** The index informs prompt context,
   readiness checks, reviewer evidence, and audits. It does not choose graph successors
   or mutate epic state.
-- **Advisory where static analysis is uncertain.** Tree-sitter or AST facts can be
+- **Advisory where static analysis is uncertain.** Tree-sitter facts can be
   deterministic, but cross-file call resolution in dynamic languages is not complete.
   Edges carry provenance/confidence such as `EXTRACTED`, `HEURISTIC`, and `AMBIGUOUS`.
   Confidence never becomes gate logic by itself.
@@ -73,10 +75,11 @@ the module and qualified name are unchanged.
 
 ### Scope
 
-V1 is Python-first in language scope so Woof can dogfood on itself, but the extractor
-substrate is tree-sitter-first. If a local environment cannot supply the tree-sitter
-substrate, the implementation may fall back to Python `ast` behind the same adapter
-boundary; that fallback must not become a second parser/indexer path.
+V1 is Python-first in language scope so Woof can dogfood on itself, and the extractor
+substrate is tree-sitter. If a local environment cannot supply tree-sitter and the
+declared grammar, structural cartography fails preflight or refresh rather than
+generating an alternate Python `ast` index. The implementation may keep an internal
+adapter boundary for future languages, but there is no second parser/indexer path.
 
 V1 targets:
 

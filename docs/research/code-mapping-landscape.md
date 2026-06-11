@@ -36,7 +36,7 @@ ADR-009 records the accepted direction. It is strictly additive to ADR-004 (it e
 `woof`, do not vendor a TS tool or stand up a second operator surface). The first cut is scoped
 to Python so Woof can dogfood on itself. It starts with a tree-sitter/parser work audit because
 there may be concurrent extraction work in flight; if no reusable substrate has landed, the
-implementation can begin with a Python `ast` extractor behind the same adapter boundary.
+implementation still builds the tree-sitter path rather than adding a Python `ast` fallback.
 
 ## The gap, precisely (provenance)
 
@@ -166,7 +166,9 @@ Pre-build spikes on Woof's own source confirmed the plan empirically; see
 
 - Extractor: tree-sitter and stdlib `ast` produce identical Python output (symbol Jaccard
   1.0, identical call resolution), tree-sitter marginally faster at ~30 LOC more. tree-sitter
-  is the v1 mechanism (Python-only, additive via `languages/*.toml`); `ast` is a safe fallback.
+  is the v1 mechanism (Python-only, additive via `languages/*.toml`). Python `ast` is not a
+  generation fallback because Woof controls the operator environment and treats missing
+  tree-sitter as an infrastructure failure.
 - Storage: FTS5 ships in stdlib `sqlite3`; a 17.4k-LOC repo indexes to a 660 KiB db; all
   queries (callers/callees/impact via recursive CTE, search via FTS5) run in microseconds.
   SQLite confirmed; JSONL's only edge (diff-friendliness) is moot for a gitignored artefact.

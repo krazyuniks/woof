@@ -31,6 +31,17 @@
       "additionalProperties": { "$ref": "#/$defs/model_profile" },
       "description": "Named route overlays. Operators can run the same graph with a different model/effort profile by setting WOOF_MODEL_PROFILE or the benchmark harness --model-profile flag."
     },
+    "routes": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Per-node-group role overlays. Each group (discovery, definition, planning, execution) may declare primary and/or reviewer entries that override the base [roles.*] defaults for dispatches in that group. Undeclared groups fall through to base role defaults.",
+      "properties": {
+        "discovery": { "$ref": "#/$defs/node_group_routes" },
+        "definition": { "$ref": "#/$defs/node_group_routes" },
+        "planning": { "$ref": "#/$defs/node_group_routes" },
+        "execution": { "$ref": "#/$defs/node_group_routes" }
+      }
+    },
     "timeouts": {
       "type": "object",
       "additionalProperties": false,
@@ -127,7 +138,36 @@
             "critiquer": { "$ref": "#/$defs/profile_role" }
           },
           "description": "Role-specific overrides applied after the base [roles.*] route resolves. Semantic primary/reviewer keys are preferred; legacy keys are accepted for migration."
+        },
+        "routes": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Per-node-group profile role overrides. Applied on top of the resolved base route for the group.",
+          "properties": {
+            "discovery": { "$ref": "#/$defs/node_group_profile_routes" },
+            "definition": { "$ref": "#/$defs/node_group_profile_routes" },
+            "planning": { "$ref": "#/$defs/node_group_profile_routes" },
+            "execution": { "$ref": "#/$defs/node_group_profile_routes" }
+          }
         }
+      }
+    },
+    "node_group_routes": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Role overrides for a single node group. Each declared role overrides the corresponding [roles.*] default for dispatches carrying this route_key.",
+      "properties": {
+        "primary": { "$ref": "#/$defs/dispatchable_role" },
+        "reviewer": { "$ref": "#/$defs/dispatchable_role" }
+      }
+    },
+    "node_group_profile_routes": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Per-node-group profile role overrides for a single node group. Each declared role refines the resolved base route model, effort, flags, and MCP for dispatches carrying this route_key.",
+      "properties": {
+        "primary": { "$ref": "#/$defs/profile_role" },
+        "reviewer": { "$ref": "#/$defs/profile_role" }
       }
     },
     "profile_role": {

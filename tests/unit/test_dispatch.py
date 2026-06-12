@@ -261,6 +261,183 @@ default_minutes = 15
     assert "claude-sonnet-4-6" in payload["argv"]
 
 
+# ---------------------------------------------------------------------------
+# per-node-group route overlays (E20)
+# ---------------------------------------------------------------------------
+
+
+_ROUTES_AGENTS_TOML = """\
+[roles.primary]
+adapter = "codex"
+
+[roles.reviewer]
+adapter = "claude"
+
+[routes.execution.primary]
+adapter = "claude"
+
+[timeouts]
+default_minutes = 15
+"""
+
+
+def test_route_key_group_override_flips_adapter(woof_project: Path) -> None:
+    """A declared [routes.<group>.<role>] override wins over the base [roles.*] adapter."""
+    (woof_project / ".woof" / "agents.toml").write_text(_ROUTES_AGENTS_TOML)
+
+    proc = run_dispatch(
+        woof_project,
+        "--role",
+        "primary",
+        "--epic",
+        "1",
+        "--route-key",
+        "execution",
+        "--dry-run",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    assert payload["adapter"] == "claude"
+    assert payload["route_key"] == "execution"
+    assert payload["argv"][0] == "claude"
+
+
+def test_route_key_falls_back_to_base_role_when_group_undeclared(woof_project: Path) -> None:
+    """An undeclared group falls through to the base role, but still records route_key."""
+    (woof_project / ".woof" / "agents.toml").write_text(_ROUTES_AGENTS_TOML)
+
+    proc = run_dispatch(
+        woof_project,
+        "--role",
+        "primary",
+        "--epic",
+        "1",
+        "--route-key",
+        "discovery",
+        "--dry-run",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    assert payload["adapter"] == "codex"
+    assert payload["route_key"] == "discovery"
+    assert payload["argv"][0] == "codex"
+
+
+def test_profile_overlay_composes_with_group_route_override(woof_project: Path) -> None:
+    """A profile group entry refines model/effort on top of the resolved group adapter.
+
+    The effort ``max`` is only valid for the claude adapter; codex would raise. A
+    returncode of 0 with effort ``max`` proves the profile overlay read the
+    route-overridden adapter, not the base [roles.primary] codex adapter.
+    """
+    (woof_project / ".woof" / "agents.toml").write_text("""\
+model_profile = "default"
+
+[roles.primary]
+adapter = "codex"
+
+[roles.reviewer]
+adapter = "claude"
+
+[routes.execution.primary]
+adapter = "claude"
+
+[model_profiles.default.roles.reviewer]
+model = "claude-opus-4-7"
+
+[model_profiles.default.routes.execution.primary]
+model = "claude-opus-4-8"
+effort = "max"
+
+[timeouts]
+default_minutes = 15
+""")
+
+    proc = run_dispatch(
+        woof_project,
+        "--role",
+        "primary",
+        "--epic",
+        "1",
+        "--route-key",
+        "execution",
+        "--dry-run",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    assert payload["adapter"] == "claude"
+    assert payload["model"] == "claude-opus-4-8"
+    assert payload["effort"] == "max"
+    assert payload["route_key"] == "execution"
+    assert "--effort" in payload["argv"]
+    assert "max" in payload["argv"]
+
+
+def test_profile_group_entry_beats_profile_roles_entry(woof_project: Path) -> None:
+    """For a route_key dispatch, profile.routes.<group>.<role> wins over profile.roles.<role>."""
+    (woof_project / ".woof" / "agents.toml").write_text("""\
+model_profile = "foo"
+
+[roles.primary]
+adapter = "codex"
+
+[roles.reviewer]
+adapter = "claude"
+
+[routes.execution.primary]
+adapter = "claude"
+
+[model_profiles.foo.roles.primary]
+model = "from-roles"
+effort = "high"
+
+[model_profiles.foo.routes.execution.primary]
+model = "from-routes"
+effort = "max"
+
+[timeouts]
+default_minutes = 15
+""")
+
+    proc = run_dispatch(
+        woof_project,
+        "--role",
+        "primary",
+        "--epic",
+        "1",
+        "--route-key",
+        "execution",
+        "--dry-run",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    assert payload["adapter"] == "claude"
+    assert payload["model"] == "from-routes"
+    assert payload["effort"] == "max"
+    assert payload["profile_role"] == "primary"
+    assert payload["route_key"] == "execution"
+
+
+def test_dry_run_without_route_key_records_null(woof_project: Path) -> None:
+    """Dispatching without --route-key leaves route_key null in the structured payload."""
+    proc = run_dispatch(
+        woof_project,
+        "--role",
+        "primary",
+        "--epic",
+        "1",
+        "--dry-run",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    assert payload["route_key"] is None
+
+
 def test_dispatch_timeouts_reject_boolean_values() -> None:
     mod = _import_woof_module()
 
@@ -1132,6 +1309,70 @@ def test_end_to_end_codex_records_thread_and_audit_path(woof_project: Path, tmp_
     assert meta["command_count"] == 1
     assert meta["exit_type"] == "clean"
     assert meta["prompt_bytes"] == len(b"critique me\n")
+
+    validate = subprocess.run([*WOOF_VALIDATE, str(jsonl)], capture_output=True, text=True)
+    assert validate.returncode == 0, validate.stdout + validate.stderr
+
+
+def test_end_to_end_records_route_key_in_jsonl_and_meta(woof_project: Path, tmp_path: Path) -> None:
+    """--route-key is recorded on both dispatch events and the meta file, and stays schema-valid.
+
+    The base [roles.primary] is codex with no execution override declared, so the
+    route falls back to the base adapter while still recording route_key.
+    """
+    bin_dir = tmp_path / "bin"
+    codex_stream = "\n".join(
+        [
+            json.dumps({"type": "thread.started", "thread_id": "thr-rk"}),
+            json.dumps(
+                {
+                    "type": "turn.completed",
+                    "usage": {
+                        "input_tokens": 5,
+                        "cached_input_tokens": 0,
+                        "output_tokens": 2,
+                        "reasoning_output_tokens": 0,
+                    },
+                }
+            ),
+        ]
+    )
+    stdin_path = tmp_path / "codex.stdin"
+    _make_stub(bin_dir, "codex", codex_stream, stdin_path=stdin_path)
+    env = {
+        "PATH": f"{bin_dir}:{__import__('os').environ['PATH']}",
+        "HOME": __import__("os").environ.get("HOME", str(tmp_path)),
+    }
+
+    proc = subprocess.run(
+        [
+            str(WOOF_BIN),
+            "dispatch",
+            "--role",
+            "primary",
+            "--epic",
+            "11",
+            "--route-key",
+            "execution",
+        ],
+        capture_output=True,
+        text=True,
+        input="do work\n",
+        cwd=woof_project,
+        env=env,
+    )
+    assert proc.returncode == 0, proc.stderr
+
+    jsonl = woof_project / ".woof" / "epics" / "E11" / "dispatch.jsonl"
+    events = [json.loads(ln) for ln in jsonl.read_text().splitlines() if ln.strip()]
+    assert events[0]["event"] == "subprocess_spawned"
+    assert events[0]["route_key"] == "execution"
+    assert events[1]["event"] == "subprocess_returned"
+    assert events[1]["route_key"] == "execution"
+
+    meta_file = next((woof_project / ".woof" / "epics" / "E11" / "audit").glob("*.meta"))
+    meta = json.loads(meta_file.read_text())
+    assert meta["route_key"] == "execution"
 
     validate = subprocess.run([*WOOF_VALIDATE, str(jsonl)], capture_output=True, text=True)
     assert validate.returncode == 0, validate.stdout + validate.stderr

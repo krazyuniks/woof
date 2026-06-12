@@ -50,6 +50,7 @@ AUDIT_COMPONENT_RE = re.compile(r"[^A-Za-z0-9_-]+")
 AGENTS_SCHEMA_PATH = schema_dir() / "agents.schema.json"
 TRUSTED_RUNTIME_MODE = "trusted-local"
 MODEL_PROFILE_ENV = "WOOF_MODEL_PROFILE"
+NODE_GROUPS = frozenset({"discovery", "definition", "planning", "execution"})
 TRUSTED_RUNTIME_NOTE = (
     "trusted-local runtime: Woof does not constrain dispatched agents at runtime; "
     "commit safety is enforced through deterministic checks, reviewer critique, "
@@ -65,6 +66,7 @@ class RoleRoute:
     config: dict[str, Any]
     model_profile: str | None = None
     profile_role: str | None = None
+    route_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -259,8 +261,41 @@ def _adapter_from_role_config(role_name: str, role: dict[str, Any]) -> str:
     return adapter
 
 
-def resolve_role_route(roles: dict[str, Any], requested_role: str) -> RoleRoute:
-    """Resolve a semantic role to a configured public adapter route."""
+def _canonical_role(requested_role: str) -> str:
+    """Return the canonical primary/reviewer name for a requested or legacy role."""
+    return LEGACY_ROLE_ALIASES.get(requested_role, requested_role)
+
+
+def resolve_role_route(
+    roles: dict[str, Any],
+    requested_role: str,
+    *,
+    route_key: str | None = None,
+    routes: dict[str, Any] | None = None,
+) -> RoleRoute:
+    """Resolve a semantic role to a configured public adapter route.
+
+    When ``route_key`` names a node group with a declared override in
+    ``routes.<group>.<role>``, that override wins over the base ``[roles.*]``
+    default. Otherwise the base fallback chain resolves the route. The
+    ``route_key`` is recorded on the returned route either way, including on
+    fallback, so dispatch audit can attribute the route to its node group.
+    Group routes use only the canonical ``primary``/``reviewer`` keys.
+    """
+    if route_key and route_key in NODE_GROUPS and isinstance(routes, dict):
+        group = routes.get(route_key)
+        if isinstance(group, dict):
+            canonical = _canonical_role(requested_role)
+            override = group.get(canonical)
+            if isinstance(override, dict):
+                return RoleRoute(
+                    requested_role=requested_role,
+                    config_role=canonical,
+                    adapter=_adapter_from_role_config(canonical, override),
+                    config=override,
+                    route_key=route_key,
+                )
+
     candidates = ROLE_CONFIG_FALLBACKS.get(requested_role, (requested_role,))
     if requested_role in LEGACY_ROLE_ALIASES:
         candidates = (requested_role, LEGACY_ROLE_ALIASES[requested_role])
@@ -273,6 +308,7 @@ def resolve_role_route(roles: dict[str, Any], requested_role: str) -> RoleRoute:
                 config_role=config_role,
                 adapter=_adapter_from_role_config(config_role, role),
                 config=role,
+                route_key=route_key,
             )
 
     if requested_role in LEGACY_ROLE_ALIASES:
@@ -315,20 +351,30 @@ def resolve_agent_route(
     requested_role: str,
     *,
     model_profile: str | None = None,
+    route_key: str | None = None,
 ) -> RoleRoute:
-    """Resolve a role route after applying the selected model profile.
+    """Resolve a role route after applying node-group overlays and the model profile.
 
-    Direct ``[roles.<name>]`` model/effort values remain valid. A selected
-    ``[model_profiles.<profile>.roles.<name>]`` table overlays the base role so
-    operators can switch model/effort choices without changing graph code or
-    prompt text.
+    Resolution order, most specific first:
+
+    1. ``[routes.<group>.<role>]`` adapter override for the dispatch ``route_key``.
+    2. ``[roles.<role>]`` base route default.
+
+    A selected ``[model_profiles.<profile>]`` then overlays model/effort/flags. Its
+    ``routes.<group>.<role>`` entry wins over its ``roles.<role>`` entry for the same
+    ``route_key``. The resolved adapter is read from the merged config so effort
+    validity is checked against the adapter that will actually run.
     """
 
     roles = agents.get("roles") or {}
     if not isinstance(roles, dict):
         raise DispatchConfigError("roles table is not an object")
 
-    route = resolve_role_route(roles, requested_role)
+    routes = agents.get("routes") or {}
+    if not isinstance(routes, dict):
+        raise DispatchConfigError("routes table is not an object")
+
+    route = resolve_role_route(roles, requested_role, route_key=route_key, routes=routes)
     profile_name = model_profile if model_profile is not None else selected_model_profile(agents)
     if not profile_name:
         return route
@@ -342,12 +388,10 @@ def resolve_agent_route(
             f"model profile {profile_name!r} is not declared in .woof/agents.toml"
         )
 
-    profile_roles = profile.get("roles") or {}
-    if not isinstance(profile_roles, dict):
-        raise DispatchConfigError(f"model profile {profile_name!r} roles table is not an object")
-
-    profile_role_name = _select_profile_role_name(profile_roles, route)
-    if profile_role_name is None:
+    profile_role_name, profile_role = _resolve_profile_overlay(
+        profile, route, profile_name=profile_name
+    )
+    if profile_role is None:
         return RoleRoute(
             requested_role=route.requested_role,
             config_role=route.config_role,
@@ -355,12 +399,7 @@ def resolve_agent_route(
             config=route.config,
             model_profile=profile_name,
             profile_role=None,
-        )
-
-    profile_role = profile_roles.get(profile_role_name)
-    if not isinstance(profile_role, dict):
-        raise DispatchConfigError(
-            f"model profile {profile_name!r} role {profile_role_name!r} is not an object"
+            route_key=route.route_key,
         )
 
     config = {**route.config, **profile_role}
@@ -372,7 +411,54 @@ def resolve_agent_route(
         config=config,
         model_profile=profile_name,
         profile_role=profile_role_name,
+        route_key=route.route_key,
     )
+
+
+def _resolve_profile_overlay(
+    profile: dict[str, Any],
+    route: RoleRoute,
+    *,
+    profile_name: str,
+) -> tuple[str | None, dict[str, Any] | None]:
+    """Select the model-profile overlay for a route, group entry first.
+
+    Checks ``profile.routes.<route_key>.<role>`` before the base
+    ``profile.roles.<role>`` table. Returns ``(name, config)`` for the most
+    specific declared overlay, or ``(None, None)`` when the profile declares no
+    entry for this route.
+    """
+    route_key = route.route_key
+    if route_key and route_key in NODE_GROUPS:
+        profile_routes = profile.get("routes") or {}
+        if not isinstance(profile_routes, dict):
+            raise DispatchConfigError(
+                f"model profile {profile_name!r} routes table is not an object"
+            )
+        group = profile_routes.get(route_key)
+        if isinstance(group, dict):
+            canonical = _canonical_role(route.requested_role)
+            override = group.get(canonical)
+            if override is not None:
+                if not isinstance(override, dict):
+                    raise DispatchConfigError(
+                        f"model profile {profile_name!r} route "
+                        f"{route_key}.{canonical} is not an object"
+                    )
+                return canonical, override
+
+    profile_roles = profile.get("roles") or {}
+    if not isinstance(profile_roles, dict):
+        raise DispatchConfigError(f"model profile {profile_name!r} roles table is not an object")
+    profile_role_name = _select_profile_role_name(profile_roles, route)
+    if profile_role_name is None:
+        return None, None
+    profile_role = profile_roles.get(profile_role_name)
+    if not isinstance(profile_role, dict):
+        raise DispatchConfigError(
+            f"model profile {profile_name!r} role {profile_role_name!r} is not an object"
+        )
+    return profile_role_name, profile_role
 
 
 def _select_profile_role_name(profile_roles: dict[str, Any], route: RoleRoute) -> str | None:
@@ -744,7 +830,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         return 2
 
     try:
-        route = resolve_agent_route(agents, args.role)
+        route = resolve_agent_route(agents, args.role, route_key=args.route_key)
     except DispatchConfigError as exc:
         sys.stderr.write(f"woof: {exc} in {agents_path}\n")
         return 2
@@ -801,6 +887,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
             "harness": route.adapter,
             "model_profile": route.model_profile,
             "profile_role": route.profile_role,
+            "route_key": route.route_key,
             "model": route.config.get("model"),
             "effort": effort,
             "mcp": mcp_names,
@@ -855,6 +942,8 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
             spawned_event["model_profile"] = route.model_profile
         if route.profile_role:
             spawned_event["profile_role"] = route.profile_role
+        if route.route_key:
+            spawned_event["route_key"] = route.route_key
         if args.story:
             spawned_event["story_id"] = args.story
         if route.config.get("model"):
@@ -974,6 +1063,8 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         returned["model_profile"] = route.model_profile
     if route.profile_role:
         returned["profile_role"] = route.profile_role
+    if route.route_key:
+        returned["route_key"] = route.route_key
     if args.story:
         returned["story_id"] = args.story
     if route.config.get("model"):
@@ -997,6 +1088,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         "config_role": route.config_role,
         "model_profile": route.model_profile,
         "profile_role": route.profile_role,
+        "route_key": route.route_key,
         "epic_id": args.epic,
         "story_id": args.story,
         "model": route.config.get("model"),

@@ -445,6 +445,13 @@ def main() -> int:
     )
     dispatch.add_argument("--story", help="story id (e.g. S1); optional")
     dispatch.add_argument(
+        "--route-key",
+        help=(
+            "node group selecting the dispatch route overlay "
+            "(discovery, definition, planning, execution); optional"
+        ),
+    )
+    dispatch.add_argument(
         "--prompt-file",
         help="path to a file holding the prompt; if omitted, prompt is read from stdin",
     )

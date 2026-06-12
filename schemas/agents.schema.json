@@ -125,7 +125,10 @@
     "model_profile": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["roles"],
+      "anyOf": [
+        { "required": ["roles"] },
+        { "required": ["routes"] }
+      ],
       "properties": {
         "roles": {
           "type": "object",

@@ -282,6 +282,10 @@ def resolve_role_route(
     fallback, so dispatch audit can attribute the route to its node group.
     Group routes use only the canonical ``primary``/``reviewer`` keys.
     """
+    if route_key and route_key not in NODE_GROUPS:
+        raise DispatchConfigError(
+            f"unknown route_key {route_key!r}; valid groups: {sorted(NODE_GROUPS)}"
+        )
     if route_key and route_key in NODE_GROUPS and isinstance(routes, dict):
         group = routes.get(route_key)
         if isinstance(group, dict):

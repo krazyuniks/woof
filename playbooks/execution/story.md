@@ -51,6 +51,14 @@ Woof verifies behaviour, not design, so designing the unit well is on you. While
 
 When chasing a failing test or a behavioural symptom, first build or confirm a reliably failing signal before changing production code - reproduce, then fix. Tag any temporary instrumentation (extra logging, probes, debug prints) with a unique, greppable prefix, and remove all of it before writing `executor_result.json`. The staged diff must contain only the slice and its tests, not leftover scaffolding.
 
+## Context hygiene
+
+Your working context is re-paid on every turn, so keep it small:
+
+- Read what you need, not whole files. Read `plan.json` and `EPIC.md` once to fix the story scope, then read only the targeted range or `grep` the region you are editing.
+- Never re-read a file you just edited. Trust the edit result; for a delta use `git diff -- <path>`, not a fresh full read.
+- Run the quality command so it reports failures, not a full passing-suite dump (quiet / failures-only flags, or pipe to a file and read only the failing block). Act on the failing assertion, not the whole log.
+
 ## Output
 
 Write `.woof/epics/E{epic_id}/executor_result.json` atomically.

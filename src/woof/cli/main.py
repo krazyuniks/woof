@@ -33,7 +33,7 @@ from pathlib import Path
 import yaml
 
 from woof.checks.contract_refs import ContractRefUsageError, validate_contract_refs
-from woof.cli.dispatcher import ADAPTERS, cmd_dispatch, find_woof_root
+from woof.cli.dispatcher import ADAPTERS, NODE_GROUPS, cmd_dispatch, find_woof_root
 from woof.lib.audit_bundle import (
     AuditBundleError,
     NonPortableTranscriptError,
@@ -446,10 +446,8 @@ def main() -> int:
     dispatch.add_argument("--story", help="story id (e.g. S1); optional")
     dispatch.add_argument(
         "--route-key",
-        help=(
-            "node group selecting the dispatch route overlay "
-            "(discovery, definition, planning, execution); optional"
-        ),
+        choices=sorted(NODE_GROUPS),
+        help="node group selecting the dispatch route overlay; optional",
     )
     dispatch.add_argument(
         "--prompt-file",

@@ -438,6 +438,41 @@ def test_dry_run_without_route_key_records_null(woof_project: Path) -> None:
     assert payload["route_key"] is None
 
 
+def test_route_key_cli_rejects_unknown_group(woof_project: Path) -> None:
+    """CLI rejects a --route-key value that is not a known node group."""
+    (woof_project / ".woof" / "agents.toml").write_text("""\
+[roles.primary]
+adapter = "codex"
+
+[roles.reviewer]
+adapter = "claude"
+
+[timeouts]
+default_minutes = 15
+""")
+    proc = run_dispatch(
+        woof_project,
+        "--role",
+        "primary",
+        "--epic",
+        "1",
+        "--route-key",
+        "executon",  # typo
+        "--dry-run",
+    )
+    assert proc.returncode == 2
+    assert "executon" in proc.stderr
+
+
+def test_resolve_role_route_rejects_unknown_route_key() -> None:
+    """resolve_role_route raises DispatchConfigError for a non-NODE_GROUPS route_key."""
+    from woof.cli.dispatcher import DispatchConfigError, resolve_role_route
+
+    roles = {"primary": {"adapter": "codex"}}
+    with pytest.raises(DispatchConfigError, match="unknown route_key"):
+        resolve_role_route(roles, "primary", route_key="executon", routes={})
+
+
 def test_dispatch_timeouts_reject_boolean_values() -> None:
     mod = _import_woof_module()
 

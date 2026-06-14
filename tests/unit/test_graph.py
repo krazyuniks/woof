@@ -182,6 +182,7 @@ def test_executor_dispatch_completed_lingering_advances(
         story_id: str | None,
         prompt: str,
         artefacts_loaded: list[str] | None = None,
+        route_key: str | None = None,
     ) -> nodes.DispatchRunResult:
         assert repo_root == tmp_path
         assert role == "primary"
@@ -230,6 +231,7 @@ def test_executor_dispatch_failure_exit_types_open_existing_crash_gate(
         story_id: str | None,
         prompt: str,
         artefacts_loaded: list[str] | None = None,
+        route_key: str | None = None,
     ) -> nodes.DispatchRunResult:
         return _dispatch_result(exit_type, returncode=returncode, stderr=f"{exit_type} failed")
 
@@ -851,6 +853,138 @@ def test_dispatch_helper_uses_role_route_without_provider_target(
     assert result.process.returncode == 0
 
 
+def test_run_dispatch_appends_route_key_to_argv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_run_dispatch appends --route-key <group> to the woof dispatch argv when set."""
+    captured: dict[str, Any] = {}
+
+    def fake_run(
+        args: list[str],
+        *,
+        cwd: Path,
+        env: dict[str, str] | None = None,
+        capture_output: bool,
+        text: bool,
+    ) -> subprocess.CompletedProcess[str]:
+        captured["args"] = args
+        dispatch_jsonl = cwd / ".woof" / "epics" / "E1" / "dispatch.jsonl"
+        dispatch_jsonl.parent.mkdir(parents=True, exist_ok=True)
+        dispatch_jsonl.write_text(
+            json.dumps(
+                {
+                    "event": "subprocess_returned",
+                    "epic_id": 1,
+                    "role": "primary",
+                    "story_id": "S1",
+                    "pid": 1234,
+                    "exit_type": "completed_lingering",
+                    "exit_code": 0,
+                }
+            )
+            + "\n"
+        )
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(nodes.subprocess, "run", fake_run)
+
+    nodes._run_dispatch(
+        tmp_path,
+        role="primary",
+        epic_id=1,
+        story_id="S1",
+        prompt="do work",
+        route_key="execution",
+    )
+
+    args = captured["args"]
+    assert "--route-key" in args
+    assert args[args.index("--route-key") + 1] == "execution"
+
+
+def test_run_dispatch_omits_route_key_from_argv_when_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_run_dispatch does not include --route-key in argv when route_key is None."""
+    captured: dict[str, Any] = {}
+
+    def fake_run(
+        args: list[str],
+        *,
+        cwd: Path,
+        env: dict[str, str] | None = None,
+        capture_output: bool,
+        text: bool,
+    ) -> subprocess.CompletedProcess[str]:
+        captured["args"] = args
+        dispatch_jsonl = cwd / ".woof" / "epics" / "E1" / "dispatch.jsonl"
+        dispatch_jsonl.parent.mkdir(parents=True, exist_ok=True)
+        dispatch_jsonl.write_text(
+            json.dumps(
+                {
+                    "event": "subprocess_returned",
+                    "epic_id": 1,
+                    "role": "primary",
+                    "story_id": "S1",
+                    "pid": 1234,
+                    "exit_type": "completed_lingering",
+                    "exit_code": 0,
+                }
+            )
+            + "\n"
+        )
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(nodes.subprocess, "run", fake_run)
+
+    nodes._run_dispatch(
+        tmp_path,
+        role="primary",
+        epic_id=1,
+        story_id="S1",
+        prompt="do work",
+    )
+
+    assert "--route-key" not in captured["args"]
+
+
+def test_dispatch_call_sites_pass_correct_route_key() -> None:
+    """Each dispatch call site in nodes.py passes the correct node group as route_key."""
+    import ast as _ast
+
+    source = Path(nodes.__file__).read_text(encoding="utf-8")
+    module = _ast.parse(source)
+
+    expected = {
+        "_discovery_bucket_node": "discovery",
+        "discovery_synthesis_node": "discovery",
+        "epic_definition_node": "definition",
+        "breakdown_planning_node": "planning",
+        "plan_critique_node": "planning",
+        "executor_dispatch_node": "execution",
+        "critique_dispatch_node": "execution",
+    }
+
+    functions = {item.name: item for item in module.body if isinstance(item, _ast.FunctionDef)}
+
+    for func_name, expected_group in expected.items():
+        func = functions[func_name]
+        route_keys = []
+        for node in _ast.walk(func):
+            if (
+                isinstance(node, _ast.Call)
+                and isinstance(node.func, _ast.Name)
+                and node.func.id == "_run_dispatch"
+            ):
+                for kw in node.keywords:
+                    if kw.arg == "route_key":
+                        route_keys.append(_ast.literal_eval(kw.value))
+        assert route_keys, f"{func_name}: missing route_key in _run_dispatch call"
+        assert all(k == expected_group for k in route_keys), (
+            f"{func_name}: expected route_key={expected_group!r}, got {route_keys}"
+        )
+
+
 def test_dispatch_consumers_route_results_through_shared_classifier() -> None:
     source = Path(nodes.__file__).read_text(encoding="utf-8")
     module = ast.parse(source)
@@ -958,6 +1092,7 @@ def test_discovery_research_node_dispatches_primary_and_bundles_playbooks(
         story_id: str | None,
         prompt: str,
         artefacts_loaded: list[str] | None = None,
+        route_key: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         captured["role"] = role
         captured["prompt"] = prompt
@@ -1001,6 +1136,7 @@ def test_discovery_dispatch_completed_lingering_advances(
         story_id: str | None,
         prompt: str,
         artefacts_loaded: list[str] | None = None,
+        route_key: str | None = None,
     ) -> nodes.DispatchRunResult:
         assert repo_root == tmp_path
         assert role == "primary"
@@ -1034,6 +1170,7 @@ def test_discovery_thinking_node_passes_prior_bucket_artefacts(tmp_path: Path, m
         story_id: str | None,
         prompt: str,
         artefacts_loaded: list[str] | None = None,
+        route_key: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         captured["artefacts_loaded"] = artefacts_loaded
         _write_discovery_bucket(directory, "thinking")
@@ -1101,6 +1238,7 @@ def test_discovery_ideate_node_bundles_no_building_blocks(tmp_path: Path, monkey
         story_id: str | None,
         prompt: str,
         artefacts_loaded: list[str] | None = None,
+        route_key: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         captured["prompt"] = prompt
         _write_discovery_bucket(directory, "ideate")
@@ -1131,6 +1269,7 @@ def test_discovery_synthesis_node_dispatches_primary_and_validates_outputs(
         story_id: str | None,
         prompt: str,
         artefacts_loaded: list[str] | None = None,
+        route_key: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         captured["repo_root"] = repo_root
         captured["role"] = role
@@ -1256,6 +1395,7 @@ def test_epic_definition_node_dispatches_primary_validates_epic_and_continues(
         story_id: str | None,
         prompt: str,
         artefacts_loaded: list[str] | None = None,
+        route_key: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         captured["repo_root"] = repo_root
         captured["role"] = role
@@ -1387,6 +1527,7 @@ def test_breakdown_planning_node_dispatches_primary_validates_plan_and_renders_m
         story_id: str | None,
         prompt: str,
         artefacts_loaded: list[str] | None = None,
+        route_key: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         captured["repo_root"] = repo_root
         captured["role"] = role
@@ -1444,6 +1585,7 @@ def test_breakdown_planning_node_rejects_crossref_invalid_plan_before_critique(
         story_id: str | None,
         prompt: str,
         artefacts_loaded: list[str] | None = None,
+        route_key: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         captured["role"] = role
         _write_stage3_plan(directory, epic_id)
@@ -1485,6 +1627,7 @@ def test_plan_critique_node_dispatches_reviewer_validates_critique_and_halts(
         story_id: str | None,
         prompt: str,
         artefacts_loaded: list[str] | None = None,
+        route_key: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         captured["repo_root"] = repo_root
         captured["role"] = role
@@ -1542,6 +1685,7 @@ def test_graph_runs_discovery_definition_breakdown_and_opens_plan_gate(
         story_id: str | None,
         prompt: str,
         artefacts_loaded: list[str] | None = None,
+        route_key: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         assert repo_root == tmp_path
         assert epic_id == 28
@@ -1677,6 +1821,7 @@ def test_critique_dispatch_failure_opens_reviewer_gate(tmp_path: Path, monkeypat
         story_id: str | None,
         prompt: str,
         artefacts_loaded: list[str] | None = None,
+        route_key: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         assert repo_root == tmp_path
         assert role == "reviewer"
@@ -1727,6 +1872,7 @@ def test_critique_dispatch_stages_changed_story_paths_before_review(
         story_id: str | None,
         prompt: str,
         artefacts_loaded: list[str] | None = None,
+        route_key: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         staged = _git(
             repo_root,
@@ -3480,6 +3626,7 @@ def test_epic_definition_node_redispatches_revision_with_prior_contract_and_find
         story_id: str | None,
         prompt: str,
         artefacts_loaded: list[str] | None = None,
+        route_key: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         captured["prompt"] = prompt
         captured["artefacts_loaded"] = artefacts_loaded
@@ -3534,6 +3681,7 @@ def test_epic_definition_node_redispatches_cold_start_revision_without_synthesis
         story_id: str | None,
         prompt: str,
         artefacts_loaded: list[str] | None = None,
+        route_key: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         captured["prompt"] = prompt
         captured["artefacts_loaded"] = artefacts_loaded

@@ -823,6 +823,7 @@ def _run_dispatch(
     story_id: str | None,
     prompt: str,
     artefacts_loaded: list[str] | None = None,
+    route_key: str | None = None,
 ) -> DispatchRunResult:
     prompt_file = _write_prompt_file(prompt)
     dispatch_jsonl = epic_dir(repo_root, epic_id) / "dispatch.jsonl"
@@ -840,6 +841,8 @@ def _run_dispatch(
         ]
         if story_id:
             args.extend(["--story", story_id])
+        if route_key:
+            args.extend(["--route-key", route_key])
         for artefact in artefacts_loaded or []:
             args.extend(["--artefact", artefact])
         proc = subprocess.run(
@@ -894,6 +897,7 @@ def _discovery_bucket_node(inp: NodeInput, bucket: str) -> NodeOutput:
             story_id=None,
             prompt=_discovery_bucket_prompt(inp.repo_root, inp.epic_id, bucket),
             artefacts_loaded=_discovery_bucket_artefacts(inp.repo_root, inp.epic_id, bucket),
+            route_key="discovery",
         )
         dispatch = _classify_dispatch_result(proc)
         if not dispatch.ok:
@@ -991,6 +995,7 @@ def discovery_synthesis_node(inp: NodeInput) -> NodeOutput:
             story_id=None,
             prompt=_discovery_synthesis_prompt(inp.repo_root, inp.epic_id),
             artefacts_loaded=_discovery_synthesis_artefacts(inp.repo_root, inp.epic_id),
+            route_key="discovery",
         )
         dispatch = _classify_dispatch_result(proc)
         if not dispatch.ok:
@@ -1097,6 +1102,7 @@ def epic_definition_node(inp: NodeInput) -> NodeOutput:
             story_id=None,
             prompt=_epic_definition_prompt(inp.repo_root, inp.epic_id),
             artefacts_loaded=_epic_definition_artefacts(inp.repo_root, inp.epic_id),
+            route_key="definition",
         )
         dispatch = _classify_dispatch_result(proc)
         if not dispatch.ok:
@@ -1358,6 +1364,7 @@ def breakdown_planning_node(inp: NodeInput) -> NodeOutput:
             story_id=None,
             prompt=_breakdown_planning_prompt(inp.repo_root, inp.epic_id),
             artefacts_loaded=_breakdown_planning_artefacts(inp.repo_root, inp.epic_id),
+            route_key="planning",
         )
         dispatch = _classify_dispatch_result(proc)
         if not dispatch.ok:
@@ -1490,6 +1497,7 @@ def plan_critique_node(inp: NodeInput) -> NodeOutput:
             story_id=None,
             prompt=_plan_critique_prompt(inp.repo_root, inp.epic_id),
             artefacts_loaded=_plan_critique_artefacts(inp.repo_root, inp.epic_id),
+            route_key="planning",
         )
         dispatch = _classify_dispatch_result(proc)
         if not dispatch.ok:
@@ -1706,6 +1714,7 @@ def executor_dispatch_node(inp: NodeInput) -> NodeOutput:
         story_id=inp.story_id,
         prompt=_story_prompt(inp.epic_id, inp.story_id),
         artefacts_loaded=_story_context_artefacts(inp.repo_root, inp.epic_id),
+        route_key="execution",
     )
     dispatch = _classify_dispatch_result(proc)
     if not dispatch.ok:
@@ -1753,6 +1762,7 @@ def critique_dispatch_node(inp: NodeInput) -> NodeOutput:
         story_id=inp.story_id,
         prompt=prompt,
         artefacts_loaded=_story_context_artefacts(inp.repo_root, inp.epic_id),
+        route_key="execution",
     )
     dispatch = _classify_dispatch_result(proc)
     if not dispatch.ok:

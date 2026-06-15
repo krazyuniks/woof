@@ -35,6 +35,7 @@ from woof.cli.dispatcher import (
     build_argv,
     resolve_agent_route,
 )
+from woof.cli.init import AGENTS_TEMPLATE
 from woof.cli.main import (
     SCHEMAS,
     load_payload,
@@ -85,7 +86,7 @@ staleness_floor_hours = 168
 summary_min_chars = 200
 """
 
-CACHE_VERSION = 2
+CACHE_VERSION = 3
 FLOOR_CACHE_TTL = timedelta(hours=24)
 RUNTIME_CACHE_TTL = timedelta(minutes=5)
 
@@ -606,7 +607,7 @@ def _check_dispatch_group_route(
     except DispatchConfigError as exc:
         errors.append(str(exc))
 
-    return [
+    findings = [
         PreflightFinding(
             id=f"agents.{group}.{role_name}.route",
             label=label,
@@ -622,6 +623,17 @@ def _check_dispatch_group_route(
             notes=[TRUSTED_RUNTIME_NOTE] if not errors else [],
         )
     ]
+    if route.adapter == "claude" and not errors:
+        findings.extend(
+            _check_claude_mcp_config(
+                role_name,
+                route.config,
+                mcp_servers,
+                repo_root,
+                id_prefix=f"agents.{group}.{role_name}",
+            )
+        )
+    return findings
 
 
 def _check_claude_mcp_config(
@@ -629,14 +641,17 @@ def _check_claude_mcp_config(
     role: dict[str, Any],
     mcp_servers: dict[str, Any],
     repo_root: Path,
+    *,
+    id_prefix: str | None = None,
 ) -> list[PreflightFinding]:
+    prefix = id_prefix if id_prefix is not None else f"agents.{role_name}"
     try:
         mcp_config = _claude_mcp_config(role, mcp_servers)
         parsed = json.loads(mcp_config)
     except (DispatchConfigError, json.JSONDecodeError) as exc:
         return [
             PreflightFinding(
-                id=f"agents.{role_name}.mcp_config",
+                id=f"{prefix}.mcp_config",
                 label=f"{role_name} Claude MCP config",
                 ok=False,
                 detail=str(exc),
@@ -645,7 +660,7 @@ def _check_claude_mcp_config(
 
     findings = [
         PreflightFinding(
-            id=f"agents.{role_name}.mcp_config",
+            id=f"{prefix}.mcp_config",
             label=f"{role_name} Claude MCP config",
             ok=isinstance(parsed.get("mcpServers"), dict),
             detail=mcp_config
@@ -656,7 +671,9 @@ def _check_claude_mcp_config(
     for name in _mcp_names(role):
         server = (mcp_servers or {}).get(name)
         if isinstance(server, dict):
-            findings.append(_check_mcp_server_command(role_name, name, server, repo_root))
+            findings.append(
+                _check_mcp_server_command(role_name, name, server, repo_root, id_prefix=prefix)
+            )
     return findings
 
 
@@ -665,12 +682,15 @@ def _check_mcp_server_command(
     server_name: str,
     server: dict[str, Any],
     repo_root: Path,
+    *,
+    id_prefix: str | None = None,
 ) -> PreflightFinding:
+    prefix = id_prefix if id_prefix is not None else f"agents.{role_name}"
     command = str(server["command"])
     resolved = _resolve_declared_command(command, repo_root)
     ok = resolved is not None
     return PreflightFinding(
-        id=f"agents.{role_name}.mcp.{server_name}",
+        id=f"{prefix}.mcp.{server_name}",
         label=f"{role_name} MCP server: {server_name}",
         ok=ok,
         detail=f"{command} resolves to {resolved}" if ok else f"{command} not found",
@@ -679,28 +699,7 @@ def _check_mcp_server_command(
 
 
 def _agents_template() -> str:
-    return """Create .woof/agents.toml, for example:
-# Runtime model: trusted-local automation. Woof does not sandbox dispatched
-# agents, restrict writable paths, allow-list commands, block network access, or
-# add MCP restrictions; commit-safety checks and gates guard what lands.
-
-model_profile = "default"
-
-[roles.primary]
-adapter = "codex"
-
-[roles.reviewer]
-adapter = "claude"
-mcp = []
-
-[model_profiles.default.roles.primary]
-model = "gpt-5.5"
-effort = "xhigh"
-
-[model_profiles.default.roles.reviewer]
-model = "claude-opus-4-7"
-effort = "max"
-"""
+    return f"Create .woof/agents.toml, for example:\n{AGENTS_TEMPLATE}"
 
 
 def _check_declared_binaries(prereq: dict[str, Any]) -> list[PreflightFinding]:

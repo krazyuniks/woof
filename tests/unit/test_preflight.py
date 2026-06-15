@@ -537,6 +537,73 @@ repo = "example/project"
         assert finding["ok"] is True, f"{fid} should pass: {finding['detail']}"
 
 
+def test_preflight_validates_grouped_claude_mcp_route(tmp_path: Path, run_woof) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _stub_core_tools(bin_dir)
+    _write_exe(bin_dir / "npx", 'echo "npx 10.0.0"\n')
+
+    agents = (
+        AGENTS_WITH_EXECUTION_OVERLAY.replace(
+            '[routes.execution.primary]\nadapter = "claude"\nmcp = []\n',
+            '[routes.execution.primary]\nadapter = "claude"\nmcp = ["exec-mcp"]\n',
+        )
+        + """
+[mcp_servers.exec-mcp]
+command = "npx"
+args = ["-y", "exec-mcp@latest"]
+"""
+    )
+    _write_ready_project(
+        tmp_path,
+        prerequisites="""\
+[infra]
+just = "any"
+git = "any"
+gh = "any"
+
+[commands]
+claude = "any"
+codex = "any"
+
+[validators]
+ajv = "any"
+ajv-formats = "any"
+
+[tracker]
+kind = "github"
+repo = "example/project"
+""",
+        agents=agents,
+    )
+
+    proc = run_woof(
+        "preflight",
+        "--project-root",
+        str(tmp_path),
+        "--format",
+        "json",
+        env=_env_with_path(bin_dir),
+    )
+
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    payload = json.loads(proc.stdout)
+    finding_ids = {f["id"] for f in payload["findings"]}
+    assert "agents.execution.primary.mcp_config" in finding_ids
+    assert "agents.execution.primary.mcp.exec-mcp" in finding_ids
+    mcp_server = next(
+        f for f in payload["findings"] if f["id"] == "agents.execution.primary.mcp.exec-mcp"
+    )
+    assert mcp_server["ok"] is True
+
+
+def test_preflight_agents_template_matches_init_template() -> None:
+    from woof.cli.init import AGENTS_TEMPLATE
+    from woof.cli.preflight import _agents_template
+
+    assert _agents_template() == f"Create .woof/agents.toml, for example:\n{AGENTS_TEMPLATE}"
+
+
 def test_preflight_validates_named_mcp_route(tmp_path: Path, run_woof) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()

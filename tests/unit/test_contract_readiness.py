@@ -920,7 +920,8 @@ def test_failed_readiness_cycles_counts_gate_opened_events(tmp_path: Path) -> No
     assert transitions.failed_readiness_cycles(tmp_path, 1) == 2
 
 
-def test_failed_readiness_cycles_resets_after_definition_closed(tmp_path: Path) -> None:
+def test_failed_readiness_cycles_does_not_reset_on_definition_closed(tmp_path: Path) -> None:
+    """definition_closed (revise cycle) must NOT reset the failure count."""
     directory = _setup_epic(tmp_path, UNREADY_EPIC)
     _append_gate_opened_event(directory, 1)
     _append_gate_opened_event(directory, 1)
@@ -931,7 +932,64 @@ def test_failed_readiness_cycles_resets_after_definition_closed(tmp_path: Path) 
         1,
         {"event": "definition_closed", "at": "2026-06-09T12:00:00Z", "epic_id": 1},
     )
+    assert transitions.failed_readiness_cycles(tmp_path, 1) == 2
+
+
+def test_failed_readiness_cycles_resets_after_epic_reset(tmp_path: Path) -> None:
+    directory = _setup_epic(tmp_path, UNREADY_EPIC)
+    _append_gate_opened_event(directory, 1)
+    _append_gate_opened_event(directory, 1)
+    assert transitions.failed_readiness_cycles(tmp_path, 1) == 2
+
+    transitions.append_epic_event(
+        tmp_path, 1, {"event": "epic_reset", "at": "2026-06-09T12:00:00Z", "epic_id": 1}
+    )
     assert transitions.failed_readiness_cycles(tmp_path, 1) == 0
+
+
+def test_escalation_gate_event_not_counted(tmp_path: Path) -> None:
+    """readiness_gate_opened with triggered_by=[readiness_escalation] is excluded."""
+    directory = _setup_epic(tmp_path, UNREADY_EPIC)
+    _append_gate_opened_event(directory, 1)  # triggered_by: [readiness_unready]
+    transitions.append_epic_event(
+        tmp_path,
+        1,
+        {
+            "event": "readiness_gate_opened",
+            "at": "2026-06-09T11:00:00Z",
+            "epic_id": 1,
+            "gate_type": "readiness_gate",
+            "triggered_by": ["readiness_escalation"],
+        },
+    )
+    assert transitions.failed_readiness_cycles(tmp_path, 1) == 1
+
+
+def test_escalation_fires_across_revise_cycles(tmp_path: Path) -> None:
+    """Escalation accumulates failures across revise_epic_contract cycles.
+
+    Each revise cycle appends definition_closed before readiness re-runs; the
+    count must not reset on those events, so escalation fires at threshold.
+    """
+    directory = _setup_epic(tmp_path, UNREADY_EPIC)
+    threshold = DEFAULT_READINESS_ESCALATION_THRESHOLD
+
+    for _ in range(threshold):
+        _append_gate_opened_event(directory, 1)
+        transitions.append_epic_event(
+            tmp_path,
+            1,
+            {"event": "definition_closed", "at": "2026-06-09T12:00:00Z", "epic_id": 1},
+        )
+
+    assert transitions.failed_readiness_cycles(tmp_path, 1) == threshold
+
+    output = nodes.contract_readiness_node(_readiness_input(tmp_path))
+
+    assert output.status == NodeStatus.GATE_OPENED
+    assert output.triggered_by == ["readiness_escalation"]
+    front = _gate_front_matter(directory / "gate.md")
+    assert front["triggered_by"] == ["readiness_escalation"]
 
 
 def test_below_threshold_opens_ordinary_readiness_gate(tmp_path: Path) -> None:

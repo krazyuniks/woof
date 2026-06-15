@@ -347,25 +347,22 @@ def readiness_satisfied(repo_root: Path, epic_id: int) -> bool:
 
 
 def failed_readiness_cycles(repo_root: Path, epic_id: int) -> int:
-    """Count readiness_gate_opened events since the last definition_closed.
+    """Count readiness failures across the current epic attempt.
 
-    Used by ``contract_readiness_node`` to decide whether to open an ordinary
-    readiness gate (``readiness_unready``) or an escalation-flavoured one
-    (``readiness_escalation``). The count resets whenever a new
-    ``definition_closed`` is appended (e.g. after ``revise_epic_contract``).
-    ``iter_epic_events`` already drops events superseded by an ``epic_reset``.
+    Counts ``readiness_gate_opened`` events carrying the ``readiness_unready``
+    trigger over the whole post-reset event stream.  ``revise_epic_contract``
+    appends a new ``definition_closed`` before the next readiness run, but that
+    does NOT reset the count; only an ``epic_reset`` does (``iter_epic_events``
+    drops events superseded by ``epic_reset``).
+
+    Events carrying the ``readiness_escalation`` trigger are excluded so the
+    escalation gate itself does not inflate the count.
     """
-    events = iter_epic_events(repo_root, epic_id)
-    last_definition_closed = -1
-    for index, event in enumerate(events):
-        if event.get("event") == "definition_closed":
-            last_definition_closed = index
-    if last_definition_closed < 0:
-        return 0
     return sum(
         1
-        for event in events[last_definition_closed + 1 :]
+        for event in iter_epic_events(repo_root, epic_id)
         if event.get("event") == "readiness_gate_opened"
+        and "readiness_unready" in (event.get("triggered_by") or [])
     )
 
 

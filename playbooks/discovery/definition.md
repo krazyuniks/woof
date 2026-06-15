@@ -8,6 +8,16 @@ Graph-owned input:
 {planning_input_json}
 ```
 
+## Context documents — read these first
+
+The graph delivers these `.woof/codebase/` documents in `inputs.cartography_paths`. Read them before beginning work:
+
+- `.woof/codebase/CURRENT-ARCHITECTURE.md`
+- `.woof/codebase/STRUCTURE.md`
+- `.woof/codebase/CONCERNS.md`
+- `.woof/codebase/TARGET-ARCHITECTURE.md`
+- `.woof/codebase/PRINCIPLES.md`
+
 Read the declared synthesis directory and produce only `EPIC.md` at the declared `epic_path`.
 
 `EPIC.md` must start with YAML front matter matching `schemas/epic.schema.json`:

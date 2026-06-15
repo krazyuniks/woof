@@ -15,6 +15,16 @@ Graph-owned input:
 }
 ```
 
+## Context documents — read these first
+
+The graph prepends a "Graph-owned cartography input" block with `inputs.cartography_paths` and `inputs.files_txt_slice`. Read them before implementing:
+
+- `.woof/codebase/STRUCTURE.md`
+- `.woof/codebase/CONVENTIONS.md`
+- `.woof/codebase/TARGET-ARCHITECTURE.md`
+- `.woof/codebase/PRINCIPLES.md`
+- `.woof/codebase/files.txt` (story-scoped subset delivered in `inputs.files_txt_slice`)
+
 Read:
 
 1. `.woof/.current-epic`

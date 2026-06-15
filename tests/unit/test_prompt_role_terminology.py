@@ -14,6 +14,74 @@ PLANNING_BREAKDOWN_PROMPT = REPO_ROOT / "playbooks" / "planning" / "breakdown.md
 EXECUTE_STORY_PROMPT = REPO_ROOT / "playbooks" / "execution" / "story.md"
 STORY_CRITIQUE_PROMPT = REPO_ROOT / "playbooks" / "critique" / "story.md"
 ARCHITECTURE_DOC = REPO_ROOT / "docs" / "architecture.md"
+
+# E19 S2 drift guard: each dispatch playbook must declare the cartography docs
+# that S1 injects for its node. If the node mapping changes in nodes.py, this
+# table must be updated to match.
+PLAYBOOK_CARTOGRAPHY_DOCS: dict[str, list[str]] = {
+    "playbooks/discovery/research.md": [
+        ".woof/codebase/STACK.md",
+        ".woof/codebase/INTEGRATIONS.md",
+        ".woof/codebase/CONCERNS.md",
+    ],
+    "playbooks/discovery/thinking.md": [
+        ".woof/codebase/CURRENT-ARCHITECTURE.md",
+        ".woof/codebase/STRUCTURE.md",
+    ],
+    "playbooks/discovery/ideate.md": [
+        ".woof/codebase/CURRENT-ARCHITECTURE.md",
+        ".woof/codebase/STACK.md",
+        ".woof/codebase/INTEGRATIONS.md",
+        ".woof/codebase/STRUCTURE.md",
+        ".woof/codebase/CONVENTIONS.md",
+        ".woof/codebase/TESTING.md",
+        ".woof/codebase/CONCERNS.md",
+        ".woof/codebase/TARGET-ARCHITECTURE.md",
+        ".woof/codebase/PRINCIPLES.md",
+    ],
+    "playbooks/discovery/synthesis.md": [
+        ".woof/codebase/CURRENT-ARCHITECTURE.md",
+        ".woof/codebase/STACK.md",
+        ".woof/codebase/INTEGRATIONS.md",
+        ".woof/codebase/STRUCTURE.md",
+        ".woof/codebase/CONVENTIONS.md",
+        ".woof/codebase/TESTING.md",
+        ".woof/codebase/CONCERNS.md",
+        ".woof/codebase/TARGET-ARCHITECTURE.md",
+        ".woof/codebase/PRINCIPLES.md",
+    ],
+    "playbooks/discovery/definition.md": [
+        ".woof/codebase/CURRENT-ARCHITECTURE.md",
+        ".woof/codebase/STRUCTURE.md",
+        ".woof/codebase/CONCERNS.md",
+        ".woof/codebase/TARGET-ARCHITECTURE.md",
+        ".woof/codebase/PRINCIPLES.md",
+    ],
+    "playbooks/planning/breakdown.md": [
+        ".woof/codebase/CURRENT-ARCHITECTURE.md",
+        ".woof/codebase/STRUCTURE.md",
+        ".woof/codebase/TARGET-ARCHITECTURE.md",
+        ".woof/codebase/PRINCIPLES.md",
+    ],
+    "playbooks/execution/story.md": [
+        ".woof/codebase/STRUCTURE.md",
+        ".woof/codebase/CONVENTIONS.md",
+        ".woof/codebase/TARGET-ARCHITECTURE.md",
+        ".woof/codebase/PRINCIPLES.md",
+        ".woof/codebase/files.txt",
+    ],
+    "playbooks/critique/plan.md": [
+        ".woof/codebase/CURRENT-ARCHITECTURE.md",
+        ".woof/codebase/STRUCTURE.md",
+        ".woof/codebase/CONCERNS.md",
+        ".woof/codebase/TARGET-ARCHITECTURE.md",
+    ],
+    "playbooks/critique/story.md": [
+        ".woof/codebase/CONVENTIONS.md",
+        ".woof/codebase/TESTING.md",
+        ".woof/codebase/CONCERNS.md",
+    ],
+}
 FORBIDDEN_PATTERNS = {
     "provider-specific prompt identity": re.compile(r"\b(?:Claude|Codex|claude|codex)\b"),
     "private wrapper spelling": re.compile(r"\b(?:cld|cod)\b"),
@@ -175,3 +243,18 @@ def test_stage3_plan_generation_rules_are_not_architecture_prose() -> None:
 
     assert not leftovers, "Stage 3 prompt guidance left in architecture: " + ", ".join(leftovers)
     assert "`playbooks/planning/breakdown.md`" in text
+
+
+def test_dispatch_playbooks_declare_cartography_context_documents() -> None:
+    """E19 S2 drift guard: each dispatch playbook must name the cartography docs
+    that nodes.py injects for its node. Update PLAYBOOK_CARTOGRAPHY_DOCS when the
+    node mapping in _DISCOVERY_BUCKET_CARTOGRAPHY_DOCS et al. changes."""
+    failures: list[str] = []
+    for rel_path, expected_docs in PLAYBOOK_CARTOGRAPHY_DOCS.items():
+        path = REPO_ROOT / rel_path
+        text = path.read_text()
+        for doc in expected_docs:
+            if doc not in text:
+                failures.append(f"{rel_path}: missing cartography doc reference: {doc!r}")
+
+    assert not failures, "\n".join(failures)

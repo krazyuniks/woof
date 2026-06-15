@@ -8,6 +8,15 @@ Graph-owned input:
 {planning_input_json}
 ```
 
+## Context documents — read these first
+
+The graph delivers these `.woof/codebase/` documents in `inputs.cartography_paths`. Read them before beginning work:
+
+- `.woof/codebase/CURRENT-ARCHITECTURE.md`
+- `.woof/codebase/STRUCTURE.md`
+- `.woof/codebase/TARGET-ARCHITECTURE.md`
+- `.woof/codebase/PRINCIPLES.md`
+
 Read the declared `EPIC.md` contract and produce only `plan.json` at the declared `plan_path`.
 
 `plan.json` must match `schemas/plan.schema.json`. Use this shape:

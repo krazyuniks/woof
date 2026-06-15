@@ -8,6 +8,14 @@ Graph-owned input:
 {planning_input_json}
 ```
 
+## Context documents — read these first
+
+The graph delivers these `.woof/codebase/` documents in `inputs.cartography_paths`. Read them before beginning work:
+
+- `.woof/codebase/STACK.md`
+- `.woof/codebase/INTEGRATIONS.md`
+- `.woof/codebase/CONCERNS.md`
+
 This is a non-interactive dispatch. Do not ask the operator questions and do not
 wait for confirmation. Where scope is ambiguous, state the assumption you made
 inside the artefact and proceed.

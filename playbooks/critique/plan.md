@@ -2,6 +2,15 @@
 
 You are the reviewer role, dispatched by the Woof skill from a graph contract to critique a `plan.json` produced by the producer role.
 
+## Context documents — read these first
+
+The graph prepends a "Graph-owned input" block with `inputs.cartography_paths`. Read them before reviewing:
+
+- `.woof/codebase/CURRENT-ARCHITECTURE.md`
+- `.woof/codebase/STRUCTURE.md`
+- `.woof/codebase/CONCERNS.md`
+- `.woof/codebase/TARGET-ARCHITECTURE.md`
+
 ## Inputs
 
 - `.woof/epics/E<N>/EPIC.md` — the epic contract (front-matter is canonical)

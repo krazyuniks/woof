@@ -151,6 +151,8 @@ E1 did not wire cartography into dispatch payloads. E19 owns that demand-side co
 
 **E17 (Gate Decision Semantics) is complete.** Its per-epic plan was removed because `docs/plans/` only keeps active epic plans. Prompts 1-6 landed: the canonical decision table (`src/woof/graph/decisions.py`, P1) with structured invalid-verb errors and `split_story` dropped everywhere; readiness-gate resolution verbs (P2, `approve_with_reason` the E3 unblocker); `retry_story` for crashed executors guarded to non-terminal stories (P3); the honest `abandoned`/`epic_abandoned` terminal propagated to every terminal-status consumer (P4); the real `revise_epic_contract` channel that archives `EPIC.md` and re-dispatches Definition with the prior epic plus findings, including cold-start tracker epics (P5); and the decision-surface conformance test pinning advertised-equals-implemented (P6). E3's readiness-resolution dependency is satisfied; E16 defect-sweep items and E2's run-resilience/baseline/drift work were independent of E17.
 
+**E19 (Cartography Consumption) is active.** Its plan is `docs/plans/e19-cartography-consumption.md`. Prompts 1-4 target: per-node payload wiring with `incomplete_stage_state` for missing docs (P1), playbook read-first context discipline (P2), Woof mechanical self-onboarding — `[cartography]` block, AS-IS mapper docs, `scripts/refresh-cartography`, post-commit hook (P3), and operator-gated DESIGN-layer authoring by Ryan (P4).
+
 ## What Happens Next
 
 Current ordering:

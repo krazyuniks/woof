@@ -194,6 +194,25 @@ require_manual_tool() {
     return 1
 }
 
+typeset -r CTAGS_HINT="Install universal-ctags: sudo apt install -y universal-ctags (Debian/Ubuntu), brew install universal-ctags (macOS), or sudo pacman -S ctags (Arch/CachyOS)."
+
+require_universal_ctags() {
+    if ! command -v ctags >/dev/null 2>&1; then
+        log_error "ctags not found"
+        print -r -- "       ${CTAGS_HINT}"
+        return 1
+    fi
+    local version_line
+    version_line="$(ctags --version 2>/dev/null | head -n 1 || true)"
+    if [[ "$version_line" != *"Universal Ctags"* ]]; then
+        log_error "ctags found but is not Universal Ctags (got: ${version_line:-unknown})"
+        print -r -- "       ${CTAGS_HINT}"
+        return 1
+    fi
+    log_info "ctags: ${version_line}"
+    return 0
+}
+
 REPO_DIR="${0:A:h:h}"
 OS="$(detect_os)"
 missing=0
@@ -222,7 +241,7 @@ log_step "Checking Woof workflow prerequisites..."
 require_manual_tool gh "Install GitHub CLI and authenticate with: gh auth login" || missing=1
 require_manual_tool claude "Install the Claude Code CLI expected by .woof/agents.toml." || missing=1
 require_manual_tool codex "Install the Codex CLI expected by .woof/agents.toml." || missing=1
-require_manual_tool ctags "Install universal-ctags: sudo apt install -y universal-ctags (Debian/Ubuntu), brew install universal-ctags (macOS), or sudo pacman -S ctags (Arch/CachyOS)." || missing=1
+require_universal_ctags || missing=1
 
 if (( missing != 0 )); then
     log_error "One or more prerequisites are missing"

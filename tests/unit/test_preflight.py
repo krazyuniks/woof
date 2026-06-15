@@ -2044,10 +2044,10 @@ def test_preflight_no_ctags_finding_when_no_languages_declared(tmp_path: Path, r
 
 
 def test_first_time_setup_includes_ctags_prerequisite() -> None:
-    """scripts/first-time-setup.sh must list ctags in the require_manual_tool tier."""
+    """scripts/first-time-setup.sh must enforce Universal Ctags at the setup seam."""
     script = REPO_ROOT / "scripts" / "first-time-setup.sh"
     assert script.is_file(), f"{script} not found"
     content = script.read_text()
-    assert "require_manual_tool ctags" in content, (
-        "ctags must be in the require_manual_tool (check-and-instruct) tier"
+    assert "require_universal_ctags" in content, (
+        "ctags check must use require_universal_ctags (validates Universal Ctags banner)"
     )

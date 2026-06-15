@@ -234,6 +234,13 @@ adapter = "in-session"
 [roles.gate-resolver]
 adapter = "in-session"
 
+[routes.execution.primary]
+adapter = "claude"
+mcp = []
+
+[routes.execution.reviewer]
+adapter = "codex"
+
 [model_profiles.default.roles.primary]
 model = "gpt-5.5"
 effort = "xhigh"
@@ -241,6 +248,14 @@ effort = "xhigh"
 [model_profiles.default.roles.reviewer]
 model = "claude-opus-4-7"
 effort = "max"
+
+[model_profiles.default.routes.execution.primary]
+model = "claude-opus-4-7"
+effort = "max"
+
+[model_profiles.default.routes.execution.reviewer]
+model = "gpt-5.5"
+effort = "xhigh"
 
 [timeouts]
 default_minutes = 30

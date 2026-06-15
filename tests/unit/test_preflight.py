@@ -24,6 +24,40 @@ effort = "max"
 mcp = []
 """
 
+AGENTS_WITH_EXECUTION_OVERLAY = """\
+model_profile = "default"
+
+[roles.primary]
+adapter = "codex"
+
+[roles.reviewer]
+adapter = "claude"
+mcp = []
+
+[routes.execution.primary]
+adapter = "claude"
+mcp = []
+
+[routes.execution.reviewer]
+adapter = "codex"
+
+[model_profiles.default.roles.primary]
+model = "gpt-5.5"
+effort = "xhigh"
+
+[model_profiles.default.roles.reviewer]
+model = "claude-opus-4-7"
+effort = "max"
+
+[model_profiles.default.routes.execution.primary]
+model = "claude-opus-4-7"
+effort = "max"
+
+[model_profiles.default.routes.execution.reviewer]
+model = "gpt-5.5"
+effort = "xhigh"
+"""
+
 CARTOGRAPHY_PREREQS = """\
 [infra]
 just = "any"
@@ -328,6 +362,7 @@ grammars = ["python"]
 [lsp]
 languages = ["python"]
 """,
+        agents=AGENTS_WITH_EXECUTION_OVERLAY,
         quality_gates="""\
 [gates.test]
 command = "just test"
@@ -354,6 +389,14 @@ timeout_seconds = 30
         "agents.primary.route",
         "agents.reviewer.route",
         "agents.reviewer.mcp_config",
+        "agents.definition.primary.route",
+        "agents.definition.reviewer.route",
+        "agents.discovery.primary.route",
+        "agents.discovery.reviewer.route",
+        "agents.execution.primary.route",
+        "agents.execution.reviewer.route",
+        "agents.planning.primary.route",
+        "agents.planning.reviewer.route",
         "github.repo",
         "lsp.python.binary",
         "tree-sitter.python",
@@ -371,6 +414,127 @@ timeout_seconds = 30
         "commit safety is enforced through deterministic checks, reviewer critique, "
         "human gates, transaction manifests, and commit decisions"
     ]
+    execution_primary = next(
+        finding
+        for finding in payload["findings"]
+        if finding["id"] == "agents.execution.primary.route"
+    )
+    assert execution_primary["ok"] is True
+    assert "adapter=claude" in execution_primary["detail"]
+    execution_reviewer = next(
+        finding
+        for finding in payload["findings"]
+        if finding["id"] == "agents.execution.reviewer.route"
+    )
+    assert execution_reviewer["ok"] is True
+    assert "adapter=codex" in execution_reviewer["detail"]
+
+
+def test_preflight_fails_for_unresolvable_node_group(tmp_path: Path, run_woof) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _stub_core_tools(bin_dir)
+
+    _write_ready_project(
+        tmp_path,
+        prerequisites="""\
+[infra]
+just = "any"
+git = "any"
+gh = "any"
+
+[commands]
+claude = "any"
+codex = "any"
+
+[validators]
+ajv = "any"
+ajv-formats = "any"
+
+[tracker]
+kind = "github"
+repo = "example/project"
+""",
+        agents="""\
+[roles.reviewer]
+adapter = "claude"
+model = "claude-opus-4-7"
+effort = "max"
+mcp = []
+""",
+    )
+
+    proc = run_woof(
+        "preflight",
+        "--project-root",
+        str(tmp_path),
+        "--format",
+        "json",
+        env=_env_with_path(bin_dir),
+    )
+
+    assert proc.returncode == 1
+    payload = json.loads(proc.stdout)
+    finding_ids = {f["id"] for f in payload["findings"]}
+    assert "agents.primary.route" in finding_ids
+    assert "agents.execution.primary.route" in finding_ids
+    primary = next(f for f in payload["findings"] if f["id"] == "agents.primary.route")
+    assert primary["ok"] is False
+    exec_primary = next(
+        f for f in payload["findings"] if f["id"] == "agents.execution.primary.route"
+    )
+    assert exec_primary["ok"] is False
+
+
+def test_preflight_passes_with_all_node_groups_resolved(tmp_path: Path, run_woof) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _stub_core_tools(bin_dir)
+
+    _write_ready_project(
+        tmp_path,
+        prerequisites="""\
+[infra]
+just = "any"
+git = "any"
+gh = "any"
+
+[commands]
+claude = "any"
+codex = "any"
+
+[validators]
+ajv = "any"
+ajv-formats = "any"
+
+[tracker]
+kind = "github"
+repo = "example/project"
+""",
+        agents=AGENTS_WITH_EXECUTION_OVERLAY,
+    )
+
+    proc = run_woof(
+        "preflight",
+        "--project-root",
+        str(tmp_path),
+        "--format",
+        "json",
+        env=_env_with_path(bin_dir),
+    )
+
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    payload = json.loads(proc.stdout)
+    finding_ids = {f["id"] for f in payload["findings"]}
+    expected_group_ids = {
+        f"agents.{group}.{role}.route"
+        for group in ("discovery", "definition", "planning", "execution")
+        for role in ("primary", "reviewer")
+    }
+    assert expected_group_ids <= finding_ids
+    for fid in expected_group_ids:
+        finding = next(f for f in payload["findings"] if f["id"] == fid)
+        assert finding["ok"] is True, f"{fid} should pass: {finding['detail']}"
 
 
 def test_preflight_validates_named_mcp_route(tmp_path: Path, run_woof) -> None:

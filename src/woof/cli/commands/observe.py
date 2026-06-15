@@ -13,6 +13,7 @@ from typing import Any, get_args
 import yaml
 
 from woof.cli.dispatcher import (
+    NODE_GROUPS,
     DispatchConfigError,
     _mcp_names,
     _role_effort,
@@ -486,6 +487,23 @@ def _dispatch_routes_summary(repo_root: Path) -> dict[str, Any]:
             route_summary["ok"] = False
             route_summary["errors"].append(timeout_error)
         summary["roles"][role_name] = route_summary
+    routes_by_group: dict[str, Any] = {}
+    for group in sorted(NODE_GROUPS):
+        group_routes: dict[str, Any] = {}
+        for role_name in ("primary", "reviewer"):
+            route_summary = _dispatch_route_summary(
+                role_name,
+                loaded,
+                mcp_servers,
+                timeout_min,
+                route_key=group,
+            )
+            if timeout_error:
+                route_summary["ok"] = False
+                route_summary["errors"].append(timeout_error)
+            group_routes[role_name] = route_summary
+        routes_by_group[group] = group_routes
+    summary["routes"] = routes_by_group
     return summary
 
 
@@ -494,9 +512,11 @@ def _dispatch_route_summary(
     agents: dict[str, Any],
     mcp_servers: dict[str, Any],
     timeout_min: int,
+    *,
+    route_key: str | None = None,
 ) -> dict[str, Any]:
     try:
-        route = resolve_agent_route(agents, role_name)
+        route = resolve_agent_route(agents, role_name, route_key=route_key)
     except DispatchConfigError as exc:
         return {"ok": False, "role": role_name, "errors": [str(exc)]}
 
@@ -1176,6 +1196,17 @@ def _print_dispatch_routes(routes: dict[str, Any]) -> None:
         else:
             errors = "; ".join(str(error) for error in route.get("errors") or [])
             print(f"  {role_name}: unavailable {errors}")
+    for group, group_routes in sorted((routes.get("routes") or {}).items()):
+        for role_name in ("primary", "reviewer"):
+            route = (group_routes or {}).get(role_name) or {}
+            if route.get("ok"):
+                print(
+                    f"  {group}/{role_name}: adapter={route.get('adapter')} "
+                    f"model={route.get('model')} effort={route.get('effort')}"
+                )
+            else:
+                errors = "; ".join(str(error) for error in route.get("errors") or [])
+                print(f"  {group}/{role_name}: unavailable {errors}")
 
 
 def _print_timeline(events: list[dict[str, Any]]) -> None:

@@ -25,6 +25,7 @@ import yaml
 
 from woof.cli.commands.observe import build_operator_state_summary
 from woof.cli.dispatcher import (
+    NODE_GROUPS,
     TRUSTED_RUNTIME_MODE,
     TRUSTED_RUNTIME_NOTE,
     DispatchConfigError,
@@ -490,6 +491,11 @@ def _check_role_routes(repo_root: Path) -> list[PreflightFinding]:
     mcp_servers = loaded.get("mcp_servers") or {}
     for role_name in ("primary", "reviewer"):
         findings.extend(_check_dispatch_role_route(role_name, loaded, mcp_servers, repo_root))
+    for group in sorted(NODE_GROUPS):
+        for role_name in ("primary", "reviewer"):
+            findings.extend(
+                _check_dispatch_group_route(group, role_name, loaded, mcp_servers, repo_root)
+            )
     return findings
 
 
@@ -555,6 +561,67 @@ def _check_dispatch_role_route(
     if route.adapter == "claude":
         findings.extend(_check_claude_mcp_config(role_name, route.config, mcp_servers, repo_root))
     return findings
+
+
+def _check_dispatch_group_route(
+    group: str,
+    role_name: str,
+    agents: dict[str, Any],
+    mcp_servers: dict[str, Any],
+    repo_root: Path,
+) -> list[PreflightFinding]:
+    label = f"{group}/{role_name} route"
+    try:
+        route = resolve_agent_route(agents, role_name, route_key=group)
+    except DispatchConfigError as exc:
+        return [
+            PreflightFinding(
+                id=f"agents.{group}.{role_name}.route",
+                label=label,
+                ok=False,
+                detail=str(exc),
+            )
+        ]
+
+    errors: list[str] = []
+    if route.adapter == "in-session":
+        errors.append("dispatchable role resolves to in-session")
+    elif shutil.which(route.adapter) is None:
+        errors.append(f"{route.adapter} not found on PATH")
+
+    model = route.config.get("model")
+    if not model:
+        errors.append("model is not declared")
+
+    try:
+        effort = _role_effort(route.adapter, route.config)
+    except DispatchConfigError as exc:
+        effort = None
+        errors.append(str(exc))
+    if effort is None:
+        errors.append("effort is not declared")
+
+    try:
+        build_argv(route.adapter, route.config, "preflight route probe", mcp_servers=mcp_servers)
+    except DispatchConfigError as exc:
+        errors.append(str(exc))
+
+    return [
+        PreflightFinding(
+            id=f"agents.{group}.{role_name}.route",
+            label=label,
+            ok=not errors,
+            detail=(
+                f"[{group}.{route.config_role}] resolves adapter={route.adapter}, "
+                f"model={model}, effort={effort}, "
+                f"profile={route.model_profile or '-'}, runtime={TRUSTED_RUNTIME_MODE}"
+                if not errors
+                else "; ".join(errors)
+            ),
+            required="explicit adapter, model, effort, and runtime-mode disclosure",
+            notes=[TRUSTED_RUNTIME_NOTE] if not errors else [],
+        )
+    ]
 
 
 def _check_claude_mcp_config(
@@ -1855,3 +1922,14 @@ def _print_operator_routes(routes: dict[str, Any]) -> None:
         else:
             errors = "; ".join(str(error) for error in route.get("errors") or [])
             print(f"    {role_name}: unavailable {errors}")
+    for group, group_routes in sorted((routes.get("routes") or {}).items()):
+        for role_name in ("primary", "reviewer"):
+            route = (group_routes or {}).get(role_name) or {}
+            if route.get("ok"):
+                print(
+                    f"    {group}/{role_name}: adapter={route.get('adapter')} "
+                    f"model={route.get('model')} effort={route.get('effort')}"
+                )
+            else:
+                errors = "; ".join(str(error) for error in route.get("errors") or [])
+                print(f"    {group}/{role_name}: unavailable {errors}")

@@ -98,6 +98,7 @@ def test_executor_dispatch_uses_portable_prompt_with_stub_adapter(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     directory = _write_plan(tmp_path, 1)
+    _write_codebase_docs(tmp_path)
     (tmp_path / ".woof" / ".current-epic").write_text("E1")
     (tmp_path / ".woof" / "agents.toml").write_text(
         """\
@@ -174,6 +175,7 @@ def test_executor_dispatch_completed_lingering_advances(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _write_plan(tmp_path, 1)
+    _write_codebase_docs(tmp_path)
 
     def fake_dispatch(
         repo_root: Path,
@@ -189,7 +191,14 @@ def test_executor_dispatch_completed_lingering_advances(
         assert epic_id == 1
         assert story_id == "S1"
         assert '"node_type": "executor_dispatch"' in prompt
-        assert artefacts_loaded == [".woof/epics/E1/plan.json"]
+        assert artefacts_loaded == [
+            ".woof/epics/E1/plan.json",
+            ".woof/codebase/STRUCTURE.md",
+            ".woof/codebase/CONVENTIONS.md",
+            ".woof/codebase/TARGET-ARCHITECTURE.md",
+            ".woof/codebase/PRINCIPLES.md",
+            ".woof/codebase/files.txt",
+        ]
         return _dispatch_result("completed_lingering")
 
     monkeypatch.setattr(nodes, "_run_dispatch", fake_dispatch)
@@ -223,6 +232,7 @@ def test_executor_dispatch_failure_exit_types_open_existing_crash_gate(
     returncode: int,
 ) -> None:
     _write_plan(tmp_path, 1)
+    _write_codebase_docs(tmp_path)
 
     def fake_dispatch(
         repo_root: Path,
@@ -341,6 +351,24 @@ def _init_git_repo(root: Path) -> None:
     _git(root, "init", check=True, capture_output=True)
     _git(root, "config", "user.email", "test@example.com", check=True)
     _git(root, "config", "user.name", "Test", check=True)
+
+
+def _write_codebase_docs(root: Path) -> None:
+    codebase_dir = root / ".woof" / "codebase"
+    codebase_dir.mkdir(parents=True, exist_ok=True)
+    for name in [
+        "CURRENT-ARCHITECTURE.md",
+        "STACK.md",
+        "INTEGRATIONS.md",
+        "STRUCTURE.md",
+        "CONVENTIONS.md",
+        "TESTING.md",
+        "CONCERNS.md",
+        "TARGET-ARCHITECTURE.md",
+        "PRINCIPLES.md",
+    ]:
+        (codebase_dir / name).write_text(f"# {name}\n\nStub.\n")
+    (codebase_dir / "files.txt").write_text("")
 
 
 def _read_gate_fm(gate_path: Path) -> dict:
@@ -1083,6 +1111,7 @@ def test_discovery_research_node_dispatches_primary_and_bundles_playbooks(
     tmp_path: Path, monkeypatch
 ) -> None:
     directory = _write_spark(tmp_path, 220)
+    _write_codebase_docs(tmp_path)
     captured: dict[str, Any] = {}
 
     def fake_dispatch(
@@ -1110,7 +1139,12 @@ def test_discovery_research_node_dispatches_primary_and_bundles_playbooks(
     assert '"node_type": "discovery_research"' in captured["prompt"]
     assert "Building-block playbook: landscape" in captured["prompt"]
     assert "AskUserQuestion" not in captured["prompt"]
-    assert captured["artefacts_loaded"] == [".woof/epics/E220/spark.md"]
+    assert captured["artefacts_loaded"] == [
+        ".woof/epics/E220/spark.md",
+        ".woof/codebase/STACK.md",
+        ".woof/codebase/INTEGRATIONS.md",
+        ".woof/codebase/CONCERNS.md",
+    ]
     assert output.status == NodeStatus.COMPLETED
     assert output.next_node == NodeType.DISCOVERY_THINKING
     assert output.validation_summary and output.validation_summary.stage == 1
@@ -1128,6 +1162,7 @@ def test_discovery_dispatch_completed_lingering_advances(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     directory = _write_spark(tmp_path, 225)
+    _write_codebase_docs(tmp_path)
 
     def fake_dispatch(
         repo_root: Path,
@@ -1143,7 +1178,12 @@ def test_discovery_dispatch_completed_lingering_advances(
         assert epic_id == 225
         assert story_id is None
         assert '"node_type": "discovery_research"' in prompt
-        assert artefacts_loaded == [".woof/epics/E225/spark.md"]
+        assert artefacts_loaded == [
+            ".woof/epics/E225/spark.md",
+            ".woof/codebase/STACK.md",
+            ".woof/codebase/INTEGRATIONS.md",
+            ".woof/codebase/CONCERNS.md",
+        ]
         _write_discovery_bucket(directory, "research")
         return _dispatch_result("completed_lingering")
 
@@ -1161,6 +1201,7 @@ def test_discovery_dispatch_completed_lingering_advances(
 def test_discovery_thinking_node_passes_prior_bucket_artefacts(tmp_path: Path, monkeypatch) -> None:
     directory = _write_spark(tmp_path, 224)
     _write_discovery_bucket(directory, "research")
+    _write_codebase_docs(tmp_path)
     captured: dict[str, Any] = {}
 
     def fake_dispatch(
@@ -1185,6 +1226,8 @@ def test_discovery_thinking_node_passes_prior_bucket_artefacts(tmp_path: Path, m
     assert captured["artefacts_loaded"] == [
         ".woof/epics/E224/spark.md",
         ".woof/epics/E224/discovery/research/research.md",
+        ".woof/codebase/CURRENT-ARCHITECTURE.md",
+        ".woof/codebase/STRUCTURE.md",
     ]
     assert output.status == NodeStatus.COMPLETED
     assert output.next_node == NodeType.DISCOVERY_IDEATE
@@ -1213,6 +1256,7 @@ def test_discovery_bucket_node_halts_when_no_artefacts_produced(
     tmp_path: Path, monkeypatch
 ) -> None:
     _write_spark(tmp_path, 222)
+    _write_codebase_docs(tmp_path)
 
     def empty_dispatch(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess([], 0, "", "")
@@ -1229,6 +1273,7 @@ def test_discovery_bucket_node_halts_when_no_artefacts_produced(
 
 def test_discovery_ideate_node_bundles_no_building_blocks(tmp_path: Path, monkeypatch) -> None:
     directory = _write_spark(tmp_path, 223)
+    _write_codebase_docs(tmp_path)
     captured: dict[str, Any] = {}
 
     def fake_dispatch(
@@ -1260,6 +1305,7 @@ def test_discovery_synthesis_node_dispatches_primary_and_validates_outputs(
     tmp_path: Path, monkeypatch
 ) -> None:
     directory = _write_spark(tmp_path, 22)
+    _write_codebase_docs(tmp_path)
     captured: dict[str, Any] = {}
 
     def fake_dispatch(
@@ -1295,7 +1341,18 @@ def test_discovery_synthesis_node_dispatches_primary_and_validates_outputs(
     assert captured["epic_id"] == 22
     assert captured["story_id"] is None
     assert '"node_type": "discovery_synthesis"' in captured["prompt"]
-    assert captured["artefacts_loaded"] == [".woof/epics/E22/spark.md"]
+    assert captured["artefacts_loaded"] == [
+        ".woof/epics/E22/spark.md",
+        ".woof/codebase/CURRENT-ARCHITECTURE.md",
+        ".woof/codebase/STACK.md",
+        ".woof/codebase/INTEGRATIONS.md",
+        ".woof/codebase/STRUCTURE.md",
+        ".woof/codebase/CONVENTIONS.md",
+        ".woof/codebase/TESTING.md",
+        ".woof/codebase/CONCERNS.md",
+        ".woof/codebase/TARGET-ARCHITECTURE.md",
+        ".woof/codebase/PRINCIPLES.md",
+    ]
     assert "The graph validates the files and selects the next node." in captured["prompt"]
     _assert_planning_node_input_schema(
         tmp_path,
@@ -1386,6 +1443,7 @@ def test_epic_definition_node_dispatches_primary_validates_epic_and_continues(
 ) -> None:
     directory = _write_spark(tmp_path, 24)
     _write_discovery_synthesis(directory)
+    _write_codebase_docs(tmp_path)
     captured: dict[str, Any] = {}
 
     def fake_dispatch(
@@ -1426,6 +1484,11 @@ def test_epic_definition_node_dispatches_primary_validates_epic_and_continues(
         ".woof/epics/E24/discovery/synthesis/PRINCIPLES.md",
         ".woof/epics/E24/discovery/synthesis/ARCHITECTURE.md",
         ".woof/epics/E24/discovery/synthesis/OPEN_QUESTIONS.md",
+        ".woof/codebase/CURRENT-ARCHITECTURE.md",
+        ".woof/codebase/STRUCTURE.md",
+        ".woof/codebase/CONCERNS.md",
+        ".woof/codebase/TARGET-ARCHITECTURE.md",
+        ".woof/codebase/PRINCIPLES.md",
     ]
     _assert_planning_node_input_schema(
         tmp_path,
@@ -1518,6 +1581,7 @@ def test_breakdown_planning_node_dispatches_primary_validates_plan_and_renders_m
 ) -> None:
     directory = _write_spark(tmp_path, 26)
     _write_minimal_epic(directory, 26)
+    _write_codebase_docs(tmp_path)
     captured: dict[str, Any] = {}
 
     def fake_dispatch(
@@ -1553,7 +1617,13 @@ def test_breakdown_planning_node_dispatches_primary_validates_plan_and_renders_m
     assert captured["epic_id"] == 26
     assert captured["story_id"] is None
     assert '"node_type": "breakdown_planning"' in captured["prompt"]
-    assert captured["artefacts_loaded"] == [".woof/epics/E26/EPIC.md"]
+    assert captured["artefacts_loaded"] == [
+        ".woof/epics/E26/EPIC.md",
+        ".woof/codebase/CURRENT-ARCHITECTURE.md",
+        ".woof/codebase/STRUCTURE.md",
+        ".woof/codebase/TARGET-ARCHITECTURE.md",
+        ".woof/codebase/PRINCIPLES.md",
+    ]
     assert "Right-sized stories" in captured["prompt"]
     assert "Do not author `PLAN.md`" in captured["prompt"]
     _assert_planning_node_input_schema(
@@ -1576,6 +1646,7 @@ def test_breakdown_planning_node_rejects_crossref_invalid_plan_before_critique(
 ) -> None:
     directory = _write_spark(tmp_path, 260)
     _write_minimal_epic(directory, 260)
+    _write_codebase_docs(tmp_path)
     captured: dict[str, Any] = {}
 
     def fake_dispatch(
@@ -1617,6 +1688,7 @@ def test_plan_critique_node_dispatches_reviewer_validates_critique_and_halts(
     directory = _write_spark(tmp_path, 27)
     _write_minimal_epic(directory, 27)
     _write_stage3_plan(directory, 27)
+    _write_codebase_docs(tmp_path)
     (directory / "PLAN.md").write_text(nodes._render_plan_markdown(nodes.load_plan(tmp_path, 27)))
     captured: dict[str, Any] = {}
 
@@ -1657,6 +1729,10 @@ def test_plan_critique_node_dispatches_reviewer_validates_critique_and_halts(
         ".woof/epics/E27/EPIC.md",
         ".woof/epics/E27/plan.json",
         ".woof/epics/E27/PLAN.md",
+        ".woof/codebase/CURRENT-ARCHITECTURE.md",
+        ".woof/codebase/STRUCTURE.md",
+        ".woof/codebase/CONCERNS.md",
+        ".woof/codebase/TARGET-ARCHITECTURE.md",
     ]
     _assert_planning_node_input_schema(
         tmp_path,
@@ -1677,6 +1753,7 @@ def test_graph_runs_discovery_definition_breakdown_and_opens_plan_gate(
     tmp_path: Path, monkeypatch
 ) -> None:
     directory = _write_spark(tmp_path, 28)
+    _write_codebase_docs(tmp_path)
 
     def fake_dispatch(
         repo_root: Path,
@@ -1812,6 +1889,7 @@ def test_plan_gate_resolution_unblocks_stage_5_story_execution(tmp_path: Path) -
 def test_critique_dispatch_failure_opens_reviewer_gate(tmp_path: Path, monkeypatch) -> None:
     _init_git_repo(tmp_path)
     directory = _write_plan(tmp_path, 1)
+    _write_codebase_docs(tmp_path)
     (directory / "EPIC.md").write_text("---\nepic_id: 1\n---\n")
 
     def fake_dispatch(
@@ -1834,6 +1912,9 @@ def test_critique_dispatch_failure_opens_reviewer_gate(tmp_path: Path, monkeypat
         assert artefacts_loaded == [
             ".woof/epics/E1/plan.json",
             ".woof/epics/E1/EPIC.md",
+            ".woof/codebase/CONVENTIONS.md",
+            ".woof/codebase/TESTING.md",
+            ".woof/codebase/CONCERNS.md",
         ]
         return subprocess.CompletedProcess([], 2, "", "reviewer failed")
 
@@ -1859,6 +1940,7 @@ def test_critique_dispatch_stages_changed_story_paths_before_review(
 ) -> None:
     _init_git_repo(tmp_path)
     directory = _write_plan(tmp_path, 1)
+    _write_codebase_docs(tmp_path)
     (directory / "EPIC.md").write_text("---\nepic_id: 1\n---\n")
     src = tmp_path / "src"
     src.mkdir()
@@ -3617,6 +3699,7 @@ def test_epic_definition_node_redispatches_revision_with_prior_contract_and_find
     directory = _write_spark(tmp_path, 71)
     _write_discovery_synthesis(directory)
     _seed_pending_contract_revision(directory, 71)
+    _write_codebase_docs(tmp_path)
     captured: dict[str, Any] = {}
 
     def fake_dispatch(
@@ -3671,6 +3754,7 @@ def test_epic_definition_node_redispatches_cold_start_revision_without_synthesis
     # leaves no synthesis inputs behind.
     directory = _write_spark(tmp_path, 72)
     _seed_pending_contract_revision(directory, 72)
+    _write_codebase_docs(tmp_path)
     assert not nodes.discovery_synthesis_complete(tmp_path, 72)
     captured: dict[str, Any] = {}
 

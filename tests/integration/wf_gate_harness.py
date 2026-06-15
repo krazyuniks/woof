@@ -473,6 +473,23 @@ redact_patterns = []
         f"[gates.compile]\ncommand = {json.dumps(quality_gate_command)}\ntimeout_seconds = 30\n",
         encoding="utf-8",
     )
+    codebase_dir = consumer / ".woof" / "codebase"
+    codebase_dir.mkdir(parents=True, exist_ok=True)
+    for _doc in [
+        "CURRENT-ARCHITECTURE.md",
+        "STACK.md",
+        "INTEGRATIONS.md",
+        "STRUCTURE.md",
+        "CONVENTIONS.md",
+        "TESTING.md",
+        "CONCERNS.md",
+        "TARGET-ARCHITECTURE.md",
+        "PRINCIPLES.md",
+    ]:
+        (codebase_dir / _doc).write_text(
+            f"# {_doc}\n\nStub for integration test.\n", encoding="utf-8"
+        )
+    (codebase_dir / "files.txt").write_text("")
     assert_ok(run(["git", "add", ".gitignore", ".woof"], cwd=consumer, env=env))
     assert_ok(run(["git", "commit", "-m", "chore: bootstrap woof"], cwd=consumer, env=env))
 

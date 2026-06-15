@@ -28,10 +28,10 @@ New call sites introduced by S1 raise `StageStateError` (`operator_recoverable=T
 
 | Node | Gate type opened |
 |---|---|
-| `discovery_research`, `discovery_thinking`, `discovery_synthesis` | `story_gate` |
-| `epic_definition`, `contract_readiness` | `story_gate` |
+| `discovery_research`, `discovery_thinking`, `discovery_ideate`, `discovery_synthesis` | `plan_gate` (no story_id at Stage 1) |
+| `epic_definition`, `contract_readiness` | `plan_gate` (no story_id at Stage 2) |
 | `breakdown_planning`, `plan_critique` | `plan_gate` |
-| `executor_dispatch`, `critique_dispatch` | `story_gate` |
+| `executor_dispatch`, `critique_dispatch` | `story_gate` (story_id always present at Stage 5) |
 
 ### Event-log consumer checklist (P1)
 
@@ -58,8 +58,8 @@ Every reader of a `gate_opened` / `incomplete_stage_state` event must handle the
 
 | ID | Decision | Resolution |
 |---|---|---|
-| D1 | Is the `files.txt` slice in `executor_dispatch` a full-file copy or a pathspec-filtered subset? | TBD in P1. Options: (a) inject `files.txt` as-is and let the executor filter; (b) filter through the story's `paths[]` at build time via `pathspec.filter_paths_matching`. Record here when P1 lands. |
-| D2 | Which gate type does a cartography-missing halt open at Stage 1 and Stage 2 nodes (no plan yet)? | TBD in P1. Current `_planning_halt` usage at those stages opens `story_gate`. Confirm this is the right type for a missing-context halt before Stage 3. |
+| D1 | Is the `files.txt` slice in `executor_dispatch` a full-file copy or a pathspec-filtered subset? | Filtered subset. `_executor_files_txt_slice` reads `files.txt`, then calls `pathspec.filter_paths_matching(repo_root, candidates, story.paths)` to produce a story-scoped list. If `files.txt` is empty or `story.paths` is empty, the candidates list is returned as-is without a git call. The filtered list goes into `inputs.files_txt_slice`; `files.txt` itself is recorded in `artefacts_loaded`. |
+| D2 | Which gate type does a cartography-missing halt open at Stage 1 and Stage 2 nodes (no plan yet)? | `plan_gate`. The gate schema requires `story_gate` to carry a non-null `story_id`; planning nodes have no story_id. `plan_gate` (null story_id, stage 4) is the correct type for all non-execution nodes. `executor_dispatch` and `critique_dispatch` (which always have a story_id) use `story_gate`. The legality matrix above has been corrected accordingly. |
 | D3 | Does S3 commit the AS-IS mapper docs, or are they gitignored? | ADR-004 says the design and AS-IS markdown docs are committed planning state; the mechanical layer (`tags`, `files.txt`, `freshness.json`) is gitignored. Confirm `.gitignore` matches before P3 commit. |
 
 ## Out of scope

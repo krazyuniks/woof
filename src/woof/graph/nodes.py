@@ -42,6 +42,7 @@ from woof.graph.state import (
     NodeStatus,
     NodeType,
     Plan,
+    StorySpec,
     ValidationSummary,
 )
 from woof.graph.transitions import (
@@ -388,6 +389,148 @@ _DISCOVERY_BUCKET_PLAYBOOK_SUBDIR = {
     "ideate": None,
 }
 
+# Cartography document loading map (per docs/architecture.md §4).
+# discovery_ideate and discovery_synthesis load the full set (architecture wins
+# over the plan's Prompt-1 table which incorrectly listed synthesis as
+# "thinking bucket only").
+# contract_readiness is a deterministic node — it has no dispatch payload, so
+# it is not wired here (S1 scope is dispatch nodes only).
+_FULL_CARTOGRAPHY_SET = [
+    "CURRENT-ARCHITECTURE.md",
+    "STACK.md",
+    "INTEGRATIONS.md",
+    "STRUCTURE.md",
+    "CONVENTIONS.md",
+    "TESTING.md",
+    "CONCERNS.md",
+    "TARGET-ARCHITECTURE.md",
+    "PRINCIPLES.md",
+]
+_DISCOVERY_BUCKET_CARTOGRAPHY_DOCS: dict[str, list[str]] = {
+    "research": ["STACK.md", "INTEGRATIONS.md", "CONCERNS.md"],
+    "thinking": ["CURRENT-ARCHITECTURE.md", "STRUCTURE.md"],
+    "ideate": _FULL_CARTOGRAPHY_SET,
+}
+_EPIC_DEFINITION_CARTOGRAPHY_DOCS = [
+    "CURRENT-ARCHITECTURE.md",
+    "STRUCTURE.md",
+    "CONCERNS.md",
+    "TARGET-ARCHITECTURE.md",
+    "PRINCIPLES.md",
+]
+_BREAKDOWN_PLANNING_CARTOGRAPHY_DOCS = [
+    "CURRENT-ARCHITECTURE.md",
+    "STRUCTURE.md",
+    "TARGET-ARCHITECTURE.md",
+    "PRINCIPLES.md",
+]
+_PLAN_CRITIQUE_CARTOGRAPHY_DOCS = [
+    "CURRENT-ARCHITECTURE.md",
+    "STRUCTURE.md",
+    "CONCERNS.md",
+    "TARGET-ARCHITECTURE.md",
+]
+_EXECUTOR_CARTOGRAPHY_DOCS = [
+    "STRUCTURE.md",
+    "CONVENTIONS.md",
+    "TARGET-ARCHITECTURE.md",
+    "PRINCIPLES.md",
+]
+_CRITIQUE_DISPATCH_CARTOGRAPHY_DOCS = ["CONVENTIONS.md", "TESTING.md", "CONCERNS.md"]
+
+
+def _codebase_doc_relpath(doc_name: str) -> str:
+    return f".woof/codebase/{doc_name}"
+
+
+def _require_cartography_docs(repo_root: Path, doc_names: list[str], gate_type: str) -> list[str]:
+    """Return repo-relative paths for each named codebase doc.
+
+    Raises StageStateError(operator_recoverable=True, gate_type=gate_type) if
+    any document is absent from .woof/codebase/. The check lives here, at
+    payload-build time, not in preflight — so a missing doc always halts
+    rather than silently dispatching cold.
+    """
+    refs = [_codebase_doc_relpath(name) for name in doc_names]
+    missing = [ref for ref in refs if not (repo_root / ref).is_file()]
+    if missing:
+        raise StageStateError(
+            "Missing cartography document(s) required before dispatch: "
+            + ", ".join(missing)
+            + ". Run `scripts/refresh-cartography` or author the missing document,"
+            " then re-run `woof wf --epic <N>`.",
+            operator_recoverable=True,
+            gate_type=gate_type,
+        )
+    return refs
+
+
+def _cartography_missing_gate(inp: NodeInput, exc: StageStateError) -> NodeOutput:
+    """Open the node's natural gate type for a missing-cartography StageStateError."""
+    position = (
+        "## Context\n\n"
+        f"One or more cartography documents required for E{inp.epic_id} dispatch are "
+        "missing from `.woof/codebase/`.\n\n"
+        "## Findings\n\n"
+        f"- {exc}\n\n"
+        "## Primary position\n\n"
+        "Run `scripts/refresh-cartography` to regenerate the mechanical layer, "
+        "or author the missing document. "
+        f"Then re-run `woof wf --epic {inp.epic_id}` to continue.\n\n"
+        "## Reviewer position\n\n"
+        "The deterministic graph opened this gate because dispatching without the "
+        "mapped cartography documents would silently give the subagent an incomplete "
+        "view of the codebase.\n"
+    )
+    write_gate(
+        epic_dir=epic_dir(inp.repo_root, inp.epic_id),
+        story_id=inp.story_id,
+        triggered_by=["incomplete_stage_state"],
+        position_text=position,
+        schema_path=schema_dir() / "gate.schema.json",
+        validate=True,
+        gate_type=exc.gate_type,
+    )
+    return NodeOutput(
+        node_type=inp.node_type,
+        status=NodeStatus.GATE_OPENED,
+        epic_id=inp.epic_id,
+        story_id=inp.story_id,
+        gate_path=_gate_path(inp.epic_id),
+        triggered_by=["incomplete_stage_state"],
+        message=str(exc),
+    )
+
+
+def _executor_files_txt_slice(repo_root: Path, story: StorySpec) -> list[str]:
+    """Return the story-scoped subset of .woof/codebase/files.txt lines.
+
+    Raises StageStateError(story_gate) if files.txt is missing or the pathspec
+    evaluation fails. Decision D1 (E19): filter through story.paths[] at build
+    time so the executor receives only its slice.
+    """
+    files_txt_path = repo_root / ".woof" / "codebase" / "files.txt"
+    if not files_txt_path.is_file():
+        raise StageStateError(
+            "Missing mechanical cartography file: .woof/codebase/files.txt. "
+            "Run `scripts/refresh-cartography` to generate it.",
+            operator_recoverable=True,
+            gate_type="story_gate",
+        )
+    candidates = [
+        line for line in files_txt_path.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
+    if not candidates or not story.paths:
+        return candidates
+    try:
+        return filter_paths_matching(repo_root, candidates, list(story.paths))
+    except PathspecEvaluationError as exc:
+        raise StageStateError(
+            f"files.txt pathspec slice evaluation failed: {exc}",
+            operator_recoverable=True,
+            gate_type="story_gate",
+        ) from exc
+
 
 def _discovery_bucket_source_paths(repo_root: Path, epic_id: int, bucket: str) -> list[str]:
     """Return prior-bucket discovery artefacts visible to a producer bucket node."""
@@ -404,7 +547,12 @@ def _discovery_bucket_source_paths(repo_root: Path, epic_id: int, bucket: str) -
     ]
 
 
-def _discovery_bucket_payload(repo_root: Path, epic_id: int, bucket: str) -> dict:
+def _discovery_bucket_payload(
+    repo_root: Path,
+    epic_id: int,
+    bucket: str,
+    cartography_refs: list[str] | None = None,
+) -> dict:
     directory = epic_dir(repo_root, epic_id)
     payload = {
         "node_type": _DISCOVERY_BUCKET_NODE_TYPE[bucket].value,
@@ -420,6 +568,8 @@ def _discovery_bucket_payload(repo_root: Path, epic_id: int, bucket: str) -> dic
     source_paths = _discovery_bucket_source_paths(repo_root, epic_id, bucket)
     if source_paths:
         payload["inputs"]["source_paths"] = source_paths
+    if cartography_refs:
+        payload["inputs"]["cartography_paths"] = cartography_refs
     return payload
 
 
@@ -451,8 +601,15 @@ def _discovery_bucket_playbooks(bucket: str) -> str:
     return "\n\n---\n\n".join(sections)
 
 
-def _discovery_bucket_prompt(repo_root: Path, epic_id: int, bucket: str) -> str:
-    payload = _discovery_bucket_payload(repo_root, epic_id, bucket)
+def _discovery_bucket_prompt(
+    repo_root: Path,
+    epic_id: int,
+    bucket: str,
+    cartography_refs: list[str] | None = None,
+) -> str:
+    payload = _discovery_bucket_payload(
+        repo_root, epic_id, bucket, cartography_refs=cartography_refs
+    )
     prompt = _prompt_template(
         tool_root() / "playbooks" / "discovery" / f"{bucket}.md",
         {"planning_input_json": json.dumps(payload, indent=2, sort_keys=True)},
@@ -463,7 +620,11 @@ def _discovery_bucket_prompt(repo_root: Path, epic_id: int, bucket: str) -> str:
     return prompt
 
 
-def _discovery_synthesis_payload(repo_root: Path, epic_id: int) -> dict:
+def _discovery_synthesis_payload(
+    repo_root: Path,
+    epic_id: int,
+    cartography_refs: list[str] | None = None,
+) -> dict:
     directory = epic_dir(repo_root, epic_id)
     synthesis_dir = discovery_synthesis_dir(repo_root, epic_id)
     payload = {
@@ -480,6 +641,8 @@ def _discovery_synthesis_payload(repo_root: Path, epic_id: int) -> dict:
     source_paths = _discovery_source_paths(repo_root, epic_id)
     if source_paths:
         payload["inputs"]["source_paths"] = source_paths
+    if cartography_refs:
+        payload["inputs"]["cartography_paths"] = cartography_refs
     return payload
 
 
@@ -513,9 +676,13 @@ def _epic_contract_revision_paths(repo_root: Path, epic_id: int) -> list[Path]:
     return paths
 
 
-def _epic_definition_payload(repo_root: Path, epic_id: int) -> dict:
+def _epic_definition_payload(
+    repo_root: Path,
+    epic_id: int,
+    cartography_refs: list[str] | None = None,
+) -> dict:
     directory = epic_dir(repo_root, epic_id)
-    inputs: dict[str, str] = {
+    inputs: dict[str, object] = {
         "synthesis_dir": _relpath(repo_root, discovery_synthesis_dir(repo_root, epic_id)),
         "epic_path": _relpath(repo_root, directory / "EPIC.md"),
     }
@@ -524,6 +691,8 @@ def _epic_definition_payload(repo_root: Path, epic_id: int) -> dict:
         inputs["prior_epic_path"] = _relpath(repo_root, revision_paths[0])
         if len(revision_paths) > 1:
             inputs["revision_findings_path"] = _relpath(repo_root, revision_paths[1])
+    if cartography_refs:
+        inputs["cartography_paths"] = cartography_refs
     return {
         "node_type": NodeType.EPIC_DEFINITION.value,
         "epic_id": epic_id,
@@ -543,18 +712,25 @@ def _epic_definition_artefacts(repo_root: Path, epic_id: int) -> list[str]:
     )
 
 
-def _breakdown_planning_payload(repo_root: Path, epic_id: int) -> dict:
+def _breakdown_planning_payload(
+    repo_root: Path,
+    epic_id: int,
+    cartography_refs: list[str] | None = None,
+) -> dict:
     directory = epic_dir(repo_root, epic_id)
+    inputs: dict[str, object] = {
+        "epic_path": _relpath(repo_root, directory / "EPIC.md"),
+        "plan_path": _relpath(repo_root, directory / "plan.json"),
+        "plan_markdown_path": _relpath(repo_root, plan_markdown_path(repo_root, epic_id)),
+    }
+    if cartography_refs:
+        inputs["cartography_paths"] = cartography_refs
     return {
         "node_type": NodeType.BREAKDOWN_PLANNING.value,
         "epic_id": epic_id,
         "repo_root": str(repo_root),
         "epic_dir": _relpath(repo_root, directory),
-        "inputs": {
-            "epic_path": _relpath(repo_root, directory / "EPIC.md"),
-            "plan_path": _relpath(repo_root, directory / "plan.json"),
-            "plan_markdown_path": _relpath(repo_root, plan_markdown_path(repo_root, epic_id)),
-        },
+        "inputs": inputs,
     }
 
 
@@ -562,19 +738,26 @@ def _breakdown_planning_artefacts(repo_root: Path, epic_id: int) -> list[str]:
     return _existing_prompt_artefacts(repo_root, [epic_dir(repo_root, epic_id) / "EPIC.md"])
 
 
-def _plan_critique_payload(repo_root: Path, epic_id: int) -> dict:
+def _plan_critique_payload(
+    repo_root: Path,
+    epic_id: int,
+    cartography_refs: list[str] | None = None,
+) -> dict:
     directory = epic_dir(repo_root, epic_id)
+    inputs: dict[str, object] = {
+        "epic_path": _relpath(repo_root, directory / "EPIC.md"),
+        "plan_path": _relpath(repo_root, directory / "plan.json"),
+        "plan_markdown_path": _relpath(repo_root, plan_markdown_path(repo_root, epic_id)),
+        "critique_path": _relpath(repo_root, plan_critique_path(repo_root, epic_id)),
+    }
+    if cartography_refs:
+        inputs["cartography_paths"] = cartography_refs
     return {
         "node_type": NodeType.PLAN_CRITIQUE.value,
         "epic_id": epic_id,
         "repo_root": str(repo_root),
         "epic_dir": _relpath(repo_root, directory),
-        "inputs": {
-            "epic_path": _relpath(repo_root, directory / "EPIC.md"),
-            "plan_path": _relpath(repo_root, directory / "plan.json"),
-            "plan_markdown_path": _relpath(repo_root, plan_markdown_path(repo_root, epic_id)),
-            "critique_path": _relpath(repo_root, plan_critique_path(repo_root, epic_id)),
-        },
+        "inputs": inputs,
     }
 
 
@@ -590,24 +773,32 @@ def _plan_critique_artefacts(repo_root: Path, epic_id: int) -> list[str]:
     )
 
 
-def _story_critique_payload(repo_root: Path, epic_id: int, story_id: str) -> dict:
+def _story_critique_payload(
+    repo_root: Path,
+    epic_id: int,
+    story_id: str,
+    cartography_refs: list[str] | None = None,
+) -> dict:
     directory = epic_dir(repo_root, epic_id)
     plan = load_plan(repo_root, epic_id)
     story = story_by_id(plan, story_id)
+    inputs: dict[str, object] = {
+        "epic_path": _relpath(repo_root, directory / "EPIC.md"),
+        "plan_path": _relpath(repo_root, directory / "plan.json"),
+        "critique_path": _relpath(repo_root, story_critique_path(directory, story_id)),
+        "staged_diff_command": "git diff --staged",
+        "staged_paths_command": "git diff --staged --name-only",
+        "story": story.model_dump(),
+    }
+    if cartography_refs:
+        inputs["cartography_paths"] = cartography_refs
     return {
         "node_type": NodeType.CRITIQUE_DISPATCH.value,
         "epic_id": epic_id,
         "story_id": story_id,
         "repo_root": str(repo_root),
         "epic_dir": _relpath(repo_root, directory),
-        "inputs": {
-            "epic_path": _relpath(repo_root, directory / "EPIC.md"),
-            "plan_path": _relpath(repo_root, directory / "plan.json"),
-            "critique_path": _relpath(repo_root, story_critique_path(directory, story_id)),
-            "staged_diff_command": "git diff --staged",
-            "staged_paths_command": "git diff --staged --name-only",
-            "story": story.model_dump(),
-        },
+        "inputs": inputs,
     }
 
 
@@ -636,32 +827,48 @@ def _missing_discovery_outputs(repo_root: Path, epic_id: int) -> list[str]:
     return missing
 
 
-def _discovery_synthesis_prompt(repo_root: Path, epic_id: int) -> str:
-    payload = _discovery_synthesis_payload(repo_root, epic_id)
+def _discovery_synthesis_prompt(
+    repo_root: Path,
+    epic_id: int,
+    cartography_refs: list[str] | None = None,
+) -> str:
+    payload = _discovery_synthesis_payload(repo_root, epic_id, cartography_refs=cartography_refs)
     return _prompt_template(
         tool_root() / "playbooks" / "discovery" / "synthesis.md",
         {"planning_input_json": json.dumps(payload, indent=2, sort_keys=True)},
     )
 
 
-def _epic_definition_prompt(repo_root: Path, epic_id: int) -> str:
-    payload = _epic_definition_payload(repo_root, epic_id)
+def _epic_definition_prompt(
+    repo_root: Path,
+    epic_id: int,
+    cartography_refs: list[str] | None = None,
+) -> str:
+    payload = _epic_definition_payload(repo_root, epic_id, cartography_refs=cartography_refs)
     return _prompt_template(
         tool_root() / "playbooks" / "discovery" / "definition.md",
         {"planning_input_json": json.dumps(payload, indent=2, sort_keys=True)},
     )
 
 
-def _breakdown_planning_prompt(repo_root: Path, epic_id: int) -> str:
-    payload = _breakdown_planning_payload(repo_root, epic_id)
+def _breakdown_planning_prompt(
+    repo_root: Path,
+    epic_id: int,
+    cartography_refs: list[str] | None = None,
+) -> str:
+    payload = _breakdown_planning_payload(repo_root, epic_id, cartography_refs=cartography_refs)
     return _prompt_template(
         tool_root() / "playbooks" / "planning" / "breakdown.md",
         {"planning_input_json": json.dumps(payload, indent=2, sort_keys=True)},
     )
 
 
-def _plan_critique_prompt(repo_root: Path, epic_id: int) -> str:
-    payload = _plan_critique_payload(repo_root, epic_id)
+def _plan_critique_prompt(
+    repo_root: Path,
+    epic_id: int,
+    cartography_refs: list[str] | None = None,
+) -> str:
+    payload = _plan_critique_payload(repo_root, epic_id, cartography_refs=cartography_refs)
     template = (tool_root() / "playbooks" / "critique" / "plan.md").read_text(encoding="utf-8")
     return (
         "Graph-owned input:\n\n"
@@ -672,8 +879,15 @@ def _plan_critique_prompt(repo_root: Path, epic_id: int) -> str:
     )
 
 
-def _story_critique_prompt(repo_root: Path, epic_id: int, story_id: str) -> str:
-    payload = _story_critique_payload(repo_root, epic_id, story_id)
+def _story_critique_prompt(
+    repo_root: Path,
+    epic_id: int,
+    story_id: str,
+    cartography_refs: list[str] | None = None,
+) -> str:
+    payload = _story_critique_payload(
+        repo_root, epic_id, story_id, cartography_refs=cartography_refs
+    )
     template = (tool_root() / "playbooks" / "critique" / "story.md").read_text(encoding="utf-8")
     return (
         "Graph-owned input:\n\n"
@@ -681,6 +895,33 @@ def _story_critique_prompt(repo_root: Path, epic_id: int, story_id: str) -> str:
         f"{json.dumps(payload, indent=2, sort_keys=True)}\n"
         "```\n\n"
         f"{template}"
+    )
+
+
+def _executor_dispatch_prompt(
+    repo_root: Path,
+    epic_id: int,
+    story_id: str,
+    cartography_refs: list[str],
+    files_txt_slice: list[str],
+) -> str:
+    """Build the executor dispatch prompt with cartography payload prepended."""
+    payload = {
+        "node_type": NodeType.EXECUTOR_DISPATCH.value,
+        "epic_id": epic_id,
+        "story_id": story_id,
+        "inputs": {
+            "cartography_paths": cartography_refs,
+            "files_txt_slice": files_txt_slice,
+        },
+    }
+    base = _story_prompt(epic_id, story_id)
+    return (
+        "Graph-owned cartography input:\n\n"
+        "```json\n"
+        f"{json.dumps(payload, indent=2, sort_keys=True)}\n"
+        "```\n\n"
+        f"{base}"
     )
 
 
@@ -889,14 +1130,27 @@ def _discovery_bucket_node(inp: NodeInput, bucket: str) -> NodeOutput:
     bucket_dir = discovery_bucket_dir(inp.repo_root, inp.epic_id, bucket)
     bucket_relpath = _relpath(inp.repo_root, bucket_dir)
     if not discovery_bucket_complete(inp.repo_root, inp.epic_id, bucket):
+        try:
+            carto_refs = _require_cartography_docs(
+                inp.repo_root,
+                _DISCOVERY_BUCKET_CARTOGRAPHY_DOCS[bucket],
+                "plan_gate",
+            )
+        except StageStateError as exc:
+            return _cartography_missing_gate(inp, exc)
         bucket_dir.mkdir(parents=True, exist_ok=True)
         proc = _run_dispatch(
             inp.repo_root,
             role="primary",
             epic_id=inp.epic_id,
             story_id=None,
-            prompt=_discovery_bucket_prompt(inp.repo_root, inp.epic_id, bucket),
-            artefacts_loaded=_discovery_bucket_artefacts(inp.repo_root, inp.epic_id, bucket),
+            prompt=_discovery_bucket_prompt(
+                inp.repo_root, inp.epic_id, bucket, cartography_refs=carto_refs
+            ),
+            artefacts_loaded=[
+                *_discovery_bucket_artefacts(inp.repo_root, inp.epic_id, bucket),
+                *carto_refs,
+            ],
             route_key="discovery",
         )
         dispatch = _classify_dispatch_result(proc)
@@ -987,14 +1241,25 @@ def discovery_synthesis_node(inp: NodeInput) -> NodeOutput:
     ]
     missing = _missing_discovery_outputs(inp.repo_root, inp.epic_id)
     if missing:
+        try:
+            carto_refs = _require_cartography_docs(
+                inp.repo_root, _FULL_CARTOGRAPHY_SET, "plan_gate"
+            )
+        except StageStateError as exc:
+            return _cartography_missing_gate(inp, exc)
         discovery_synthesis_dir(inp.repo_root, inp.epic_id).mkdir(parents=True, exist_ok=True)
         proc = _run_dispatch(
             inp.repo_root,
             role="primary",
             epic_id=inp.epic_id,
             story_id=None,
-            prompt=_discovery_synthesis_prompt(inp.repo_root, inp.epic_id),
-            artefacts_loaded=_discovery_synthesis_artefacts(inp.repo_root, inp.epic_id),
+            prompt=_discovery_synthesis_prompt(
+                inp.repo_root, inp.epic_id, cartography_refs=carto_refs
+            ),
+            artefacts_loaded=[
+                *_discovery_synthesis_artefacts(inp.repo_root, inp.epic_id),
+                *carto_refs,
+            ],
             route_key="discovery",
         )
         dispatch = _classify_dispatch_result(proc)
@@ -1095,13 +1360,22 @@ def epic_definition_node(inp: NodeInput) -> NodeOutput:
                 check_count=4,
                 failed_check_count=len(missing) or 4,
             )
+        try:
+            carto_refs = _require_cartography_docs(
+                inp.repo_root, _EPIC_DEFINITION_CARTOGRAPHY_DOCS, "plan_gate"
+            )
+        except StageStateError as exc:
+            return _cartography_missing_gate(inp, exc)
         proc = _run_dispatch(
             inp.repo_root,
             role="primary",
             epic_id=inp.epic_id,
             story_id=None,
-            prompt=_epic_definition_prompt(inp.repo_root, inp.epic_id),
-            artefacts_loaded=_epic_definition_artefacts(inp.repo_root, inp.epic_id),
+            prompt=_epic_definition_prompt(inp.repo_root, inp.epic_id, cartography_refs=carto_refs),
+            artefacts_loaded=[
+                *_epic_definition_artefacts(inp.repo_root, inp.epic_id),
+                *carto_refs,
+            ],
             route_key="definition",
         )
         dispatch = _classify_dispatch_result(proc)
@@ -1357,13 +1631,24 @@ def breakdown_planning_node(inp: NodeInput) -> NodeOutput:
         )
 
     if not plan_path.exists():
+        try:
+            carto_refs = _require_cartography_docs(
+                inp.repo_root, _BREAKDOWN_PLANNING_CARTOGRAPHY_DOCS, "plan_gate"
+            )
+        except StageStateError as exc:
+            return _cartography_missing_gate(inp, exc)
         proc = _run_dispatch(
             inp.repo_root,
             role="primary",
             epic_id=inp.epic_id,
             story_id=None,
-            prompt=_breakdown_planning_prompt(inp.repo_root, inp.epic_id),
-            artefacts_loaded=_breakdown_planning_artefacts(inp.repo_root, inp.epic_id),
+            prompt=_breakdown_planning_prompt(
+                inp.repo_root, inp.epic_id, cartography_refs=carto_refs
+            ),
+            artefacts_loaded=[
+                *_breakdown_planning_artefacts(inp.repo_root, inp.epic_id),
+                *carto_refs,
+            ],
             route_key="planning",
         )
         dispatch = _classify_dispatch_result(proc)
@@ -1489,14 +1774,23 @@ def plan_critique_node(inp: NodeInput) -> NodeOutput:
         )
 
     if not critique_path.exists():
+        try:
+            carto_refs = _require_cartography_docs(
+                inp.repo_root, _PLAN_CRITIQUE_CARTOGRAPHY_DOCS, "plan_gate"
+            )
+        except StageStateError as exc:
+            return _cartography_missing_gate(inp, exc)
         critique_path.parent.mkdir(parents=True, exist_ok=True)
         proc = _run_dispatch(
             inp.repo_root,
             role="reviewer",
             epic_id=inp.epic_id,
             story_id=None,
-            prompt=_plan_critique_prompt(inp.repo_root, inp.epic_id),
-            artefacts_loaded=_plan_critique_artefacts(inp.repo_root, inp.epic_id),
+            prompt=_plan_critique_prompt(inp.repo_root, inp.epic_id, cartography_refs=carto_refs),
+            artefacts_loaded=[
+                *_plan_critique_artefacts(inp.repo_root, inp.epic_id),
+                *carto_refs,
+            ],
             route_key="planning",
         )
         dispatch = _classify_dispatch_result(proc)
@@ -1706,14 +2000,33 @@ def plan_gate_open_node(inp: NodeInput) -> NodeOutput:
 def executor_dispatch_node(inp: NodeInput) -> NodeOutput:
     if not inp.story_id:
         raise ValueError("executor_dispatch requires story_id")
+    try:
+        carto_refs = _require_cartography_docs(
+            inp.repo_root, _EXECUTOR_CARTOGRAPHY_DOCS, "story_gate"
+        )
+        plan = load_plan(inp.repo_root, inp.epic_id)
+        story = story_by_id(plan, inp.story_id)
+        files_txt_slice = _executor_files_txt_slice(inp.repo_root, story)
+    except StageStateError as exc:
+        return _cartography_missing_gate(inp, exc)
     mark_story_status(inp.repo_root, inp.epic_id, inp.story_id, "in_progress")
     proc = _run_dispatch(
         inp.repo_root,
         role="primary",
         epic_id=inp.epic_id,
         story_id=inp.story_id,
-        prompt=_story_prompt(inp.epic_id, inp.story_id),
-        artefacts_loaded=_story_context_artefacts(inp.repo_root, inp.epic_id),
+        prompt=_executor_dispatch_prompt(
+            inp.repo_root,
+            inp.epic_id,
+            inp.story_id,
+            cartography_refs=carto_refs,
+            files_txt_slice=files_txt_slice,
+        ),
+        artefacts_loaded=[
+            *_story_context_artefacts(inp.repo_root, inp.epic_id),
+            *carto_refs,
+            _codebase_doc_relpath("files.txt"),
+        ],
         route_key="execution",
     )
     dispatch = _classify_dispatch_result(proc)
@@ -1747,6 +2060,12 @@ def critique_dispatch_node(inp: NodeInput) -> NodeOutput:
     if not inp.story_id:
         raise ValueError("critique_dispatch requires story_id")
     try:
+        carto_refs = _require_cartography_docs(
+            inp.repo_root, _CRITIQUE_DISPATCH_CARTOGRAPHY_DOCS, "story_gate"
+        )
+    except StageStateError as exc:
+        return _cartography_missing_gate(inp, exc)
+    try:
         _stage_changed_story_paths(inp.repo_root, inp.epic_id, inp.story_id)
     except (subprocess.CalledProcessError, StageStateError, ValueError) as exc:
         return _write_position_gate(
@@ -1754,14 +2073,19 @@ def critique_dispatch_node(inp: NodeInput) -> NodeOutput:
             trigger="incomplete_stage_state",
             position=f"Story paths could not be staged before reviewer critique: {exc}",
         )
-    prompt = _story_critique_prompt(inp.repo_root, inp.epic_id, inp.story_id)
+    prompt = _story_critique_prompt(
+        inp.repo_root, inp.epic_id, inp.story_id, cartography_refs=carto_refs
+    )
     proc = _run_dispatch(
         inp.repo_root,
         role="reviewer",
         epic_id=inp.epic_id,
         story_id=inp.story_id,
         prompt=prompt,
-        artefacts_loaded=_story_context_artefacts(inp.repo_root, inp.epic_id),
+        artefacts_loaded=[
+            *_story_context_artefacts(inp.repo_root, inp.epic_id),
+            *carto_refs,
+        ],
         route_key="execution",
     )
     dispatch = _classify_dispatch_result(proc)

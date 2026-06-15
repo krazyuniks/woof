@@ -155,7 +155,8 @@
         "spark_path": { "$ref": "#/$defs/path" },
         "discovery_dir": { "$ref": "#/$defs/path" },
         "bucket_dir": { "$ref": "#/$defs/path" },
-        "source_paths": { "$ref": "#/$defs/path_list" }
+        "source_paths": { "$ref": "#/$defs/path_list" },
+        "cartography_paths": { "$ref": "#/$defs/path_list" }
       }
     },
     "discovery_synthesis_input": {
@@ -166,7 +167,8 @@
         "spark_path": { "$ref": "#/$defs/path" },
         "discovery_dir": { "$ref": "#/$defs/path" },
         "synthesis_dir": { "$ref": "#/$defs/path" },
-        "source_paths": { "$ref": "#/$defs/path_list" }
+        "source_paths": { "$ref": "#/$defs/path_list" },
+        "cartography_paths": { "$ref": "#/$defs/path_list" }
       }
     },
     "epic_definition_input": {
@@ -182,7 +184,8 @@
           "uniqueItems": true
         },
         "prior_epic_path": { "$ref": "#/$defs/path" },
-        "revision_findings_path": { "$ref": "#/$defs/path" }
+        "revision_findings_path": { "$ref": "#/$defs/path" },
+        "cartography_paths": { "$ref": "#/$defs/path_list" }
       }
     },
     "breakdown_planning_input": {
@@ -192,7 +195,8 @@
       "properties": {
         "epic_path": { "$ref": "#/$defs/path" },
         "plan_path": { "$ref": "#/$defs/path" },
-        "plan_markdown_path": { "$ref": "#/$defs/path" }
+        "plan_markdown_path": { "$ref": "#/$defs/path" },
+        "cartography_paths": { "$ref": "#/$defs/path_list" }
       }
     },
     "plan_critique_input": {
@@ -203,7 +207,8 @@
         "epic_path": { "$ref": "#/$defs/path" },
         "plan_path": { "$ref": "#/$defs/path" },
         "plan_markdown_path": { "$ref": "#/$defs/path" },
-        "critique_path": { "$ref": "#/$defs/path" }
+        "critique_path": { "$ref": "#/$defs/path" },
+        "cartography_paths": { "$ref": "#/$defs/path_list" }
       }
     },
     "plan_gate_open_input": {

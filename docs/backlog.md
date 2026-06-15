@@ -315,13 +315,9 @@ Depends on: E1. Must land before E3/E5 because the baseline otherwise measures a
 
 Implement ADR-002's route table so the documented per-stage producer/reviewer policy is expressible, and fix Woof's own inverted Stage-5 configuration.
 
-Open work:
-- Add `[routes.<node_group>.<role>]` overlays to `agents.schema.json` over existing `[roles.primary]`/`[roles.reviewer]` defaults. Node groups: `discovery`, `definition`, `planning`, `execution`. `model_profiles` compose with route overlays; `in-session` remains invalid for dispatchable routes.
-- Graph node handlers pass their node group as `route_key`; route resolution is override-then-default. `RoleRoute` and dispatch audit record `route_key` and resolved adapter.
-- Update `woof init` templates and `.woof/agents.toml` in this repo to the ADR-002 default policy: Stages 1-3 producer=Codex/reviewer=Claude; Stage 5 producer=Claude/reviewer=Codex. Preflight validates that every node group resolves.
-- Tests: per-stage resolution, profile overlay, audit recording, preflight failure on unresolvable routes.
+Status: complete. ADR-002's per-stage policy is now data. `[routes.<node_group>.<role>]` overlays sit over the base `[roles.primary]`/`[roles.reviewer]` defaults in `agents.schema.json`; `resolve_agent_route` resolves override-then-default for a given `route_key`, model profiles compose with the overlay, and `RoleRoute`/dispatch audit record `route_key` and the resolved adapter. Every graph dispatch node threads its node group (`discovery`, `definition`, `planning`, `execution`) into `_run_dispatch`, which forwards `--route-key` to the `woof dispatch` subprocess. `.woof/agents.toml` and the `woof init` template carry the default policy with an explicit `execution` override (Claude producer, Codex reviewer); the other three groups fall through to the base defaults (Codex producer, Claude reviewer). Preflight's `_check_role_routes` validates all four node groups with group-qualified `agents.<group>.<role>.route` findings, mirroring every base-role check (MCP config, MCP server command, adapter auth markers) through a shared helper so the base-role and group-route paths cannot drift; `observe` reports per-group routes alongside base roles, and the preflight floor cache version was bumped so the new checks are not masked by a stale cache.
 
-Depends on: nothing. Must land before E5.
+Depends on: nothing. Completed; was a hard dependency of E5.
 
 ### E21. Dispatch Token Economy And Solo-Operator Affordances
 

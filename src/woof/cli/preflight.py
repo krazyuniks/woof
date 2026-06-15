@@ -86,7 +86,7 @@ staleness_floor_hours = 168
 summary_min_chars = 200
 """
 
-CACHE_VERSION = 3
+CACHE_VERSION = 4  # v4: adds cartography ctags floor check
 FLOOR_CACHE_TTL = timedelta(hours=24)
 RUNTIME_CACHE_TTL = timedelta(minutes=5)
 

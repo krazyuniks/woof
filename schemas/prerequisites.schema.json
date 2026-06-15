@@ -125,6 +125,19 @@
       "additionalProperties": { "$ref": "#/$defs/server_check" },
       "description": "Named local or project-specific server prerequisites. Each entry either runs a readiness command from the project root or probes a URL for the expected HTTP status."
     },
+    "readiness": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Contract-readiness check configuration (Stage 2.5).",
+      "properties": {
+        "escalation_threshold": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 3,
+          "description": "Number of failed readiness cycles (readiness_gate_opened events) since the last definition_closed before the contract_readiness node opens an escalation-flavoured readiness gate (triggered_by: readiness_escalation) instead of an ordinary one (triggered_by: readiness_unready). Default: 3 (three ordinary failures before escalation)."
+        }
+      }
+    },
     "cartography": {
       "type": "object",
       "additionalProperties": false,

@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import tomllib
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -58,6 +59,7 @@ from woof.graph.transitions import (
     discovery_synthesis_dir,
     discovery_synthesis_paths,
     epic_dir,
+    failed_readiness_cycles,
     load_plan,
     mark_story_status,
     plan_critique_path,
@@ -72,6 +74,10 @@ from woof.paths import schema_dir, tool_root
 
 NodeHandler = Callable[[NodeInput], NodeOutput]
 DispatchExitType = str
+
+# Default number of failed readiness cycles before escalation. Configurable via
+# .woof/prerequisites.toml [readiness].escalation_threshold.
+DEFAULT_READINESS_ESCALATION_THRESHOLD = 3
 
 _DISPATCH_SUCCESS_EXIT_TYPES = {"clean", "completed_lingering"}
 _DISPATCH_FAILURE_EXIT_TYPES = {
@@ -99,6 +105,25 @@ class DispatchClassification:
 
 def _now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _readiness_escalation_threshold(repo_root: Path) -> int:
+    """Return the configured readiness-escalation threshold.
+
+    Reads ``[readiness].escalation_threshold`` from ``.woof/prerequisites.toml``.
+    Falls back to ``DEFAULT_READINESS_ESCALATION_THRESHOLD`` when the file is
+    absent, unreadable, or the key is not set.
+    """
+    prereq_path = repo_root / ".woof" / "prerequisites.toml"
+    try:
+        with prereq_path.open("rb") as fh:
+            data = tomllib.load(fh)
+        threshold = data.get("readiness", {}).get("escalation_threshold")
+        if isinstance(threshold, int) and threshold >= 1:
+            return threshold
+    except (OSError, tomllib.TOMLDecodeError):
+        pass
+    return DEFAULT_READINESS_ESCALATION_THRESHOLD
 
 
 def _woof_subprocess_argv() -> list[str]:
@@ -1529,12 +1554,15 @@ def contract_readiness_node(inp: NodeInput) -> NodeOutput:
             paths=[result_relpath],
         )
 
+    cycles = failed_readiness_cycles(inp.repo_root, inp.epic_id)
+    threshold = _readiness_escalation_threshold(inp.repo_root)
+    trigger = "readiness_escalation" if cycles >= threshold else "readiness_unready"
     gate = graph_gate_path(inp.repo_root, inp.epic_id)
     if not gate.exists():
         write_gate(
             epic_dir=directory,
             story_id=None,
-            triggered_by=["readiness_unready"],
+            triggered_by=[trigger],
             position_text=_readiness_gate_body(inp.epic_id, epic_relpath, result),
             schema_path=schema_dir() / "gate.schema.json",
             validate=True,
@@ -1549,11 +1577,11 @@ def contract_readiness_node(inp: NodeInput) -> NodeOutput:
         validation_summary=_planning_validation(
             ok=False,
             stage=2,
-            triggered_by=["readiness_unready"],
+            triggered_by=[trigger],
             check_count=len(result.checks),
             failed_check_count=failed,
         ),
-        triggered_by=["readiness_unready"],
+        triggered_by=[trigger],
         message="contract readiness gate opened: EPIC.md is not ready for planning",
         paths=[epic_relpath, result_relpath, _gate_path(inp.epic_id)],
     )

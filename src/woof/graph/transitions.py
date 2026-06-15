@@ -346,6 +346,29 @@ def readiness_satisfied(repo_root: Path, epic_id: int) -> bool:
     return False
 
 
+def failed_readiness_cycles(repo_root: Path, epic_id: int) -> int:
+    """Count readiness_gate_opened events since the last definition_closed.
+
+    Used by ``contract_readiness_node`` to decide whether to open an ordinary
+    readiness gate (``readiness_unready``) or an escalation-flavoured one
+    (``readiness_escalation``). The count resets whenever a new
+    ``definition_closed`` is appended (e.g. after ``revise_epic_contract``).
+    ``iter_epic_events`` already drops events superseded by an ``epic_reset``.
+    """
+    events = iter_epic_events(repo_root, epic_id)
+    last_definition_closed = -1
+    for index, event in enumerate(events):
+        if event.get("event") == "definition_closed":
+            last_definition_closed = index
+    if last_definition_closed < 0:
+        return 0
+    return sum(
+        1
+        for event in events[last_definition_closed + 1 :]
+        if event.get("event") == "readiness_gate_opened"
+    )
+
+
 def epic_abandoned(repo_root: Path, epic_id: int) -> bool:
     """Return whether the epic has been abandoned (E17 P4 / D-AB).
 

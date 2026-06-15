@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import tomllib
 from pathlib import Path
 from typing import cast
 
@@ -22,6 +23,7 @@ import yaml
 
 from woof.cli.commands.wf import _resolve_gate
 from woof.graph import nodes, transitions
+from woof.graph.nodes import DEFAULT_READINESS_ESCALATION_THRESHOLD
 from woof.graph.readiness import (
     ACCEPTANCE_PROSE_CHECK_ID,
     ACCEPTANCE_SIGNAL_CHECK_ID,
@@ -871,3 +873,159 @@ def test_zero_budget_warn_does_not_mask_a_real_blocker(tmp_path: Path) -> None:
 )
 def test_has_concrete_signal(text: str, expected: bool) -> None:
     assert has_concrete_signal(text) is expected
+
+
+# --------------------------------------------------------------------------- #
+# S3: readiness recycle escalation
+# --------------------------------------------------------------------------- #
+
+
+def _append_gate_opened_event(directory: Path, epic_id: int) -> None:
+    """Simulate a prior failed readiness cycle by appending the gate event."""
+    transitions.append_epic_event(
+        directory.parent.parent.parent,
+        epic_id,
+        {
+            "event": "readiness_gate_opened",
+            "at": "2026-06-09T10:30:00Z",
+            "epic_id": epic_id,
+            "gate_type": "readiness_gate",
+            "triggered_by": ["readiness_unready"],
+        },
+    )
+
+
+def _write_prereqs(root: Path, escalation_threshold: int | None = None) -> None:
+    woof_dir = root / ".woof"
+    woof_dir.mkdir(parents=True, exist_ok=True)
+    lines = [
+        '[infra]\ngit = "any"\njust = "any"\n',
+        '[commands]\nclaude = "any"\ncodex = "any"\n',
+        '[validators]\najv = "any"\n"ajv-formats" = "any"\n',
+        '[tracker]\nkind = "local"\n',
+    ]
+    if escalation_threshold is not None:
+        lines.append(f"[readiness]\nescalation_threshold = {escalation_threshold}\n")
+    (woof_dir / "prerequisites.toml").write_text("\n".join(lines), encoding="utf-8")
+
+
+def test_failed_readiness_cycles_counts_gate_opened_events(tmp_path: Path) -> None:
+    directory = _setup_epic(tmp_path, UNREADY_EPIC)
+    assert transitions.failed_readiness_cycles(tmp_path, 1) == 0
+
+    _append_gate_opened_event(directory, 1)
+    assert transitions.failed_readiness_cycles(tmp_path, 1) == 1
+
+    _append_gate_opened_event(directory, 1)
+    assert transitions.failed_readiness_cycles(tmp_path, 1) == 2
+
+
+def test_failed_readiness_cycles_resets_after_definition_closed(tmp_path: Path) -> None:
+    directory = _setup_epic(tmp_path, UNREADY_EPIC)
+    _append_gate_opened_event(directory, 1)
+    _append_gate_opened_event(directory, 1)
+    assert transitions.failed_readiness_cycles(tmp_path, 1) == 2
+
+    transitions.append_epic_event(
+        tmp_path,
+        1,
+        {"event": "definition_closed", "at": "2026-06-09T12:00:00Z", "epic_id": 1},
+    )
+    assert transitions.failed_readiness_cycles(tmp_path, 1) == 0
+
+
+def test_below_threshold_opens_ordinary_readiness_gate(tmp_path: Path) -> None:
+    # With threshold=3 (default), 2 prior cycles (< 3) → ordinary gate.
+    directory = _setup_epic(tmp_path, UNREADY_EPIC)
+    _append_gate_opened_event(directory, 1)
+    _append_gate_opened_event(directory, 1)
+
+    output = nodes.contract_readiness_node(_readiness_input(tmp_path))
+
+    assert output.status == NodeStatus.GATE_OPENED
+    assert output.triggered_by == ["readiness_unready"]
+
+    front = _gate_front_matter(directory / "gate.md")
+    assert front["triggered_by"] == ["readiness_unready"]
+    assert front["type"] == "readiness_gate"
+
+
+def test_escalation_fires_at_threshold(tmp_path: Path) -> None:
+    # With threshold=3 (default), exactly 3 prior cycles → escalation gate.
+    directory = _setup_epic(tmp_path, UNREADY_EPIC)
+    for _ in range(DEFAULT_READINESS_ESCALATION_THRESHOLD):
+        _append_gate_opened_event(directory, 1)
+
+    output = nodes.contract_readiness_node(_readiness_input(tmp_path))
+
+    assert output.status == NodeStatus.GATE_OPENED
+    assert output.triggered_by == ["readiness_escalation"]
+
+    front = _gate_front_matter(directory / "gate.md")
+    assert front["triggered_by"] == ["readiness_escalation"]
+    assert front["type"] == "readiness_gate"
+    assert front["stage"] == 2
+    assert front["story_id"] is None
+
+    # The opened event is still readiness_gate_opened (same event name for the
+    # same gate type): consumers reading by event type are not broken.
+    events = _epic_events(directory)
+    opened = [e for e in events if e.get("event") == "readiness_gate_opened"]
+    assert opened
+    assert opened[-1]["gate_type"] == "readiness_gate"
+
+
+def test_escalated_gate_resolves_through_same_verbs(tmp_path: Path) -> None:
+    # An escalated gate has gate_type=readiness_gate, so it accepts the same
+    # resolution verbs as an ordinary readiness gate: approve_with_reason,
+    # revise_epic_contract, abandon_epic. Verify approve_with_reason works.
+    directory = _setup_epic(tmp_path, UNREADY_EPIC)
+    for _ in range(DEFAULT_READINESS_ESCALATION_THRESHOLD):
+        _append_gate_opened_event(directory, 1)
+
+    output = nodes.contract_readiness_node(_readiness_input(tmp_path))
+    assert output.triggered_by == ["readiness_escalation"]
+    assert (directory / "gate.md").exists()
+
+    rc = _resolve_gate(tmp_path, 1, "approve_with_reason", cast(Tracker, _NoopTracker()))
+    assert rc == 0
+    assert not (directory / "gate.md").exists()
+
+    resolved = [e for e in _epic_events(directory) if e["event"] == "readiness_gate_resolved"]
+    assert resolved and resolved[-1]["decision"] == "approve_with_reason"
+
+
+def test_threshold_from_config(tmp_path: Path) -> None:
+    # A custom threshold of 1 escalates after just one prior failed cycle.
+    directory = _setup_epic(tmp_path, UNREADY_EPIC)
+    _write_prereqs(tmp_path, escalation_threshold=1)
+    _append_gate_opened_event(directory, 1)
+
+    output = nodes.contract_readiness_node(_readiness_input(tmp_path))
+
+    assert output.triggered_by == ["readiness_escalation"]
+    front = _gate_front_matter(directory / "gate.md")
+    assert front["triggered_by"] == ["readiness_escalation"]
+
+
+def test_default_threshold_when_config_absent(tmp_path: Path) -> None:
+    # No prerequisites.toml: default threshold applies.
+    directory = _setup_epic(tmp_path, UNREADY_EPIC)
+    # With only 1 prior cycle and default=3, expect ordinary gate.
+    _append_gate_opened_event(directory, 1)
+
+    output = nodes.contract_readiness_node(_readiness_input(tmp_path))
+
+    assert output.triggered_by == ["readiness_unready"]
+    front = _gate_front_matter(directory / "gate.md")
+    assert front["triggered_by"] == ["readiness_unready"]
+
+
+def test_config_threshold_is_valid_toml(tmp_path: Path) -> None:
+    # Smoke-test that a prerequisites.toml with [readiness].escalation_threshold
+    # is valid TOML and the value is read correctly.
+    _write_prereqs(tmp_path, escalation_threshold=5)
+    prereq_path = tmp_path / ".woof" / "prerequisites.toml"
+    with prereq_path.open("rb") as fh:
+        data = tomllib.load(fh)
+    assert data["readiness"]["escalation_threshold"] == 5

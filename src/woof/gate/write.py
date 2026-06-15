@@ -191,7 +191,7 @@ def write_gate_for_trigger(
 def _gate_type_for_triggers(triggered_by: list[str]) -> str:
     if triggered_by == ["plan_review"]:
         return "plan_gate"
-    if triggered_by == ["readiness_unready"]:
+    if triggered_by in (["readiness_unready"], ["readiness_escalation"]):
         return "readiness_gate"
     if triggered_by == ["check_9_review_valve"]:
         return "review_gate"

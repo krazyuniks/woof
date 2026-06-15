@@ -1,0 +1,48 @@
+#!/usr/bin/env sh
+
+# >>> woof:refresh-cartography
+# Managed by `woof init`; regenerates the .woof/codebase mechanical layer
+# (files.txt, tags, freshness.json). Re-run `woof init --language <lang> ...` to
+# recompose. Edits inside this block are overwritten.
+set -eu
+
+woof_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+cd "$woof_root"
+woof_codebase=".woof/codebase"
+mkdir -p "$woof_codebase"
+
+# git ls-files -> files.txt
+git ls-files >"$woof_codebase/files.txt"
+
+# Per-language ctags coverage, contributed by the composed fragments below.
+woof_ctags_languages=""
+woof_add_ctags_language() {
+  if [ -z "$woof_ctags_languages" ]; then
+    woof_ctags_languages="$1"
+  else
+    woof_ctags_languages="$woof_ctags_languages,$1"
+  fi
+}
+
+# Python cartography fragment (composed by `woof init` into scripts/refresh-cartography).
+# Registers the ctags language for .py sources so the mechanical tags index
+# covers Python symbols.
+woof_add_ctags_language Python
+
+# ctags -> tags, scoped to the declared cartography languages. ctags is a hard
+# cartography prerequisite (ADR-004); when it is genuinely absent the script
+# still writes an empty index so the mechanical layer is present.
+if command -v ctags >/dev/null 2>&1; then
+  ctags --languages="$woof_ctags_languages" -L "$woof_codebase/files.txt" -f "$woof_codebase/tags"
+else
+  : >"$woof_codebase/tags"
+  echo "woof refresh-cartography: ctags not found on PATH; wrote an empty tags index" >&2
+fi
+
+# freshness.json stamp: {ts, git_ref, age_s, generator_version}. ts is the
+# authoritative staleness signal; age_s is 0 at generation and never advances.
+woof_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+woof_git_ref=$(git rev-parse HEAD 2>/dev/null || echo unknown)
+printf '{"ts":"%s","git_ref":"%s","age_s":%d,"generator_version":%d}\n' \
+  "$woof_ts" "$woof_git_ref" 0 1 >"$woof_codebase/freshness.json"
+# <<< woof:refresh-cartography

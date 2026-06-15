@@ -23,3 +23,19 @@ build/
 docs/continuation-prompt.md
 .gemini/
 .agents/
+
+# >>> woof
+# Managed by `woof init`; runtime/per-worktree state that must not be committed.
+.woof/.current-epic
+.woof/epics/*/gate.md
+.woof/epics/*/.wf.lock
+.woof/epics/*/.last-sync
+.woof/epics/*/executor_result.json
+.woof/epics/*/check-result.json
+.woof/epics/*/audit/raw/
+.woof/codebase/tags
+.woof/codebase/files.txt
+.woof/codebase/freshness.json
+.woof/.preflight-floor
+.woof/.preflight-runtime
+# <<< woof

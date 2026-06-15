@@ -1,0 +1,19 @@
+# Stage 5 Check 2 outcome-marker rules per language. Defaults ship for Python
+# and TypeScript; add or override languages here when the project uses other
+# test layouts or marker conventions.
+
+[languages.python]
+test_paths = ["tests/", "src/**/test_*.py"]
+marker_regex = '(?<![A-Za-z0-9])O\d+(?![A-Za-z0-9])'
+cd_marker_regex = '(?<![A-Za-z0-9])CD\d+(?![A-Za-z0-9])'
+docstring_keyword = "outcomes:"
+comment_prefix = "#"
+context_lines = 3
+
+[languages.typescript]
+test_paths = ["tests/", "src/**/*.test.ts"]
+marker_regex = '(?<![A-Za-z0-9])O\d+(?![A-Za-z0-9])'
+cd_marker_regex = '(?<![A-Za-z0-9])CD\d+(?![A-Za-z0-9])'
+docstring_keyword = "outcomes:"
+comment_prefix = "//"
+context_lines = 3

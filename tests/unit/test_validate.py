@@ -546,6 +546,80 @@ def test_validate_critique_via_path(tmp_path: Path, run_woof) -> None:
     assert "valid (critique)" in proc.stdout
 
 
+# ---------------------------------------------------------------------------
+# Critique schema — evidence constraint scoped to blocker findings only (R3)
+# ---------------------------------------------------------------------------
+
+_CRITIQUE_STORY_HEADER = """\
+---
+target: story
+target_id: S1
+severity: {top_severity}
+timestamp: "2026-06-16T00:00:00Z"
+harness: test-reviewer
+findings:
+{findings}---
+
+Body.
+"""
+
+
+def _write_critique_file(tmp_path: Path, top_severity: str, findings_yaml: str) -> Path:
+    crit_dir = tmp_path / "critique"
+    crit_dir.mkdir(parents=True, exist_ok=True)
+    path = crit_dir / "story-S1.md"
+    path.write_text(
+        _CRITIQUE_STORY_HEADER.format(top_severity=top_severity, findings=findings_yaml)
+    )
+    return path
+
+
+def test_non_blocker_finding_empty_evidence_validates(tmp_path: Path, run_woof) -> None:
+    """R3: non-blocker finding with evidence='' must pass schema validation."""
+    findings = '  - id: F1\n    severity: minor\n    summary: minor issue\n    evidence: ""\n'
+    path = _write_critique_file(tmp_path, "minor", findings)
+    proc = run_woof("validate", str(path))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "valid (critique)" in proc.stdout
+
+
+def test_non_blocker_finding_absent_evidence_validates(tmp_path: Path, run_woof) -> None:
+    """R3: non-blocker finding without evidence field must pass schema validation."""
+    findings = "  - id: F1\n    severity: info\n    summary: informational note\n"
+    path = _write_critique_file(tmp_path, "info", findings)
+    proc = run_woof("validate", str(path))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "valid (critique)" in proc.stdout
+
+
+def test_blocker_finding_empty_evidence_fails_schema(tmp_path: Path, run_woof) -> None:
+    """R3: blocker finding with evidence='' must fail schema validation."""
+    findings = '  - id: F1\n    severity: blocker\n    summary: blocking issue\n    evidence: ""\n'
+    path = _write_critique_file(tmp_path, "blocker", findings)
+    proc = run_woof("validate", str(path))
+    assert proc.returncode != 0
+
+
+def test_blocker_finding_absent_evidence_fails_schema(tmp_path: Path, run_woof) -> None:
+    """R3: blocker finding with no evidence field must fail schema validation."""
+    findings = "  - id: F1\n    severity: blocker\n    summary: blocking issue\n"
+    path = _write_critique_file(tmp_path, "blocker", findings)
+    proc = run_woof("validate", str(path))
+    assert proc.returncode != 0
+
+
+def test_blocker_finding_with_evidence_validates(tmp_path: Path, run_woof) -> None:
+    """R3: blocker finding with non-empty evidence must pass schema validation."""
+    findings = (
+        "  - id: F1\n    severity: blocker\n    summary: blocking issue\n"
+        "    evidence: src/woof/graph/runner.py:42\n"
+    )
+    path = _write_critique_file(tmp_path, "blocker", findings)
+    proc = run_woof("validate", str(path))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "valid (critique)" in proc.stdout
+
+
 GATE_WITH_UNQUOTED_TIMESTAMP = """\
 ---
 type: plan_gate

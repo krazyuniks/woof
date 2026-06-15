@@ -81,7 +81,6 @@
         },
         "evidence": {
           "type": "string",
-          "minLength": 1,
           "description": "Resolvable artefact evidence for the finding. Required (and non-empty) when severity=blocker; optional for non-blocker severities. Must cite at least one of: file:line, story id (S<n>), observable outcome id (O<n>), contract-decision id (CD<n>), schema ref (schemas/*.schema.json), or quality-gate id."
         },
         "suggestion": {
@@ -96,7 +95,8 @@
             "required": ["severity"]
           },
           "then": {
-            "required": ["evidence"]
+            "required": ["evidence"],
+            "properties": { "evidence": { "minLength": 1 } }
           }
         }
       ]

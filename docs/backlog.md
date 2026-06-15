@@ -303,13 +303,9 @@ Depends on: E16 rename fix and E17 gate semantics. Blocks the first unattended r
 
 Wire the architecture's per-node loading map into dispatch payloads and playbooks, and onboard Woof itself. E1 shipped the supply side; this epic makes dispatched work actually receive the required context.
 
-Open work:
-- Add per-node payload wiring: each dispatch-shaped node's `inputs` and `artefacts_loaded[]` carry the mapped `.woof/codebase/` documents. Executor additionally receives the story-scoped `files.txt` slice through the shared pathspec module. Missing mapped docs halt as `incomplete_stage_state`.
-- Add playbook context discipline: every producer/reviewer playbook starts from the payload's context-document list and reads those documents first.
-- Dogfood Woof: author Woof's own `TARGET-ARCHITECTURE.md` and `PRINCIPLES.md`, run map-codebase for AS-IS docs, add the `[cartography]` block, `scripts/refresh-cartography`, and post-commit hook, then make `woof preflight` pass in the Woof repo.
-- Tests: per-node payload contains exactly the mapped refs; integration telemetry includes cartography paths in `artefacts_loaded[]`; missing-doc halt path.
+Status: complete. Dispatched work now receives its mapped context and Woof dogfoods its own cartography. S1 wired per-node payloads: each dispatch-shaped node's `inputs`/`artefacts_loaded[]` carry the mapped `.woof/codebase/` documents, the executor additionally takes the story-scoped `files.txt` slice through the shared pathspec module, and missing mapped docs halt as `incomplete_stage_state` (with the fix that stage-state halts resolve non-approvingly across gate types). S2 added playbook context discipline: every producer/reviewer playbook starts from the payload's context-document list and reads those documents first. S3 onboarded the Woof repo itself - the seven mapper-authored AS-IS docs, `scripts/refresh-cartography`, the post-commit hook, the `.gitignore` block, `.woof/test-markers.toml`, and the `[cartography]` enforcement block. S4 (operator-authored) added the design layer - `.woof/codebase/TARGET-ARCHITECTURE.md` and `PRINCIPLES.md` - so `woof preflight` enforces and passes end-to-end in the Woof repo. The `[cartography]` enforcement block and the design docs it requires were pushed in one step so `origin/main` never carried an enforce-on-but-docs-missing window.
 
-Depends on: E1. Must land before E3/E5 because the baseline otherwise measures a workflow that ignores its own context system.
+Depends on: E1. Completed; was required before E3/E5 so the baseline measures a workflow that consumes its own context system.
 
 ### E20. Per-Stage Role Routing
 

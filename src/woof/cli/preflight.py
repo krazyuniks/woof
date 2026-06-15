@@ -908,6 +908,10 @@ def _check_adapter_auth_markers(repo_root: Path) -> list[PreflightFinding]:
     validated at first dispatch - runtime token expiry, revoked credentials, or
     a model the underlying API has retired surface as a fail-loud dispatch
     error rather than a preflight finding.
+
+    Covers both base roles and any adapter introduced exclusively via a node-group
+    route overlay, so an execution-group Claude route is auth-checked even when
+    the base roles use only Codex.
     """
 
     agents_path = repo_root / ".woof" / "agents.toml"
@@ -917,7 +921,9 @@ def _check_adapter_auth_markers(repo_root: Path) -> list[PreflightFinding]:
     if not isinstance(loaded, dict):
         return []
     findings: list[PreflightFinding] = []
-    seen: set[tuple[str, str]] = set()
+    seen_keys: set[tuple[str, str]] = set()  # (role_name, adapter) already checked
+    seen_adapters: set[str] = set()  # adapters auth-checked via base roles
+
     for role_name in ("primary", "reviewer"):
         try:
             route = resolve_agent_route(loaded, role_name)
@@ -926,10 +932,31 @@ def _check_adapter_auth_markers(repo_root: Path) -> list[PreflightFinding]:
         if route.adapter not in ADAPTER_AUTH_MARKERS:
             continue
         key = (role_name, route.adapter)
-        if key in seen:
+        if key in seen_keys:
             continue
-        seen.add(key)
+        seen_keys.add(key)
+        seen_adapters.add(route.adapter)
         findings.append(_check_adapter_auth(role_name, route.adapter))
+
+    for group in sorted(NODE_GROUPS):
+        for role_name in ("primary", "reviewer"):
+            try:
+                route = resolve_agent_route(loaded, role_name, route_key=group)
+            except DispatchConfigError:
+                continue
+            if route.adapter not in ADAPTER_AUTH_MARKERS:
+                continue
+            if route.adapter in seen_adapters:
+                continue
+            seen_adapters.add(route.adapter)
+            findings.append(
+                _check_adapter_auth(
+                    role_name,
+                    route.adapter,
+                    id_prefix=f"agents.{group}.{role_name}",
+                )
+            )
+
     return findings
 
 
@@ -951,10 +978,17 @@ ADAPTER_AUTH_MARKERS: dict[str, dict[str, str]] = {
 }
 
 
-def _check_adapter_auth(role_name: str, adapter: str) -> PreflightFinding:
+def _check_adapter_auth(
+    role_name: str,
+    adapter: str,
+    *,
+    id_prefix: str | None = None,
+) -> PreflightFinding:
     spec = ADAPTER_AUTH_MARKERS[adapter]
-    finding_id = f"agents.{role_name}.auth"
-    label = f"{role_name} adapter auth ({adapter})"
+    prefix = id_prefix if id_prefix is not None else f"agents.{role_name}"
+    finding_id = f"{prefix}.auth"
+    label_role = prefix.removeprefix("agents.")
+    label = f"{label_role} adapter auth ({adapter})"
     env_key = spec["env_key"]
     if os.environ.get(env_key):
         return PreflightFinding(

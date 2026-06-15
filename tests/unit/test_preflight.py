@@ -1278,6 +1278,163 @@ repo = "example/project"
     assert reviewer["install"] == "claude /login"
 
 
+def test_preflight_fails_when_group_route_adapter_auth_missing(tmp_path: Path, run_woof) -> None:
+    """An adapter introduced only via a group route fails auth when credentials absent."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _stub_core_tools(bin_dir)
+
+    empty_home = tmp_path / "empty-home"
+    empty_home.mkdir()
+
+    _write_ready_project(
+        tmp_path,
+        prerequisites="""\
+[infra]
+just = "any"
+git = "any"
+gh = "any"
+
+[commands]
+claude = "any"
+codex = "any"
+
+[validators]
+ajv = "any"
+ajv-formats = "any"
+
+[tracker]
+kind = "github"
+repo = "example/project"
+""",
+        agents="""\
+model_profile = "default"
+
+[roles.primary]
+adapter = "codex"
+
+[roles.reviewer]
+adapter = "codex"
+
+[routes.execution.primary]
+adapter = "claude"
+mcp = []
+
+[model_profiles.default.roles.primary]
+model = "gpt-5.5"
+effort = "xhigh"
+
+[model_profiles.default.roles.reviewer]
+model = "gpt-5.5"
+effort = "xhigh"
+
+[model_profiles.default.routes.execution.primary]
+model = "claude-opus-4-7"
+effort = "max"
+""",
+    )
+
+    env = _env_with_path(
+        bin_dir,
+        {
+            "CLAUDE_CONFIG_DIR": str(empty_home),
+            "CODEX_HOME": str(empty_home),
+        },
+    )
+    env.pop("ANTHROPIC_API_KEY", None)
+    env.pop("OPENAI_API_KEY", None)
+
+    proc = run_woof(
+        "preflight",
+        "--project-root",
+        str(tmp_path),
+        "--format",
+        "json",
+        env=env,
+    )
+
+    assert proc.returncode == 1
+    payload = json.loads(proc.stdout)
+    finding_ids = {f["id"] for f in payload["findings"]}
+    assert "agents.execution.primary.auth" in finding_ids
+    exec_auth = next(f for f in payload["findings"] if f["id"] == "agents.execution.primary.auth")
+    assert exec_auth["ok"] is False
+    assert "claude dispatch will fail" in exec_auth["detail"]
+    assert exec_auth["install"] == "claude /login"
+    # Codex auth (from base roles) is checked under base-role IDs
+    assert "agents.primary.auth" in finding_ids
+
+
+def test_preflight_passes_when_group_route_adapter_auth_present(tmp_path: Path, run_woof) -> None:
+    """An adapter introduced only via a group route passes auth when credentials present."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _stub_core_tools(bin_dir)
+
+    _write_ready_project(
+        tmp_path,
+        prerequisites="""\
+[infra]
+just = "any"
+git = "any"
+gh = "any"
+
+[commands]
+claude = "any"
+codex = "any"
+
+[validators]
+ajv = "any"
+ajv-formats = "any"
+
+[tracker]
+kind = "github"
+repo = "example/project"
+""",
+        agents="""\
+model_profile = "default"
+
+[roles.primary]
+adapter = "codex"
+
+[roles.reviewer]
+adapter = "codex"
+
+[routes.execution.primary]
+adapter = "claude"
+mcp = []
+
+[model_profiles.default.roles.primary]
+model = "gpt-5.5"
+effort = "xhigh"
+
+[model_profiles.default.roles.reviewer]
+model = "gpt-5.5"
+effort = "xhigh"
+
+[model_profiles.default.routes.execution.primary]
+model = "claude-opus-4-7"
+effort = "max"
+""",
+    )
+
+    proc = run_woof(
+        "preflight",
+        "--project-root",
+        str(tmp_path),
+        "--format",
+        "json",
+        env=_env_with_path(bin_dir),
+    )
+
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    payload = json.loads(proc.stdout)
+    finding_ids = {f["id"] for f in payload["findings"]}
+    assert "agents.execution.primary.auth" in finding_ids
+    exec_auth = next(f for f in payload["findings"] if f["id"] == "agents.execution.primary.auth")
+    assert exec_auth["ok"] is True
+
+
 def test_preflight_flags_non_executable_cartography_script(tmp_path: Path, run_woof) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()

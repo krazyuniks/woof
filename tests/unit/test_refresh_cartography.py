@@ -29,6 +29,35 @@ def _env() -> dict[str, str]:
     return os.environ.copy()
 
 
+def _make_universal_ctags_stub(bin_dir: Path) -> None:
+    """Write a stub ctags that satisfies preflight (--version) and refresh-cartography (-f)."""
+    stub = bin_dir / "ctags"
+    stub.write_text(
+        "#!/usr/bin/env sh\n"
+        'if [ "$1" = "--version" ]; then\n'
+        '  echo "Universal Ctags 6.1.0(+sandbox), Copyright (C) 2015-2023 Universal Ctags Team"\n'
+        "  exit 0\n"
+        "fi\n"
+        "while [ $# -gt 0 ]; do\n"
+        '  case "$1" in\n'
+        '    -f) printf "stub_sym\\t%s\\t1\\n" "$(pwd)" > "$2"; shift 2;;\n'
+        "    *) shift;;\n"
+        "  esac\n"
+        "done\n"
+    )
+    stub.chmod(0o755)
+
+
+def _env_with_universal_ctags(tmp_path: Path) -> dict[str, str]:
+    """Return an environment with a stub Universal Ctags prepended to PATH."""
+    stub_bin = tmp_path / "_stub_ctags_bin"
+    stub_bin.mkdir(exist_ok=True)
+    _make_universal_ctags_stub(stub_bin)
+    env = os.environ.copy()
+    env["PATH"] = str(stub_bin) + os.pathsep + env.get("PATH", "")
+    return env
+
+
 def _init_git_repo(path: Path) -> None:
     subprocess.run(["git", "init"], cwd=path, check=True, capture_output=True, text=True)
     (path / "app.py").write_text("def hello():\n    return 1\n")
@@ -138,18 +167,12 @@ def test_composed_script_emits_schema_valid_freshness(tmp_path: Path, run_woof) 
     _init_git_repo(tmp_path)
     assert _init(tmp_path, run_woof, "python").returncode == 0
 
+    env = _env_with_universal_ctags(tmp_path)
     run = subprocess.run(
-        [str(_script(tmp_path))], cwd=tmp_path, env=_env(), capture_output=True, text=True
+        [str(_script(tmp_path))], cwd=tmp_path, env=env, capture_output=True, text=True
     )
 
     codebase = tmp_path / ".woof" / "codebase"
-
-    if shutil.which("ctags") is None:
-        # ADR-004 conformance: refresh exits non-zero when ctags is absent and
-        # languages are declared. The ctags-absent path has its own dedicated test.
-        assert run.returncode != 0
-        assert "ctags not found" in run.stderr
-        return
 
     assert run.returncode == 0, run.stderr + run.stdout
     assert (codebase / "files.txt").read_text().strip() != ""

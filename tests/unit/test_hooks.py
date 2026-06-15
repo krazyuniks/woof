@@ -117,19 +117,58 @@ def test_hook_install_replaces_existing_managed_block(tmp_path: Path) -> None:
     assert installed.count(HOOK_BEGIN) == 1
 
 
+def _make_universal_ctags_stub(bin_dir: Path) -> None:
+    """Write a stub ctags executable that satisfies both preflight and refresh-cartography.
+
+    On ``--version`` it prints a Universal Ctags banner so preflight passes.
+    On an index invocation (``ctags ... -f <out>``) it creates the output file
+    so refresh-cartography's tags-write succeeds.
+    """
+    stub = bin_dir / "ctags"
+    stub.write_text(
+        "#!/usr/bin/env sh\n"
+        'if [ "$1" = "--version" ]; then\n'
+        '  echo "Universal Ctags 6.1.0(+sandbox), Copyright (C) 2015-2023 Universal Ctags Team"\n'
+        "  exit 0\n"
+        "fi\n"
+        "# Parse -f <outfile> from the indexing invocation and create the file.\n"
+        "while [ $# -gt 0 ]; do\n"
+        '  case "$1" in\n'
+        '    -f) printf "stub_sym\\t%s\\t1\\n" "$(pwd)" > "$2"; shift 2;;\n'
+        "    *) shift;;\n"
+        "  esac\n"
+        "done\n"
+    )
+    stub.chmod(0o755)
+
+
+def _env_with_ctags_stub(stub_bin: Path) -> dict[str, str]:
+    env = os.environ.copy()
+    env["PATH"] = str(stub_bin) + os.pathsep + env.get("PATH", "")
+    return env
+
+
 def test_post_commit_hook_regenerates_cartography_mechanical_layer(tmp_path: Path) -> None:
+    stub_bin = tmp_path / "_stub_bin"
+    stub_bin.mkdir()
+    _make_universal_ctags_stub(stub_bin)
+    env = _env_with_ctags_stub(stub_bin)
+
     _init_repo(tmp_path)
     _configure_user(tmp_path)
     (tmp_path / "app.py").write_text("def hello():\n    return 1\n")
     run_init(tmp_path, tracker="local", languages=["python"])
     install_woof_hooks(tmp_path)
 
-    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True, text=True, env=env
+    )
     commit = subprocess.run(
         ["git", "commit", "-m", "initial"],
         cwd=tmp_path,
         capture_output=True,
         text=True,
+        env=env,
     )
 
     assert commit.returncode == 0, commit.stderr + commit.stdout

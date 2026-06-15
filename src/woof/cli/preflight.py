@@ -1317,32 +1317,45 @@ def _check_cartography_mechanical(repo_root: Path) -> PreflightFinding:
 
 
 def _check_cartography_ctags() -> PreflightFinding:
-    """Check that ctags is on PATH when cartography languages are declared (ADR-004).
+    """Check that universal-ctags is on PATH when cartography languages are declared (ADR-004).
 
-    ADR-004 mandates ctags as a hard prerequisite: "ctags is a hard prerequisite.
-    Preflight verifies the binary is on PATH." When ``[cartography].languages`` is
-    non-empty the composed ``scripts/refresh-cartography`` will exit 1 if ctags is
-    absent; preflight surfaces that failure proactively here.
+    ADR-004 mandates ctags as a hard prerequisite. ``scripts/refresh-cartography``
+    uses ``--languages``, a Universal Ctags-only flag; a BSD or Exuberant Ctags
+    binary passes a bare ``which`` check but fails at index time. Preflight
+    therefore verifies both presence and variant.
     """
+    _INSTALL_HINT = (
+        "Install universal-ctags:\n"
+        "  Debian/Ubuntu: sudo apt install -y universal-ctags\n"
+        "  macOS:          brew install universal-ctags\n"
+        "  Arch/CachyOS:   sudo pacman -S ctags"
+    )
     path = shutil.which("ctags")
-    if path is not None:
+    if path is None:
         return PreflightFinding(
             id="cartography.ctags",
             label="cartography ctags",
-            ok=True,
-            detail=f"ctags found at {path}",
+            ok=False,
+            detail="ctags not found on PATH; scripts/refresh-cartography will exit 1",
+            install=_INSTALL_HINT,
+        )
+    _, version_output = _run_capture([path, "--version"], timeout=10)
+    if "Universal Ctags" not in version_output:
+        return PreflightFinding(
+            id="cartography.ctags",
+            label="cartography ctags",
+            ok=False,
+            detail=(
+                f"ctags at {path} is not Universal Ctags; "
+                "scripts/refresh-cartography requires Universal Ctags (--languages flag)"
+            ),
+            install=_INSTALL_HINT,
         )
     return PreflightFinding(
         id="cartography.ctags",
         label="cartography ctags",
-        ok=False,
-        detail="ctags not found on PATH; scripts/refresh-cartography will exit 1",
-        install=(
-            "Install universal-ctags:\n"
-            "  Debian/Ubuntu: sudo apt install -y universal-ctags\n"
-            "  macOS:          brew install universal-ctags\n"
-            "  Arch/CachyOS:   sudo pacman -S ctags"
-        ),
+        ok=True,
+        detail=f"Universal Ctags found at {path}",
     )
 
 

@@ -1936,6 +1936,34 @@ def _env_with_path_no_ctags(tmp_path: Path, bin_dir: Path) -> dict[str, str]:
     return env
 
 
+def test_preflight_ctags_finding_fails_when_ctags_not_universal(tmp_path: Path, run_woof) -> None:
+    """cartography.ctags fails when ctags on PATH is not Universal Ctags (ADR-004)."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _stub_core_tools(bin_dir)
+    _write_exe(bin_dir / "ctags", 'echo "Exuberant Ctags 5.8"\n')
+
+    _write_project(tmp_path, prerequisites=CARTOGRAPHY_PREREQS_WITH_LANGUAGES)
+    _write_cartography(tmp_path)
+
+    proc = run_woof(
+        "preflight",
+        "--project-root",
+        str(tmp_path),
+        "--format",
+        "json",
+        env=_env_with_path(bin_dir),
+    )
+
+    assert proc.returncode == 1
+    by_id = {f["id"]: f for f in json.loads(proc.stdout)["findings"]}
+    assert "cartography.ctags" in by_id
+    ctags_finding = by_id["cartography.ctags"]
+    assert ctags_finding["ok"] is False
+    assert "not Universal Ctags" in ctags_finding["detail"]
+    assert "universal-ctags" in ctags_finding["install"]
+
+
 def test_preflight_ctags_finding_fires_when_absent_and_languages_declared(
     tmp_path: Path, run_woof
 ) -> None:

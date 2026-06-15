@@ -46,13 +46,9 @@ Shipped:
 - S1: the deterministic Stage-2.5 readiness seam - `NodeType.CONTRACT_READINESS`, `next_node` routing after `definition_closed`, `readiness-result.schema.json`, and `readiness_gate` schema/event/write support.
 - S2: the full readiness matrix in `src/woof/graph/readiness.py` - machine-checkable acceptance signals (a non-deprecated contract decision related to the outcome, or an acceptance criterion that names it with a concrete signal; a bare `O<n>`/`CD<n>` mention is not a signal), non-subjective acceptance prose, contract-decision concreteness, path resolution against `git ls-files`, cheap file-based symbol resolution, and Stage-3 decomposition sufficiency. The forward-created grammar (`` `path/or/symbol` (forward-created) `` or `` `path/or/symbol` (created by ticket <id>) ``) whitelists not-yet-existing refs from the EPIC body and contract-decision notes. A deterministic checker timeout emits a non-blocking `readiness_checker_budget` warning that never blocks the gate on its own.
 - S3: readiness recycle escalation - after a configured number of failed readiness cycles (default 3), the `contract_readiness` node opens an escalation-flavoured `readiness_gate` with trigger `readiness_escalation` instead of looping on `readiness_unready` indefinitely. The cycle count is derived from `readiness_gate_opened` events in the current epic attempt (since the last `epic_reset`); `definition_closed` does NOT reset the count, so it accumulates across `revise_epic_contract` retries. The threshold is configurable via `.woof/prerequisites.toml` `[readiness].escalation_threshold`. The escalated gate has `type: readiness_gate` and resolves through the same verbs as an ordinary readiness gate (`approve_with_reason`, `revise_epic_contract`, `abandon_epic`).
+- S4: blocker-evidence discipline - `critique.schema.json` requires `evidence` (non-empty) on every `blocker` finding via a JSON Schema conditional (`if severity=blocker then evidence required`). Evidence must resolve to a known artefact reference: file:line (file tracked by git), story id (`S<n>` in `plan.json`), observable outcome id (`O<n>` in `EPIC.md`), contract-decision id (`CD<n>` in `EPIC.md`), schema ref (`schemas/*.schema.json` that exists), or quality-gate id (named gate in `.woof/quality-gates.toml`). `check_6_critique_blocker` fails closed when blocker evidence is absent or unresolvable, reporting before the severity-based failure. Resolution logic lives in `src/woof/graph/dispositions.py`. Reviewer playbooks (`playbooks/critique/story.md`, `playbooks/critique/plan.md`) carry the evidence-discipline grammar. No confidence field.
 
 Remaining open work:
-- Add blocker-evidence discipline to `critique.schema.json`, prompts, and checks:
-  - blocker findings require `evidence`;
-  - evidence must resolve to a known artefact reference: file:line, story id, observable outcome id, contract-decision id, schema ref, or quality-gate id;
-  - extend `check_6_critique_blocker` so unresolvable blocker evidence is itself a blocker;
-  - do not add confidence-based gating.
 - Add `quality-gates.toml` mode support:
   - `strict`: any failure blocks;
   - `baseline`: command-level baseline for arbitrary gates; a command already red at capture time is reported but does not block unless its configured command identity changes or the baseline expires.
@@ -69,7 +65,7 @@ Remaining open work:
   - record `head_before`, `branch_before`, `head_after`, and `branch_after` for dispatched work;
   - halt commit/gate paths if HEAD or branch moved unexpectedly and not through a graph-owned commit.
 - tmux-backed long-run supervision is deferred out of E2. If revisited later, it is panes/logs/status only with no direct state mutation outside Woof commands.
-- Tests covering readiness pass/fail, readiness timeout non-blocking behaviour, readiness escalation, blocker evidence resolution, command-level baseline behaviour, baseline freshness/recapture, HEAD/branch drift, and circuit-breaker decision logic.
+- Tests covering readiness pass/fail, readiness timeout non-blocking behaviour, readiness escalation, command-level baseline behaviour, baseline freshness/recapture, HEAD/branch drift, and circuit-breaker decision logic.
 
 Depends on: E1. Gate-resolution semantics live in E17, which consumes the shipped S1/S2 readiness seam and is not blocked by E2's remaining work. E16 items may batch with E2 when they touch the same files. Blocks: E3, E4, E5.
 

@@ -2,11 +2,151 @@
 
 from __future__ import annotations
 
+import re
+import subprocess
+import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+from woof.graph.git import git
+
+# ---------------------------------------------------------------------------
+# Blocker-evidence resolution
+# ---------------------------------------------------------------------------
+
+# file:line — a path with a recognised extension followed by a colon and digits
+_FILE_LINE_RE = re.compile(
+    r"\b([\w./\-]+\.(?:py|json|ya?ml|md|toml|txt|sh|go|ts|tsx|js|jsx|sql|rs|cfg|ini|proto)):(\d+)\b"
+)
+
+# Typed artefact IDs
+_STORY_ID_RE = re.compile(r"\bS([1-9]\d*)\b")
+_OUTCOME_ID_RE = re.compile(r"\bO([1-9]\d*)\b")
+_CD_ID_RE = re.compile(r"\bCD([1-9]\d*)\b")
+
+# Schema refs — path rooted at schemas/ with .schema.json suffix
+_SCHEMA_REF_RE = re.compile(r"\b(schemas/[\w./\-]+\.schema\.json)\b")
+
+
+def resolve_evidence_reference(
+    evidence: str,
+    *,
+    repo_root: Path,
+    plan: dict[str, Any],
+    epic_dir: Path,
+) -> bool:
+    """Return True if evidence contains at least one resolvable artefact reference.
+
+    The six reference kinds checked in order:
+    - file:line (tracked by git)
+    - story id (S<n> present in plan.stories)
+    - observable outcome id (O<n> present in EPIC.md)
+    - contract-decision id (CD<n> present in EPIC.md)
+    - schema ref (schemas/*.schema.json exists under repo_root)
+    - quality-gate id (named gate in .woof/quality-gates.toml)
+    """
+    ev = evidence.strip()
+    if not ev:
+        return False
+
+    tracked = _evidence_tracked_paths(repo_root)
+    if _has_file_line_ref(ev, tracked):
+        return True
+
+    story_ids = {
+        s["id"]
+        for s in plan.get("stories", [])
+        if isinstance(s, dict) and isinstance(s.get("id"), str)
+    }
+    if _has_pattern_ref(ev, _STORY_ID_RE, story_ids):
+        return True
+
+    outcome_ids, cd_ids = _epic_artefact_ids(epic_dir)
+    if _has_pattern_ref(ev, _OUTCOME_ID_RE, outcome_ids):
+        return True
+    if _has_pattern_ref(ev, _CD_ID_RE, cd_ids):
+        return True
+
+    if _has_schema_ref(ev, repo_root):
+        return True
+
+    gate_names = _quality_gate_names(repo_root)
+    return bool(_has_gate_ref(ev, gate_names))
+
+
+def _evidence_tracked_paths(repo_root: Path) -> set[str]:
+    try:
+        proc = git(repo_root, "ls-files")
+    except (subprocess.CalledProcessError, OSError):
+        return set()
+    return {line.strip() for line in proc.stdout.splitlines() if line.strip()}
+
+
+def _has_file_line_ref(evidence: str, tracked: set[str]) -> bool:
+    return any(match.group(1) in tracked for match in _FILE_LINE_RE.finditer(evidence))
+
+
+def _has_pattern_ref(evidence: str, pattern: re.Pattern[str], known_ids: set[str]) -> bool:
+    return any(match.group(0) in known_ids for match in pattern.finditer(evidence))
+
+
+def _has_schema_ref(evidence: str, repo_root: Path) -> bool:
+    return any((repo_root / match.group(1)).exists() for match in _SCHEMA_REF_RE.finditer(evidence))
+
+
+def _has_gate_ref(evidence: str, gate_names: set[str]) -> bool:
+    return any(re.search(rf"\b{re.escape(name)}\b", evidence) for name in gate_names)
+
+
+def _epic_artefact_ids(epic_dir: Path) -> tuple[set[str], set[str]]:
+    """Return (outcome_ids, cd_ids) from EPIC.md front-matter, or empty sets."""
+    epic_path = epic_dir / "EPIC.md"
+    try:
+        import yaml as _yaml
+
+        text = epic_path.read_text(encoding="utf-8")
+    except OSError:
+        return set(), set()
+    if not text.startswith("---\n"):
+        return set(), set()
+    end = text.find("\n---\n", 4)
+    if end < 0:
+        return set(), set()
+    try:
+        front = _yaml.safe_load(text[4:end]) or {}
+    except Exception:
+        return set(), set()
+    if not isinstance(front, dict):
+        return set(), set()
+
+    outcome_ids: set[str] = set()
+    for o in front.get("observable_outcomes") or []:
+        if isinstance(o, dict) and isinstance(o.get("id"), str):
+            outcome_ids.add(o["id"])
+
+    cd_ids: set[str] = set()
+    for cd in front.get("contract_decisions") or []:
+        if isinstance(cd, dict) and isinstance(cd.get("id"), str):
+            cd_ids.add(cd["id"])
+
+    return outcome_ids, cd_ids
+
+
+def _quality_gate_names(repo_root: Path) -> set[str]:
+    toml_path = repo_root / ".woof" / "quality-gates.toml"
+    try:
+        with toml_path.open("rb") as fh:
+            data = tomllib.load(fh)
+    except (OSError, tomllib.TOMLDecodeError):
+        return set()
+    gates = data.get("gates")
+    if not isinstance(gates, dict):
+        return set()
+    return {str(name) for name in gates}
+
 
 NON_BLOCKING_SEVERITIES = {"info", "minor"}
 SEVERITIES = {*NON_BLOCKING_SEVERITIES, "blocker"}

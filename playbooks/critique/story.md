@@ -57,9 +57,22 @@ Evidence must be concrete. A finding without a repo-relative path, diff hunk, st
 6. **Class-2 architectural concerns.** Does the diff breach BC boundaries (`import-linter` contracts), violate lazy-loading rules (`lazy="raise"` on relationships), bypass auto-escaping (Jinja2 `|safe`, Astro `set:html`), use forbidden patterns (raw f-string SQL, `unittest.mock`, `allow_origins=["*"]`)? All `blocker`.
 7. **Hidden coupling.** Does the diff introduce a non-obvious dependency between BCs that the plan didn't anticipate? `minor` if recoverable, `blocker` if it breaks isolation.
 
+## Evidence discipline
+
+Every `blocker` finding must carry an `evidence` field that resolves to a known artefact reference. Acceptable reference kinds:
+
+- **file:line** — `path/to/file.py:42` where the file is tracked in the repo.
+- **story id** — `S<n>` for a story in the plan.
+- **observable outcome id** — `O<n>` declared in `EPIC.md`.
+- **contract-decision id** — `CD<n>` declared in `EPIC.md`.
+- **schema ref** — `schemas/foo.schema.json` that exists in the repo.
+- **quality-gate id** — a named gate from `.woof/quality-gates.toml` (e.g. `lint`, `test`).
+
+A blocker without a resolvable evidence reference will itself be reported as a blocker by Check 6. Record uncertain concerns as `minor` or `info` rather than adding an unsupported blocker with vague prose.
+
 ## Severity rubric
 
-- `blocker` — the story cannot ship as-is. The 9 deterministic checks may not catch this, so spell it out.
+- `blocker` — the story cannot ship as-is. The 9 deterministic checks may not catch this, so spell it out. Requires resolvable evidence (see above).
 - `minor` — accumulates for the Check 9 periodic-review valve. Use this for `test-fingerprint` findings when tests are data-structure-anchored but not completely missing outcome assertions.
 - `info` — observation, no action required.
 

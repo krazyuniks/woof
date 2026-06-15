@@ -56,16 +56,24 @@ Evaluate the plan along these axes:
 6. **Missed Class-2 (architectural) concerns.** Will the plan, if executed as written, breach BC isolation, the import-linter contracts, the lazy-loading rules, or any other invariant declared in CLAUDE.md / AGENTS.md? `blocker` if so.
 7. **Standalone-slice value.** Once a story's `depends_on[]` are satisfied, can it be demonstrated or verified on its own through its `satisfies[]` outcomes? A story that is pure internal plumbing with no independently checkable outcome should fold into the story it serves — that is a `minor`. A story that claims an outcome it could not actually demonstrate as a standalone slice is a `blocker`.
 
+## Evidence discipline
+
+Every `blocker` finding must carry an `evidence` field that resolves to a known artefact reference. Acceptable reference kinds:
+
+- **file:line** — `path/to/file.py:42` where the file is tracked in the repo.
+- **story id** — `S<n>` for a story in the plan.
+- **observable outcome id** — `O<n>` declared in `EPIC.md`.
+- **contract-decision id** — `CD<n>` declared in `EPIC.md`.
+- **schema ref** — `schemas/foo.schema.json` that exists in the repo.
+- **quality-gate id** — a named gate from `.woof/quality-gates.toml` (e.g. `lint`, `test`).
+
+A blocker without a resolvable evidence reference will itself be reported as a blocker by Check 6. Record uncertain concerns as `minor` or `info` rather than adding an unsupported blocker with vague prose. Do not add unsupported front-matter keys such as confidence.
+
 ## Severity rubric
 
-- `blocker` — the plan cannot be executed as written without producing a wrong-behaviour or quality-gate failure.
+- `blocker` — the plan cannot be executed as written without producing a wrong-behaviour or quality-gate failure. Requires resolvable evidence (see above).
 - `minor` — the plan can be executed but a future operator will have to clean up (rework, refactor, doc fix).
 - `info` — observation worth recording but does not require revision.
-
-A `blocker` must cite concrete evidence in the existing artefacts: a story id,
-path, file:line reference, observable outcome id, contract-decision id, schema
-ref, or quality-gate id. Record uncertain concerns as `minor` or `info`; do not
-add unsupported front-matter keys such as confidence.
 
 ## Forbidden
 

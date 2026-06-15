@@ -349,7 +349,14 @@ def _build_critique_failure(repo_root: Path) -> CheckContext:
         epic_dir,
         "S1",
         severity="blocker",
-        findings=[{"id": "F1", "severity": "blocker", "summary": "Stop for review"}],
+        findings=[
+            {
+                "id": "F1",
+                "severity": "blocker",
+                "summary": "Stop for review",
+                "evidence": "S1 does not implement the required contract decision",
+            }
+        ],
     )
     return _ctx(repo_root, epic_dir=epic_dir)
 

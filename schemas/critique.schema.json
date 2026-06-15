@@ -81,13 +81,25 @@
         },
         "evidence": {
           "type": "string",
-          "description": "Prose evidence for the finding. Optional."
+          "minLength": 1,
+          "description": "Resolvable artefact evidence for the finding. Required (and non-empty) when severity=blocker; optional for non-blocker severities. Must cite at least one of: file:line, story id (S<n>), observable outcome id (O<n>), contract-decision id (CD<n>), schema ref (schemas/*.schema.json), or quality-gate id."
         },
         "suggestion": {
           "type": "string",
           "description": "Prose suggested resolution. Optional; advisory only."
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "severity": { "const": "blocker" } },
+            "required": ["severity"]
+          },
+          "then": {
+            "required": ["evidence"]
+          }
+        }
+      ]
     }
   },
   "allOf": [

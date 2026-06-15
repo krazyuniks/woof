@@ -477,11 +477,18 @@ def _write_stage3_plan(directory: Path, epic_id: int) -> None:
 def _write_plan_critique(directory: Path, severity: str = "minor") -> None:
     critique_dir = directory / "critique"
     critique_dir.mkdir(exist_ok=True)
-    findings = (
-        f"findings:\n  - id: F1\n    severity: {severity}\n    summary: tighten story scope\n"
-        if severity != "info"
-        else "findings: []\n"
-    )
+    if severity == "info":
+        findings = "findings: []\n"
+    elif severity == "blocker":
+        findings = (
+            f"findings:\n  - id: F1\n    severity: {severity}\n"
+            "    summary: tighten story scope\n"
+            "    evidence: S1 does not implement the required outcome\n"
+        )
+    else:
+        findings = (
+            f"findings:\n  - id: F1\n    severity: {severity}\n    summary: tighten story scope\n"
+        )
     (critique_dir / "plan.md").write_text(
         "---\n"
         "target: plan\n"

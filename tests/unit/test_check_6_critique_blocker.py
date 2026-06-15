@@ -468,3 +468,74 @@ def test_non_blocking_findings_unaffected_by_evidence_rule_O4(tmp_path: Path) ->
 
     assert outcome.ok
     assert outcome.severity == "minor"
+
+
+# ---------------------------------------------------------------------------
+# R1 — file:line resolver accepts extensionless and dotfiles
+# ---------------------------------------------------------------------------
+
+
+def test_blocker_with_extensionless_file_line_evidence_passes_R1(tmp_path: Path) -> None:
+    """R1: blocker evidence citing a tracked extensionless file (justfile:1) resolves."""
+    import sys
+
+    sys.path.insert(0, str(REPO_ROOT))
+    from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
+
+    epic_dir = tmp_path / ".woof" / "epics" / "E1"
+    _write_critique(
+        epic_dir / "critique",
+        "S1",
+        _blocker_critique("S1", "justfile:1 the build target is misconfigured"),
+    )
+    ctx = _make_ctx_with_plan(epic_dir)
+
+    outcome = check_6_critique_blocker_runner(ctx)
+
+    assert not outcome.ok
+    assert outcome.severity == "blocker"
+    assert "critique severity is blocker" in outcome.summary
+
+
+def test_blocker_with_dotfile_line_evidence_passes_R1(tmp_path: Path) -> None:
+    """R1: blocker evidence citing a tracked dotfile (.gitignore:1) resolves."""
+    import sys
+
+    sys.path.insert(0, str(REPO_ROOT))
+    from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
+
+    epic_dir = tmp_path / ".woof" / "epics" / "E1"
+    _write_critique(
+        epic_dir / "critique",
+        "S1",
+        _blocker_critique("S1", ".gitignore:1 pattern incorrectly excludes artefacts"),
+    )
+    ctx = _make_ctx_with_plan(epic_dir)
+
+    outcome = check_6_critique_blocker_runner(ctx)
+
+    assert not outcome.ok
+    assert outcome.severity == "blocker"
+    assert "critique severity is blocker" in outcome.summary
+
+
+def test_blocker_with_untracked_path_line_still_fails_R1(tmp_path: Path) -> None:
+    """R1: blocker evidence citing an untracked path:line does not resolve."""
+    import sys
+
+    sys.path.insert(0, str(REPO_ROOT))
+    from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
+
+    epic_dir = tmp_path / ".woof" / "epics" / "E1"
+    _write_critique(
+        epic_dir / "critique",
+        "S1",
+        _blocker_critique("S1", "nonexistent_untracked_file_xyz:42 is wrong"),
+    )
+    ctx = _make_ctx_with_plan(epic_dir)
+
+    outcome = check_6_critique_blocker_runner(ctx)
+
+    assert not outcome.ok
+    assert outcome.severity == "blocker"
+    assert "resolvable evidence" in outcome.summary

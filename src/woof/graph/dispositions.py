@@ -17,10 +17,9 @@ from woof.graph.git import git
 # Blocker-evidence resolution
 # ---------------------------------------------------------------------------
 
-# file:line — a path with a recognised extension followed by a colon and digits
-_FILE_LINE_RE = re.compile(
-    r"\b([\w./\-]+\.(?:py|json|ya?ml|md|toml|txt|sh|go|ts|tsx|js|jsx|sql|rs|cfg|ini|proto)):(\d+)\b"
-)
+# file:line — any non-whitespace path followed by a colon and digits; tracked-set membership
+# is the real validator so no extension whitelist is needed here.
+_FILE_LINE_RE = re.compile(r"([^\s:]+):(\d+)\b")
 
 # Typed artefact IDs
 _STORY_ID_RE = re.compile(r"\bS([1-9]\d*)\b")

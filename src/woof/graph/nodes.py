@@ -17,6 +17,7 @@ from woof.gate.write import write_gate, write_gate_for_trigger, write_gate_from_
 from woof.graph.dispositions import (
     FrontMatterError,
     MarkdownFrontMatter,
+    check_blocker_findings_evidence,
     critique_findings,
     critique_severity,
     read_markdown_front_matter,
@@ -2141,6 +2142,25 @@ def review_disposition_node(inp: NodeInput) -> NodeOutput:
 
     severity = critique_severity(critique.front)
     if severity == "blocker":
+        blocker_findings = [
+            f for f in critique_findings(critique.front) if f.get("severity") == "blocker"
+        ]
+        plan_path = epic_dir(inp.repo_root, inp.epic_id) / "plan.json"
+        try:
+            plan_dict: dict = json.loads(plan_path.read_text())
+        except (OSError, ValueError):
+            plan_dict = {}
+        bad_evidence = check_blocker_findings_evidence(
+            blocker_findings,
+            repo_root=inp.repo_root,
+            plan=plan_dict,
+            epic_dir=epic_dir(inp.repo_root, inp.epic_id),
+        )
+        if bad_evidence:
+            return _write_disposition_incomplete_gate(
+                inp,
+                "Blocker finding(s) lack resolvable evidence:\n" + "\n".join(bad_evidence),
+            )
         body = reviewer_blocker_gate_body(
             epic_id=inp.epic_id,
             story_id=inp.story_id,

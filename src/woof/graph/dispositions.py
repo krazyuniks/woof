@@ -85,7 +85,11 @@ def _evidence_tracked_paths(repo_root: Path) -> set[str]:
 
 
 def _has_file_line_ref(evidence: str, tracked: set[str]) -> bool:
-    return any(match.group(1) in tracked for match in _FILE_LINE_RE.finditer(evidence))
+    for match in _FILE_LINE_RE.finditer(evidence):
+        path = match.group(1).strip("`()")
+        if path in tracked:
+            return True
+    return False
 
 
 def _has_pattern_ref(evidence: str, pattern: re.Pattern[str], known_ids: set[str]) -> bool:
@@ -145,6 +149,40 @@ def _quality_gate_names(repo_root: Path) -> set[str]:
     if not isinstance(gates, dict):
         return set()
     return {str(name) for name in gates}
+
+
+def check_blocker_findings_evidence(
+    blocker_findings: list[dict[str, Any]],
+    *,
+    repo_root: Path,
+    plan: dict[str, Any],
+    epic_dir: Path,
+) -> list[str]:
+    """Return one error message per blocker finding whose evidence is absent or unresolvable."""
+    errors: list[str] = []
+    for finding in blocker_findings:
+        finding_id = str(finding.get("id") or "<unknown>")
+        evidence = finding.get("evidence")
+        ev_str = str(evidence).strip() if isinstance(evidence, str) else ""
+        if not ev_str:
+            errors.append(
+                f"{finding_id}: blocker finding has no evidence; "
+                "blockers must cite a resolvable artefact reference "
+                "(file:line, story id, outcome id, contract-decision id, "
+                "schema ref, or quality-gate id)"
+            )
+            continue
+        if not resolve_evidence_reference(
+            ev_str,
+            repo_root=repo_root,
+            plan=plan,
+            epic_dir=epic_dir,
+        ):
+            errors.append(
+                f"{finding_id}: blocker evidence does not resolve to a known artefact reference; "
+                f"evidence was: {ev_str!r}"
+            )
+    return errors
 
 
 NON_BLOCKING_SEVERITIES = {"info", "minor"}

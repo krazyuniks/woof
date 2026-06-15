@@ -2232,6 +2232,7 @@ def test_reviewer_blocker_opens_gate_without_primary_debate(tmp_path: Path, monk
         "---\ntarget: story\ntarget_id: S1\nseverity: blocker\n"
         "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
         "findings:\n  - id: F1\n    severity: blocker\n    summary: missing assertion\n"
+        "    evidence: 'S1 does not assert the required outcome'\n"
         "---\nReviewer says the staged test does not assert O1.\n"
     )
 
@@ -2258,6 +2259,84 @@ def test_reviewer_blocker_opens_gate_without_primary_debate(tmp_path: Path, monk
     gate_text = gate.read_text()
     assert "## Primary position" in gate_text
     assert "## Reviewer position" in gate_text
+
+
+def test_reviewer_blocker_without_evidence_opens_incomplete_gate(tmp_path: Path) -> None:
+    """P1 regression: blocker finding with no evidence opens incomplete gate, not reviewer-blocker gate."""
+    directory = _write_plan(tmp_path, 1)
+    mark_story_status(tmp_path, 1, "S1", "in_progress")
+    (directory / "executor_result.json").write_text(
+        json.dumps(
+            {
+                "epic_id": 1,
+                "story_id": "S1",
+                "outcome": "staged_for_verification",
+                "commit_body": "done",
+                "position": None,
+            }
+        )
+    )
+    critique_dir = directory / "critique"
+    critique_dir.mkdir()
+    (critique_dir / "story-S1.md").write_text(
+        "---\ntarget: story\ntarget_id: S1\nseverity: blocker\n"
+        "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
+        "findings:\n  - id: F1\n    severity: blocker\n    summary: missing assertion\n"
+        "---\nNo evidence supplied.\n"
+    )
+
+    output = nodes.review_disposition_node(
+        NodeInput(
+            node_type=NodeType.REVIEW_DISPOSITION,
+            epic_id=1,
+            story_id="S1",
+            repo_root=tmp_path,
+        )
+    )
+
+    assert output.status == NodeStatus.GATE_OPENED
+    assert output.triggered_by == ["incomplete_stage_state"]
+    gate_fm = _read_gate_fm(directory / "gate.md")
+    assert gate_fm["triggered_by"] == ["incomplete_stage_state"]
+
+
+def test_reviewer_blocker_with_unresolvable_evidence_opens_incomplete_gate(tmp_path: Path) -> None:
+    """P1 regression: blocker finding with prose-only evidence (no resolvable ref) opens incomplete gate."""
+    directory = _write_plan(tmp_path, 1)
+    mark_story_status(tmp_path, 1, "S1", "in_progress")
+    (directory / "executor_result.json").write_text(
+        json.dumps(
+            {
+                "epic_id": 1,
+                "story_id": "S1",
+                "outcome": "staged_for_verification",
+                "commit_body": "done",
+                "position": None,
+            }
+        )
+    )
+    critique_dir = directory / "critique"
+    critique_dir.mkdir()
+    (critique_dir / "story-S1.md").write_text(
+        "---\ntarget: story\ntarget_id: S1\nseverity: blocker\n"
+        "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
+        "findings:\n  - id: F1\n    severity: blocker\n    summary: bad impl\n"
+        "    evidence: 'The implementation is wrong and should be fixed'\n"
+        "---\nProse-only evidence; no resolvable ref.\n"
+    )
+
+    output = nodes.review_disposition_node(
+        NodeInput(
+            node_type=NodeType.REVIEW_DISPOSITION,
+            epic_id=1,
+            story_id="S1",
+            repo_root=tmp_path,
+        )
+    )
+
+    assert output.status == NodeStatus.GATE_OPENED
+    assert output.triggered_by == ["incomplete_stage_state"]
+    assert "F1" in (output.message or "")
 
 
 def test_graph_resumes_interrupted_commit_transaction(tmp_path: Path) -> None:
@@ -2559,7 +2638,8 @@ def test_failed_check_result_reopens_structured_gate_on_reentry(tmp_path: Path) 
     (critique_dir / "story-S1.md").write_text(
         "---\ntarget: story\ntarget_id: S1\nseverity: blocker\n"
         "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
-        "findings:\n  - id: F1\n    severity: blocker\n    summary: test\n---\n"
+        "findings:\n  - id: F1\n    severity: blocker\n    summary: test\n"
+        "    evidence: 'S1 does not implement the required contract'\n---\n"
     )
     (directory / "check-result.json").write_text(
         json.dumps(
@@ -2795,7 +2875,8 @@ def test_wf_gate_case_reports_stable_json_contract(tmp_path: Path) -> None:
     (critique_dir / "story-S1.md").write_text(
         "---\ntarget: story\ntarget_id: S1\nseverity: blocker\n"
         "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
-        "findings:\n  - id: F1\n    severity: blocker\n    summary: test\n---\n"
+        "findings:\n  - id: F1\n    severity: blocker\n    summary: test\n"
+        "    evidence: 'S1 does not implement the required contract'\n---\n"
     )
     (directory / "check-result.json").write_text(
         json.dumps(
@@ -2842,7 +2923,8 @@ def test_wf_gate_case_reports_stable_json_contract(tmp_path: Path) -> None:
                 "Reviewer critique `.woof/epics/E11/critique/story-S1.md` marked story S1 as blocker. "
                 "Woof does not start a model-to-model debate loop for blocker findings.\n\n"
                 "## Findings\n\n"
-                "- F1: test\n\n"
+                "- F1: test\n"
+                "  Evidence: S1 does not implement the required contract\n\n"
                 "## Primary position\n\n"
                 "The primary story output remains staged for operator inspection. "
                 "No primary disposition was requested because blocker findings require a human gate.\n\n"

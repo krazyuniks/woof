@@ -333,7 +333,7 @@ def write_story_critique(prompt: str) -> None:
             "  - id: F1\n"
             "    severity: blocker\n"
             "    summary: missing recovery assertion\n"
-            "    evidence: tests/test_app.py lacks the required recovery marker\n"
+            "    evidence: tests/test_app.py:1 lacks the required recovery marker\n"
         )
         body = "Story must prove recovery before commit."
     else:

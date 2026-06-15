@@ -13,7 +13,7 @@ from __future__ import annotations
 import yaml
 
 from woof.checks import CheckContext, CheckOutcome
-from woof.graph.dispositions import resolve_evidence_reference, validate_story_disposition
+from woof.graph.dispositions import check_blocker_findings_evidence, validate_story_disposition
 
 _SEVERITY_ORDER = {"info": 0, "minor": 1, "blocker": 2}
 _VALID_SEVERITIES = set(_SEVERITY_ORDER)
@@ -141,31 +141,12 @@ def check_6_critique_blocker_runner(ctx: CheckContext) -> CheckOutcome:
 
 
 def _check_blocker_evidence(blocker_findings: list[dict], ctx: CheckContext) -> list[str]:
-    """Return one error message per blocker finding whose evidence is absent or unresolvable."""
-    errors: list[str] = []
-    for finding in blocker_findings:
-        finding_id = str(finding.get("id") or "<unknown>")
-        evidence = finding.get("evidence")
-        ev_str = str(evidence).strip() if isinstance(evidence, str) else ""
-        if not ev_str:
-            errors.append(
-                f"{finding_id}: blocker finding has no evidence; "
-                "blockers must cite a resolvable artefact reference "
-                "(file:line, story id, outcome id, contract-decision id, "
-                "schema ref, or quality-gate id)"
-            )
-            continue
-        if not resolve_evidence_reference(
-            ev_str,
-            repo_root=ctx.repo_root,
-            plan=ctx.plan,
-            epic_dir=ctx.epic_dir,
-        ):
-            errors.append(
-                f"{finding_id}: blocker evidence does not resolve to a known artefact reference; "
-                f"evidence was: {ev_str!r}"
-            )
-    return errors
+    return check_blocker_findings_evidence(
+        blocker_findings,
+        repo_root=ctx.repo_root,
+        plan=ctx.plan,
+        epic_dir=ctx.epic_dir,
+    )
 
 
 def _format_findings(findings: list[dict]) -> str | None:

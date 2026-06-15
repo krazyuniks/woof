@@ -539,3 +539,52 @@ def test_blocker_with_untracked_path_line_still_fails_R1(tmp_path: Path) -> None
     assert not outcome.ok
     assert outcome.severity == "blocker"
     assert "resolvable evidence" in outcome.summary
+
+
+# ---------------------------------------------------------------------------
+# R2 — backtick/paren-wrapped file:line refs resolve
+# ---------------------------------------------------------------------------
+
+
+def test_blocker_with_backtick_wrapped_file_line_resolves_R2(tmp_path: Path) -> None:
+    """R2: evidence like `src/foo.py:42` (backtick-wrapped) resolves when the path is tracked."""
+    import sys
+
+    sys.path.insert(0, str(REPO_ROOT))
+    from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
+
+    epic_dir = tmp_path / ".woof" / "epics" / "E1"
+    _write_critique(
+        epic_dir / "critique",
+        "S1",
+        _blocker_critique("S1", "See `src/woof/graph/nodes.py:1` for the offending line"),
+    )
+    ctx = _make_ctx_with_plan(epic_dir)
+
+    outcome = check_6_critique_blocker_runner(ctx)
+
+    assert not outcome.ok
+    assert outcome.severity == "blocker"
+    assert "critique severity is blocker" in outcome.summary
+
+
+def test_blocker_with_paren_wrapped_file_line_resolves_R2(tmp_path: Path) -> None:
+    """R2: evidence like (src/foo.py:42) (paren-wrapped) resolves when the path is tracked."""
+    import sys
+
+    sys.path.insert(0, str(REPO_ROOT))
+    from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
+
+    epic_dir = tmp_path / ".woof" / "epics" / "E1"
+    _write_critique(
+        epic_dir / "critique",
+        "S1",
+        _blocker_critique("S1", "The bug is at (src/woof/graph/nodes.py:1) in the node runner"),
+    )
+    ctx = _make_ctx_with_plan(epic_dir)
+
+    outcome = check_6_critique_blocker_runner(ctx)
+
+    assert not outcome.ok
+    assert outcome.severity == "blocker"
+    assert "critique severity is blocker" in outcome.summary

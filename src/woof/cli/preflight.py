@@ -1085,6 +1085,8 @@ def _check_cartography(repo_root: Path, prereq: dict[str, Any]) -> list[Prefligh
             )
         )
     findings.append(_check_cartography_mechanical(repo_root))
+    if cartography.get("languages"):
+        findings.append(_check_cartography_ctags())
     floor_hours = int(cartography.get("staleness_floor_hours") or DEFAULT_STALENESS_FLOOR_HOURS)
     freshness = _check_cartography_freshness(repo_root, floor_hours=floor_hours)
     if freshness is not None:
@@ -1310,6 +1312,36 @@ def _check_cartography_mechanical(repo_root: Path) -> PreflightFinding:
             None
             if ok
             else "Run ./scripts/refresh-cartography (or commit with the woof post-commit hook installed)."
+        ),
+    )
+
+
+def _check_cartography_ctags() -> PreflightFinding:
+    """Check that ctags is on PATH when cartography languages are declared (ADR-004).
+
+    ADR-004 mandates ctags as a hard prerequisite: "ctags is a hard prerequisite.
+    Preflight verifies the binary is on PATH." When ``[cartography].languages`` is
+    non-empty the composed ``scripts/refresh-cartography`` will exit 1 if ctags is
+    absent; preflight surfaces that failure proactively here.
+    """
+    path = shutil.which("ctags")
+    if path is not None:
+        return PreflightFinding(
+            id="cartography.ctags",
+            label="cartography ctags",
+            ok=True,
+            detail=f"ctags found at {path}",
+        )
+    return PreflightFinding(
+        id="cartography.ctags",
+        label="cartography ctags",
+        ok=False,
+        detail="ctags not found on PATH; scripts/refresh-cartography will exit 1",
+        install=(
+            "Install universal-ctags:\n"
+            "  Debian/Ubuntu: sudo apt install -y universal-ctags\n"
+            "  macOS:          brew install universal-ctags\n"
+            "  Arch/CachyOS:   sudo pacman -S ctags"
         ),
     )
 

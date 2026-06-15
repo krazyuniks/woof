@@ -222,6 +222,7 @@ log_step "Checking Woof workflow prerequisites..."
 require_manual_tool gh "Install GitHub CLI and authenticate with: gh auth login" || missing=1
 require_manual_tool claude "Install the Claude Code CLI expected by .woof/agents.toml." || missing=1
 require_manual_tool codex "Install the Codex CLI expected by .woof/agents.toml." || missing=1
+require_manual_tool ctags "Install universal-ctags: sudo apt install -y universal-ctags (Debian/Ubuntu), brew install universal-ctags (macOS), or sudo pacman -S ctags (Arch/CachyOS)." || missing=1
 
 if (( missing != 0 )); then
     log_error "One or more prerequisites are missing"

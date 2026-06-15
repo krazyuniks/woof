@@ -141,25 +141,73 @@ def test_composed_script_emits_schema_valid_freshness(tmp_path: Path, run_woof) 
     run = subprocess.run(
         [str(_script(tmp_path))], cwd=tmp_path, env=_env(), capture_output=True, text=True
     )
-    assert run.returncode == 0, run.stderr + run.stdout
 
     codebase = tmp_path / ".woof" / "codebase"
+
+    if shutil.which("ctags") is None:
+        # ADR-004 conformance: refresh exits non-zero when ctags is absent and
+        # languages are declared. The ctags-absent path has its own dedicated test.
+        assert run.returncode != 0
+        assert "ctags not found" in run.stderr
+        return
+
+    assert run.returncode == 0, run.stderr + run.stdout
     assert (codebase / "files.txt").read_text().strip() != ""
+    assert (codebase / "tags").read_text().strip() != ""
 
     freshness = codebase / "freshness.json"
     payload = json.loads(freshness.read_text())
     assert set(payload) == {"ts", "git_ref", "age_s", "generator_version"}
     assert payload["age_s"] == 0
-    assert payload["generator_version"] == 1
+    assert payload["generator_version"] == 2
 
     validate = run_woof("validate", "--schema", "freshness", str(freshness), env=_env())
     assert validate.returncode == 0, validate.stderr + validate.stdout
 
-    # ctags is optional on the test host; gate the index-content assertion on it.
-    if shutil.which("ctags") is not None:
-        assert (codebase / "tags").read_text().strip() != ""
-    else:
-        assert (codebase / "tags").is_file()
+
+def _env_without_ctags(tmp_path: Path) -> dict[str, str]:
+    """Return an environment suitable for running refresh-cartography with no ctags.
+
+    Builds a shadow bin dir inside tmp_path that contains the tools the refresh
+    script needs (git, sh, date) but NOT ctags. PATH is set to that dir plus
+    any system PATH dirs that do not contain ctags, so the script can run but
+    ``command -v ctags`` returns non-zero.
+    """
+    shadow = tmp_path / "_no_ctags_bin"
+    shadow.mkdir(exist_ok=True)
+    # Tools the refresh script invokes before reaching the ctags guard.
+    for tool in ("git", "sh", "mkdir", "date", "printf"):
+        tool_path = shutil.which(tool)
+        if tool_path and not (shadow / tool).exists():
+            (shadow / tool).symlink_to(tool_path)
+
+    env = os.environ.copy()
+    path_dirs = env.get("PATH", "").split(os.pathsep)
+    no_ctags_dirs = [d for d in path_dirs if not (Path(d) / "ctags").is_file()]
+    env["PATH"] = str(shadow) + os.pathsep + os.pathsep.join(no_ctags_dirs)
+    return env
+
+
+def test_refresh_exits_nonzero_when_ctags_absent(tmp_path: Path, run_woof) -> None:
+    """Refresh fails loud with exit 1 when ctags is absent and languages are declared (ADR-004)."""
+    _init_git_repo(tmp_path)
+    assert _init(tmp_path, run_woof, "python").returncode == 0
+
+    run = subprocess.run(
+        [str(_script(tmp_path))],
+        cwd=tmp_path,
+        env=_env_without_ctags(tmp_path),
+        capture_output=True,
+        text=True,
+    )
+
+    assert run.returncode != 0, "refresh must exit non-zero when ctags is absent"
+    assert "ctags not found" in run.stderr
+    assert "universal-ctags" in run.stderr
+    # freshness.json must NOT be written; an empty tags was never written either.
+    codebase = tmp_path / ".woof" / "codebase"
+    assert not (codebase / "freshness.json").exists()
+    assert not (codebase / "tags").exists()
 
 
 def test_language_registries_validate_against_amended_schema(run_woof) -> None:

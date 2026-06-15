@@ -62,7 +62,7 @@ summary_min_chars = 200
 
 # Bumped when the composed refresh-cartography body changes shape, so stamps from
 # an older `woof init` are distinguishable (freshness.json.generator_version).
-REFRESH_GENERATOR_VERSION = 1
+REFRESH_GENERATOR_VERSION = 2
 
 CARTOGRAPHY_LANGUAGES_HINT = (
     '# languages = ["python"]  # refresh-cartography fragments to compose (woof init --language)'
@@ -387,13 +387,17 @@ woof_add_ctags_language() {
 __WOOF_FRAGMENTS__
 
 # ctags -> tags, scoped to the declared cartography languages. ctags is a hard
-# cartography prerequisite (ADR-004); when it is genuinely absent the script
-# still writes an empty index so the mechanical layer is present.
-if command -v ctags >/dev/null 2>&1; then
+# cartography prerequisite (ADR-004); refresh fails loud when ctags is absent
+# and languages are declared rather than silently writing an empty index.
+if [ -n "$woof_ctags_languages" ]; then
+  if ! command -v ctags >/dev/null 2>&1; then
+    echo "woof refresh-cartography: ctags not found on PATH; install universal-ctags" >&2
+    echo "  Debian/Ubuntu: sudo apt install -y universal-ctags" >&2
+    echo "  macOS:          brew install universal-ctags" >&2
+    echo "  Arch/CachyOS:   sudo pacman -S ctags" >&2
+    exit 1
+  fi
   ctags --languages="$woof_ctags_languages" -L "$woof_codebase/files.txt" -f "$woof_codebase/tags"
-else
-  : >"$woof_codebase/tags"
-  echo "woof refresh-cartography: ctags not found on PATH; wrote an empty tags index" >&2
 fi
 
 # freshness.json stamp: {ts, git_ref, age_s, generator_version}. ts is the

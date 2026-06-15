@@ -139,7 +139,7 @@ def test_post_commit_hook_regenerates_cartography_mechanical_layer(tmp_path: Pat
     freshness = json.loads((codebase / "freshness.json").read_text())
     assert freshness["git_ref"] == _head(tmp_path)
     assert freshness["age_s"] == 0
-    assert freshness["generator_version"] == 1
+    assert freshness["generator_version"] == 2
 
 
 def test_post_commit_hook_fails_loud_when_refresh_script_fails(tmp_path: Path) -> None:

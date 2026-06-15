@@ -1882,3 +1882,144 @@ def test_preflight_secret_scan_passes_on_clean_cartography(tmp_path: Path, run_w
 
     by_id = {finding["id"]: finding for finding in json.loads(proc.stdout)["findings"]}
     assert by_id["cartography.secrets"]["ok"] is True
+
+
+# --- cartography.ctags check (ADR-004 conformance, E16) ----------------------
+
+CARTOGRAPHY_PREREQS_WITH_LANGUAGES = """\
+[infra]
+just = "any"
+git = "any"
+gh = "any"
+
+[commands]
+claude = "any"
+codex = "any"
+
+[validators]
+ajv = "any"
+ajv-formats = "any"
+
+[tracker]
+kind = "github"
+repo = "example/project"
+
+[cartography]
+summary_min_chars = 40
+languages = ["python"]
+"""
+
+
+def _env_with_path_no_ctags(tmp_path: Path, bin_dir: Path) -> dict[str, str]:
+    """Like _env_with_path but with ctags excluded from the resolved PATH.
+
+    On systems where sh and ctags share a directory (e.g. /usr/bin), a plain
+    _env_with_path would include that directory and shutil.which('ctags') inside
+    the preflight subprocess would succeed. This helper shadows sh into a private
+    dir so PATH can include sh without including ctags.
+    """
+    uv = shutil.which("uv")
+    sh = shutil.which("sh")
+    assert uv is not None
+    assert sh is not None
+
+    sh_shadow = tmp_path / "_sh_shadow"
+    sh_shadow.mkdir(exist_ok=True)
+    sh_link = sh_shadow / "sh"
+    if not sh_link.exists():
+        sh_link.symlink_to(sh)
+
+    env = os.environ.copy()
+    env["PATH"] = os.pathsep.join([str(bin_dir), str(Path(uv).parent), str(sh_shadow)])
+    env.setdefault("ANTHROPIC_API_KEY", "stub-anthropic")
+    env.setdefault("OPENAI_API_KEY", "stub-openai")
+    return env
+
+
+def test_preflight_ctags_finding_fires_when_absent_and_languages_declared(
+    tmp_path: Path, run_woof
+) -> None:
+    """cartography.ctags fails when languages declared and ctags absent from PATH (ADR-004)."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _stub_core_tools(bin_dir)
+    # Intentionally no ctags stub in bin_dir.
+
+    _write_project(tmp_path, prerequisites=CARTOGRAPHY_PREREQS_WITH_LANGUAGES)
+    _write_cartography(tmp_path)
+
+    proc = run_woof(
+        "preflight",
+        "--project-root",
+        str(tmp_path),
+        "--format",
+        "json",
+        env=_env_with_path_no_ctags(tmp_path, bin_dir),
+    )
+
+    assert proc.returncode == 1
+    by_id = {f["id"]: f for f in json.loads(proc.stdout)["findings"]}
+    assert "cartography.ctags" in by_id
+    ctags_finding = by_id["cartography.ctags"]
+    assert ctags_finding["ok"] is False
+    assert "ctags not found" in ctags_finding["detail"]
+    assert "universal-ctags" in ctags_finding["install"]
+
+
+def test_preflight_ctags_finding_passes_when_ctags_present(tmp_path: Path, run_woof) -> None:
+    """cartography.ctags passes when ctags is on PATH and languages are declared."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _stub_core_tools(bin_dir)
+    _write_exe(bin_dir / "ctags", 'echo "Universal Ctags 6.0.0"\n')
+
+    _write_project(tmp_path, prerequisites=CARTOGRAPHY_PREREQS_WITH_LANGUAGES)
+    _write_cartography(tmp_path)
+
+    proc = run_woof(
+        "preflight",
+        "--project-root",
+        str(tmp_path),
+        "--format",
+        "json",
+        env=_env_with_path(bin_dir),
+    )
+
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    by_id = {f["id"]: f for f in json.loads(proc.stdout)["findings"]}
+    assert "cartography.ctags" in by_id
+    assert by_id["cartography.ctags"]["ok"] is True
+
+
+def test_preflight_no_ctags_finding_when_no_languages_declared(tmp_path: Path, run_woof) -> None:
+    """cartography.ctags is not emitted when [cartography].languages is absent."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _stub_core_tools(bin_dir)
+    # No ctags stub — but no languages declared either.
+
+    _write_project(tmp_path, prerequisites=CARTOGRAPHY_PREREQS)
+    _write_cartography(tmp_path)
+
+    proc = run_woof(
+        "preflight",
+        "--project-root",
+        str(tmp_path),
+        "--format",
+        "json",
+        env=_env_with_path(bin_dir),
+    )
+
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    finding_ids = {f["id"] for f in json.loads(proc.stdout)["findings"]}
+    assert "cartography.ctags" not in finding_ids
+
+
+def test_first_time_setup_includes_ctags_prerequisite() -> None:
+    """scripts/first-time-setup.sh must list ctags in the require_manual_tool tier."""
+    script = REPO_ROOT / "scripts" / "first-time-setup.sh"
+    assert script.is_file(), f"{script} not found"
+    content = script.read_text()
+    assert "require_manual_tool ctags" in content, (
+        "ctags must be in the require_manual_tool (check-and-instruct) tier"
+    )

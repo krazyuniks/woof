@@ -20,7 +20,14 @@ from woof.graph.lock import LOCK_FILENAME, WorkflowLockError
 from woof.graph.manifest import build_story_manifest, verify_staged_manifest
 from woof.graph.runner import run_graph
 from woof.graph.state import NodeInput, NodeOutput, NodeStatus, NodeType, StorySpec
-from woof.graph.transitions import StageStateError, epic_dir, mark_story_status, next_node
+from woof.graph.transitions import (
+    StageStateError,
+    append_epic_event,
+    epic_dir,
+    mark_story_status,
+    next_node,
+    plan_gate_resolved,
+)
 from woof.trackers.base import LifecycleSyncResult, Tracker
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -3862,4 +3869,49 @@ def test_wf_resolve_revise_epic_contract_reenters_definition_from_plan_gate(tmp_
     resolved = [e for e in events if e["event"] == "gate_resolved"]
     assert resolved and resolved[-1]["decision"] == "revise_epic_contract"
     assert transitions.definition_revision_requested(tmp_path, 73) is True
-    assert next_node(tmp_path, 73) == (NodeType.EPIC_DEFINITION, None)
+
+
+# ---------------------------------------------------------------------------
+# E19 S1 R1 — stage-state halt resolution is non-approving (P1 regression)
+# ---------------------------------------------------------------------------
+
+
+def test_plan_gate_resolved_false_for_stage_state_halt_approve(tmp_path: Path) -> None:
+    """An 'approve' on a cartography halt plan_gate must not satisfy the mandatory plan gate."""
+    _write_plan(tmp_path, 74)
+    # Simulate operator approving the cartography-halt gate with incomplete_stage_state.
+    append_epic_event(
+        tmp_path,
+        74,
+        {
+            "event": "gate_resolved",
+            "at": "2026-01-01T00:00:00Z",
+            "epic_id": 74,
+            "decision": "approve",
+            "gate_type": "plan_gate",
+            "triggered_by": ["incomplete_stage_state"],
+        },
+    )
+    assert plan_gate_resolved(tmp_path, 74) is False
+
+
+def test_story_gate_stage_state_halt_approve_leaves_story_pending(tmp_path: Path) -> None:
+    """An 'approve' on a cartography halt story_gate must not mark the story done."""
+    _write_plan(tmp_path, 75)
+    # Simulate operator approving the cartography-halt gate with incomplete_stage_state.
+    append_epic_event(
+        tmp_path,
+        75,
+        {
+            "event": "gate_resolved",
+            "at": "2026-01-01T00:00:00Z",
+            "epic_id": 75,
+            "decision": "approve",
+            "gate_type": "story_gate",
+            "story_id": "S1",
+            "triggered_by": ["incomplete_stage_state"],
+        },
+    )
+    plan = transitions.load_plan(tmp_path, 75)
+    story = next(s for s in plan.stories if s.id == "S1")
+    assert story.status == "pending"

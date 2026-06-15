@@ -8,11 +8,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-import yaml
 
 from woof.graph import nodes
 from woof.graph.git import git_env
-from woof.graph.state import NodeInput, NodeStatus, NodeType
+from woof.graph.state import NodeInput, NodeType
+from woof.graph.transitions import StageStateError
 
 
 def _git(root: Path, *args: str, **kwargs: Any) -> subprocess.CompletedProcess[Any]:
@@ -128,136 +128,136 @@ def _write_stage3_plan(directory: Path, epic_id: int) -> None:
     (directory / "plan.json").write_text(json.dumps(plan))
 
 
-def _read_gate_fm(gate_path: Path) -> dict:
-    text = gate_path.read_text()
-    return yaml.safe_load(text[4 : text.find("\n---\n", 4)])
-
-
 # ---------------------------------------------------------------------------
 # Missing-doc gate type tests
 # ---------------------------------------------------------------------------
 
 
-def test_discovery_research_missing_cartography_opens_plan_gate(tmp_path: Path) -> None:
+def test_discovery_research_missing_cartography_raises_stage_state_error(tmp_path: Path) -> None:
     _write_spark(tmp_path, 1)
 
-    output = nodes.discovery_research_node(
-        NodeInput(node_type=NodeType.DISCOVERY_RESEARCH, epic_id=1, repo_root=tmp_path)
-    )
+    with pytest.raises(StageStateError) as exc_info:
+        nodes.discovery_research_node(
+            NodeInput(node_type=NodeType.DISCOVERY_RESEARCH, epic_id=1, repo_root=tmp_path)
+        )
 
-    assert output.status == NodeStatus.GATE_OPENED
-    assert output.triggered_by == ["incomplete_stage_state"]
-    gate_fm = _read_gate_fm(tmp_path / ".woof" / "epics" / "E1" / "gate.md")
-    assert gate_fm["type"] == "plan_gate"
-    assert gate_fm["story_id"] is None
-    assert "STACK.md" in output.message
+    exc = exc_info.value
+    assert exc.operator_recoverable
+    assert exc.gate_type == "plan_gate"
+    assert exc.story_id is None
+    assert "STACK.md" in str(exc)
 
 
-def test_discovery_thinking_missing_cartography_opens_plan_gate(tmp_path: Path) -> None:
+def test_discovery_thinking_missing_cartography_raises_stage_state_error(tmp_path: Path) -> None:
     directory = _write_spark(tmp_path, 2)
     (directory / "discovery" / "research").mkdir(parents=True)
     (directory / "discovery" / "research" / "research.md").write_text("# Research\n\nDone.\n")
 
-    output = nodes.discovery_thinking_node(
-        NodeInput(node_type=NodeType.DISCOVERY_THINKING, epic_id=2, repo_root=tmp_path)
-    )
+    with pytest.raises(StageStateError) as exc_info:
+        nodes.discovery_thinking_node(
+            NodeInput(node_type=NodeType.DISCOVERY_THINKING, epic_id=2, repo_root=tmp_path)
+        )
 
-    assert output.status == NodeStatus.GATE_OPENED
-    assert output.triggered_by == ["incomplete_stage_state"]
-    gate_fm = _read_gate_fm(tmp_path / ".woof" / "epics" / "E2" / "gate.md")
-    assert gate_fm["type"] == "plan_gate"
+    exc = exc_info.value
+    assert exc.operator_recoverable
+    assert exc.gate_type == "plan_gate"
+    assert exc.story_id is None
 
 
-def test_discovery_synthesis_missing_cartography_opens_plan_gate(tmp_path: Path) -> None:
+def test_discovery_synthesis_missing_cartography_raises_stage_state_error(tmp_path: Path) -> None:
     _write_spark(tmp_path, 3)
 
-    output = nodes.discovery_synthesis_node(
-        NodeInput(node_type=NodeType.DISCOVERY_SYNTHESIS, epic_id=3, repo_root=tmp_path)
-    )
+    with pytest.raises(StageStateError) as exc_info:
+        nodes.discovery_synthesis_node(
+            NodeInput(node_type=NodeType.DISCOVERY_SYNTHESIS, epic_id=3, repo_root=tmp_path)
+        )
 
-    assert output.status == NodeStatus.GATE_OPENED
-    assert output.triggered_by == ["incomplete_stage_state"]
-    gate_fm = _read_gate_fm(tmp_path / ".woof" / "epics" / "E3" / "gate.md")
-    assert gate_fm["type"] == "plan_gate"
+    exc = exc_info.value
+    assert exc.operator_recoverable
+    assert exc.gate_type == "plan_gate"
+    assert exc.story_id is None
 
 
-def test_epic_definition_missing_cartography_opens_plan_gate(tmp_path: Path) -> None:
+def test_epic_definition_missing_cartography_raises_stage_state_error(tmp_path: Path) -> None:
     directory = _write_spark(tmp_path, 4)
     _write_discovery_synthesis(directory)
 
-    output = nodes.epic_definition_node(
-        NodeInput(node_type=NodeType.EPIC_DEFINITION, epic_id=4, repo_root=tmp_path)
-    )
+    with pytest.raises(StageStateError) as exc_info:
+        nodes.epic_definition_node(
+            NodeInput(node_type=NodeType.EPIC_DEFINITION, epic_id=4, repo_root=tmp_path)
+        )
 
-    assert output.status == NodeStatus.GATE_OPENED
-    assert output.triggered_by == ["incomplete_stage_state"]
-    gate_fm = _read_gate_fm(tmp_path / ".woof" / "epics" / "E4" / "gate.md")
-    assert gate_fm["type"] == "plan_gate"
+    exc = exc_info.value
+    assert exc.operator_recoverable
+    assert exc.gate_type == "plan_gate"
+    assert exc.story_id is None
 
 
-def test_breakdown_planning_missing_cartography_opens_plan_gate(tmp_path: Path) -> None:
+def test_breakdown_planning_missing_cartography_raises_stage_state_error(tmp_path: Path) -> None:
     directory = _write_spark(tmp_path, 5)
     _write_minimal_epic(directory, 5)
 
-    output = nodes.breakdown_planning_node(
-        NodeInput(node_type=NodeType.BREAKDOWN_PLANNING, epic_id=5, repo_root=tmp_path)
-    )
+    with pytest.raises(StageStateError) as exc_info:
+        nodes.breakdown_planning_node(
+            NodeInput(node_type=NodeType.BREAKDOWN_PLANNING, epic_id=5, repo_root=tmp_path)
+        )
 
-    assert output.status == NodeStatus.GATE_OPENED
-    assert output.triggered_by == ["incomplete_stage_state"]
-    gate_fm = _read_gate_fm(tmp_path / ".woof" / "epics" / "E5" / "gate.md")
-    assert gate_fm["type"] == "plan_gate"
+    exc = exc_info.value
+    assert exc.operator_recoverable
+    assert exc.gate_type == "plan_gate"
+    assert exc.story_id is None
 
 
-def test_plan_critique_missing_cartography_opens_plan_gate(tmp_path: Path) -> None:
+def test_plan_critique_missing_cartography_raises_stage_state_error(tmp_path: Path) -> None:
     directory = _write_spark(tmp_path, 6)
     _write_minimal_epic(directory, 6)
     _write_stage3_plan(directory, 6)
     plan_md = nodes._render_plan_markdown(nodes.load_plan(tmp_path, 6))
     (directory / "PLAN.md").write_text(plan_md)
 
-    output = nodes.plan_critique_node(
-        NodeInput(node_type=NodeType.PLAN_CRITIQUE, epic_id=6, repo_root=tmp_path)
-    )
+    with pytest.raises(StageStateError) as exc_info:
+        nodes.plan_critique_node(
+            NodeInput(node_type=NodeType.PLAN_CRITIQUE, epic_id=6, repo_root=tmp_path)
+        )
 
-    assert output.status == NodeStatus.GATE_OPENED
-    assert output.triggered_by == ["incomplete_stage_state"]
-    gate_fm = _read_gate_fm(tmp_path / ".woof" / "epics" / "E6" / "gate.md")
-    assert gate_fm["type"] == "plan_gate"
+    exc = exc_info.value
+    assert exc.operator_recoverable
+    assert exc.gate_type == "plan_gate"
+    assert exc.story_id is None
 
 
-def test_executor_dispatch_missing_cartography_opens_story_gate(tmp_path: Path) -> None:
+def test_executor_dispatch_missing_cartography_raises_stage_state_error(tmp_path: Path) -> None:
     _write_plan(tmp_path, 7)
 
-    output = nodes.executor_dispatch_node(
-        NodeInput(
-            node_type=NodeType.EXECUTOR_DISPATCH, epic_id=7, story_id="S1", repo_root=tmp_path
+    with pytest.raises(StageStateError) as exc_info:
+        nodes.executor_dispatch_node(
+            NodeInput(
+                node_type=NodeType.EXECUTOR_DISPATCH, epic_id=7, story_id="S1", repo_root=tmp_path
+            )
         )
-    )
 
-    assert output.status == NodeStatus.GATE_OPENED
-    assert output.triggered_by == ["incomplete_stage_state"]
-    gate_fm = _read_gate_fm(tmp_path / ".woof" / "epics" / "E7" / "gate.md")
-    assert gate_fm["type"] == "story_gate"
-    assert gate_fm["story_id"] == "S1"
+    exc = exc_info.value
+    assert exc.operator_recoverable
+    assert exc.gate_type == "story_gate"
+    assert exc.story_id == "S1"
 
 
-def test_critique_dispatch_missing_cartography_opens_story_gate(tmp_path: Path) -> None:
+def test_critique_dispatch_missing_cartography_raises_stage_state_error(tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     directory = _write_plan(tmp_path, 8)
     (directory / "EPIC.md").write_text("---\nepic_id: 8\n---\n")
 
-    output = nodes.critique_dispatch_node(
-        NodeInput(
-            node_type=NodeType.CRITIQUE_DISPATCH, epic_id=8, story_id="S1", repo_root=tmp_path
+    with pytest.raises(StageStateError) as exc_info:
+        nodes.critique_dispatch_node(
+            NodeInput(
+                node_type=NodeType.CRITIQUE_DISPATCH, epic_id=8, story_id="S1", repo_root=tmp_path
+            )
         )
-    )
 
-    assert output.status == NodeStatus.GATE_OPENED
-    assert output.triggered_by == ["incomplete_stage_state"]
-    gate_fm = _read_gate_fm(tmp_path / ".woof" / "epics" / "E8" / "gate.md")
-    assert gate_fm["type"] == "story_gate"
-    assert gate_fm["story_id"] == "S1"
+    exc = exc_info.value
+    assert exc.operator_recoverable
+    assert exc.gate_type == "story_gate"
+    assert exc.story_id == "S1"
 
 
 # ---------------------------------------------------------------------------

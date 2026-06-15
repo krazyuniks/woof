@@ -39,10 +39,12 @@ Every reader of a `gate_opened` / `incomplete_stage_state` event must handle the
 
 | Consumer | Required behaviour |
 |---|---|
-| `woof wf` runner (`src/woof/graph/runner.py`) | Already calls `_open_stage_state_gate` on `StageStateError(operator_recoverable=True)`. No change needed if the new raises conform to this contract. Verify. |
+| `woof wf` runner (`src/woof/graph/runner.py`) | Catches `StageStateError(operator_recoverable=True)` from both `next_node` and node handler calls; calls `_open_stage_state_gate` in both paths. Node handlers raise `StageStateError` directly; `_cartography_missing_gate` was removed (R1 dedup). |
 | `woof observe` (`src/woof/cli/commands/observe.py`) | Already maps `incomplete_stage_state` trigger to a labelled node display (lines ~295, ~302, ~330). Verify the cartography-missing variant surfaces with a readable message pointing at the missing file. |
 | Bench harness (`src/woof/bench/efficiency.py`) | Reads `gate_opened` events for gate summary. A cartography-missing gate must not be mistaken for a plan gate; `gate_type` field in `gate.md` must be correct so `_gate_summary` classifies it correctly. |
-| `woof wf --resolve` | Resolves via the existing story-gate or plan-gate decision path. No new verb required. The gate body must describe the missing document so the operator knows to run `scripts/refresh-cartography` or re-author missing docs before resolving. |
+| `woof wf --resolve` | Resolves via the existing story-gate or plan-gate decision path. No new verb required. The gate body must describe the missing document so the operator knows to run `scripts/refresh-cartography` or re-author missing docs before resolving. Resolution with `approve` uses `NON_APPROVING_TRIGGERS` guard (R1) so no plan-summary or plan-approval effects run. |
+| `plan_gate_resolved()` (`src/woof/graph/transitions.py`) | **R1 fix.** Now excludes `NON_APPROVING_TRIGGERS` (`incomplete_stage_state`) from the approve branch, identically to `CONFLICT_TRIGGERS`. A `gate_resolved` event with `gate_type=plan_gate`, `decision=approve`, `triggered_by=[incomplete_stage_state]` returns False — the mandatory Stage-4 plan approval is not satisfied. |
+| `_apply_gate_resolution_effects` (`src/woof/cli/commands/wf.py`) | **R1 fix.** Early-returns with no effects when `decision=approve` and any `NON_APPROVING_TRIGGERS` trigger is present. Prevents `tracker.push_plan_summary` from running before `plan.json` exists (pre-plan guard) and prevents story-completion effects for a cartography story_gate halt. |
 | End-of-epic detection (`next_node`) | A halted epic with `gate.md` present is not complete. No special case needed; the existing gate-presence short-circuit in `next_node` handles it. Verify no path skips the gate check for this trigger. |
 | Tracker sync | Gate state is not a terminal state. Trackers must not mark the epic closed. Existing tracker logic reads graph status, not `triggered_by`; verify no regression. |
 

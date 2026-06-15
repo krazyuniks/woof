@@ -46,6 +46,7 @@ from woof.paths import find_project_root
 from woof.trackers import (
     CONFLICT_DECISIONS,
     CONFLICT_TRIGGERS,
+    NON_APPROVING_TRIGGERS,
     Tracker,
     TrackerError,
     resolve_tracker,
@@ -216,6 +217,11 @@ def _apply_gate_resolution_effects(
 ) -> list[str]:
     directory = epic_dir(repo_root, epic_id)
     changed: list[str] = []
+
+    # A non-approving trigger (e.g. incomplete_stage_state) means the operator
+    # fixed the halt condition; no approval effects run for any gate type.
+    if decision == "approve" and any(trigger in NON_APPROVING_TRIGGERS for trigger in triggered_by):
+        return changed
 
     if any(trigger in CONFLICT_TRIGGERS for trigger in triggered_by):
         validate_decision("tracker_sync_conflict", decision)

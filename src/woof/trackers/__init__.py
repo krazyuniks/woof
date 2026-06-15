@@ -20,6 +20,7 @@ from typing import Any
 from woof.trackers.base import (
     CONFLICT_DECISIONS,
     CONFLICT_TRIGGERS,
+    NON_APPROVING_TRIGGERS,
     ColdStartResult,
     ConflictResolutionResult,
     DefinitionSyncResult,
@@ -34,6 +35,7 @@ from woof.trackers.local import LocalTracker
 __all__ = [
     "CONFLICT_DECISIONS",
     "CONFLICT_TRIGGERS",
+    "NON_APPROVING_TRIGGERS",
     "ColdStartResult",
     "ConflictResolutionResult",
     "DefinitionSyncResult",

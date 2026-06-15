@@ -99,14 +99,20 @@ def run_graph(
                 )
                 return outputs
             handler: NodeHandler = handlers[node_type]
-            out = handler(
-                NodeInput(
-                    node_type=node_type,
-                    epic_id=epic_id,
-                    story_id=story_id,
-                    repo_root=repo_root,
+            try:
+                out = handler(
+                    NodeInput(
+                        node_type=node_type,
+                        epic_id=epic_id,
+                        story_id=story_id,
+                        repo_root=repo_root,
+                    )
                 )
-            )
+            except StageStateError as exc:
+                if exc.operator_recoverable:
+                    outputs.append(_open_stage_state_gate(repo_root, epic_id, exc))
+                    return outputs
+                raise
             outputs.append(out)
             if once or out.status in {
                 NodeStatus.GATE_OPENED,

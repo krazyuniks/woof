@@ -443,7 +443,13 @@ def _codebase_doc_relpath(doc_name: str) -> str:
     return f".woof/codebase/{doc_name}"
 
 
-def _require_cartography_docs(repo_root: Path, doc_names: list[str], gate_type: str) -> list[str]:
+def _require_cartography_docs(
+    repo_root: Path,
+    doc_names: list[str],
+    gate_type: str,
+    *,
+    story_id: str | None = None,
+) -> list[str]:
     """Return repo-relative paths for each named codebase doc.
 
     Raises StageStateError(operator_recoverable=True, gate_type=gate_type) if
@@ -461,45 +467,9 @@ def _require_cartography_docs(repo_root: Path, doc_names: list[str], gate_type: 
             " then re-run `woof wf --epic <N>`.",
             operator_recoverable=True,
             gate_type=gate_type,
+            story_id=story_id,
         )
     return refs
-
-
-def _cartography_missing_gate(inp: NodeInput, exc: StageStateError) -> NodeOutput:
-    """Open the node's natural gate type for a missing-cartography StageStateError."""
-    position = (
-        "## Context\n\n"
-        f"One or more cartography documents required for E{inp.epic_id} dispatch are "
-        "missing from `.woof/codebase/`.\n\n"
-        "## Findings\n\n"
-        f"- {exc}\n\n"
-        "## Primary position\n\n"
-        "Run `scripts/refresh-cartography` to regenerate the mechanical layer, "
-        "or author the missing document. "
-        f"Then re-run `woof wf --epic {inp.epic_id}` to continue.\n\n"
-        "## Reviewer position\n\n"
-        "The deterministic graph opened this gate because dispatching without the "
-        "mapped cartography documents would silently give the subagent an incomplete "
-        "view of the codebase.\n"
-    )
-    write_gate(
-        epic_dir=epic_dir(inp.repo_root, inp.epic_id),
-        story_id=inp.story_id,
-        triggered_by=["incomplete_stage_state"],
-        position_text=position,
-        schema_path=schema_dir() / "gate.schema.json",
-        validate=True,
-        gate_type=exc.gate_type,
-    )
-    return NodeOutput(
-        node_type=inp.node_type,
-        status=NodeStatus.GATE_OPENED,
-        epic_id=inp.epic_id,
-        story_id=inp.story_id,
-        gate_path=_gate_path(inp.epic_id),
-        triggered_by=["incomplete_stage_state"],
-        message=str(exc),
-    )
 
 
 def _executor_files_txt_slice(repo_root: Path, story: StorySpec) -> list[str]:
@@ -516,6 +486,7 @@ def _executor_files_txt_slice(repo_root: Path, story: StorySpec) -> list[str]:
             "Run `scripts/refresh-cartography` to generate it.",
             operator_recoverable=True,
             gate_type="story_gate",
+            story_id=story.id,
         )
     candidates = [
         line for line in files_txt_path.read_text(encoding="utf-8").splitlines() if line.strip()
@@ -529,6 +500,7 @@ def _executor_files_txt_slice(repo_root: Path, story: StorySpec) -> list[str]:
             f"files.txt pathspec slice evaluation failed: {exc}",
             operator_recoverable=True,
             gate_type="story_gate",
+            story_id=story.id,
         ) from exc
 
 
@@ -1130,14 +1102,11 @@ def _discovery_bucket_node(inp: NodeInput, bucket: str) -> NodeOutput:
     bucket_dir = discovery_bucket_dir(inp.repo_root, inp.epic_id, bucket)
     bucket_relpath = _relpath(inp.repo_root, bucket_dir)
     if not discovery_bucket_complete(inp.repo_root, inp.epic_id, bucket):
-        try:
-            carto_refs = _require_cartography_docs(
-                inp.repo_root,
-                _DISCOVERY_BUCKET_CARTOGRAPHY_DOCS[bucket],
-                "plan_gate",
-            )
-        except StageStateError as exc:
-            return _cartography_missing_gate(inp, exc)
+        carto_refs = _require_cartography_docs(
+            inp.repo_root,
+            _DISCOVERY_BUCKET_CARTOGRAPHY_DOCS[bucket],
+            "plan_gate",
+        )
         bucket_dir.mkdir(parents=True, exist_ok=True)
         proc = _run_dispatch(
             inp.repo_root,
@@ -1241,12 +1210,7 @@ def discovery_synthesis_node(inp: NodeInput) -> NodeOutput:
     ]
     missing = _missing_discovery_outputs(inp.repo_root, inp.epic_id)
     if missing:
-        try:
-            carto_refs = _require_cartography_docs(
-                inp.repo_root, _FULL_CARTOGRAPHY_SET, "plan_gate"
-            )
-        except StageStateError as exc:
-            return _cartography_missing_gate(inp, exc)
+        carto_refs = _require_cartography_docs(inp.repo_root, _FULL_CARTOGRAPHY_SET, "plan_gate")
         discovery_synthesis_dir(inp.repo_root, inp.epic_id).mkdir(parents=True, exist_ok=True)
         proc = _run_dispatch(
             inp.repo_root,
@@ -1360,12 +1324,9 @@ def epic_definition_node(inp: NodeInput) -> NodeOutput:
                 check_count=4,
                 failed_check_count=len(missing) or 4,
             )
-        try:
-            carto_refs = _require_cartography_docs(
-                inp.repo_root, _EPIC_DEFINITION_CARTOGRAPHY_DOCS, "plan_gate"
-            )
-        except StageStateError as exc:
-            return _cartography_missing_gate(inp, exc)
+        carto_refs = _require_cartography_docs(
+            inp.repo_root, _EPIC_DEFINITION_CARTOGRAPHY_DOCS, "plan_gate"
+        )
         proc = _run_dispatch(
             inp.repo_root,
             role="primary",
@@ -1631,12 +1592,9 @@ def breakdown_planning_node(inp: NodeInput) -> NodeOutput:
         )
 
     if not plan_path.exists():
-        try:
-            carto_refs = _require_cartography_docs(
-                inp.repo_root, _BREAKDOWN_PLANNING_CARTOGRAPHY_DOCS, "plan_gate"
-            )
-        except StageStateError as exc:
-            return _cartography_missing_gate(inp, exc)
+        carto_refs = _require_cartography_docs(
+            inp.repo_root, _BREAKDOWN_PLANNING_CARTOGRAPHY_DOCS, "plan_gate"
+        )
         proc = _run_dispatch(
             inp.repo_root,
             role="primary",
@@ -1774,12 +1732,9 @@ def plan_critique_node(inp: NodeInput) -> NodeOutput:
         )
 
     if not critique_path.exists():
-        try:
-            carto_refs = _require_cartography_docs(
-                inp.repo_root, _PLAN_CRITIQUE_CARTOGRAPHY_DOCS, "plan_gate"
-            )
-        except StageStateError as exc:
-            return _cartography_missing_gate(inp, exc)
+        carto_refs = _require_cartography_docs(
+            inp.repo_root, _PLAN_CRITIQUE_CARTOGRAPHY_DOCS, "plan_gate"
+        )
         critique_path.parent.mkdir(parents=True, exist_ok=True)
         proc = _run_dispatch(
             inp.repo_root,
@@ -2000,15 +1955,12 @@ def plan_gate_open_node(inp: NodeInput) -> NodeOutput:
 def executor_dispatch_node(inp: NodeInput) -> NodeOutput:
     if not inp.story_id:
         raise ValueError("executor_dispatch requires story_id")
-    try:
-        carto_refs = _require_cartography_docs(
-            inp.repo_root, _EXECUTOR_CARTOGRAPHY_DOCS, "story_gate"
-        )
-        plan = load_plan(inp.repo_root, inp.epic_id)
-        story = story_by_id(plan, inp.story_id)
-        files_txt_slice = _executor_files_txt_slice(inp.repo_root, story)
-    except StageStateError as exc:
-        return _cartography_missing_gate(inp, exc)
+    carto_refs = _require_cartography_docs(
+        inp.repo_root, _EXECUTOR_CARTOGRAPHY_DOCS, "story_gate", story_id=inp.story_id
+    )
+    plan = load_plan(inp.repo_root, inp.epic_id)
+    story = story_by_id(plan, inp.story_id)
+    files_txt_slice = _executor_files_txt_slice(inp.repo_root, story)
     mark_story_status(inp.repo_root, inp.epic_id, inp.story_id, "in_progress")
     proc = _run_dispatch(
         inp.repo_root,
@@ -2059,12 +2011,9 @@ def executor_dispatch_node(inp: NodeInput) -> NodeOutput:
 def critique_dispatch_node(inp: NodeInput) -> NodeOutput:
     if not inp.story_id:
         raise ValueError("critique_dispatch requires story_id")
-    try:
-        carto_refs = _require_cartography_docs(
-            inp.repo_root, _CRITIQUE_DISPATCH_CARTOGRAPHY_DOCS, "story_gate"
-        )
-    except StageStateError as exc:
-        return _cartography_missing_gate(inp, exc)
+    carto_refs = _require_cartography_docs(
+        inp.repo_root, _CRITIQUE_DISPATCH_CARTOGRAPHY_DOCS, "story_gate", story_id=inp.story_id
+    )
     try:
         _stage_changed_story_paths(inp.repo_root, inp.epic_id, inp.story_id)
     except (subprocess.CalledProcessError, StageStateError, ValueError) as exc:

@@ -17,7 +17,7 @@ from woof.graph.dispositions import (
 from woof.graph.git import changed_paths, staged_paths
 from woof.graph.manifest import build_story_manifest
 from woof.graph.state import TERMINAL_STORY_STATUSES, NodeStatus, NodeType, Plan, StorySpec
-from woof.trackers.base import CONFLICT_TRIGGERS
+from woof.trackers.base import CONFLICT_TRIGGERS, NON_APPROVING_TRIGGERS
 
 
 class StageStateError(RuntimeError):
@@ -283,8 +283,10 @@ def plan_gate_resolved(repo_root: Path, epic_id: int) -> bool:
             decision = event.get("decision")
             if decision in {"revise_epic_contract", "revise_plan"}:
                 resolved = False
-            elif decision == "approve" and not any(
-                trigger in CONFLICT_TRIGGERS for trigger in triggered_by
+            elif (
+                decision == "approve"
+                and not any(trigger in CONFLICT_TRIGGERS for trigger in triggered_by)
+                and not any(trigger in NON_APPROVING_TRIGGERS for trigger in triggered_by)
             ):
                 resolved = True
     return resolved

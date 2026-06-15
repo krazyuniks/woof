@@ -26,6 +26,11 @@ class TrackerError(RuntimeError):
 CONFLICT_TRIGGERS = ("tracker_sync_conflict", "github_sync_conflict")
 CONFLICT_DECISIONS = ("keep_local", "accept_remote", "hand_merge")
 
+# Triggers that mark a gate resolution as non-approving at every gate type.
+# A gate_resolved event carrying one of these triggers must never be counted
+# as the genuine plan/story/readiness/review approval, regardless of decision.
+NON_APPROVING_TRIGGERS = ("incomplete_stage_state",)
+
 
 @dataclass(frozen=True)
 class ColdStartResult:

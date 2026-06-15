@@ -134,7 +134,7 @@
           "type": "integer",
           "minimum": 1,
           "default": 3,
-          "description": "Number of failed readiness cycles (readiness_gate_opened events) since the last definition_closed before the contract_readiness node opens an escalation-flavoured readiness gate (triggered_by: readiness_escalation) instead of an ordinary one (triggered_by: readiness_unready). Default: 3 (three ordinary failures before escalation)."
+          "description": "Number of failed readiness cycles (readiness_gate_opened events with trigger readiness_unready) in the current epic attempt — counted since the last epic_reset, not reset by definition_closed, so the count accumulates across revise_epic_contract retries — before the contract_readiness node opens an escalation-flavoured readiness gate (triggered_by: readiness_escalation) instead of an ordinary one (triggered_by: readiness_unready). Default: 3 (three ordinary failures before escalation)."
         }
       }
     },

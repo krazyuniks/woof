@@ -274,8 +274,12 @@ def plan_gate_resolved(repo_root: Path, epic_id: int) -> bool:
     resolved = False
     for event in iter_epic_events(repo_root, epic_id):
         if event.get("event") == "plan_gate_resolved":
+            triggered_by = event.get("triggered_by")
+            if not isinstance(triggered_by, list):
+                triggered_by = []
             decision = event.get("decision")
-            resolved = decision in {None, "approve"}
+            if not any(trigger in NON_APPROVING_TRIGGERS for trigger in triggered_by):
+                resolved = decision in {None, "approve"}
         if event.get("event") == "gate_resolved" and event.get("gate_type") == "plan_gate":
             triggered_by = event.get("triggered_by")
             if not isinstance(triggered_by, list):
@@ -334,7 +338,11 @@ def readiness_satisfied(repo_root: Path, epic_id: int) -> bool:
             event.get("event") == "readiness_gate_resolved"
             and event.get("decision") == "approve_with_reason"
         ):
-            return True
+            triggered_by = event.get("triggered_by")
+            if not isinstance(triggered_by, list):
+                triggered_by = []
+            if not any(trigger in NON_APPROVING_TRIGGERS for trigger in triggered_by):
+                return True
     return False
 
 

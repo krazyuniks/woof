@@ -455,7 +455,14 @@ def _resolve_gate(repo_root: Path, epic_id: int, decision: GateDecision, tracker
         sys.stderr.write(f"woof wf: gate resolution failed: {exc}\n")
         return 2
     specific_event_name = _gate_resolved_event_name(gate_type)
-    if specific_event_name and not (specific_event_name == "story_gate_resolved" and not story_id):
+    # Stage-state halt resolutions must not emit an approval-shaped specific event;
+    # the generic gate_resolved below is the sole audit record for those resolutions.
+    emit_specific = (
+        specific_event_name
+        and not (specific_event_name == "story_gate_resolved" and not story_id)
+        and not any(trigger in NON_APPROVING_TRIGGERS for trigger in triggered_by)
+    )
+    if emit_specific:
         specific_event = {
             "event": specific_event_name,
             "at": _now(),

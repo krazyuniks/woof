@@ -27,6 +27,7 @@ from woof.graph.transitions import (
     mark_story_status,
     next_node,
     plan_gate_resolved,
+    readiness_satisfied,
 )
 from woof.trackers.base import LifecycleSyncResult, Tracker
 
@@ -3915,3 +3916,120 @@ def test_story_gate_stage_state_halt_approve_leaves_story_pending(tmp_path: Path
     plan = transitions.load_plan(tmp_path, 75)
     story = next(s for s in plan.stories if s.id == "S1")
     assert story.status == "pending"
+
+
+# ---------------------------------------------------------------------------
+# E19 S1 R2 — specific *_gate_resolved events not emitted for stage-state halts
+# ---------------------------------------------------------------------------
+
+
+def test_plan_gate_resolved_false_for_specific_event_with_stage_state_trigger(
+    tmp_path: Path,
+) -> None:
+    """Exact Codex repro: both specific and generic events written; plan_gate_resolved still False."""
+    _write_plan(tmp_path, 76)
+    # Write the specific plan_gate_resolved event (pre-R2 source behaviour) with non-approving trigger.
+    append_epic_event(
+        tmp_path,
+        76,
+        {
+            "event": "plan_gate_resolved",
+            "at": "2026-01-01T00:00:00Z",
+            "epic_id": 76,
+            "decision": "approve",
+            "gate_type": "plan_gate",
+            "triggered_by": ["incomplete_stage_state"],
+        },
+    )
+    # Also write the generic event (as _resolve_gate always does).
+    append_epic_event(
+        tmp_path,
+        76,
+        {
+            "event": "gate_resolved",
+            "at": "2026-01-01T00:00:00Z",
+            "epic_id": 76,
+            "decision": "approve",
+            "gate_type": "plan_gate",
+            "triggered_by": ["incomplete_stage_state"],
+        },
+    )
+    assert plan_gate_resolved(tmp_path, 76) is False
+
+
+def test_plan_gate_resolved_true_for_genuine_approval(tmp_path: Path) -> None:
+    """A genuine plan-gate approval (no non-approving trigger) must still return True."""
+    _write_plan(tmp_path, 77)
+    append_epic_event(
+        tmp_path,
+        77,
+        {
+            "event": "plan_gate_resolved",
+            "at": "2026-01-01T00:00:00Z",
+            "epic_id": 77,
+            "decision": "approve",
+            "gate_type": "plan_gate",
+            "triggered_by": [],
+        },
+    )
+    append_epic_event(
+        tmp_path,
+        77,
+        {
+            "event": "gate_resolved",
+            "at": "2026-01-01T00:00:00Z",
+            "epic_id": 77,
+            "decision": "approve",
+            "gate_type": "plan_gate",
+            "triggered_by": [],
+        },
+    )
+    assert plan_gate_resolved(tmp_path, 77) is True
+
+
+def test_readiness_satisfied_false_for_stage_state_specific_event(tmp_path: Path) -> None:
+    """A readiness_gate_resolved event with a non-approving trigger must not satisfy readiness."""
+    _write_plan(tmp_path, 78)
+    # Need a definition_closed event for readiness_satisfied to scan past it.
+    append_epic_event(
+        tmp_path,
+        78,
+        {"event": "definition_closed", "at": "2026-01-01T00:00:00Z", "epic_id": 78},
+    )
+    # Write the specific readiness_gate_resolved event with a non-approving trigger.
+    append_epic_event(
+        tmp_path,
+        78,
+        {
+            "event": "readiness_gate_resolved",
+            "at": "2026-01-01T00:00:00Z",
+            "epic_id": 78,
+            "decision": "approve_with_reason",
+            "gate_type": "readiness_gate",
+            "triggered_by": ["incomplete_stage_state"],
+        },
+    )
+    assert readiness_satisfied(tmp_path, 78) is False
+
+
+def test_readiness_satisfied_true_for_genuine_approval(tmp_path: Path) -> None:
+    """A genuine readiness approval (no non-approving trigger) must still satisfy readiness."""
+    _write_plan(tmp_path, 79)
+    append_epic_event(
+        tmp_path,
+        79,
+        {"event": "definition_closed", "at": "2026-01-01T00:00:00Z", "epic_id": 79},
+    )
+    append_epic_event(
+        tmp_path,
+        79,
+        {
+            "event": "readiness_gate_resolved",
+            "at": "2026-01-01T00:00:00Z",
+            "epic_id": 79,
+            "decision": "approve_with_reason",
+            "gate_type": "readiness_gate",
+            "triggered_by": [],
+        },
+    )
+    assert readiness_satisfied(tmp_path, 79) is True

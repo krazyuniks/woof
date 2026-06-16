@@ -16,12 +16,12 @@ _RATE_LIMITED_RE = re.compile(r"\brate[\s_-]?limited\b")
 _RATELIMIT_RE = re.compile(r"\bratelimit(?:ed)?\b")
 
 # Negated rate-limit forms: "no rate limit", "no rate limited", "rate limit: none",
-# "no http/status/error/code 429" (guards the 429 unambiguous patterns against
-# explicit negation in diagnostic output like "no HTTP 429 observed").
+# and "no [qualifier] 429" with one optional intervening word to handle compound forms
+# such as "no HTTP status 429" or "no error code 429".
 _NEGATED_RE = re.compile(
     r"\bno\s+rate[\s_-]?limit(?:ed)?\b"
     r"|\brate[\s_-]?limit\s*:\s*none\b"
-    r"|\bno\s+(?:http|status|error|code)\s+429\b",
+    r"|\bno\b(?:\s+\w+)?\s+(?:http|status|error|code)\s+429\b",
     re.IGNORECASE,
 )
 

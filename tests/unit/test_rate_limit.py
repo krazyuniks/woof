@@ -66,3 +66,11 @@ def test_no_http_429_not_classified() -> None:
 
 def test_no_status_429_not_classified() -> None:
     assert classify("no status 429 errors", "") is None
+
+
+def test_no_http_status_429_not_classified() -> None:
+    assert classify("no HTTP status 429 encountered", "") is None
+
+
+def test_no_error_code_429_not_classified() -> None:
+    assert classify("no error code 429", "") is None

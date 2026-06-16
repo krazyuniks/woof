@@ -2355,7 +2355,11 @@ def commit_node(inp: NodeInput) -> NodeOutput:
     dispatch_jsonl = epic_dir(inp.repo_root, inp.epic_id) / "dispatch.jsonl"
     dispatch_events = _read_appended_dispatch_events(dispatch_jsonl, 0)
     last_returned = next(
-        (e for e in reversed(dispatch_events) if e.get("event") == "subprocess_returned"),
+        (
+            e
+            for e in reversed(dispatch_events)
+            if e.get("event") == "subprocess_returned" and e.get("story_id") == inp.story_id
+        ),
         None,
     )
     if last_returned is not None:

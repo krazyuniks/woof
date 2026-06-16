@@ -7,6 +7,11 @@
   "additionalProperties": false,
   "required": ["gates"],
   "properties": {
+    "default_mode": {
+      "type": "string",
+      "enum": ["strict", "baseline"],
+      "description": "Project-level default mode applied to every gate that does not declare its own mode. Omitting this field is equivalent to 'strict'. Baseline is opt-in for brownfield repos with known-red gates."
+    },
     "gates": {
       "type": "object",
       "minProperties": 1,
@@ -34,6 +39,11 @@
           "type": "boolean",
           "default": true,
           "description": "If false, a non-zero exit logs a finding but does not fail Stage 5 Check 1."
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["strict", "baseline"],
+          "description": "Per-command mode. 'strict': any failure blocks (default). 'baseline': a command already red at capture time is reported but does not block, provided its command identity is unchanged and a durable baseline record exists. Overrides default_mode for this gate."
         }
       }
     }

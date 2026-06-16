@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://woof.dev/schemas/quality-gates-baseline.schema.json",
+  "title": "woof quality-gates baseline record",
+  "description": "Durable baseline record at .woof/quality-gates-baseline.json. Captures per-command red/green state and command identity at the time of explicit operator capture. Used by check_1_quality_gates to suppress known-red commands in baseline mode. A gate that was red at capture is reported but not blocking until its command identity changes or a new failure appears beyond the captured baseline.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["captured_at", "gates"],
+  "properties": {
+    "captured_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of when the baseline was captured by the operator."
+    },
+    "gates": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "$ref": "#/$defs/gate_baseline" },
+      "description": "Per-gate baseline entries keyed by gate name. Only gates present here can have failures suppressed."
+    }
+  },
+  "$defs": {
+    "gate_baseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command", "passed"],
+      "properties": {
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Exact command string at capture time. This is the command identity: if the configured command differs from this value, baseline suppression is re-armed and the failure blocks."
+        },
+        "passed": {
+          "type": "boolean",
+          "description": "Whether the gate passed (true) or failed (false) at capture time. Only a false entry (red at capture) with matching command identity suppresses blocking. A true entry (green at capture) that now fails is a new regression and always blocks."
+        }
+      }
+    }
+  }
+}

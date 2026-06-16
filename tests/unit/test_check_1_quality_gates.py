@@ -462,3 +462,65 @@ mode = ["baseline"]
 
     assert not outcome.ok
     assert "mode" in outcome.summary
+
+
+# ---------------------------------------------------------------------------
+# Non-object baseline JSON fails closed — R2 fix
+# ---------------------------------------------------------------------------
+
+BASELINE_PATH = ".woof/quality-gates-baseline.json"
+
+
+def _write_raw_baseline(repo_root: Path, content: str) -> None:
+    woof_dir = repo_root / ".woof"
+    woof_dir.mkdir(exist_ok=True)
+    (woof_dir / "quality-gates-baseline.json").write_text(content)
+
+
+def _write_failing_gate(repo_root: Path) -> str:
+    fail_cmd = _python_command("raise SystemExit(1)")
+    _write_quality_gates(
+        repo_root,
+        f"""\
+[gates.lint]
+command = {_toml_string(fail_cmd)}
+timeout_seconds = 5
+mode = "baseline"
+""",
+    )
+    return fail_cmd
+
+
+@pytest.mark.parametrize("raw", ["[]", "null", "42", '"x"'])
+def test_non_object_baseline_fails_closed(tmp_path: Path, raw: str) -> None:
+    """A baseline file containing valid JSON that is not an object must not crash the runner.
+
+    It should degrade to 'no baseline' — no suppression, so a red gate still blocks.
+    """
+    _write_failing_gate(tmp_path)
+    _write_raw_baseline(tmp_path, raw)
+
+    outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
+
+    assert not outcome.ok
+    assert outcome.severity == "blocker"
+
+
+def test_well_formed_baseline_still_suppresses(tmp_path: Path) -> None:
+    """Regression guard: a valid baseline object continues to suppress pre-existing red gates."""
+    fail_cmd = _python_command("raise SystemExit(1)")
+    _write_quality_gates(
+        tmp_path,
+        f"""\
+[gates.lint]
+command = {_toml_string(fail_cmd)}
+timeout_seconds = 5
+mode = "baseline"
+""",
+    )
+    _write_baseline(tmp_path, {"lint": {"command": fail_cmd, "passed": False}})
+
+    outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
+
+    assert outcome.ok
+    assert "baseline-suppressed" in outcome.summary

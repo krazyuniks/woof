@@ -175,6 +175,8 @@ def _load_baseline(repo_root: Path) -> dict[str, _BaselineEntry]:
         data = json.loads(baseline_path.read_text())
     except (OSError, json.JSONDecodeError):
         return {}
+    if not isinstance(data, dict):
+        return {}
     gates = data.get("gates", {})
     if not isinstance(gates, dict):
         return {}

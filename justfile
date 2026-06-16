@@ -19,6 +19,7 @@ test:
 lint:
     uv run ruff check .
     uv run ruff format --check .
+    uv run pyright
 
 # Apply mechanical Python formatting/lint fixes.
 format:

@@ -9,6 +9,7 @@ import stat
 import subprocess
 import textwrap
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -529,11 +530,11 @@ def create_stage5_consumer(
     return consumer, env
 
 
-def json_stdout(proc: subprocess.CompletedProcess[str]) -> list[dict[str, object]]:
+def json_stdout(proc: subprocess.CompletedProcess[str]) -> list[dict[str, Any]]:
     return [json.loads(line) for line in proc.stdout.splitlines() if line]
 
 
-def jsonl(path: Path) -> list[dict[str, object]]:
+def jsonl(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
 
 

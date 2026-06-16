@@ -577,7 +577,8 @@ def _check_summary(repo_root: Path, directory: Path) -> dict[str, Any]:
             "error": error,
         }
 
-    checks_raw = payload.get("checks") if isinstance(payload.get("checks"), list) else []
+    _checks_val = payload.get("checks")
+    checks_raw: list[Any] = _checks_val if isinstance(_checks_val, list) else []
     checks = [_check_entry_summary(check) for check in checks_raw if isinstance(check, dict)]
     failed_checks = [check for check in checks if not check["ok"]]
     return {
@@ -658,7 +659,8 @@ def _gate_summary(repo_root: Path, directory: Path) -> dict[str, Any]:
             if isinstance(loaded, dict):
                 front = loaded
             body = text[end + 5 :].strip()
-    triggered_by = front.get("triggered_by") if isinstance(front.get("triggered_by"), list) else []
+    _triggered_val = front.get("triggered_by")
+    triggered_by: list[Any] = _triggered_val if isinstance(_triggered_val, list) else []
     return {
         "open": True,
         "path": _display_path(repo_root, gate_path),

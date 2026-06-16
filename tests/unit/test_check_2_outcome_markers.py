@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
+
+if TYPE_CHECKING:
+    from woof.checks import CheckContext
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -48,7 +51,7 @@ def _make_ctx(
     satisfies: list[Any],
     story_id: str = "S1",
     tests: dict[str, Any] | None = None,
-) -> object:
+) -> CheckContext:
     from woof.checks import CheckContext
 
     return CheckContext(

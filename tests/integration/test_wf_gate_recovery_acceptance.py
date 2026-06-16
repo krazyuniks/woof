@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -32,7 +33,7 @@ def _resolve(consumer: Path, env: dict[str, str], decision: str) -> None:
     assert proc.stdout == f"woof wf: gate resolved decision={decision}\n"
 
 
-def _run_epic_json(consumer: Path, env: dict[str, str]) -> list[dict[str, object]]:
+def _run_epic_json(consumer: Path, env: dict[str, str]) -> list[dict[str, Any]]:
     proc = _wf(consumer, env, "--epic", "1", "--format", "json")
     assert_ok(proc)
     return json_stdout(proc)

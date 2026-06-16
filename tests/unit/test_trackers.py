@@ -455,6 +455,7 @@ def test_tracker_contract_conflict_resolution_decisions(
     assert last_sync["body"] == remote_body
     if decision == "accept_remote":
         assert result.epic_path == epic_dir / "EPIC.md"
+        assert result.epic_path is not None
         assert "Remote canonical intent." in result.epic_path.read_text(encoding="utf-8")
     else:
         assert result.epic_path is None
@@ -755,7 +756,7 @@ def test_github_tracker_gh_helpers_use_timeouts(
 
 
 def test_github_tracker_timeout_fails_loud(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    def timeout_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+    def timeout_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
 
     monkeypatch.setattr(github_module.subprocess, "run", timeout_run)

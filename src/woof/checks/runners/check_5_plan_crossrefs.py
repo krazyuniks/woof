@@ -170,7 +170,7 @@ def _crossref_failures(
     outcomes = _object_items(epic.get("observable_outcomes"))
     cds = _object_items(epic.get("contract_decisions"))
 
-    story_ids = [story.get("id") for story in stories if isinstance(story.get("id"), str)]
+    story_ids = [sid for story in stories if isinstance(sid := story.get("id"), str)]
     active_outcome_ids = {
         outcome["id"]
         for outcome in outcomes
@@ -192,13 +192,13 @@ def _crossref_failures(
     failures.extend(
         _duplicate_id_failures(
             "observable_outcome",
-            [outcome.get("id") for outcome in outcomes if isinstance(outcome.get("id"), str)],
+            [oid for outcome in outcomes if isinstance(oid := outcome.get("id"), str)],
         )
     )
     failures.extend(
         _duplicate_id_failures(
             "contract_decision",
-            [cd.get("id") for cd in cds if isinstance(cd.get("id"), str)],
+            [cdid for cd in cds if isinstance(cdid := cd.get("id"), str)],
         )
     )
 

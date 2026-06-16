@@ -297,7 +297,7 @@ def _auto_position_for_trigger(trigger: str, exit_code: int | None) -> str:
     elif trigger in {"tracker_sync_conflict", "github_sync_conflict"}:
         finding = "Issue-tracker sync conflict detected."
         primary = "Review the remote tracker body, local render, and .last-sync before retrying."
-    elif trigger != "subprocess_crash":
+    else:
         finding = context
         primary = "No accepted primary revision has been recorded after this trigger."
     return (

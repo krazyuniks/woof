@@ -7,8 +7,12 @@ basic pass/fail branches of the check logic.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from woof.checks import CheckContext
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_DIR = REPO_ROOT / "tests" / "fixtures" / "woof" / "e181_s2"
@@ -16,7 +20,7 @@ FIXTURE_DIR = REPO_ROOT / "tests" / "fixtures" / "woof" / "e181_s2"
 pytestmark = pytest.mark.host_only
 
 
-def _make_ctx(epic_dir: Path, story_id: str = "S2") -> object:
+def _make_ctx(epic_dir: Path, story_id: str = "S2") -> CheckContext:
     from woof.checks import CheckContext
 
     return CheckContext(
@@ -232,7 +236,9 @@ def test_missing_critique_file_fails(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _make_ctx_with_plan(epic_dir: Path, story_id: str = "S1", plan: dict | None = None) -> object:
+def _make_ctx_with_plan(
+    epic_dir: Path, story_id: str = "S1", plan: dict | None = None
+) -> CheckContext:
     from woof.checks import CheckContext
 
     return CheckContext(

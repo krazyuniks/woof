@@ -339,6 +339,7 @@ def supervise(
     with state_lock:
         terminal_seen = state.terminal_seen
 
+    assert exit_type is not None
     duration_ms = int((time.monotonic() - start) * 1000)
     return SupervisedResult(
         pid=proc.pid,

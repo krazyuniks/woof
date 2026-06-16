@@ -9,6 +9,7 @@ import stat
 import subprocess
 import textwrap
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -461,7 +462,7 @@ timeout_seconds = 30
     _assert_ok(_run(["git", "commit", "-m", "chore: bootstrap woof"], cwd=consumer, env=env))
 
 
-def _jsonl(path: Path) -> list[dict[str, object]]:
+def _jsonl(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
 
 

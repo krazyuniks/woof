@@ -765,7 +765,11 @@ def _version_meets_floor(binary: str, version_spec: str) -> tuple[bool, str]:
 
 def _version_tuple(version: str) -> tuple[int, int, int]:
     parts = [int(part) for part in version.split(".")]
-    return tuple([*parts, 0, 0, 0][:3])
+    return (
+        parts[0] if len(parts) > 0 else 0,
+        parts[1] if len(parts) > 1 else 0,
+        parts[2] if len(parts) > 2 else 0,
+    )
 
 
 def _check_ajv_formats(prereq: dict[str, Any]) -> list[PreflightFinding]:
@@ -1865,6 +1869,12 @@ def _run_command_check(
     )
 
 
+def _exc_str(value: bytes | str | None) -> str:
+    if isinstance(value, bytes):
+        return value.decode(errors="replace")
+    return value or ""
+
+
 def _run_capture(
     argv: list[str],
     *,
@@ -1876,7 +1886,7 @@ def _run_capture(
     except FileNotFoundError:
         return 127, f"{argv[0]} not found on PATH"
     except subprocess.TimeoutExpired as exc:
-        output = ((exc.stdout or "") + (exc.stderr or "")).strip()
+        output = (_exc_str(exc.stdout) + _exc_str(exc.stderr)).strip()
         detail = f"timed out after {timeout}s"
         return 124, f"{detail}\n{output}".strip()
     return proc.returncode, (proc.stdout + proc.stderr).strip()

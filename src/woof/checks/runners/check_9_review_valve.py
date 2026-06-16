@@ -53,7 +53,11 @@ def check_9_review_valve_runner(ctx: CheckContext) -> CheckOutcome:
             summary="plan contains no stories; review valve cannot determine cadence",
         )
 
-    story_ids = [story.get("id") for story in stories if isinstance(story, dict)]
+    story_ids = [
+        sid
+        for story in stories
+        if isinstance(story, dict) and isinstance(sid := story.get("id"), str)
+    ]
     if ctx.story_id not in story_ids:
         return CheckOutcome(
             id=CHECK_ID,

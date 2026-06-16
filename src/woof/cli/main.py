@@ -136,6 +136,7 @@ def load_payload(path: Path, schema: str) -> object:
         return extract_front_matter(path)
     if schema in {
         "plan",
+        "quality-gates-baseline",
         "check-result",
         "executor-result",
         "readiness-result",

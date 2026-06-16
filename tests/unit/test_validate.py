@@ -125,6 +125,39 @@ def test_validate_plan_missing_goal_fails(tmp_path: Path, run_woof) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Quality-gates baseline (JSON) — R1
+# ---------------------------------------------------------------------------
+
+
+def _minimal_baseline() -> dict:
+    return {
+        "captured_at": "2026-06-16T12:00:00Z",
+        "gates": {
+            "lint": {"command": "just lint", "passed": False},
+            "test": {"command": "just test", "passed": True},
+        },
+    }
+
+
+def test_validate_quality_gates_baseline_valid(tmp_path: Path, run_woof) -> None:
+    path = tmp_path / "quality-gates-baseline.json"
+    path.write_text(json.dumps(_minimal_baseline()))
+    proc = run_woof("validate", str(path))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "valid (quality-gates-baseline)" in proc.stdout
+
+
+def test_validate_quality_gates_baseline_invalid_fails(tmp_path: Path, run_woof) -> None:
+    payload = _minimal_baseline()
+    del payload["captured_at"]
+    path = tmp_path / "quality-gates-baseline.json"
+    path.write_text(json.dumps(payload))
+    proc = run_woof("validate", str(path))
+    assert proc.returncode == 1
+    assert "INVALID" in proc.stdout
+
+
+# ---------------------------------------------------------------------------
 # Planning graph node contracts (JSON)
 # ---------------------------------------------------------------------------
 

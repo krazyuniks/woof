@@ -372,3 +372,93 @@ def test_baseline_record_validates_against_schema(tmp_path: Path) -> None:
         text=True,
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+# ---------------------------------------------------------------------------
+# Timeout always blocks — R1 fixes
+# ---------------------------------------------------------------------------
+
+
+def test_advisory_gate_timeout_blocks(tmp_path: Path) -> None:
+    """A blocking=false gate that times out must still block Check 1."""
+    _write_quality_gates(
+        tmp_path,
+        f"""\
+[gates.slow]
+command = {_toml_string(_python_command("import time; time.sleep(5)"))}
+timeout_seconds = 1
+blocking = false
+""",
+    )
+
+    outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
+
+    assert not outcome.ok
+    assert outcome.severity == "blocker"
+    assert outcome.evidence is not None
+    assert "timed out" in outcome.evidence
+
+
+def test_baseline_mode_gate_timeout_blocks(tmp_path: Path) -> None:
+    """A baseline-mode gate that times out must block regardless of the baseline record."""
+    slow_cmd = _python_command("import time; time.sleep(5)")
+    _write_quality_gates(
+        tmp_path,
+        f"""\
+[gates.slow]
+command = {_toml_string(slow_cmd)}
+timeout_seconds = 1
+mode = "baseline"
+""",
+    )
+    # Provide a baseline that marks slow as red — baseline suppression must not apply to timeouts.
+    _write_baseline(tmp_path, {"slow": {"command": slow_cmd, "passed": False}})
+
+    outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
+
+    assert not outcome.ok
+    assert outcome.severity == "blocker"
+    assert outcome.evidence is not None
+    assert "timed out" in outcome.evidence
+
+
+# ---------------------------------------------------------------------------
+# Non-string mode returns config error — R1 fixes
+# ---------------------------------------------------------------------------
+
+
+def test_non_string_default_mode_returns_config_error(tmp_path: Path) -> None:
+    """A non-string default_mode (e.g. a TOML array) must return a config error, not crash."""
+    _write_quality_gates(
+        tmp_path,
+        f"""\
+default_mode = ["baseline"]
+
+[gates.lint]
+command = {_toml_string(_python_command("print('ok')"))}
+timeout_seconds = 5
+""",
+    )
+
+    outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
+
+    assert not outcome.ok
+    assert "default_mode" in outcome.summary
+
+
+def test_non_string_per_command_mode_returns_config_error(tmp_path: Path) -> None:
+    """A non-string per-command mode must return a config error, not crash."""
+    _write_quality_gates(
+        tmp_path,
+        f"""\
+[gates.lint]
+command = {_toml_string(_python_command("print('ok')"))}
+timeout_seconds = 5
+mode = ["baseline"]
+""",
+    )
+
+    outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
+
+    assert not outcome.ok
+    assert "mode" in outcome.summary

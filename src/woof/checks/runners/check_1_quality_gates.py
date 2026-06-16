@@ -96,6 +96,10 @@ def check_1_quality_gates_runner(ctx: CheckContext) -> CheckOutcome:
         failed = run.timed_out or run.exit_code != 0
         if not failed:
             continue
+        if run.timed_out:
+            # A hung command is always a hard failure: independent of blocking flag and mode.
+            blocking_failures.append(run)
+            continue
         if not run.spec.blocking:
             non_blocking_findings.append(run)
             continue
@@ -201,7 +205,7 @@ def _load_gate_specs(config_path: Path) -> tuple[list[_GateSpec], str | None]:
         return [], "quality gates configuration must define at least one [gates.<name>] table"
 
     raw_default_mode = config.get("default_mode", _MODE_STRICT)
-    if raw_default_mode not in _VALID_MODES:
+    if not isinstance(raw_default_mode, str) or raw_default_mode not in _VALID_MODES:
         return (
             [],
             f"quality gates default_mode must be 'strict' or 'baseline', got {raw_default_mode!r}",
@@ -240,7 +244,7 @@ def _parse_gate_spec(
         return _empty_spec(name, default_mode), f"quality gate {name!r} blocking must be a boolean"
 
     raw_mode = raw_spec.get("mode", default_mode)
-    if raw_mode not in _VALID_MODES:
+    if not isinstance(raw_mode, str) or raw_mode not in _VALID_MODES:
         return _empty_spec(name, default_mode), (
             f"quality gate {name!r} mode must be 'strict' or 'baseline', got {raw_mode!r}"
         )

@@ -188,6 +188,7 @@ def check_blocker_findings_evidence(
 NON_BLOCKING_SEVERITIES = {"info", "minor"}
 SEVERITIES = {*NON_BLOCKING_SEVERITIES, "blocker"}
 DISPOSITION_DECISIONS = {"accepted", "rejected", "deferred"}
+_SEVERITY_ORDER: dict[str, int] = {"info": 0, "minor": 1, "blocker": 2}
 
 
 class FrontMatterError(ValueError):
@@ -322,6 +323,55 @@ def critique_findings(critique_front: dict[str, Any]) -> list[dict[str, Any]]:
     if not isinstance(raw_findings, list):
         return []
     return [finding for finding in raw_findings if isinstance(finding, dict)]
+
+
+def check_critique_rollup(critique_front: dict[str, Any]) -> list[str]:
+    """Return an error if top-level severity != max(findings[].severity).
+
+    An empty list means the roll-up is honest. Callers must validate that the
+    top-level severity field is a known value before calling this.
+    """
+    top_sev = critique_severity(critique_front)
+    findings = critique_findings(critique_front)
+    if not findings:
+        return []
+    max_sev = max(
+        (f.get("severity", "info") for f in findings),
+        key=lambda s: _SEVERITY_ORDER.get(s, 0),
+    )
+    if _SEVERITY_ORDER.get(top_sev or "", 0) != _SEVERITY_ORDER.get(max_sev, 0):
+        return [
+            f"critique top-level severity {top_sev!r} != max finding severity {max_sev!r}; "
+            "top-level severity must equal the highest finding severity"
+        ]
+    return []
+
+
+def validate_critique_invariants(
+    critique_front: dict[str, Any],
+    *,
+    repo_root: Path,
+    plan: dict[str, Any],
+    epic_dir: Path,
+) -> list[str]:
+    """Validate roll-up honesty and per-finding blocker evidence.
+
+    Returns one error string per violated invariant; an empty list means both
+    invariants hold. Callers must validate that the top-level severity field is
+    a known value before calling this.
+    """
+    errors = check_critique_rollup(critique_front)
+    blocker_findings = [
+        f for f in critique_findings(critique_front) if f.get("severity") == "blocker"
+    ]
+    if blocker_findings:
+        errors = errors + check_blocker_findings_evidence(
+            blocker_findings,
+            repo_root=repo_root,
+            plan=plan,
+            epic_dir=epic_dir,
+        )
+    return errors
 
 
 def validate_story_disposition(

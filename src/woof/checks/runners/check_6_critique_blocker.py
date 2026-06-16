@@ -13,10 +13,14 @@ from __future__ import annotations
 import yaml
 
 from woof.checks import CheckContext, CheckOutcome
-from woof.graph.dispositions import check_blocker_findings_evidence, validate_story_disposition
+from woof.graph.dispositions import (
+    SEVERITIES,
+    check_blocker_findings_evidence,
+    check_critique_rollup,
+    validate_story_disposition,
+)
 
-_SEVERITY_ORDER = {"info": 0, "minor": 1, "blocker": 2}
-_VALID_SEVERITIES = set(_SEVERITY_ORDER)
+_VALID_SEVERITIES = SEVERITIES
 _REQUIRED_FIELDS = {"target", "target_id", "severity", "timestamp", "harness"}
 
 CHECK_ID = "check_6_critique_blocker"
@@ -80,21 +84,15 @@ def check_6_critique_blocker_runner(ctx: CheckContext) -> CheckOutcome:
         )
 
     findings = fm.get("findings") or []
-    if findings:
-        max_sev = max(
-            (f.get("severity", "info") for f in findings if isinstance(f, dict)),
-            key=lambda s: _SEVERITY_ORDER.get(s, 0),
+    rollup_errors = check_critique_rollup(fm)
+    if rollup_errors:
+        return CheckOutcome(
+            id=CHECK_ID,
+            ok=False,
+            severity="blocker",
+            summary=rollup_errors[0],
+            evidence=f"findings severities: {[f.get('severity') for f in findings if isinstance(f, dict)]}",
         )
-        if _SEVERITY_ORDER.get(top_sev, 0) != _SEVERITY_ORDER.get(max_sev, 0):
-            return CheckOutcome(
-                id=CHECK_ID,
-                ok=False,
-                severity="blocker",
-                summary=(
-                    f"critique top-level severity {top_sev!r} != max finding severity {max_sev!r}"
-                ),
-                evidence=f"findings severities: {[f.get('severity') for f in findings if isinstance(f, dict)]}",
-            )
 
     if top_sev == "blocker":
         blocker_findings = [

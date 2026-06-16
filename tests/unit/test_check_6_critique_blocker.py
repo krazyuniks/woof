@@ -588,3 +588,106 @@ def test_blocker_with_paren_wrapped_file_line_resolves_R2(tmp_path: Path) -> Non
     assert not outcome.ok
     assert outcome.severity == "blocker"
     assert "critique severity is blocker" in outcome.summary
+
+
+# ---------------------------------------------------------------------------
+# R5 — roll-up honesty enforced via shared helper
+# ---------------------------------------------------------------------------
+
+
+def _minor_top_blocker_finding_critique(story_id: str, evidence: str = "") -> str:
+    ev_line = f"    evidence: {evidence!r}\n" if evidence else ""
+    return (
+        f"---\ntarget: story\ntarget_id: {story_id}\nseverity: minor\n"
+        f'timestamp: "2026-01-01T00:00:00Z"\nharness: test-reviewer\n'
+        f"findings:\n  - id: F1\n    severity: blocker\n    summary: dishonest roll-up\n"
+        f"{ev_line}---\nBody.\n"
+    )
+
+
+def test_rollup_mismatch_minor_top_blocker_finding_fails_R5(tmp_path: Path) -> None:
+    """R5: critique with minor top-level severity but a blocker finding → roll-up mismatch → check_6 fails."""
+    import sys
+
+    sys.path.insert(0, str(REPO_ROOT))
+    from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
+
+    epic_dir = tmp_path / ".woof" / "epics" / "E1"
+    _write_critique(
+        epic_dir / "critique",
+        "S1",
+        _minor_top_blocker_finding_critique("S1"),
+    )
+    ctx = _make_ctx_with_plan(epic_dir)
+
+    outcome = check_6_critique_blocker_runner(ctx)
+
+    assert not outcome.ok
+    assert outcome.severity == "blocker"
+    assert "minor" in outcome.summary
+    assert "blocker" in outcome.summary
+
+
+def test_rollup_mismatch_info_top_blocker_finding_fails_R5(tmp_path: Path) -> None:
+    """R5: critique with info top-level severity but a blocker finding → roll-up mismatch → check_6 fails."""
+    import sys
+
+    sys.path.insert(0, str(REPO_ROOT))
+    from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
+
+    epic_dir = tmp_path / ".woof" / "epics" / "E1"
+    critique = (
+        "---\ntarget: story\ntarget_id: S1\nseverity: info\n"
+        'timestamp: "2026-01-01T00:00:00Z"\nharness: test-reviewer\n'
+        "findings:\n  - id: F1\n    severity: blocker\n    summary: sneaky blocker\n---\nBody.\n"
+    )
+    _write_critique(epic_dir / "critique", "S1", critique)
+    ctx = _make_ctx_with_plan(epic_dir)
+
+    outcome = check_6_critique_blocker_runner(ctx)
+
+    assert not outcome.ok
+    assert outcome.severity == "blocker"
+
+
+def test_rollup_mismatch_blocker_finding_bad_evidence_also_fails_R5(tmp_path: Path) -> None:
+    """R5: minor top-level + blocker finding with no evidence → fails (roll-up catches it; evidence also bad)."""
+    import sys
+
+    sys.path.insert(0, str(REPO_ROOT))
+    from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
+
+    epic_dir = tmp_path / ".woof" / "epics" / "E1"
+    _write_critique(
+        epic_dir / "critique",
+        "S1",
+        _minor_top_blocker_finding_critique("S1", evidence=""),
+    )
+    ctx = _make_ctx_with_plan(epic_dir)
+
+    outcome = check_6_critique_blocker_runner(ctx)
+
+    assert not outcome.ok
+    assert outcome.severity == "blocker"
+
+
+def test_honest_blocker_critique_still_reported_as_blocker_R5(tmp_path: Path) -> None:
+    """R5: honest blocker critique (roll-up matches, evidence resolves) → check_6 still reports blocker."""
+    import sys
+
+    sys.path.insert(0, str(REPO_ROOT))
+    from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
+
+    epic_dir = tmp_path / ".woof" / "epics" / "E1"
+    _write_critique(
+        epic_dir / "critique",
+        "S1",
+        _blocker_critique("S1", "src/woof/graph/nodes.py:1 the offending call"),
+    )
+    ctx = _make_ctx_with_plan(epic_dir)
+
+    outcome = check_6_critique_blocker_runner(ctx)
+
+    assert not outcome.ok
+    assert outcome.severity == "blocker"
+    assert "critique severity is blocker" in outcome.summary

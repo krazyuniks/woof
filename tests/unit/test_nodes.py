@@ -450,3 +450,66 @@ def test_plan_critique_node_accepts_blocker_with_resolvable_story_evidence(
 
     assert output.status == NodeStatus.COMPLETED
     assert output.next_node == NodeType.PLAN_GATE_OPEN
+
+
+# ---------------------------------------------------------------------------
+# R5 — roll-up honesty enforced via shared helper on the plan path
+# ---------------------------------------------------------------------------
+
+
+def _write_plan_critique_rollup_mismatch(directory: Path, top_sev: str, finding_sev: str) -> None:
+    critique_dir = directory / "critique"
+    critique_dir.mkdir(exist_ok=True)
+    (critique_dir / "plan.md").write_text(
+        "---\n"
+        "target: plan\n"
+        "target_id: null\n"
+        f"severity: {top_sev}\n"
+        "timestamp: '2026-01-01T00:00:00Z'\n"
+        "harness: test-reviewer\n"
+        "findings:\n"
+        "  - id: F1\n"
+        f"    severity: {finding_sev}\n"
+        "    summary: roll-up mismatch test finding\n"
+        "    evidence: S1 is missing the implementation\n"
+        "---\n"
+        "Plan critique body.\n"
+    )
+
+
+def test_plan_critique_node_rejects_rollup_mismatch_minor_top_blocker_finding_R5(
+    tmp_path: Path,
+) -> None:
+    """R5: plan critique with minor top-level but a blocker finding → rejected (roll-up mismatch)."""
+    directory = _write_spark(tmp_path, 52)
+    _write_minimal_epic(directory, 52)
+    _write_stage3_plan(directory, 52)
+    (directory / "PLAN.md").write_text(nodes._render_plan_markdown(nodes.load_plan(tmp_path, 52)))
+    _write_plan_critique_rollup_mismatch(directory, top_sev="minor", finding_sev="blocker")
+
+    output = nodes.plan_critique_node(
+        NodeInput(node_type=NodeType.PLAN_CRITIQUE, epic_id=52, repo_root=tmp_path)
+    )
+
+    assert output.status == NodeStatus.HALTED
+    assert output.triggered_by == ["schema_validation_failed"]
+    assert "minor" in output.message
+    assert "blocker" in output.message
+
+
+def test_plan_critique_node_rejects_rollup_mismatch_info_top_blocker_finding_R5(
+    tmp_path: Path,
+) -> None:
+    """R5: plan critique with info top-level but a blocker finding → rejected (roll-up mismatch)."""
+    directory = _write_spark(tmp_path, 53)
+    _write_minimal_epic(directory, 53)
+    _write_stage3_plan(directory, 53)
+    (directory / "PLAN.md").write_text(nodes._render_plan_markdown(nodes.load_plan(tmp_path, 53)))
+    _write_plan_critique_rollup_mismatch(directory, top_sev="info", finding_sev="blocker")
+
+    output = nodes.plan_critique_node(
+        NodeInput(node_type=NodeType.PLAN_CRITIQUE, epic_id=53, repo_root=tmp_path)
+    )
+
+    assert output.status == NodeStatus.HALTED
+    assert output.triggered_by == ["schema_validation_failed"]

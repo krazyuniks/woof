@@ -17,7 +17,6 @@ from woof.gate.write import write_gate, write_gate_for_trigger, write_gate_from_
 from woof.graph.dispositions import (
     FrontMatterError,
     MarkdownFrontMatter,
-    check_blocker_findings_evidence,
     critique_findings,
     critique_severity,
     read_markdown_front_matter,
@@ -25,6 +24,7 @@ from woof.graph.dispositions import (
     story_critique_path,
     story_disposition_path,
     story_disposition_relpath,
+    validate_critique_invariants,
     validate_story_disposition,
     write_deterministic_story_disposition,
 )
@@ -976,18 +976,14 @@ def _validate_plan_critique(
         return False, "plan critique front-matter must set target=plan and target_id=null"
     if critique_severity(critique.front) is None:
         return False, "plan critique severity must be info, minor, or blocker"
-    if critique_severity(critique.front) == "blocker":
-        blocker_findings = [
-            f for f in critique_findings(critique.front) if f.get("severity") == "blocker"
-        ]
-        bad_evidence = check_blocker_findings_evidence(
-            blocker_findings,
-            repo_root=repo_root,
-            plan=plan,
-            epic_dir=epic_dir_path,
-        )
-        if bad_evidence:
-            return False, "\n".join(bad_evidence)
+    errors = validate_critique_invariants(
+        critique.front,
+        repo_root=repo_root,
+        plan=plan,
+        epic_dir=epic_dir_path,
+    )
+    if errors:
+        return False, "\n".join(errors)
     return True, (proc.stdout + proc.stderr).strip()
 
 
@@ -2164,26 +2160,27 @@ def review_disposition_node(inp: NodeInput) -> NodeOutput:
         return _write_disposition_incomplete_gate(inp, f"Reviewer critique is unreadable: {exc}")
 
     severity = critique_severity(critique.front)
-    if severity == "blocker":
-        blocker_findings = [
-            f for f in critique_findings(critique.front) if f.get("severity") == "blocker"
-        ]
-        plan_path = epic_dir(inp.repo_root, inp.epic_id) / "plan.json"
-        try:
-            plan_dict: dict = json.loads(plan_path.read_text())
-        except (OSError, ValueError):
-            plan_dict = {}
-        bad_evidence = check_blocker_findings_evidence(
-            blocker_findings,
-            repo_root=inp.repo_root,
-            plan=plan_dict,
-            epic_dir=epic_dir(inp.repo_root, inp.epic_id),
+    if severity not in {"info", "minor", "blocker"}:
+        return _write_disposition_incomplete_gate(
+            inp,
+            "Reviewer critique severity must be info, minor, or blocker.",
         )
-        if bad_evidence:
-            return _write_disposition_incomplete_gate(
-                inp,
-                "Blocker finding(s) lack resolvable evidence:\n" + "\n".join(bad_evidence),
-            )
+
+    plan_path = epic_dir(inp.repo_root, inp.epic_id) / "plan.json"
+    try:
+        plan_dict: dict = json.loads(plan_path.read_text())
+    except (OSError, ValueError):
+        plan_dict = {}
+    invariant_errors = validate_critique_invariants(
+        critique.front,
+        repo_root=inp.repo_root,
+        plan=plan_dict,
+        epic_dir=epic_dir(inp.repo_root, inp.epic_id),
+    )
+    if invariant_errors:
+        return _write_disposition_incomplete_gate(inp, "\n".join(invariant_errors))
+
+    if severity == "blocker":
         body = reviewer_blocker_gate_body(
             epic_id=inp.epic_id,
             story_id=inp.story_id,
@@ -2193,11 +2190,6 @@ def review_disposition_node(inp: NodeInput) -> NodeOutput:
             inp,
             trigger="check_6_critique_blocker",
             position=body,
-        )
-    if severity not in {"info", "minor"}:
-        return _write_disposition_incomplete_gate(
-            inp,
-            "Reviewer critique severity must be info, minor, or blocker.",
         )
 
     disposition_path = story_disposition_path(directory, inp.story_id)

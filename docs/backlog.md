@@ -42,6 +42,8 @@ Depends on: nothing. Completed prerequisite for: E2, E3.
 
 Add operational guardrails around the current `woof wf` runner without splitting the operator surface.
 
+Status: complete. Unblocks E3, E4, E5. S1-S9 all shipped. Deferred out of E2: tmux-backed long-run supervision (panes/logs/status only, no runner-state mutation if revisited); unit tests for readiness pass/fail, readiness timeout non-blocking behaviour, readiness escalation, and command-level baseline behaviour.
+
 Shipped:
 - S1: the deterministic Stage-2.5 readiness seam - `NodeType.CONTRACT_READINESS`, `next_node` routing after `definition_closed`, `readiness-result.schema.json`, and `readiness_gate` schema/event/write support.
 - S2: the full readiness matrix in `src/woof/graph/readiness.py` - machine-checkable acceptance signals (a non-deprecated contract decision related to the outcome, or an acceptance criterion that names it with a concrete signal; a bare `O<n>`/`CD<n>` mention is not a signal), non-subjective acceptance prose, contract-decision concreteness, path resolution against `git ls-files`, cheap file-based symbol resolution, and Stage-3 decomposition sufficiency. The forward-created grammar (`` `path/or/symbol` (forward-created) `` or `` `path/or/symbol` (created by ticket <id>) ``) whitelists not-yet-existing refs from the EPIC body and contract-decision notes. A deterministic checker timeout emits a non-blocking `readiness_checker_budget` warning that never blocks the gate on its own.
@@ -53,11 +55,7 @@ Shipped:
 - S8: HEAD/branch drift gate - `commit_node` checks `head_after`/`branch_after` from the last `subprocess_returned` event in `dispatch.jsonl` against the current repo position before any other commit work. Mismatch opens a `head_branch_drift` `story_gate`. `head_branch_drift_detected()` is a pure predicate in `src/woof/graph/git.py`; the new trigger is registered in `schemas/gate.schema.json` and snapshot-tested in `tests/unit/test_check_stage_5_subcommand.py`. Four real-repo tests in `tests/unit/test_drift.py` cover no-prior-event, clean-match, HEAD-moved, and branch-switched scenarios.
 - S9: run-resilience circuit breaker - `detect_resilience_gate(repo_root, epic_id, story_id)` in `src/woof/graph/resilience.py` scans `dispatch.jsonl` via `iter_dispatch_events` for two gate conditions: `course_correction` when `consecutive_same_error >= 3`, and `run_resilience` when `consecutive_no_progress >= 3`. Rate-limited events are skipped without affecting counters. Progress is detected via current staged paths matching the story's path patterns (signal 2); when progress is detected, both counters reset to zero. course_correction takes priority when both thresholds hit simultaneously. `runner.py` consults the policy after each `EXECUTOR_DISPATCH`/`CRITIQUE_DISPATCH` node completes and opens the appropriate `story_gate` via `write_gate_for_trigger`. Both triggers are registered in `schemas/gate.schema.json`, `src/woof/gate/write.py`, and the snapshot in `tests/unit/test_check_stage_5_subcommand.py`. Seven real-repo tests in `tests/unit/test_resilience.py` cover all decision-matrix paths.
 
-Remaining open work:
-- tmux-backed long-run supervision is deferred out of E2. If revisited later, it is panes/logs/status only with no direct state mutation outside Woof commands.
-- Tests covering readiness pass/fail, readiness timeout non-blocking behaviour, readiness escalation, command-level baseline behaviour, HEAD/branch drift, and circuit-breaker decision logic.
-
-Depends on: E1. Gate-resolution semantics live in E17, which consumes the shipped S1/S2 readiness seam and is not blocked by E2's remaining work. E16 items may batch with E2 when they touch the same files. Blocks: E3, E4, E5.
+Depends on: E1. Gate-resolution semantics consumed by E17 (complete). Completed; was a hard prerequisite for E3, E4, E5.
 
 ### E3. Specwright Bootstrap
 

@@ -13,9 +13,6 @@ Do not use this document to preserve speculative architecture. If a direction is
 ## Sequence
 
 ```text
-E2 Contract readiness and run resilience   (active)
-  + E16 Defect sweep              (immediate; batch with E2 where files overlap)
-
 Hard ordering constraints (a DAG, not one chain - E19 and E21 S1-S3 are
 mutually independent):
   E17 readiness-resolution slice   -> complete (E3's readiness dependency satisfied)
@@ -44,7 +41,9 @@ Completed prerequisite:
 E7 Dispatch process supervision   (complete; ADR-008; per-epic plan removed)
 E1 Cartography prerequisite       (complete; prompts 1-5 landed)
 E17 Gate decision semantics       (complete; prompts 1-6 landed; per-epic plan removed)
+E19 Cartography consumption       (complete; S1-S4 landed; per-epic plan removed)
 E20 Per-stage role routing        (complete; prompts 1-3 landed; per-epic plan removed)
+E2 Contract readiness and run resilience  (complete; S1-S9 shipped; per-epic plan removed)
 
 Follow-on (off the critical chain):
 E8 Run lineage  ->  E9 Producer-output recovery
@@ -56,9 +55,9 @@ E14 Ranked and semantic cartography retrieval
 E15 Structural onboarding and mapper grounding
 ```
 
-E7 is complete: per-dispatch supervision now classifies hanging-but-done workers as `completed_lingering`, emits trustworthy `exit_type` telemetry, and leaves the detailed behaviour in ADR-008 plus architecture s11.5. E1 is complete on the supply side: prompts 1-5 enforce the cartography prerequisite and onboard legacy consumers that lack `[cartography]`. E19 is still required before dispatched work actually consumes the mapped cartography documents.
+E7 is complete: per-dispatch supervision now classifies hanging-but-done workers as `completed_lingering`, emits trustworthy `exit_type` telemetry, and leaves the detailed behaviour in ADR-008 plus architecture s11.5. E1 is complete on the supply side: prompts 1-5 enforce the cartography prerequisite and onboard legacy consumers that lack `[cartography]`. E19 is complete: dispatched work now receives its mapped context and Woof dogfoods its own cartography. E2 is complete: S1-S9 shipped the readiness gate, blocker-evidence discipline, quality-gate modes, dispatch telemetry, drift detection gate, and run-resilience circuit breaker.
 
-E2 remains the active hardening line for readiness, blocker evidence, quality-gate modes, run resilience, and drift detection. E16 runs immediately beside it for small silent-wrong-result defects. The ordering constraints form a DAG, not one chain. E17 is complete: it made a readiness failure during consumer bootstrap legally resolvable rather than a reset-or-stuck loop, so E3's readiness-resolution dependency is satisfied. E19 and E21 S1-S3 precede E5 so the first baseline measures the intended production shape: Stage-5 roles routable and correctly configured (E20, complete), cartography consumed by dispatches, and the discovery prompt free of the known removable playbook bulk. Those work items do not depend on each other; with E17 and E20 complete, the recommended single-operator order continues with E19 and E21 S1-S3, then the eval line.
+The ordering constraints form a DAG, not one chain. E17 is complete: it made a readiness failure during consumer bootstrap legally resolvable rather than a reset-or-stuck loop, so E3's readiness-resolution dependency is satisfied. E21 S1-S3 precede E5 so the first baseline measures the intended production shape with the discovery prompt free of removable playbook bulk. With E17, E19, E20, and E2 complete, the recommended single-operator order is E21 S1-S3 then the eval line (E3 -> E4 -> E5); E16 defect-sweep items may batch with active epics where files overlap.
 
 E17, E18, and E22 are the unattended-safety gate; E17 (gate semantics) is now complete, leaving E18 (artefact integrity) and E22 (runner seam hardening). They may overlap the eval chain if the baseline is needed sooner, but no overnight unattended run should happen until E18 and E22 are complete too.
 

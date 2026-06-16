@@ -141,3 +141,60 @@ def test_combined_volatile_stripped_stable_preserved() -> None:
     assert ":123:4" not in sig
     assert "RuntimeError" in sig
     assert "1" in sig
+
+
+# --- Explicit span-stripping tests (R2) ---
+
+
+def test_bare_filename_colon_lc_span_stripped() -> None:
+    sig = normalise("error in foo.py:42:10: bad value")
+    assert ":42" not in sig
+    assert ":10" not in sig
+    assert "<path>" in sig
+
+
+def test_bare_filename_colon_l_span_stripped() -> None:
+    sig = normalise("error in foo.py:42: bad value")
+    assert ":42" not in sig
+    assert "<path>" in sig
+
+
+def test_bare_filename_line_form_stripped() -> None:
+    sig = normalise("error in foo.py line 42: bad value")
+    assert "line 42" not in sig
+    assert "<path>" in sig
+
+
+def test_bare_filename_paren_lc_stripped() -> None:
+    sig = normalise("error in foo.py (42,10): bad value")
+    assert "(42,10)" not in sig
+    assert "<path>" in sig
+
+
+def test_same_span_forms_same_signature() -> None:
+    a = normalise("error in foo.py:42:10: bad value")
+    b = normalise("error in foo.py line 42: bad value")
+    c = normalise("error in foo.py (42,10): bad value")
+    assert a == b == c
+
+
+def test_bracket_lc_span_stripped() -> None:
+    sig = normalise("syntax error [42:10] unexpected token")
+    assert "[42:10]" not in sig
+
+
+def test_exit_code_key_value_preserved() -> None:
+    sig = normalise("exit_code:1 something failed")
+    assert "1" in sig
+    assert "exit_code" in sig
+
+
+def test_exit_code_key_value_distinct() -> None:
+    a = normalise("exit_code:1 something failed")
+    b = normalise("exit_code:2 something failed")
+    assert a != b
+
+
+def test_status_key_value_preserved() -> None:
+    sig = normalise("status:2 operation failed")
+    assert "2" in sig

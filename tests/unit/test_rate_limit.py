@@ -35,3 +35,26 @@ def test_clean_output_not_classified() -> None:
 
 def test_quota_exceeded_classified() -> None:
     assert classify("", "quota exceeded") == "rate_limited"
+
+
+# --- Anchored classification tests (R2) ---
+
+
+def test_no_rate_limit_not_classified() -> None:
+    assert classify("no rate limit was hit", "") is None
+
+
+def test_overloaded_function_not_classified() -> None:
+    assert classify("overloaded function", "") is None
+
+
+def test_status_4290_not_classified() -> None:
+    assert classify("status 4290 occurred", "") is None
+
+
+def test_rate_limited_retry_classified() -> None:
+    assert classify("HTTP 429 Too Many Requests", "rate limited, retry after 30s") == "rate_limited"
+
+
+def test_rate_limit_none_not_classified() -> None:
+    assert classify("rate limit: none", "") is None

@@ -111,6 +111,24 @@ def test_empty_string_normalises_to_empty() -> None:
     assert normalise("") == ""
 
 
+def test_bare_relative_path_stripped() -> None:
+    sig = normalise("error in src/foo.py:10: bad value")
+    assert "src/foo.py" not in sig
+    assert "<path>" in sig
+
+
+def test_bare_relative_multi_segment_stripped() -> None:
+    sig = normalise("cannot open a/b/c.py")
+    assert "a/b/c.py" not in sig
+    assert "<path>" in sig
+
+
+def test_same_logical_error_different_relative_paths_same_signature() -> None:
+    a = normalise("error in src/foo.py:10: something failed")
+    b = normalise("error in lib/foo.py:20: something failed")
+    assert a == b
+
+
 def test_combined_volatile_stripped_stable_preserved() -> None:
     text = (
         "RuntimeError: /home/ci/build/src/main.py:123:4: "

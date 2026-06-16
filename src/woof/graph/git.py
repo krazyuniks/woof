@@ -55,9 +55,9 @@ def staged_paths(repo_root: Path) -> list[str]:
 
 
 def head_sha(repo_root: Path) -> str | None:
-    """Return the current HEAD short SHA, or None if unreadable (e.g. empty repo)."""
+    """Return the current HEAD full SHA (40 hex chars), or None if unreadable (e.g. empty repo)."""
     try:
-        proc = git(repo_root, "rev-parse", "--short", "HEAD", check=False)
+        proc = git(repo_root, "rev-parse", "HEAD", check=False)
         if proc.returncode == 0:
             sha = proc.stdout.strip()
             return sha if sha else None

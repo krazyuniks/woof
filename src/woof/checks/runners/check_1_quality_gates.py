@@ -187,24 +187,38 @@ def _is_suppressed(run: _GateRun, baseline: dict[str, _BaselineEntry]) -> bool:
     return not entry.passed
 
 
-def _read_run_count(repo_root: Path) -> int:
-    """Return the current woof run count from .woof/wf-run-count, or 0 if absent/invalid."""
+def _read_run_count(repo_root: Path, captured_iteration: int | None = None) -> int | None:
+    """Return the current woof run count, or None when the counter is untrusted.
+
+    None is returned (fail-closed) when:
+    - the counter file is absent or unreadable (fresh checkout, reset counter)
+    - the stored value is less than captured_iteration (impossible-going-forward regression)
+
+    In both cases the caller treats the iteration axis as expired so that a
+    baseline whose counter can't be trusted does not keep suppressing failures.
+    """
     path = repo_root / RUN_COUNT_PATH
     if not path.exists():
-        return 0
+        return None
     try:
         data = json.loads(path.read_text())
         count = data.get("count") if isinstance(data, dict) else None
-        return int(count) if isinstance(count, int) and count >= 0 else 0
+        if not (isinstance(count, int) and count >= 0):
+            return None
+        if captured_iteration is not None and count < captured_iteration:
+            return None
+        return count
     except (OSError, json.JSONDecodeError, TypeError, ValueError):
-        return 0
+        return None
 
 
 def _check_freshness(data: dict[str, Any], repo_root: Path) -> str | None:
     """Return an expiry reason string if the baseline is expired, or None if fresh.
 
     Wall-clock: expired when UTC now > captured_at + expiry_seconds.
-    Iteration: expired when current run count > captured_iteration + expiry_iterations.
+    Iteration: expired when current run count > captured_iteration + expiry_iterations,
+               OR when the counter is absent/unreadable/regressed (fail-closed: treat
+               as iteration-expired so the baseline cannot suppress indefinitely).
     A baseline without freshness fields has no expiry (backwards-compatible with S5).
     """
     expiry_seconds = data.get("expiry_seconds")
@@ -225,7 +239,13 @@ def _check_freshness(data: dict[str, Any], repo_root: Path) -> str | None:
             pass
 
     if expiry_iterations is not None and captured_iteration is not None:
-        current = _read_run_count(repo_root)
+        current = _read_run_count(repo_root, captured_iteration)
+        if current is None:
+            # Counter absent, unreadable, or regressed — fail closed: treat as expired.
+            return (
+                "baseline expired: run counter absent or regressed "
+                f"(captured_iteration={captured_iteration}); cannot verify iteration window"
+            )
         if current > captured_iteration + expiry_iterations:
             return (
                 f"baseline expired: run count {current} exceeds "
@@ -407,7 +427,8 @@ def capture_baseline(
     runs = [_run_gate(repo_root, spec) for spec in specs]
 
     captured_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-    current_count = _read_run_count(repo_root)
+    # None means the counter is absent (no runs yet); treat as 0 at capture time.
+    current_count = _read_run_count(repo_root) or 0
 
     gates_record: dict[str, Any] = {}
     red_count = 0

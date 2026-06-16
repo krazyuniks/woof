@@ -28,6 +28,7 @@ docs/continuation-prompt.md
 # Managed by `woof init`; runtime/per-worktree state that must not be committed.
 .woof/.current-epic
 .woof/wf-run-count
+.woof/wf-run-count.lock
 .woof/epics/*/gate.md
 .woof/epics/*/.wf.lock
 .woof/epics/*/.last-sync

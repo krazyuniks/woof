@@ -7,6 +7,7 @@ import os
 import shlex
 import socket
 import subprocess
+import threading
 from pathlib import Path
 from typing import Any, cast
 
@@ -18,7 +19,7 @@ from woof.graph import nodes, transitions
 from woof.graph.git import git_env
 from woof.graph.lock import LOCK_FILENAME, WorkflowLockError
 from woof.graph.manifest import build_story_manifest, verify_staged_manifest
-from woof.graph.runner import run_graph
+from woof.graph.runner import _increment_run_count, run_graph
 from woof.graph.state import NodeInput, NodeOutput, NodeStatus, NodeType, StorySpec
 from woof.graph.transitions import (
     StageStateError,
@@ -359,7 +360,7 @@ def _init_git_repo(root: Path) -> None:
     _git(root, "init", check=True, capture_output=True)
     _git(root, "config", "user.email", "test@example.com", check=True)
     _git(root, "config", "user.name", "Test", check=True)
-    (root / ".gitignore").write_text(".woof/wf-run-count\n")
+    (root / ".gitignore").write_text(".woof/wf-run-count\n.woof/wf-run-count.lock\n")
     _git(root, "add", ".gitignore", check=True, capture_output=True)
     _git(root, "commit", "-m", "chore: test repo setup", check=True, capture_output=True)
 
@@ -4125,3 +4126,36 @@ def test_readiness_satisfied_true_for_genuine_approval(tmp_path: Path) -> None:
         },
     )
     assert readiness_satisfied(tmp_path, 79) is True
+
+
+# ---------------------------------------------------------------------------
+# Run counter — R2 concurrent increment
+# ---------------------------------------------------------------------------
+
+
+def test_concurrent_increment_no_lost_updates(tmp_path: Path) -> None:
+    """R2 Concurrent _increment_run_count calls from parallel epic runs all land.
+
+    Two threads each call _increment_run_count N times; the final counter must
+    equal 2*N with no lost increments from a read-modify-write race.
+    """
+    n = 20
+    errors: list[Exception] = []
+
+    def _worker() -> None:
+        try:
+            for _ in range(n):
+                _increment_run_count(tmp_path)
+        except Exception as exc:
+            errors.append(exc)
+
+    t1 = threading.Thread(target=_worker)
+    t2 = threading.Thread(target=_worker)
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    assert not errors, errors
+    count_data = json.loads((tmp_path / ".woof" / "wf-run-count").read_text())
+    assert count_data["count"] == 2 * n

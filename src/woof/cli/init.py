@@ -318,6 +318,7 @@ GITIGNORE_END = "# <<< woof"
 GITIGNORE_ENTRIES = [
     ".woof/.current-epic",
     ".woof/wf-run-count",
+    ".woof/wf-run-count.lock",
     ".woof/epics/*/gate.md",
     ".woof/epics/*/.wf.lock",
     ".woof/epics/*/.last-sync",

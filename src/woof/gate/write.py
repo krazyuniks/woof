@@ -197,6 +197,8 @@ def _gate_type_for_triggers(triggered_by: list[str]) -> str:
         return "review_gate"
     if triggered_by in (["tracker_sync_conflict"], ["github_sync_conflict"]):
         return "plan_gate"
+    if triggered_by in (["course_correction"], ["run_resilience"]):
+        return "story_gate"
     return "story_gate"
 
 

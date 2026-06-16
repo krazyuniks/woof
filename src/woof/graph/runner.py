@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from woof.gate.write import write_gate
+from woof.gate.write import write_gate, write_gate_for_trigger
 from woof.graph.lock import epic_workflow_lock
 from woof.graph.nodes import NodeHandler, default_registry
+from woof.graph.resilience import detect_resilience_gate
 from woof.graph.state import NodeInput, NodeOutput, NodeStatus, NodeType
 from woof.graph.transitions import StageStateError, epic_dir, next_node
 from woof.paths import schema_dir
@@ -28,6 +29,26 @@ def _stage_state_gate_body(epic_id: int, message: str) -> str:
         "## Reviewer position\n\n"
         "The deterministic graph opened this gate because continuing would require guessing "
         "the intended workflow state.\n"
+    )
+
+
+def _open_resilience_gate(
+    repo_root: Path, epic_id: int, story_id: str | None, trigger: str
+) -> NodeOutput:
+    node_type = NodeType.GATE_OPEN
+    write_gate_for_trigger(
+        trigger=trigger,
+        epic_dir=epic_dir(repo_root, epic_id),
+        story_id=story_id,
+        schema_path=schema_dir() / "gate.schema.json",
+    )
+    return NodeOutput(
+        node_type=node_type,
+        status=NodeStatus.GATE_OPENED,
+        epic_id=epic_id,
+        story_id=story_id,
+        gate_path=_gate_path(epic_id),
+        triggered_by=[trigger],
     )
 
 
@@ -114,6 +135,14 @@ def run_graph(
                     return outputs
                 raise
             outputs.append(out)
+            if (
+                node_type in {NodeType.EXECUTOR_DISPATCH, NodeType.CRITIQUE_DISPATCH}
+                and out.status == NodeStatus.COMPLETED
+            ):
+                trigger = detect_resilience_gate(repo_root, epic_id, story_id)
+                if trigger is not None:
+                    outputs.append(_open_resilience_gate(repo_root, epic_id, story_id, trigger))
+                    return outputs
             if once or out.status in {
                 NodeStatus.GATE_OPENED,
                 NodeStatus.HALTED,

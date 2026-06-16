@@ -261,6 +261,23 @@ def iter_epic_events(repo_root: Path, epic_id: int) -> list[dict]:
     return events
 
 
+def iter_dispatch_events(repo_root: Path, epic_id: int) -> list[dict]:
+    path = epic_dir(repo_root, epic_id) / "dispatch.jsonl"
+    if not path.exists():
+        return []
+    events: list[dict] = []
+    for line in path.read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict):
+            events.append(event)
+    return events
+
+
 def append_epic_event_once(
     repo_root: Path, epic_id: int, event_payload: dict, **identity: object
 ) -> None:

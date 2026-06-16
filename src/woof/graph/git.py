@@ -78,6 +78,34 @@ def current_branch(repo_root: Path) -> str | None:
         return None
 
 
+def head_branch_drift_detected(
+    repo_root: Path,
+    expected_sha: str | None,
+    expected_branch: str | None,
+) -> tuple[bool, str]:
+    """Return (True, description) when current HEAD/branch differs from expected.
+
+    If either expected value is None (not recorded by the dispatcher), that axis
+    is skipped. If current HEAD or branch is unreadable, the check fails closed
+    (drift=True) whenever the corresponding expected value is known.
+    """
+    if expected_sha is not None:
+        actual_sha = head_sha(repo_root)
+        if actual_sha is None:
+            return True, "current HEAD is unreadable"
+        if actual_sha != expected_sha:
+            return True, f"HEAD moved from {expected_sha[:12]} to {actual_sha[:12]}"
+
+    if expected_branch is not None:
+        actual_branch = current_branch(repo_root)
+        if actual_branch is None:
+            return True, "current branch is unreadable (detached HEAD)"
+        if actual_branch != expected_branch:
+            return True, f"branch switched from {expected_branch!r} to {actual_branch!r}"
+
+    return False, ""
+
+
 def changed_paths(repo_root: Path) -> list[str]:
     proc = subprocess.run(
         ["git", "status", "--porcelain=v1", "--untracked-files=all", "-z"],

@@ -28,7 +28,7 @@ from woof.graph.dispositions import (
     validate_story_disposition,
     write_deterministic_story_disposition,
 )
-from woof.graph.git import changed_paths, git, staged_paths
+from woof.graph.git import changed_paths, git, head_branch_drift_detected, staged_paths
 from woof.graph.manifest import build_story_manifest, verify_staged_manifest
 from woof.graph.pathspec import PathspecEvaluationError, filter_paths_matching
 from woof.graph.planning_contracts import (
@@ -2349,6 +2349,40 @@ def _commit_message(
 def commit_node(inp: NodeInput) -> NodeOutput:
     if not inp.story_id:
         raise ValueError("commit requires story_id")
+
+    # Drift check: verify HEAD/branch haven't moved since the last dispatch.
+    # subprocess_returned events live in dispatch.jsonl, not epic.jsonl.
+    dispatch_jsonl = epic_dir(inp.repo_root, inp.epic_id) / "dispatch.jsonl"
+    dispatch_events = _read_appended_dispatch_events(dispatch_jsonl, 0)
+    last_returned = next(
+        (e for e in reversed(dispatch_events) if e.get("event") == "subprocess_returned"),
+        None,
+    )
+    if last_returned is not None:
+        expected_sha = last_returned.get("head_after")
+        expected_branch = last_returned.get("branch_after")
+        if not isinstance(expected_sha, str):
+            expected_sha = None
+        if not isinstance(expected_branch, str):
+            expected_branch = None
+        drift, drift_desc = head_branch_drift_detected(inp.repo_root, expected_sha, expected_branch)
+        if drift:
+            write_gate_for_trigger(
+                trigger="head_branch_drift",
+                epic_dir=epic_dir(inp.repo_root, inp.epic_id),
+                story_id=inp.story_id,
+                schema_path=schema_dir() / "gate.schema.json",
+            )
+            return NodeOutput(
+                node_type=inp.node_type,
+                status=NodeStatus.GATE_OPENED,
+                epic_id=inp.epic_id,
+                story_id=inp.story_id,
+                gate_path=_gate_path(inp.epic_id),
+                triggered_by=["head_branch_drift"],
+                message=drift_desc,
+            )
+
     plan = load_plan(inp.repo_root, inp.epic_id)
     story = story_by_id(plan, inp.story_id)
     result = _executor_result(inp.repo_root, inp.epic_id)

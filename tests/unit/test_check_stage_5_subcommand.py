@@ -308,3 +308,49 @@ def test_check_stage_5_reports_review_valve_not_due_as_info(tmp_path: Path) -> N
     assert c["severity"] == "info"
     assert "not due" in c["summary"]
     assert "check_9_review_valve" not in result["triggered_by"]
+
+
+# ---------------------------------------------------------------------------
+# Snapshot — gate.schema.json triggered_by enum
+# ---------------------------------------------------------------------------
+
+EXPECTED_GATE_TRIGGERS = {
+    "plan_review",
+    "readiness_unready",
+    "readiness_escalation",
+    "check_1_quality_gates",
+    "check_2_outcome_markers",
+    "check_3_scope",
+    "check_4_contract_refs",
+    "check_5_plan_crossrefs",
+    "check_6_critique_blocker",
+    "check_7_commit_transaction",
+    "check_8_docs_drift",
+    "check_9_review_valve",
+    "empty_diff_review",
+    "timeout",
+    "subprocess_crash",
+    "subprocess_aborted",
+    "executor_aborted",
+    "codex_unreachable",
+    "reviewer_unreachable",
+    "incomplete_subprocess",
+    "incomplete_stage_state",
+    "schema_validation_failed",
+    "tracker_sync_conflict",
+    "github_sync_conflict",
+    "head_branch_drift",
+    "manual",
+}
+
+
+def test_gate_schema_triggered_by_enum_snapshot() -> None:
+    """gate.schema.json triggered_by enum must match the expected set exactly."""
+    schema_path = REPO_ROOT / "schemas" / "gate.schema.json"
+    schema = json.loads(schema_path.read_text())
+    enum_values = set(schema["properties"]["triggered_by"]["items"]["enum"])
+    assert enum_values == EXPECTED_GATE_TRIGGERS, (
+        f"gate.schema.json triggered_by enum mismatch.\n"
+        f"Extra: {enum_values - EXPECTED_GATE_TRIGGERS}\n"
+        f"Missing: {EXPECTED_GATE_TRIGGERS - enum_values}"
+    )

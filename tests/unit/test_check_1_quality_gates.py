@@ -6,6 +6,7 @@ import json
 import shlex
 import subprocess
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -783,8 +784,9 @@ def _write_fresh_baseline(repo_root: Path, gates: dict, *, expiry_seconds: int =
     """Write a baseline with freshness metadata and a future wall-clock expiry."""
     woof_dir = repo_root / ".woof"
     woof_dir.mkdir(exist_ok=True)
+    captured_at = (datetime.now(UTC) - timedelta(seconds=60)).strftime("%Y-%m-%dT%H:%M:%SZ")
     record = {
-        "captured_at": "2026-06-16T00:00:00Z",
+        "captured_at": captured_at,
         "captured_iteration": 0,
         "expiry_seconds": expiry_seconds,
         "expiry_iterations": 100,

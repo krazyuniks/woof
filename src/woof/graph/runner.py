@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from woof.gate.write import write_gate
@@ -10,6 +11,21 @@ from woof.graph.nodes import NodeHandler, default_registry
 from woof.graph.state import NodeInput, NodeOutput, NodeStatus, NodeType
 from woof.graph.transitions import StageStateError, epic_dir, next_node
 from woof.paths import schema_dir
+
+_WF_RUN_COUNT_PATH = ".woof/wf-run-count"
+
+
+def _increment_run_count(repo_root: Path) -> None:
+    """Increment .woof/wf-run-count; create at 1 if absent or unreadable."""
+    path = repo_root / _WF_RUN_COUNT_PATH
+    try:
+        data = json.loads(path.read_text()) if path.exists() else {}
+        count = data.get("count") if isinstance(data, dict) else None
+        new_count = (int(count) + 1) if isinstance(count, int) and count >= 0 else 1
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        new_count = 1
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(json.dumps({"count": new_count}))
 
 
 def _gate_path(epic_id: int) -> str:
@@ -65,6 +81,7 @@ def run_graph(
     """Run the deterministic graph until it halts, gates, or completes."""
 
     with epic_workflow_lock(repo_root, epic_id):
+        _increment_run_count(repo_root)
         handlers: dict = registry or default_registry()
         outputs: list[NodeOutput] = []
         while True:

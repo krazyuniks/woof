@@ -425,6 +425,10 @@ def capture_baseline(
         "gates": gates_record,
     }
 
+    ok, errors = validate_against_schema(record, "quality-gates-baseline")
+    if not ok:
+        return CaptureResult(repo_root / BASELINE_PATH, 0, 0), f"baseline record invalid: {errors}"
+
     baseline_path = repo_root / BASELINE_PATH
     (repo_root / ".woof").mkdir(exist_ok=True)
     baseline_path.write_text(json.dumps(record, indent=2))

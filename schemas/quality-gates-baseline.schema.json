@@ -6,6 +6,9 @@
   "type": "object",
   "additionalProperties": false,
   "required": ["captured_at", "gates"],
+  "dependentRequired": {
+    "expiry_iterations": ["captured_iteration"]
+  },
   "properties": {
     "captured_at": {
       "type": "string",

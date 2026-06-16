@@ -359,6 +359,9 @@ def _init_git_repo(root: Path) -> None:
     _git(root, "init", check=True, capture_output=True)
     _git(root, "config", "user.email", "test@example.com", check=True)
     _git(root, "config", "user.name", "Test", check=True)
+    (root / ".gitignore").write_text(".woof/wf-run-count\n")
+    _git(root, "add", ".gitignore", check=True, capture_output=True)
+    _git(root, "commit", "-m", "chore: test repo setup", check=True, capture_output=True)
 
 
 def _write_codebase_docs(root: Path) -> None:

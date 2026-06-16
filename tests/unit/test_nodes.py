@@ -11,7 +11,7 @@ import pytest
 
 from woof.graph import nodes
 from woof.graph.git import git_env
-from woof.graph.state import NodeInput, NodeType
+from woof.graph.state import NodeInput, NodeStatus, NodeType
 from woof.graph.transitions import StageStateError
 
 
@@ -390,3 +390,63 @@ def test_executor_dispatch_files_txt_slice_filtered_by_story_paths(
     assert "src/app.py" in files_txt_slice
     assert "README.md" not in files_txt_slice
     assert "docs/design.md" not in files_txt_slice
+
+
+# ---------------------------------------------------------------------------
+# Plan-critique blocker evidence enforcement (E2 S4 R4)
+# ---------------------------------------------------------------------------
+
+
+def _write_plan_critique_blocker(directory: Path, evidence: str) -> None:
+    critique_dir = directory / "critique"
+    critique_dir.mkdir(exist_ok=True)
+    (critique_dir / "plan.md").write_text(
+        "---\n"
+        "target: plan\n"
+        "target_id: null\n"
+        "severity: blocker\n"
+        "timestamp: '2026-01-01T00:00:00Z'\n"
+        "harness: test-reviewer\n"
+        "findings:\n"
+        "  - id: F1\n"
+        "    severity: blocker\n"
+        "    summary: tighten story scope\n"
+        f"    evidence: {evidence}\n"
+        "---\n"
+        "Plan critique body.\n"
+    )
+
+
+def test_plan_critique_node_rejects_blocker_with_unresolvable_evidence(
+    tmp_path: Path,
+) -> None:
+    directory = _write_spark(tmp_path, 50)
+    _write_minimal_epic(directory, 50)
+    _write_stage3_plan(directory, 50)
+    (directory / "PLAN.md").write_text(nodes._render_plan_markdown(nodes.load_plan(tmp_path, 50)))
+    _write_plan_critique_blocker(directory, "looks wrong")
+
+    output = nodes.plan_critique_node(
+        NodeInput(node_type=NodeType.PLAN_CRITIQUE, epic_id=50, repo_root=tmp_path)
+    )
+
+    assert output.status == NodeStatus.HALTED
+    assert output.triggered_by == ["schema_validation_failed"]
+    assert "F1" in output.message
+
+
+def test_plan_critique_node_accepts_blocker_with_resolvable_story_evidence(
+    tmp_path: Path,
+) -> None:
+    directory = _write_spark(tmp_path, 51)
+    _write_minimal_epic(directory, 51)
+    _write_stage3_plan(directory, 51)
+    (directory / "PLAN.md").write_text(nodes._render_plan_markdown(nodes.load_plan(tmp_path, 51)))
+    _write_plan_critique_blocker(directory, "S1 does not implement the required outcome")
+
+    output = nodes.plan_critique_node(
+        NodeInput(node_type=NodeType.PLAN_CRITIQUE, epic_id=51, repo_root=tmp_path)
+    )
+
+    assert output.status == NodeStatus.COMPLETED
+    assert output.next_node == NodeType.PLAN_GATE_OPEN

@@ -953,7 +953,12 @@ def _validate_plan(repo_root: Path, epic_id: int, plan_path: Path) -> tuple[bool
     return True, (proc.stdout + proc.stderr).strip()
 
 
-def _validate_plan_critique(repo_root: Path, critique_path: Path) -> tuple[bool, str]:
+def _validate_plan_critique(
+    repo_root: Path,
+    critique_path: Path,
+    plan: dict,
+    epic_dir_path: Path,
+) -> tuple[bool, str]:
     proc = subprocess.run(
         [*_woof_subprocess_argv(), "validate", "--schema", "critique", str(critique_path)],
         cwd=repo_root,
@@ -971,6 +976,18 @@ def _validate_plan_critique(repo_root: Path, critique_path: Path) -> tuple[bool,
         return False, "plan critique front-matter must set target=plan and target_id=null"
     if critique_severity(critique.front) is None:
         return False, "plan critique severity must be info, minor, or blocker"
+    if critique_severity(critique.front) == "blocker":
+        blocker_findings = [
+            f for f in critique_findings(critique.front) if f.get("severity") == "blocker"
+        ]
+        bad_evidence = check_blocker_findings_evidence(
+            blocker_findings,
+            repo_root=repo_root,
+            plan=plan,
+            epic_dir=epic_dir_path,
+        )
+        if bad_evidence:
+            return False, "\n".join(bad_evidence)
     return True, (proc.stdout + proc.stderr).strip()
 
 
@@ -1800,7 +1817,10 @@ def plan_critique_node(inp: NodeInput) -> NodeOutput:
             paths=[critique_relpath],
         )
 
-    critique_ok, critique_message = _validate_plan_critique(inp.repo_root, critique_path)
+    plan_dict: dict = json.loads(plan_path.read_text())
+    critique_ok, critique_message = _validate_plan_critique(
+        inp.repo_root, critique_path, plan_dict, directory
+    )
     if not critique_ok:
         return _planning_halt(
             inp,
@@ -1934,7 +1954,10 @@ def plan_gate_open_node(inp: NodeInput) -> NodeOutput:
             paths=[plan_relpath],
         )
 
-    critique_ok, critique_message = _validate_plan_critique(inp.repo_root, critique_path)
+    plan_dict: dict = json.loads(plan_path.read_text())
+    critique_ok, critique_message = _validate_plan_critique(
+        inp.repo_root, critique_path, plan_dict, directory
+    )
     if not critique_ok:
         return _planning_halt(
             inp,

@@ -479,10 +479,11 @@ The `/woof` umbrella and `/woof:brainstorm` are the operator entry points for th
 woof/
 ├── docs/
 │   ├── architecture.md          # this file
+│   ├── CONTEXT.md               # glossary - what the words mean
 │   ├── backlog.md               # work-to-be-done
 │   ├── implementation-plan.md   # how the backlog gets executed
 │   ├── adr/                     # design decisions
-│   ├── plans/                   # per-epic implementation plans
+│   ├── plans/                   # per-epic implementation plans (ephemeral; deleted at epic close-out)
 │   └── research/                # research backing ADRs and backlog items
 ├── src/woof/                    # Python library + setup CLI
 │   ├── graph/                   # graph transitions, validation
@@ -538,4 +539,6 @@ In a consumer repository:
 
 Architecture changes that alter graph topology, stage contracts, tracker authority, runtime safety boundaries, role policy, or operator surfaces require an ADR plus matching tests.
 
-ADRs live under `docs/adr/`. The backlog under `docs/backlog.md` lists open work; the implementation plan under `docs/implementation-plan.md` sequences it; per-epic implementation plans live under `docs/plans/<epic>.md` and are written when each epic starts.
+ADRs live under `docs/adr/`. Durable terms live in `docs/CONTEXT.md`. The backlog under `docs/backlog.md` lists open work; the implementation plan under `docs/implementation-plan.md` sequences it; per-epic implementation plans live under `docs/plans/<epic>.md` and are written when each epic starts.
+
+Per-epic plans are ephemeral. A plan holds the slice order, prompt sequencing, and design-in-progress for one epic only; nothing in it is durable. At epic close-out the plan is deleted, behind a promotion gate that first moves everything worth keeping to a permanent home: decisions promote to ADRs under `docs/adr/`; target-state deltas promote to `docs/architecture.md`; new or changed terms promote to `docs/CONTEXT.md`; residual work promotes to `docs/backlog.md`. Only once those promotions are done is the plan file deleted; git history is its archive.

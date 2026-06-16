@@ -1190,6 +1190,278 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
     assert validate.returncode == 0, validate.stdout + validate.stderr
 
 
+# ---------------------------------------------------------------------------
+# S7: error_signature, rate_limit, and HEAD/branch fields
+# ---------------------------------------------------------------------------
+
+
+def _init_git_repo(path: Path) -> None:
+    """Initialise a git repo with one commit so HEAD is readable."""
+    for cmd in (
+        ["git", "init"],
+        ["git", "config", "user.email", "test@woof.dev"],
+        ["git", "config", "user.name", "Test"],
+    ):
+        subprocess.run(cmd, cwd=path, check=True, capture_output=True)
+    (path / "README.md").write_text("init\n")
+    subprocess.run(["git", "add", "README.md"], cwd=path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=path, check=True, capture_output=True)
+
+
+@pytest.fixture
+def git_woof_project(woof_project: Path) -> Path:
+    """Woof project with a real git repository so HEAD/branch are readable."""
+    _init_git_repo(woof_project)
+    return woof_project
+
+
+def _make_stderr_stub(
+    bin_dir: Path,
+    name: str,
+    payload: str,
+    stderr_text: str,
+    stdin_path: Path | None = None,
+) -> None:
+    """Stub that emits ``stderr_text`` on stderr before printing ``payload`` on stdout."""
+    import shlex
+
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    script = bin_dir / name
+    stdin_line = f"cat > {shlex.quote(str(stdin_path))}" if stdin_path else "cat >/dev/null"
+    script.write_text(
+        f"#!/bin/sh\n{stdin_line}\n"
+        f"printf '%s\\n' {shlex.quote(stderr_text)} >&2\n"
+        f"cat <<'__WOOF_PAYLOAD__'\n{payload}\n__WOOF_PAYLOAD__\n"
+    )
+    script.chmod(0o755)
+
+
+def test_subprocess_returned_records_head_branch_fields(
+    git_woof_project: Path, tmp_path: Path
+) -> None:
+    """subprocess_returned carries head_before/after and branch_before/after from a git repo."""
+    bin_dir = tmp_path / "bin"
+    claude_response = json.dumps(
+        {
+            "type": "result",
+            "session_id": "00000000-0000-0000-0000-000000000010",
+            "usage": {
+                "input_tokens": 1,
+                "output_tokens": 1,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+            },
+        }
+    )
+    stdin_path = tmp_path / "claude.stdin"
+    _make_stub(bin_dir, "claude", claude_response, stdin_path=stdin_path)
+    env = {
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "HOME": os.environ.get("HOME", str(tmp_path)),
+    }
+
+    proc = subprocess.run(
+        [str(WOOF_BIN), "dispatch", "--role", "reviewer", "--epic", "20"],
+        capture_output=True,
+        text=True,
+        input="do work\n",
+        cwd=git_woof_project,
+        env=env,
+    )
+    assert proc.returncode == 0, proc.stderr
+
+    jsonl = git_woof_project / ".woof" / "epics" / "E20" / "dispatch.jsonl"
+    events = [json.loads(ln) for ln in jsonl.read_text().splitlines() if ln.strip()]
+    returned = next(e for e in events if e["event"] == "subprocess_returned")
+
+    import re
+
+    assert "head_before" in returned
+    assert "head_after" in returned
+    assert "branch_before" in returned
+    assert "branch_after" in returned
+    assert re.fullmatch(r"[0-9a-f]{7,40}", returned["head_before"])
+    assert returned["head_before"] == returned["head_after"]
+    assert returned["branch_before"] == returned["branch_after"]
+
+    validate = subprocess.run([*WOOF_VALIDATE, str(jsonl)], capture_output=True, text=True)
+    assert validate.returncode == 0, validate.stdout + validate.stderr
+
+
+def test_subprocess_returned_records_error_signature_from_stderr(
+    git_woof_project: Path, tmp_path: Path
+) -> None:
+    """subprocess_returned carries error_signature when the subprocess writes to stderr."""
+    bin_dir = tmp_path / "bin"
+    claude_response = json.dumps(
+        {
+            "type": "result",
+            "session_id": "00000000-0000-0000-0000-000000000011",
+            "usage": {
+                "input_tokens": 1,
+                "output_tokens": 1,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+            },
+        }
+    )
+    stderr_text = "error: bad value in /home/ci/project/src/foo.py:42:10"
+    stdin_path = tmp_path / "claude.stdin"
+    _make_stderr_stub(bin_dir, "claude", claude_response, stderr_text, stdin_path)
+    env = {
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "HOME": os.environ.get("HOME", str(tmp_path)),
+    }
+
+    proc = subprocess.run(
+        [str(WOOF_BIN), "dispatch", "--role", "reviewer", "--epic", "21"],
+        capture_output=True,
+        text=True,
+        input="do work\n",
+        cwd=git_woof_project,
+        env=env,
+    )
+    assert proc.returncode == 0, proc.stderr
+
+    jsonl = git_woof_project / ".woof" / "epics" / "E21" / "dispatch.jsonl"
+    events = [json.loads(ln) for ln in jsonl.read_text().splitlines() if ln.strip()]
+    returned = next(e for e in events if e["event"] == "subprocess_returned")
+
+    assert "error_signature" in returned
+    sig = returned["error_signature"]
+    assert "/home" not in sig
+    assert ":42:10" not in sig
+    assert "bad value" in sig
+    assert len(sig) <= 256
+
+    validate = subprocess.run([*WOOF_VALIDATE, str(jsonl)], capture_output=True, text=True)
+    assert validate.returncode == 0, validate.stdout + validate.stderr
+
+
+def test_subprocess_returned_records_rate_limit_when_detected(
+    git_woof_project: Path, tmp_path: Path
+) -> None:
+    """subprocess_returned carries rate_limit='rate_limited' when adapter signals it."""
+    bin_dir = tmp_path / "bin"
+    claude_response = json.dumps(
+        {
+            "type": "result",
+            "session_id": "00000000-0000-0000-0000-000000000012",
+            "usage": {
+                "input_tokens": 1,
+                "output_tokens": 1,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+            },
+        }
+    )
+    stderr_text = "API error: 429 too many requests - rate limit exceeded"
+    stdin_path = tmp_path / "claude.stdin"
+    _make_stderr_stub(bin_dir, "claude", claude_response, stderr_text, stdin_path)
+    env = {
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "HOME": os.environ.get("HOME", str(tmp_path)),
+    }
+
+    proc = subprocess.run(
+        [str(WOOF_BIN), "dispatch", "--role", "reviewer", "--epic", "22"],
+        capture_output=True,
+        text=True,
+        input="do work\n",
+        cwd=git_woof_project,
+        env=env,
+    )
+    assert proc.returncode == 0, proc.stderr
+
+    jsonl = git_woof_project / ".woof" / "epics" / "E22" / "dispatch.jsonl"
+    events = [json.loads(ln) for ln in jsonl.read_text().splitlines() if ln.strip()]
+    returned = next(e for e in events if e["event"] == "subprocess_returned")
+
+    assert returned.get("rate_limit") == "rate_limited"
+
+    validate = subprocess.run([*WOOF_VALIDATE, str(jsonl)], capture_output=True, text=True)
+    assert validate.returncode == 0, validate.stdout + validate.stderr
+
+
+def test_subprocess_returned_no_rate_limit_field_on_clean_run(
+    git_woof_project: Path, tmp_path: Path
+) -> None:
+    """rate_limit field is absent when no rate-limit signal is detected."""
+    bin_dir = tmp_path / "bin"
+    claude_response = json.dumps(
+        {
+            "type": "result",
+            "session_id": "00000000-0000-0000-0000-000000000013",
+            "usage": {
+                "input_tokens": 1,
+                "output_tokens": 1,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+            },
+        }
+    )
+    stdin_path = tmp_path / "claude.stdin"
+    _make_stub(bin_dir, "claude", claude_response, stdin_path=stdin_path)
+    env = {
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "HOME": os.environ.get("HOME", str(tmp_path)),
+    }
+
+    proc = subprocess.run(
+        [str(WOOF_BIN), "dispatch", "--role", "reviewer", "--epic", "23"],
+        capture_output=True,
+        text=True,
+        input="do work\n",
+        cwd=git_woof_project,
+        env=env,
+    )
+    assert proc.returncode == 0, proc.stderr
+
+    jsonl = git_woof_project / ".woof" / "epics" / "E23" / "dispatch.jsonl"
+    events = [json.loads(ln) for ln in jsonl.read_text().splitlines() if ln.strip()]
+    returned = next(e for e in events if e["event"] == "subprocess_returned")
+
+    assert "rate_limit" not in returned
+
+    validate = subprocess.run([*WOOF_VALIDATE, str(jsonl)], capture_output=True, text=True)
+    assert validate.returncode == 0, validate.stdout + validate.stderr
+
+
+def test_existing_consumers_unaffected_by_new_optional_fields() -> None:
+    """nodes._dispatch_outcome_from_events still parses returned events with S7 fields
+    (additive, nothing breaks)."""
+    from woof.graph.nodes import _dispatch_outcome_from_events  # type: ignore[attr-defined]
+
+    event_with_new_fields = {
+        "event": "subprocess_returned",
+        "at": "2026-06-16T12:00:00Z",
+        "epic_id": 99,
+        "role": "reviewer",
+        "pid": 1234,
+        "exit_code": 0,
+        "exit_type": "clean",
+        "duration_ms": 500,
+        "timed_out": False,
+        "terminal_seen": True,
+        "harness": "claude",
+        "adapter": "claude",
+        "error_signature": "error: something went wrong at <path>",
+        "rate_limit": "rate_limited",
+        "head_before": "abc1234",
+        "head_after": "abc1234",
+        "branch_before": "main",
+        "branch_after": "main",
+    }
+    exit_type, exit_code = _dispatch_outcome_from_events(
+        [event_with_new_fields],
+        role="reviewer",
+        epic_id=99,
+        story_id=None,
+    )
+    assert exit_type == "clean"
+    assert exit_code == 0
+
+
 def test_end_to_end_completed_lingering_counts_as_success(
     woof_project: Path, tmp_path: Path
 ) -> None:

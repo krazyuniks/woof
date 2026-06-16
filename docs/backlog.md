@@ -49,19 +49,17 @@ Shipped:
 - S4: blocker-evidence discipline - `critique.schema.json` requires `evidence` (non-empty) on every `blocker` finding via a JSON Schema conditional (`if severity=blocker then evidence required`). Evidence must resolve to a known artefact reference: file:line (file tracked by git), story id (`S<n>` in `plan.json`), observable outcome id (`O<n>` in `EPIC.md`), contract-decision id (`CD<n>` in `EPIC.md`), schema ref (`schemas/*.schema.json` that exists), or quality-gate id (named gate in `.woof/quality-gates.toml`). `check_6_critique_blocker` fails closed when blocker evidence is absent or unresolvable, reporting before the severity-based failure. Resolution logic lives in `src/woof/graph/dispositions.py`. Reviewer playbooks (`playbooks/critique/story.md`, `playbooks/critique/plan.md`) carry the evidence-discipline grammar. No confidence field.
 - S5: quality-gate strict/baseline modes - `quality-gates.schema.json` gains a per-gate `mode` enum (`strict` | `baseline`) and a project-level `default_mode`; default when unset is `strict` (D-QG). A new `quality-gates-baseline.schema.json` governs a durable baseline record at `.woof/quality-gates-baseline.json` that stores per-command `passed` state and `command` identity. `check_1_quality_gates` in baseline mode suppresses a blocking gate only when the gate was red at capture and the command string is unchanged; a changed identity or a green-at-capture gate going red re-arms blocking. No per-failure subtraction. The new schema is registered with `woof validate`.
 - S6: baseline freshness and explicit recapture - wall-clock expiry via `expiry_seconds` (measured from `captured_at`). An expired baseline is ignored: the check runner surfaces a clear "baseline expired" note and suppresses nothing. Baselines without `expiry_seconds` retain S5 behaviour (no expiry). `woof baseline capture` is the only path that writes the baseline. The run-iteration age axis (`captured_iteration`/`expiry_iterations`/`.woof/wf-run-count`) is dropped: a committed baseline cannot reliably reference the gitignored per-machine counter; reconsider only with a committed-counter design.
+- S7: dispatch resilience and drift telemetry - `subprocess_returned` records a normalised `error_signature` (volatile paths, line/column spans, ISO-8601 timestamps, UUIDs, and excess whitespace stripped; standalone integers preserved; truncated to 256 characters), a `rate_limit` classification (`"rate_limited"`) when adapter stdout/stderr signals rate-limiting, and `head_before`/`head_after`/`branch_before`/`branch_after` from `graph/git.py` readers. All six fields are declared as optional in `jsonl-events.schema.json`. Pure functions live in `src/woof/lib/error_signature.py` and `src/woof/lib/rate_limit.py`; HEAD/branch readers are in `src/woof/graph/git.py`.
 
 Remaining open work:
-- Add run-resilience policy over `woof wf` dispatch telemetry:
+- Add run-resilience policy over `woof wf` dispatch telemetry (S9):
   - stage-aware progress detection;
   - separate counters for consecutive no-progress and consecutive same-error signatures;
   - same-error checked before no-progress;
-  - error-signature normalisation that strips volatile paths, line/column spans, ISO timestamps, UUIDs, and excess whitespace, preserves standalone numbers, and truncates to a bounded length;
   - course-correction gates for repeated constraint/invariant/contract-discovery signatures;
   - run-resilience gates for repeated timeout without expected artefact progress;
-  - separate classification for rate-limit wait/resume.
-- Add HEAD/branch drift detection:
-  - record `head_before`, `branch_before`, `head_after`, and `branch_after` for dispatched work;
-  - halt commit/gate paths if HEAD or branch moved unexpectedly and not through a graph-owned commit.
+  - rate-limit waits classified separately and excluded from the counters.
+- Add HEAD/branch drift gate (S8): halt commit/gate paths when HEAD or branch moved unexpectedly and not through a graph-owned commit; add `head_branch_drift` gate trigger.
 - tmux-backed long-run supervision is deferred out of E2. If revisited later, it is panes/logs/status only with no direct state mutation outside Woof commands.
 - Tests covering readiness pass/fail, readiness timeout non-blocking behaviour, readiness escalation, command-level baseline behaviour, HEAD/branch drift, and circuit-breaker decision logic.
 

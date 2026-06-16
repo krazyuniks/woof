@@ -54,6 +54,30 @@ def staged_paths(repo_root: Path) -> list[str]:
     return sorted(git_z(repo_root, "diff", "--cached", "--name-only"))
 
 
+def head_sha(repo_root: Path) -> str | None:
+    """Return the current HEAD short SHA, or None if unreadable (e.g. empty repo)."""
+    try:
+        proc = git(repo_root, "rev-parse", "--short", "HEAD", check=False)
+        if proc.returncode == 0:
+            sha = proc.stdout.strip()
+            return sha if sha else None
+        return None
+    except OSError:
+        return None
+
+
+def current_branch(repo_root: Path) -> str | None:
+    """Return the current branch name, or None if in detached HEAD or unreadable."""
+    try:
+        proc = git(repo_root, "symbolic-ref", "--short", "HEAD", check=False)
+        if proc.returncode == 0:
+            branch = proc.stdout.strip()
+            return branch if branch else None
+        return None
+    except OSError:
+        return None
+
+
 def changed_paths(repo_root: Path) -> list[str]:
     proc = subprocess.run(
         ["git", "status", "--porcelain=v1", "--untracked-files=all", "-z"],

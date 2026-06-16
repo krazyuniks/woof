@@ -295,6 +295,37 @@
       "minimum": 0,
       "description": "Completed Codex command_execution tool calls observed in codex exec --json output."
     },
+    "error_signature": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "description": "Normalised signature of subprocess error output on subprocess_returned. Volatile absolute/relative paths, line/column spans, ISO-8601 timestamps, UUIDs, and excess whitespace are stripped; standalone integers are preserved; truncated to 256 characters. Absent when stderr is empty."
+    },
+    "rate_limit": {
+      "type": "string",
+      "enum": ["rate_limited"],
+      "description": "Rate-limit classification on subprocess_returned. Present only when the adapter stdout/stderr signals rate-limiting (HTTP 429, 'too many requests', 'overloaded', etc.); absent otherwise."
+    },
+    "head_before": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$",
+      "description": "Git HEAD short SHA read immediately before the supervised subprocess was spawned. Absent when HEAD is unreadable (e.g. empty repo or detached without commits)."
+    },
+    "head_after": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$",
+      "description": "Git HEAD short SHA read immediately after the supervised subprocess returned."
+    },
+    "branch_before": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Git branch name read immediately before the supervised subprocess was spawned. Absent when in detached HEAD state or unreadable."
+    },
+    "branch_after": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Git branch name read immediately after the supervised subprocess returned."
+    },
     "runtime_policy": {
       "type": "object",
       "additionalProperties": false,

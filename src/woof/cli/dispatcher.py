@@ -24,7 +24,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from woof.graph.git import current_branch, head_sha
 from woof.lib.audit_config import load_audit_config
+from woof.lib.error_signature import normalise as _normalise_error_sig
+from woof.lib.rate_limit import classify as _classify_rate_limit
 from woof.lib.supervise import ExitType, supervise
 from woof.paths import schema_dir
 
@@ -956,6 +959,9 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
             spawned_event["effort"] = effort
         append_jsonl(dispatch_jsonl, spawned_event)
 
+    head_before = head_sha(repo_root)
+    branch_before = current_branch(repo_root)
+
     cancel = threading.Event()
     previous_sigint = signal.getsignal(signal.SIGINT)
 
@@ -998,6 +1004,8 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         signal.signal(signal.SIGINT, previous_sigint)
 
     ended_at = datetime.now(UTC)
+    head_after = head_sha(repo_root)
+    branch_after = current_branch(repo_root)
     stdout = result.stdout
     stderr = result.stderr
     duration_ms = result.duration_ms
@@ -1083,6 +1091,20 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     if route.adapter == "codex":
         returned["codex_audit_path"] = str(base.relative_to(repo_root))
         returned["command_count"] = command_count
+    error_sig = _normalise_error_sig(stderr) if stderr.strip() else None
+    if error_sig:
+        returned["error_signature"] = error_sig
+    rl = _classify_rate_limit(stdout, stderr)
+    if rl is not None:
+        returned["rate_limit"] = rl
+    if head_before is not None:
+        returned["head_before"] = head_before
+    if head_after is not None:
+        returned["head_after"] = head_after
+    if branch_before is not None:
+        returned["branch_before"] = branch_before
+    if branch_after is not None:
+        returned["branch_after"] = branch_after
     append_jsonl(dispatch_jsonl, returned)
 
     meta = {

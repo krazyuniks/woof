@@ -610,3 +610,123 @@ mode = "baseline"
     assert "baseline-suppressed" in outcome.summary
     assert outcome.evidence is not None
     assert "baseline-suppressed finding" in outcome.evidence
+
+
+# ---------------------------------------------------------------------------
+# Real-schema validation replaces Pydantic — R4 fixes
+#
+# Pydantic was looser: it coerced "passed": "false" → False, ignored extra
+# fields, and accepted any string for captured_at.  The schema rejects all
+# three.  Verify that the runner matches woof-validate's accept/reject.
+# ---------------------------------------------------------------------------
+
+_INVALID_BASELINES: list[tuple[str, object]] = [
+    (
+        "string_passed_field",
+        {
+            "captured_at": "2026-06-16T00:00:00Z",
+            "gates": {"lint": {"command": "just lint", "passed": "false"}},
+        },
+    ),
+    (
+        "extra_top_level_field",
+        {
+            "captured_at": "2026-06-16T00:00:00Z",
+            "gates": {"lint": {"command": "just lint", "passed": False}},
+            "unknown_field": "should be rejected",
+        },
+    ),
+    (
+        "non_datetime_captured_at",
+        {
+            "captured_at": "2026-06-16",
+            "gates": {"lint": {"command": "just lint", "passed": False}},
+        },
+    ),
+    (
+        "extra_gate_field",
+        {
+            "captured_at": "2026-06-16T00:00:00Z",
+            "gates": {"lint": {"command": "just lint", "passed": False, "extra": 1}},
+        },
+    ),
+]
+
+
+def _ajv_rejects(payload: object, tmp_path: Path) -> bool:
+    """Return True when ajv-cli rejects ``payload`` against the baseline schema."""
+    data_file = tmp_path / "_ajv_payload.json"
+    data_file.write_text(json.dumps(payload))
+    proc = subprocess.run(
+        [
+            "ajv",
+            "validate",
+            "--spec=draft2020",
+            "-c",
+            "ajv-formats",
+            "-s",
+            str(BASELINE_SCHEMA),
+            "-d",
+            str(data_file),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    return proc.returncode != 0
+
+
+@pytest.mark.parametrize(
+    "label,payload", _INVALID_BASELINES, ids=[x[0] for x in _INVALID_BASELINES]
+)
+def test_schema_invalid_baseline_fails_closed_and_warns(
+    tmp_path: Path, label: str, payload: object
+) -> None:
+    """Any baseline that woof-validate rejects suppresses nothing and warns 'ignored'."""
+    fail_cmd = _python_command("raise SystemExit(1)")
+    _write_quality_gates(
+        tmp_path,
+        f"""\
+[gates.lint]
+command = {_toml_string(fail_cmd)}
+timeout_seconds = 5
+mode = "baseline"
+""",
+    )
+    (tmp_path / ".woof" / "quality-gates-baseline.json").write_text(json.dumps(payload))
+
+    # Confirm ajv also rejects this payload (runtime strictness == schema).
+    assert _ajv_rejects(payload, tmp_path), f"expected ajv to reject payload for case {label!r}"
+
+    outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
+
+    assert not outcome.ok, f"expected blocking for case {label!r}"
+    assert outcome.severity == "blocker"
+    assert outcome.evidence is not None
+    assert "ignored" in outcome.evidence, f"expected 'ignored' warning for case {label!r}"
+
+
+def test_schema_valid_baseline_suppresses_and_runtime_matches_ajv(tmp_path: Path) -> None:
+    """A fully schema-valid baseline suppresses a red-at-capture gate; ajv also accepts it."""
+    fail_cmd = _python_command("raise SystemExit(1)")
+    _write_quality_gates(
+        tmp_path,
+        f"""\
+[gates.lint]
+command = {_toml_string(fail_cmd)}
+timeout_seconds = 5
+mode = "baseline"
+""",
+    )
+    valid_payload = {
+        "captured_at": "2026-06-16T00:00:00Z",
+        "gates": {"lint": {"command": fail_cmd, "passed": False}},
+    }
+    (tmp_path / ".woof" / "quality-gates-baseline.json").write_text(json.dumps(valid_payload))
+
+    # Confirm ajv accepts the payload too.
+    assert not _ajv_rejects(valid_payload, tmp_path), "expected ajv to accept the valid payload"
+
+    outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
+
+    assert outcome.ok
+    assert "baseline-suppressed" in outcome.summary

@@ -35,9 +35,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ValidationError
-
 from woof.checks import CheckContext, CheckOutcome
+from woof.lib.schema_validate import validate_against_schema
 
 CHECK_ID = "check_1_quality_gates"
 CONFIG_PATH = ".woof/quality-gates.toml"
@@ -49,16 +48,6 @@ OUTPUT_LIMIT = 1200
 _MODE_STRICT = "strict"
 _MODE_BASELINE = "baseline"
 _VALID_MODES = {_MODE_STRICT, _MODE_BASELINE}
-
-
-class _BaselineGateModel(BaseModel):
-    command: str
-    passed: bool
-
-
-class _BaselineRecord(BaseModel):
-    captured_at: str
-    gates: dict[str, _BaselineGateModel]
 
 
 @dataclass(frozen=True)
@@ -206,15 +195,13 @@ def _load_baseline(repo_root: Path) -> tuple[dict[str, _BaselineEntry], str | No
         return {}, None
     if not isinstance(data, dict):
         return {}, None
-    try:
-        record = _BaselineRecord.model_validate(data)
-    except ValidationError as exc:
-        errors = "; ".join(
-            f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in exc.errors()
-        )
+    ok, errors = validate_against_schema(data, "quality-gates-baseline")
+    if not ok:
         return {}, f"baseline file ignored (schema invalid — {errors})"
+    gates: dict[str, Any] = data.get("gates", {})
     return {
-        name: _BaselineEntry(command=g.command, passed=g.passed) for name, g in record.gates.items()
+        name: _BaselineEntry(command=entry["command"], passed=entry["passed"])
+        for name, entry in gates.items()
     }, None
 
 

@@ -24,9 +24,7 @@ import argparse
 import json
 import re
 import shutil
-import subprocess
 import sys
-import tempfile
 import tomllib
 from pathlib import Path
 
@@ -39,6 +37,7 @@ from woof.lib.audit_bundle import (
     NonPortableTranscriptError,
     bundle_claude_transcripts,
 )
+from woof.lib.schema_validate import run_ajv
 from woof.paths import schema_dir
 from woof.trackers import TrackerError, resolve_tracker
 from woof.trackers.epic_body import render_epic_issue_body, split_epic_front_matter
@@ -159,33 +158,6 @@ def load_payload(path: Path, schema: str) -> object:
         with path.open("rb") as fh:
             return tomllib.load(fh)
     raise ValueError(f"load_payload: unhandled schema '{schema}'")
-
-
-def run_ajv(schema_path: Path, data_json: bytes) -> tuple[bool, str]:
-    """Run ajv-cli; return (ok, combined-output)."""
-    with tempfile.NamedTemporaryFile("wb", suffix=".json", delete=False) as fh:
-        fh.write(data_json)
-        data_path = fh.name
-    try:
-        proc = subprocess.run(
-            [
-                "ajv",
-                "validate",
-                "--spec=draft2020",
-                "-c",
-                "ajv-formats",
-                "-s",
-                str(schema_path),
-                "-d",
-                data_path,
-            ],
-            capture_output=True,
-            text=True,
-        )
-    finally:
-        Path(data_path).unlink(missing_ok=True)
-    output = (proc.stdout + proc.stderr).strip()
-    return proc.returncode == 0, output
 
 
 def ensure_ajv() -> None:

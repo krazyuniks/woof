@@ -36,10 +36,15 @@ def run_ajv(schema_path: Path, data_json: bytes) -> tuple[bool, str]:
             capture_output=True,
             text=True,
         )
+        output = (proc.stdout + proc.stderr).strip()
+        return proc.returncode == 0, output
+    except FileNotFoundError:
+        return (
+            False,
+            "ajv not found on PATH — install ajv-cli and ajv-formats (e.g. `volta install ajv-cli ajv-formats`)",
+        )
     finally:
         Path(data_path).unlink(missing_ok=True)
-    output = (proc.stdout + proc.stderr).strip()
-    return proc.returncode == 0, output
 
 
 def validate_against_schema(payload: object, schema_name: str) -> tuple[bool, str]:

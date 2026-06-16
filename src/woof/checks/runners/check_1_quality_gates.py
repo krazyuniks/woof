@@ -197,7 +197,7 @@ def _load_baseline(repo_root: Path) -> tuple[dict[str, _BaselineEntry], str | No
         return {}, None
     ok, errors = validate_against_schema(data, "quality-gates-baseline")
     if not ok:
-        return {}, f"baseline file ignored (schema invalid — {errors})"
+        return {}, f"baseline file ignored (could not validate — {errors})"
     gates: dict[str, Any] = data.get("gates", {})
     return {
         name: _BaselineEntry(command=entry["command"], passed=entry["passed"])

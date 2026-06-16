@@ -730,3 +730,42 @@ mode = "baseline"
 
     assert outcome.ok
     assert "baseline-suppressed" in outcome.summary
+
+
+# ---------------------------------------------------------------------------
+# ajv absent from PATH — R5 fix
+# ---------------------------------------------------------------------------
+
+
+def test_ajv_absent_from_path_fails_closed_without_crashing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When ajv is not on PATH, _load_baseline fails closed: no crash, no suppression, warns."""
+    fail_cmd = _python_command("raise SystemExit(1)")
+    _write_quality_gates(
+        tmp_path,
+        f"""\
+[gates.lint]
+command = {_toml_string(fail_cmd)}
+timeout_seconds = 5
+mode = "baseline"
+""",
+    )
+    # Write a syntactically valid baseline so the only failure is the missing validator.
+    valid_payload = {
+        "captured_at": "2026-06-16T00:00:00Z",
+        "gates": {"lint": {"command": fail_cmd, "passed": False}},
+    }
+    (tmp_path / ".woof" / "quality-gates-baseline.json").write_text(json.dumps(valid_payload))
+
+    # Strip ajv from PATH; Python gate commands use a full path so gates still execute.
+    monkeypatch.setenv("PATH", str(tmp_path / "empty_bin"))
+
+    outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
+
+    # Must not crash; baseline is ignored so the failing gate blocks.
+    assert not outcome.ok
+    assert outcome.severity == "blocker"
+    assert outcome.evidence is not None
+    assert "ignored" in outcome.evidence
+    assert "ajv" in outcome.evidence

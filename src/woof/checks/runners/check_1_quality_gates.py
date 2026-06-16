@@ -32,6 +32,7 @@ import signal
 import subprocess
 import tomllib
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +42,7 @@ from woof.lib.schema_validate import validate_against_schema
 CHECK_ID = "check_1_quality_gates"
 CONFIG_PATH = ".woof/quality-gates.toml"
 BASELINE_PATH = ".woof/quality-gates-baseline.json"
+RUN_COUNT_PATH = ".woof/wf-run-count"
 DEFAULT_TIMEOUT_SECONDS = 300
 KILL_GRACE_SECONDS = 1
 OUTPUT_LIMIT = 1200
@@ -185,6 +187,54 @@ def _is_suppressed(run: _GateRun, baseline: dict[str, _BaselineEntry]) -> bool:
     return not entry.passed
 
 
+def _read_run_count(repo_root: Path) -> int:
+    """Return the current woof run count from .woof/wf-run-count, or 0 if absent/invalid."""
+    path = repo_root / RUN_COUNT_PATH
+    if not path.exists():
+        return 0
+    try:
+        data = json.loads(path.read_text())
+        count = data.get("count") if isinstance(data, dict) else None
+        return int(count) if isinstance(count, int) and count >= 0 else 0
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return 0
+
+
+def _check_freshness(data: dict[str, Any], repo_root: Path) -> str | None:
+    """Return an expiry reason string if the baseline is expired, or None if fresh.
+
+    Wall-clock: expired when UTC now > captured_at + expiry_seconds.
+    Iteration: expired when current run count > captured_iteration + expiry_iterations.
+    A baseline without freshness fields has no expiry (backwards-compatible with S5).
+    """
+    expiry_seconds = data.get("expiry_seconds")
+    expiry_iterations = data.get("expiry_iterations")
+    captured_iteration = data.get("captured_iteration")
+
+    if expiry_seconds is not None:
+        captured_at_str = data.get("captured_at", "")
+        try:
+            captured_at = datetime.fromisoformat(captured_at_str.replace("Z", "+00:00"))
+            elapsed = (datetime.now(UTC) - captured_at).total_seconds()
+            if elapsed > expiry_seconds:
+                return (
+                    f"baseline expired: wall-clock age {elapsed:.0f}s exceeds "
+                    f"expiry_seconds {expiry_seconds}s"
+                )
+        except (ValueError, AttributeError):
+            pass
+
+    if expiry_iterations is not None and captured_iteration is not None:
+        current = _read_run_count(repo_root)
+        if current > captured_iteration + expiry_iterations:
+            return (
+                f"baseline expired: run count {current} exceeds "
+                f"captured_iteration {captured_iteration} + expiry_iterations {expiry_iterations}"
+            )
+
+    return None
+
+
 def _load_baseline(repo_root: Path) -> tuple[dict[str, _BaselineEntry], str | None]:
     baseline_path = repo_root / BASELINE_PATH
     if not baseline_path.exists():
@@ -198,6 +248,9 @@ def _load_baseline(repo_root: Path) -> tuple[dict[str, _BaselineEntry], str | No
     ok, errors = validate_against_schema(data, "quality-gates-baseline")
     if not ok:
         return {}, f"baseline file ignored (could not validate — {errors})"
+    expiry_reason = _check_freshness(data, repo_root)
+    if expiry_reason is not None:
+        return {}, f"baseline file ignored ({expiry_reason})"
     gates: dict[str, Any] = data.get("gates", {})
     return {
         name: _BaselineEntry(command=entry["command"], passed=entry["passed"])
@@ -327,6 +380,56 @@ def _kill_process_group(proc: subprocess.Popen[str], sig: signal.Signals) -> Non
         os.killpg(proc.pid, sig)
     except ProcessLookupError:
         return
+
+
+@dataclass(frozen=True)
+class CaptureResult:
+    baseline_path: Path
+    gate_count: int
+    red_count: int
+
+
+def capture_baseline(
+    repo_root: Path,
+    expiry_seconds: int,
+    expiry_iterations: int,
+) -> tuple[CaptureResult, str | None]:
+    """Run all configured gates and write a fresh baseline record.
+
+    Returns (CaptureResult, error_message). On error the baseline is not written.
+    This is the ONLY path that writes the baseline; no implicit recapture occurs.
+    """
+    config_path = repo_root / CONFIG_PATH
+    specs, error = _load_gate_specs(config_path)
+    if error is not None:
+        return CaptureResult(repo_root / BASELINE_PATH, 0, 0), error
+
+    runs = [_run_gate(repo_root, spec) for spec in specs]
+
+    captured_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    current_count = _read_run_count(repo_root)
+
+    gates_record: dict[str, Any] = {}
+    red_count = 0
+    for run in runs:
+        passed = not (run.timed_out or run.exit_code != 0)
+        gates_record[run.spec.name] = {"command": run.spec.command, "passed": passed}
+        if not passed:
+            red_count += 1
+
+    record: dict[str, Any] = {
+        "captured_at": captured_at,
+        "captured_iteration": current_count,
+        "expiry_seconds": expiry_seconds,
+        "expiry_iterations": expiry_iterations,
+        "gates": gates_record,
+    }
+
+    baseline_path = repo_root / BASELINE_PATH
+    (repo_root / ".woof").mkdir(exist_ok=True)
+    baseline_path.write_text(json.dumps(record, indent=2))
+
+    return CaptureResult(baseline_path, len(runs), red_count), None
 
 
 def _format_evidence(

@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from woof.checks import CheckContext
-from woof.checks.runners.check_1_quality_gates import check_1_quality_gates_runner
+from woof.checks.runners.check_1_quality_gates import capture_baseline, check_1_quality_gates_runner
 
 pytestmark = pytest.mark.host_only
 
@@ -769,3 +769,207 @@ mode = "baseline"
     assert outcome.evidence is not None
     assert "ignored" in outcome.evidence
     assert "ajv" in outcome.evidence
+
+
+# ---------------------------------------------------------------------------
+# Baseline freshness — S6
+#
+# Wall-clock and iteration expiry both cause the baseline to stop suppressing.
+# Only `woof baseline capture` (capture_baseline()) writes the baseline.
+# ---------------------------------------------------------------------------
+
+
+def _write_fresh_baseline(repo_root: Path, gates: dict, *, expiry_seconds: int = 86400) -> None:
+    """Write a baseline with freshness metadata and a future wall-clock expiry."""
+    woof_dir = repo_root / ".woof"
+    woof_dir.mkdir(exist_ok=True)
+    record = {
+        "captured_at": "2026-06-16T00:00:00Z",
+        "captured_iteration": 0,
+        "expiry_seconds": expiry_seconds,
+        "expiry_iterations": 100,
+        "gates": gates,
+    }
+    (woof_dir / "quality-gates-baseline.json").write_text(json.dumps(record))
+
+
+def _write_run_count(repo_root: Path, count: int) -> None:
+    woof_dir = repo_root / ".woof"
+    woof_dir.mkdir(exist_ok=True)
+    (woof_dir / "wf-run-count").write_text(json.dumps({"count": count}))
+
+
+def test_fresh_baseline_suppresses_pre_existing_red(tmp_path: Path) -> None:
+    """O1 A fresh baseline (within expiry) suppresses a gate that was red at capture."""
+    fail_cmd = _python_command("import sys; sys.exit(2)")
+    _write_quality_gates(
+        tmp_path,
+        f"""\
+[gates.lint]
+command = {_toml_string(fail_cmd)}
+timeout_seconds = 5
+mode = "baseline"
+""",
+    )
+    _write_fresh_baseline(tmp_path, {"lint": {"command": fail_cmd, "passed": False}})
+    _write_run_count(tmp_path, 5)  # within expiry_iterations = 100
+
+    outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
+
+    assert outcome.ok
+    assert "baseline-suppressed" in outcome.summary
+
+
+def test_wall_clock_expired_baseline_blocks(tmp_path: Path) -> None:
+    """O1 A baseline past its wall-clock expiry stops suppressing; the red gate blocks."""
+    fail_cmd = _python_command("import sys; sys.exit(2)")
+    _write_quality_gates(
+        tmp_path,
+        f"""\
+[gates.lint]
+command = {_toml_string(fail_cmd)}
+timeout_seconds = 5
+mode = "baseline"
+""",
+    )
+    # expiry_seconds = 1: captured in 2020 means it's long expired
+    woof_dir = tmp_path / ".woof"
+    woof_dir.mkdir(exist_ok=True)
+    record = {
+        "captured_at": "2020-01-01T00:00:00Z",
+        "captured_iteration": 0,
+        "expiry_seconds": 1,
+        "expiry_iterations": 100,
+        "gates": {"lint": {"command": fail_cmd, "passed": False}},
+    }
+    (woof_dir / "quality-gates-baseline.json").write_text(json.dumps(record))
+
+    outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
+
+    assert not outcome.ok
+    assert outcome.severity == "blocker"
+    assert outcome.evidence is not None
+    assert "ignored" in outcome.evidence
+    assert "expired" in outcome.evidence
+
+
+def test_iteration_expired_baseline_blocks(tmp_path: Path) -> None:
+    """O1 A baseline past its iteration expiry stops suppressing; the red gate blocks."""
+    fail_cmd = _python_command("import sys; sys.exit(2)")
+    _write_quality_gates(
+        tmp_path,
+        f"""\
+[gates.lint]
+command = {_toml_string(fail_cmd)}
+timeout_seconds = 5
+mode = "baseline"
+""",
+    )
+    # captured_iteration=0, expiry_iterations=5, current run count=10 → expired
+    woof_dir = tmp_path / ".woof"
+    woof_dir.mkdir(exist_ok=True)
+    record = {
+        "captured_at": "2026-06-16T00:00:00Z",
+        "captured_iteration": 0,
+        "expiry_seconds": 86400 * 30,
+        "expiry_iterations": 5,
+        "gates": {"lint": {"command": fail_cmd, "passed": False}},
+    }
+    (woof_dir / "quality-gates-baseline.json").write_text(json.dumps(record))
+    _write_run_count(tmp_path, 10)  # 10 > 0 + 5 → expired
+
+    outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
+
+    assert not outcome.ok
+    assert outcome.severity == "blocker"
+    assert outcome.evidence is not None
+    assert "ignored" in outcome.evidence
+    assert "expired" in outcome.evidence
+
+
+def test_capture_baseline_writes_freshness_metadata(tmp_path: Path) -> None:
+    """O1 capture_baseline() is the only path that writes the baseline; it records freshness fields."""
+    pass_cmd = _python_command("print('ok')")
+    fail_cmd = _python_command("import sys; sys.exit(1)")
+    _write_quality_gates(
+        tmp_path,
+        f"""\
+[gates.pass_gate]
+command = {_toml_string(pass_cmd)}
+timeout_seconds = 5
+
+[gates.fail_gate]
+command = {_toml_string(fail_cmd)}
+timeout_seconds = 5
+""",
+    )
+    _write_run_count(tmp_path, 42)
+
+    result, error = capture_baseline(tmp_path, expiry_seconds=86400, expiry_iterations=50)
+
+    assert error is None
+    assert result.gate_count == 2
+    assert result.red_count == 1
+
+    raw = json.loads(result.baseline_path.read_text())
+    assert raw["captured_iteration"] == 42
+    assert raw["expiry_seconds"] == 86400
+    assert raw["expiry_iterations"] == 50
+    assert raw["gates"]["pass_gate"]["passed"] is True
+    assert raw["gates"]["fail_gate"]["passed"] is False
+
+
+def test_captured_baseline_validates_against_schema(tmp_path: Path) -> None:
+    """O1 A baseline written by capture_baseline() is valid against quality-gates-baseline.schema.json."""
+    pass_cmd = _python_command("print('ok')")
+    _write_quality_gates(
+        tmp_path,
+        f"""\
+[gates.lint]
+command = {_toml_string(pass_cmd)}
+timeout_seconds = 5
+""",
+    )
+
+    result, error = capture_baseline(tmp_path, expiry_seconds=86400, expiry_iterations=100)
+    assert error is None
+
+    proc = subprocess.run(
+        [
+            "ajv",
+            "validate",
+            "--spec=draft2020",
+            "-c",
+            "ajv-formats",
+            "-s",
+            str(BASELINE_SCHEMA),
+            "-d",
+            str(result.baseline_path),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def test_recapture_only_via_explicit_action(tmp_path: Path) -> None:
+    """O1 Running the check runner does not rewrite the baseline — only capture_baseline() does."""
+    fail_cmd = _python_command("import sys; sys.exit(1)")
+    _write_quality_gates(
+        tmp_path,
+        f"""\
+[gates.lint]
+command = {_toml_string(fail_cmd)}
+timeout_seconds = 5
+mode = "baseline"
+""",
+    )
+    # Write a fresh baseline that suppresses the failure
+    _write_fresh_baseline(tmp_path, {"lint": {"command": fail_cmd, "passed": False}})
+    original_content = (tmp_path / ".woof" / "quality-gates-baseline.json").read_text()
+
+    check_1_quality_gates_runner(_make_ctx(tmp_path))
+
+    # Baseline must be unchanged — the runner never rewrites it
+    current_content = (tmp_path / ".woof" / "quality-gates-baseline.json").read_text()
+    assert current_content == original_content

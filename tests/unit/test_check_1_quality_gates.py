@@ -781,28 +781,20 @@ mode = "baseline"
 
 
 def _write_fresh_baseline(repo_root: Path, gates: dict, *, expiry_seconds: int = 86400) -> None:
-    """Write a baseline with freshness metadata and a future wall-clock expiry."""
+    """Write a baseline with wall-clock freshness metadata and a future expiry."""
     woof_dir = repo_root / ".woof"
     woof_dir.mkdir(exist_ok=True)
     captured_at = (datetime.now(UTC) - timedelta(seconds=60)).strftime("%Y-%m-%dT%H:%M:%SZ")
     record = {
         "captured_at": captured_at,
-        "captured_iteration": 0,
         "expiry_seconds": expiry_seconds,
-        "expiry_iterations": 100,
         "gates": gates,
     }
     (woof_dir / "quality-gates-baseline.json").write_text(json.dumps(record))
 
 
-def _write_run_count(repo_root: Path, count: int) -> None:
-    woof_dir = repo_root / ".woof"
-    woof_dir.mkdir(exist_ok=True)
-    (woof_dir / "wf-run-count").write_text(json.dumps({"count": count}))
-
-
 def test_fresh_baseline_suppresses_pre_existing_red(tmp_path: Path) -> None:
-    """O1 A fresh baseline (within expiry) suppresses a gate that was red at capture."""
+    """O1 A fresh baseline (within wall-clock expiry) suppresses a gate that was red at capture."""
     fail_cmd = _python_command("import sys; sys.exit(2)")
     _write_quality_gates(
         tmp_path,
@@ -814,7 +806,6 @@ mode = "baseline"
 """,
     )
     _write_fresh_baseline(tmp_path, {"lint": {"command": fail_cmd, "passed": False}})
-    _write_run_count(tmp_path, 5)  # within expiry_iterations = 100
 
     outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
 
@@ -839,9 +830,7 @@ mode = "baseline"
     woof_dir.mkdir(exist_ok=True)
     record = {
         "captured_at": "2020-01-01T00:00:00Z",
-        "captured_iteration": 0,
         "expiry_seconds": 1,
-        "expiry_iterations": 100,
         "gates": {"lint": {"command": fail_cmd, "passed": False}},
     }
     (woof_dir / "quality-gates-baseline.json").write_text(json.dumps(record))
@@ -855,8 +844,8 @@ mode = "baseline"
     assert "expired" in outcome.evidence
 
 
-def test_iteration_expired_baseline_blocks(tmp_path: Path) -> None:
-    """O1 A baseline past its iteration expiry stops suppressing; the red gate blocks."""
+def test_lowercase_z_captured_at_treats_as_expired(tmp_path: Path) -> None:
+    """R3 A captured_at with lowercase 'z' suffix is parsed tolerantly and expiry still applies."""
     fail_cmd = _python_command("import sys; sys.exit(2)")
     _write_quality_gates(
         tmp_path,
@@ -867,18 +856,16 @@ timeout_seconds = 5
 mode = "baseline"
 """,
     )
-    # captured_iteration=0, expiry_iterations=5, current run count=10 → expired
+    # ajv accepts lowercase 'z' as a valid date-time; Python's fromisoformat does not without
+    # normalisation. Captured in 2020 with expiry_seconds=1 so it is long expired.
     woof_dir = tmp_path / ".woof"
     woof_dir.mkdir(exist_ok=True)
     record = {
-        "captured_at": "2026-06-16T00:00:00Z",
-        "captured_iteration": 0,
-        "expiry_seconds": 86400 * 30,
-        "expiry_iterations": 5,
+        "captured_at": "2020-01-01T00:00:00z",
+        "expiry_seconds": 1,
         "gates": {"lint": {"command": fail_cmd, "passed": False}},
     }
     (woof_dir / "quality-gates-baseline.json").write_text(json.dumps(record))
-    _write_run_count(tmp_path, 10)  # 10 > 0 + 5 → expired
 
     outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
 
@@ -889,13 +876,8 @@ mode = "baseline"
     assert "expired" in outcome.evidence
 
 
-def test_absent_counter_treats_iteration_axis_as_expired(tmp_path: Path) -> None:
-    """R2 A committed baseline with captured_iteration > 0 and no counter file fails closed.
-
-    The iteration axis must be treated as expired (baseline ignored) rather than
-    suppressing failures, because a missing counter is an untrusted state (fresh
-    checkout or reset counter).
-    """
+def test_garbage_captured_at_treats_as_expired(tmp_path: Path) -> None:
+    """R3 An unparseable captured_at fails closed: the baseline is treated as expired."""
     fail_cmd = _python_command("import sys; sys.exit(2)")
     _write_quality_gates(
         tmp_path,
@@ -908,63 +890,24 @@ mode = "baseline"
     )
     woof_dir = tmp_path / ".woof"
     woof_dir.mkdir(exist_ok=True)
-    # Baseline was captured at iteration 5; no wf-run-count file exists (fresh checkout).
+    # captured_at passes schema validation (any string satisfying date-time format would be caught
+    # by ajv, but we write it raw here to test the Python parse path directly).
+    # A completely garbage string cannot be parsed; the baseline must be treated as expired.
     record = {
-        "captured_at": (datetime.now(UTC) - timedelta(seconds=60)).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "captured_iteration": 5,
+        "captured_at": "not-a-date",
         "expiry_seconds": 86400,
-        "expiry_iterations": 100,
         "gates": {"lint": {"command": fail_cmd, "passed": False}},
     }
     (woof_dir / "quality-gates-baseline.json").write_text(json.dumps(record))
-    # No wf-run-count file written — counter is absent.
 
     outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
 
-    # Baseline must be ignored (fail closed); the red gate must block.
+    # Schema validation rejects "not-a-date" as a date-time, so the baseline is ignored
+    # at the validation stage before even reaching the freshness check. Either way it blocks.
     assert not outcome.ok
     assert outcome.severity == "blocker"
     assert outcome.evidence is not None
     assert "ignored" in outcome.evidence
-    assert "expired" in outcome.evidence
-
-
-def test_regressed_counter_treats_iteration_axis_as_expired(tmp_path: Path) -> None:
-    """R2 A counter value less than captured_iteration fails closed.
-
-    A counter that is lower than the captured baseline iteration is an impossible
-    state going forward; the baseline cannot be trusted to gate suppression.
-    """
-    fail_cmd = _python_command("import sys; sys.exit(2)")
-    _write_quality_gates(
-        tmp_path,
-        f"""\
-[gates.lint]
-command = {_toml_string(fail_cmd)}
-timeout_seconds = 5
-mode = "baseline"
-""",
-    )
-    woof_dir = tmp_path / ".woof"
-    woof_dir.mkdir(exist_ok=True)
-    record = {
-        "captured_at": (datetime.now(UTC) - timedelta(seconds=60)).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "captured_iteration": 10,
-        "expiry_seconds": 86400,
-        "expiry_iterations": 100,
-        "gates": {"lint": {"command": fail_cmd, "passed": False}},
-    }
-    (woof_dir / "quality-gates-baseline.json").write_text(json.dumps(record))
-    # Counter at 3 — less than captured_iteration 10 (regressed/reset).
-    _write_run_count(tmp_path, 3)
-
-    outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
-
-    assert not outcome.ok
-    assert outcome.severity == "blocker"
-    assert outcome.evidence is not None
-    assert "ignored" in outcome.evidence
-    assert "expired" in outcome.evidence
 
 
 def test_capture_baseline_writes_freshness_metadata(tmp_path: Path) -> None:
@@ -983,18 +926,17 @@ command = {_toml_string(fail_cmd)}
 timeout_seconds = 5
 """,
     )
-    _write_run_count(tmp_path, 42)
 
-    result, error = capture_baseline(tmp_path, expiry_seconds=86400, expiry_iterations=50)
+    result, error = capture_baseline(tmp_path, expiry_seconds=86400)
 
     assert error is None
     assert result.gate_count == 2
     assert result.red_count == 1
 
     raw = json.loads(result.baseline_path.read_text())
-    assert raw["captured_iteration"] == 42
     assert raw["expiry_seconds"] == 86400
-    assert raw["expiry_iterations"] == 50
+    assert "captured_iteration" not in raw
+    assert "expiry_iterations" not in raw
     assert raw["gates"]["pass_gate"]["passed"] is True
     assert raw["gates"]["fail_gate"]["passed"] is False
 
@@ -1011,7 +953,7 @@ timeout_seconds = 5
 """,
     )
 
-    result, error = capture_baseline(tmp_path, expiry_seconds=86400, expiry_iterations=100)
+    result, error = capture_baseline(tmp_path, expiry_seconds=86400)
     assert error is None
 
     proc = subprocess.run(

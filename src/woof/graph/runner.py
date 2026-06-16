@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import fcntl
-import json
 from pathlib import Path
 
 from woof.gate.write import write_gate
@@ -12,32 +10,6 @@ from woof.graph.nodes import NodeHandler, default_registry
 from woof.graph.state import NodeInput, NodeOutput, NodeStatus, NodeType
 from woof.graph.transitions import StageStateError, epic_dir, next_node
 from woof.paths import schema_dir
-
-_WF_RUN_COUNT_PATH = ".woof/wf-run-count"
-_WF_RUN_COUNT_LOCK_PATH = ".woof/wf-run-count.lock"
-
-
-def _increment_run_count(repo_root: Path) -> None:
-    """Increment .woof/wf-run-count exactly once per woof wf invocation.
-
-    A dedicated repo-wide flock on wf-run-count.lock serialises concurrent
-    runs for different epics so no increment is lost to a read-modify-write race.
-    """
-    count_path = repo_root / _WF_RUN_COUNT_PATH
-    lock_path = repo_root / _WF_RUN_COUNT_LOCK_PATH
-    count_path.parent.mkdir(exist_ok=True)
-    with open(lock_path, "w") as lock_fh:
-        fcntl.flock(lock_fh, fcntl.LOCK_EX)
-        try:
-            try:
-                data = json.loads(count_path.read_text()) if count_path.exists() else {}
-                count = data.get("count") if isinstance(data, dict) else None
-                new_count = (int(count) + 1) if isinstance(count, int) and count >= 0 else 1
-            except (OSError, json.JSONDecodeError, TypeError, ValueError):
-                new_count = 1
-            count_path.write_text(json.dumps({"count": new_count}))
-        finally:
-            fcntl.flock(lock_fh, fcntl.LOCK_UN)
 
 
 def _gate_path(epic_id: int) -> str:
@@ -93,7 +65,6 @@ def run_graph(
     """Run the deterministic graph until it halts, gates, or completes."""
 
     with epic_workflow_lock(repo_root, epic_id):
-        _increment_run_count(repo_root)
         handlers: dict = registry or default_registry()
         outputs: list[NodeOutput] = []
         while True:

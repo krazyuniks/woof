@@ -42,7 +42,6 @@ from woof.lib.schema_validate import validate_against_schema
 CHECK_ID = "check_1_quality_gates"
 CONFIG_PATH = ".woof/quality-gates.toml"
 BASELINE_PATH = ".woof/quality-gates-baseline.json"
-RUN_COUNT_PATH = ".woof/wf-run-count"
 DEFAULT_TIMEOUT_SECONDS = 300
 KILL_GRACE_SECONDS = 1
 OUTPUT_LIMIT = 1200
@@ -187,70 +186,31 @@ def _is_suppressed(run: _GateRun, baseline: dict[str, _BaselineEntry]) -> bool:
     return not entry.passed
 
 
-def _read_run_count(repo_root: Path, captured_iteration: int | None = None) -> int | None:
-    """Return the current woof run count, or None when the counter is untrusted.
-
-    None is returned (fail-closed) when:
-    - the counter file is absent or unreadable (fresh checkout, reset counter)
-    - the stored value is less than captured_iteration (impossible-going-forward regression)
-
-    In both cases the caller treats the iteration axis as expired so that a
-    baseline whose counter can't be trusted does not keep suppressing failures.
-    """
-    path = repo_root / RUN_COUNT_PATH
-    if not path.exists():
-        return None
-    try:
-        data = json.loads(path.read_text())
-        count = data.get("count") if isinstance(data, dict) else None
-        if not (isinstance(count, int) and count >= 0):
-            return None
-        if captured_iteration is not None and count < captured_iteration:
-            return None
-        return count
-    except (OSError, json.JSONDecodeError, TypeError, ValueError):
-        return None
-
-
-def _check_freshness(data: dict[str, Any], repo_root: Path) -> str | None:
+def _check_freshness(data: dict[str, Any]) -> str | None:
     """Return an expiry reason string if the baseline is expired, or None if fresh.
 
-    Wall-clock: expired when UTC now > captured_at + expiry_seconds.
-    Iteration: expired when current run count > captured_iteration + expiry_iterations,
-               OR when the counter is absent/unreadable/regressed (fail-closed: treat
-               as iteration-expired so the baseline cannot suppress indefinitely).
-    A baseline without freshness fields has no expiry (backwards-compatible with S5).
+    Wall-clock only: expired when UTC now > captured_at + expiry_seconds.
+    On any parse failure of captured_at, the baseline is treated as expired (fail closed).
+    A baseline without expiry_seconds has no expiry (backwards-compatible with S5).
     """
     expiry_seconds = data.get("expiry_seconds")
-    expiry_iterations = data.get("expiry_iterations")
-    captured_iteration = data.get("captured_iteration")
+    if expiry_seconds is None:
+        return None
 
-    if expiry_seconds is not None:
-        captured_at_str = data.get("captured_at", "")
-        try:
-            captured_at = datetime.fromisoformat(captured_at_str.replace("Z", "+00:00"))
-            elapsed = (datetime.now(UTC) - captured_at).total_seconds()
-            if elapsed > expiry_seconds:
-                return (
-                    f"baseline expired: wall-clock age {elapsed:.0f}s exceeds "
-                    f"expiry_seconds {expiry_seconds}s"
-                )
-        except (ValueError, AttributeError):
-            pass
-
-    if expiry_iterations is not None and captured_iteration is not None:
-        current = _read_run_count(repo_root, captured_iteration)
-        if current is None:
-            # Counter absent, unreadable, or regressed — fail closed: treat as expired.
+    captured_at_str = data.get("captured_at", "")
+    try:
+        # Normalise trailing lowercase 'z' (accepted by ajv but not by fromisoformat).
+        if isinstance(captured_at_str, str) and captured_at_str.endswith("z"):
+            captured_at_str = captured_at_str[:-1] + "Z"
+        captured_at = datetime.fromisoformat(captured_at_str.replace("Z", "+00:00"))
+        elapsed = (datetime.now(UTC) - captured_at).total_seconds()
+        if elapsed > expiry_seconds:
             return (
-                "baseline expired: run counter absent or regressed "
-                f"(captured_iteration={captured_iteration}); cannot verify iteration window"
+                f"baseline expired: wall-clock age {elapsed:.0f}s exceeds "
+                f"expiry_seconds {expiry_seconds}s"
             )
-        if current > captured_iteration + expiry_iterations:
-            return (
-                f"baseline expired: run count {current} exceeds "
-                f"captured_iteration {captured_iteration} + expiry_iterations {expiry_iterations}"
-            )
+    except (ValueError, AttributeError, TypeError):
+        return "baseline expired: captured_at is unparseable; treating as expired (fail closed)"
 
     return None
 
@@ -268,7 +228,7 @@ def _load_baseline(repo_root: Path) -> tuple[dict[str, _BaselineEntry], str | No
     ok, errors = validate_against_schema(data, "quality-gates-baseline")
     if not ok:
         return {}, f"baseline file ignored (could not validate — {errors})"
-    expiry_reason = _check_freshness(data, repo_root)
+    expiry_reason = _check_freshness(data)
     if expiry_reason is not None:
         return {}, f"baseline file ignored ({expiry_reason})"
     gates: dict[str, Any] = data.get("gates", {})
@@ -412,7 +372,6 @@ class CaptureResult:
 def capture_baseline(
     repo_root: Path,
     expiry_seconds: int,
-    expiry_iterations: int,
 ) -> tuple[CaptureResult, str | None]:
     """Run all configured gates and write a fresh baseline record.
 
@@ -427,8 +386,6 @@ def capture_baseline(
     runs = [_run_gate(repo_root, spec) for spec in specs]
 
     captured_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-    # None means the counter is absent (no runs yet); treat as 0 at capture time.
-    current_count = _read_run_count(repo_root) or 0
 
     gates_record: dict[str, Any] = {}
     red_count = 0
@@ -440,9 +397,7 @@ def capture_baseline(
 
     record: dict[str, Any] = {
         "captured_at": captured_at,
-        "captured_iteration": current_count,
         "expiry_seconds": expiry_seconds,
-        "expiry_iterations": expiry_iterations,
         "gates": gates_record,
     }
 

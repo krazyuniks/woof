@@ -2,7 +2,7 @@
 
 Runs every gate declared in .woof/quality-gates.toml, records their pass/fail state
 and command identity, and writes a fresh .woof/quality-gates-baseline.json with
-wall-clock and iteration freshness metadata.
+wall-clock freshness metadata.
 
 Recapture is NEVER implicit: this command is the ONLY path that writes the baseline.
 Any other mechanism that suppressed failures without explicit operator intent would be
@@ -16,7 +16,6 @@ import sys
 from pathlib import Path
 
 DEFAULT_EXPIRY_DAYS = 30
-DEFAULT_EXPIRY_ITERATIONS = 100
 
 
 def _find_repo_root() -> Path:
@@ -32,9 +31,8 @@ def cmd_baseline_capture(args: argparse.Namespace) -> int:
     repo_root = Path(args.project_root).resolve() if args.project_root else _find_repo_root()
 
     expiry_seconds = args.expiry_days * 86400
-    expiry_iterations = args.expiry_iterations
 
-    result, error = capture_baseline(repo_root, expiry_seconds, expiry_iterations)
+    result, error = capture_baseline(repo_root, expiry_seconds)
     if error is not None:
         sys.stderr.write(f"woof baseline capture: {error}\n")
         return 2
@@ -71,13 +69,6 @@ def setup_baseline_parser(sub: argparse._SubParsersAction) -> None:  # type: ign
         default=DEFAULT_EXPIRY_DAYS,
         metavar="N",
         help=f"wall-clock expiry in days (default: {DEFAULT_EXPIRY_DAYS})",
-    )
-    capture.add_argument(
-        "--expiry-iterations",
-        type=int,
-        default=DEFAULT_EXPIRY_ITERATIONS,
-        metavar="N",
-        help=f"run-iteration expiry (default: {DEFAULT_EXPIRY_ITERATIONS})",
     )
     capture.set_defaults(func=cmd_baseline_capture)
 

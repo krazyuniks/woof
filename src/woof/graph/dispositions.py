@@ -29,6 +29,9 @@ _CD_ID_RE = re.compile(r"\bCD([1-9]\d*)\b")
 # Schema refs — path rooted at schemas/ with .schema.json suffix
 _SCHEMA_REF_RE = re.compile(r"\b(schemas/[\w./\-]+\.schema\.json)\b")
 
+# Quality-gate refs — explicit gate:<name> prefix required; bare names in prose do not resolve
+_GATE_REF_RE = re.compile(r"\bgate:([\w\-]+)")
+
 
 def resolve_evidence_reference(
     evidence: str,
@@ -45,7 +48,7 @@ def resolve_evidence_reference(
     - observable outcome id (O<n> present in EPIC.md)
     - contract-decision id (CD<n> present in EPIC.md)
     - schema ref (schemas/*.schema.json exists under repo_root)
-    - quality-gate id (named gate in .woof/quality-gates.toml)
+    - gate:<name> (explicit prefix; <name> present in .woof/quality-gates.toml)
     """
     ev = evidence.strip()
     if not ev:
@@ -101,7 +104,7 @@ def _has_schema_ref(evidence: str, repo_root: Path) -> bool:
 
 
 def _has_gate_ref(evidence: str, gate_names: set[str]) -> bool:
-    return any(re.search(rf"\b{re.escape(name)}\b", evidence) for name in gate_names)
+    return any(m.group(1) in gate_names for m in _GATE_REF_RE.finditer(evidence))
 
 
 def _epic_artefact_ids(epic_dir: Path) -> tuple[set[str], set[str]]:
@@ -334,6 +337,11 @@ def check_critique_rollup(critique_front: dict[str, Any]) -> list[str]:
     top_sev = critique_severity(critique_front)
     findings = critique_findings(critique_front)
     if not findings:
+        if top_sev == "blocker":
+            return [
+                "critique top-level severity is 'blocker' but has no findings; "
+                "a blocker critique requires at least one finding with severity 'blocker'"
+            ]
         return []
     max_sev = max(
         (f.get("severity", "info") for f in findings),

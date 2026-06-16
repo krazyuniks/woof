@@ -81,7 +81,7 @@
         },
         "evidence": {
           "type": "string",
-          "description": "Resolvable artefact evidence for the finding. Required (and non-empty) when severity=blocker; optional for non-blocker severities. Must cite at least one of: file:line, story id (S<n>), observable outcome id (O<n>), contract-decision id (CD<n>), schema ref (schemas/*.schema.json), or quality-gate id."
+          "description": "Resolvable artefact evidence for the finding. Required (and non-empty) when severity=blocker; optional for non-blocker severities. Must cite at least one explicit reference: file:line (tracked path), S<n> (story id), O<n> (outcome id), CD<n> (contract-decision id), schemas/*.schema.json (schema path), or gate:<name> (quality-gate with explicit prefix). Bare prose and bare gate names do not resolve."
         },
         "suggestion": {
           "type": "string",

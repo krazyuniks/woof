@@ -65,7 +65,7 @@ Every `blocker` finding must carry an `evidence` field that resolves to a known 
 - **observable outcome id** — `O<n>` declared in `EPIC.md`.
 - **contract-decision id** — `CD<n>` declared in `EPIC.md`.
 - **schema ref** — `schemas/foo.schema.json` that exists in the repo.
-- **quality-gate id** — a named gate from `.woof/quality-gates.toml` (e.g. `lint`, `test`).
+- **quality-gate id** — `gate:<name>` where `<name>` is a gate in `.woof/quality-gates.toml` (e.g. `gate:lint`, `gate:test`). The `gate:` prefix is required; a bare gate name in prose does not resolve.
 
 A blocker without a resolvable evidence reference will itself be reported as a blocker by Check 6. Record uncertain concerns as `minor` or `info` rather than adding an unsupported blocker with vague prose. Do not add unsupported front-matter keys such as confidence.
 

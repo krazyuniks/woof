@@ -431,7 +431,7 @@ def test_blocker_with_schema_ref_evidence_passes_O4(tmp_path: Path) -> None:
 
 
 def test_blocker_with_quality_gate_id_evidence_passes_O4(tmp_path: Path) -> None:
-    """O4 S4: blocker evidence naming a quality-gate id from quality-gates.toml resolves."""
+    """O4 S4: blocker evidence with explicit gate:<name> prefix resolves against quality-gates.toml."""
     import sys
 
     sys.path.insert(0, str(REPO_ROOT))
@@ -441,7 +441,7 @@ def test_blocker_with_quality_gate_id_evidence_passes_O4(tmp_path: Path) -> None
     _write_critique(
         epic_dir / "critique",
         "S1",
-        _blocker_critique("S1", "the lint gate fails on the staged diff"),
+        _blocker_critique("S1", "gate:lint fails on the staged diff"),
     )
     ctx = _make_ctx_with_plan(epic_dir)
 
@@ -669,6 +669,101 @@ def test_rollup_mismatch_blocker_finding_bad_evidence_also_fails_R5(tmp_path: Pa
 
     assert not outcome.ok
     assert outcome.severity == "blocker"
+
+
+# ---------------------------------------------------------------------------
+# R6 — strict explicit-reference grammar + blocker-needs-findings
+# ---------------------------------------------------------------------------
+
+
+def test_bare_gate_name_in_prose_does_not_resolve_R6(tmp_path: Path) -> None:
+    """R6: bare gate name in prose ('the test is wrong') does NOT resolve; gate: prefix required."""
+    import sys
+
+    sys.path.insert(0, str(REPO_ROOT))
+    from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
+
+    epic_dir = tmp_path / ".woof" / "epics" / "E1"
+    # 'test' is a real gate name but cited without the gate: prefix — must fail
+    _write_critique(
+        epic_dir / "critique",
+        "S1",
+        _blocker_critique("S1", "the test is wrong and needs fixing"),
+    )
+    ctx = _make_ctx_with_plan(epic_dir)
+
+    outcome = check_6_critique_blocker_runner(ctx)
+
+    assert not outcome.ok
+    assert outcome.severity == "blocker"
+    assert "resolvable evidence" in outcome.summary
+
+
+def test_gate_explicit_prefix_resolves_R6(tmp_path: Path) -> None:
+    """R6: gate:test explicit prefix resolves when 'test' is a real gate name."""
+    import sys
+
+    sys.path.insert(0, str(REPO_ROOT))
+    from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
+
+    epic_dir = tmp_path / ".woof" / "epics" / "E1"
+    _write_critique(
+        epic_dir / "critique",
+        "S1",
+        _blocker_critique("S1", "gate:test fails on the staged diff"),
+    )
+    ctx = _make_ctx_with_plan(epic_dir)
+
+    outcome = check_6_critique_blocker_runner(ctx)
+
+    assert not outcome.ok
+    assert outcome.severity == "blocker"
+    assert "critique severity is blocker" in outcome.summary
+
+
+def test_blocker_with_no_findings_fails_rollup_R6(tmp_path: Path) -> None:
+    """R6: blocker top-level severity with no findings fails roll-up validation."""
+    import sys
+
+    sys.path.insert(0, str(REPO_ROOT))
+    from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
+
+    epic_dir = tmp_path / ".woof" / "epics" / "E1"
+    critique = (
+        "---\ntarget: story\ntarget_id: S1\nseverity: blocker\n"
+        'timestamp: "2026-01-01T00:00:00Z"\nharness: test\n'
+        "findings: []\n---\nBody.\n"
+    )
+    _write_critique(epic_dir / "critique", "S1", critique)
+    ctx = _make_ctx_with_plan(epic_dir)
+
+    outcome = check_6_critique_blocker_runner(ctx)
+
+    assert not outcome.ok
+    assert outcome.severity == "blocker"
+    assert "blocker" in outcome.summary
+
+
+def test_nonexistent_gate_name_with_prefix_does_not_resolve_R6(tmp_path: Path) -> None:
+    """R6: gate:nonexistent does not resolve when 'nonexistent' is not in quality-gates.toml."""
+    import sys
+
+    sys.path.insert(0, str(REPO_ROOT))
+    from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
+
+    epic_dir = tmp_path / ".woof" / "epics" / "E1"
+    _write_critique(
+        epic_dir / "critique",
+        "S1",
+        _blocker_critique("S1", "gate:nonexistent_gate_xyz is the problem"),
+    )
+    ctx = _make_ctx_with_plan(epic_dir)
+
+    outcome = check_6_critique_blocker_runner(ctx)
+
+    assert not outcome.ok
+    assert outcome.severity == "blocker"
+    assert "resolvable evidence" in outcome.summary
 
 
 def test_honest_blocker_critique_still_reported_as_blocker_R5(tmp_path: Path) -> None:

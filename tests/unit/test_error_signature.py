@@ -178,9 +178,34 @@ def test_same_span_forms_same_signature() -> None:
     assert a == b == c
 
 
-def test_bracket_lc_span_stripped() -> None:
-    sig = normalise("syntax error [42:10] unexpected token")
+def test_paren_shape_tuple_preserved() -> None:
+    # Shape tuples like (2, 3) without a preceding path must not be stripped.
+    sig = normalise("ValueError: expected shape (2, 3)")
+    assert "(2, 3)" in sig
+
+
+def test_paren_different_shape_tuples_distinct() -> None:
+    a = normalise("ValueError: expected shape (2, 3)")
+    b = normalise("ValueError: expected shape (4, 5)")
+    assert a != b
+
+
+def test_bracket_lc_after_path_stripped() -> None:
+    sig = normalise("error in foo.py [42:10] bad value")
     assert "[42:10]" not in sig
+    assert "<path>" in sig
+
+
+def test_bracket_lc_standalone_preserved() -> None:
+    # [N:N] without a preceding path is a slice literal, not a position — preserve it.
+    sig = normalise("IndexError: slice [1:2] invalid")
+    assert "[1:2]" in sig
+
+
+def test_bracket_lc_different_slices_distinct() -> None:
+    a = normalise("IndexError: slice [1:2] invalid")
+    b = normalise("IndexError: slice [3:4] invalid")
+    assert a != b
 
 
 def test_exit_code_key_value_preserved() -> None:

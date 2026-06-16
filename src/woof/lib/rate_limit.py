@@ -15,10 +15,13 @@ _RATE_LIMIT_EXCEEDED_RE = re.compile(r"\brate[\s_-]?limit\s+exceeded\b")
 _RATE_LIMITED_RE = re.compile(r"\brate[\s_-]?limited\b")
 _RATELIMIT_RE = re.compile(r"\bratelimit(?:ed)?\b")
 
-# Negated rate-limit forms: "no rate limit", "no rate limited", "rate limit: none".
+# Negated rate-limit forms: "no rate limit", "no rate limited", "rate limit: none",
+# "no http/status/error/code 429" (guards the 429 unambiguous patterns against
+# explicit negation in diagnostic output like "no HTTP 429 observed").
 _NEGATED_RE = re.compile(
     r"\bno\s+rate[\s_-]?limit(?:ed)?\b"
-    r"|\brate[\s_-]?limit\s*:\s*none\b",
+    r"|\brate[\s_-]?limit\s*:\s*none\b"
+    r"|\bno\s+(?:http|status|error|code)\s+429\b",
     re.IGNORECASE,
 )
 
@@ -32,7 +35,11 @@ def classify(stdout: str, stderr: str) -> str | None:
     """
     combined = (stdout + "\n" + stderr).lower()
 
-    # Unambiguous patterns — no negation risk.
+    # Short-circuit on explicit negation before any pattern check.
+    if _NEGATED_RE.search(combined):
+        return None
+
+    # Unambiguous patterns.
     if _TOO_MANY_REQUESTS_RE.search(combined):
         return "rate_limited"
     if _429_HTTP_RE.search(combined):
@@ -42,9 +49,7 @@ def classify(stdout: str, stderr: str) -> str | None:
     if _RESOURCE_EXHAUSTED_RE.search(combined):
         return "rate_limited"
 
-    # "Rate limit" phrases — check for negation first to avoid false positives.
-    if _NEGATED_RE.search(combined):
-        return None
+    # "Rate limit" phrases.
     if _RATE_LIMIT_EXCEEDED_RE.search(combined):
         return "rate_limited"
     if _RATE_LIMITED_RE.search(combined):

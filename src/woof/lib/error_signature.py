@@ -20,10 +20,12 @@ _PATH_RE = re.compile(
 _SPAN_AFTER_PATH_RE = re.compile(r"(?<=<path>)(?::\d+)+")
 # "line L" or "line L, col C" (word-boundary anchored, case-insensitive).
 _LINE_FORM_RE = re.compile(r"\bline\s+\d+(?:\s*,\s*col\s+\d+)?\b", re.IGNORECASE)
-# (L,C) parenthesised pair.
-_PAREN_LC_RE = re.compile(r"\(\s*\d+\s*,\s*\d+\s*\)")
-# [L:C] bracket pair.
-_BRACKET_LC_RE = re.compile(r"\[\s*\d+\s*:\s*\d+\s*\]")
+# (L,C) parenthesised pair — only immediately after a <path> placeholder to avoid
+# stripping meaningful numeric tuples such as shape (2, 3) in error messages.
+_PAREN_LC_RE = re.compile(r"(<path>)\s*\(\s*\d+\s*,\s*\d+\s*\)")
+# [L:C] bracket pair — only immediately after a <path> placeholder to avoid
+# stripping slice notation such as [1:2] from IndexError messages.
+_BRACKET_LC_RE = re.compile(r"(<path>)\s*\[\s*\d+\s*:\s*\d+\s*\]")
 # Whitespace left between <path> and a following colon after span removal.
 _PATH_COLON_WS_RE = re.compile(r"(?<=<path>)\s+(?=:)")
 
@@ -46,8 +48,8 @@ def normalise(text: str) -> str:
     sig = _PATH_RE.sub("<path>", sig)
     sig = _SPAN_AFTER_PATH_RE.sub("", sig)
     sig = _LINE_FORM_RE.sub("", sig)
-    sig = _PAREN_LC_RE.sub("", sig)
-    sig = _BRACKET_LC_RE.sub("", sig)
+    sig = _PAREN_LC_RE.sub(r"\1", sig)
+    sig = _BRACKET_LC_RE.sub(r"\1", sig)
     sig = _PATH_COLON_WS_RE.sub("", sig)
     sig = _EXCESS_WS_RE.sub(" ", sig).strip()
     return sig[:MAX_LEN]

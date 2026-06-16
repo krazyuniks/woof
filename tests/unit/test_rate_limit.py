@@ -58,3 +58,11 @@ def test_rate_limited_retry_classified() -> None:
 
 def test_rate_limit_none_not_classified() -> None:
     assert classify("rate limit: none", "") is None
+
+
+def test_no_http_429_not_classified() -> None:
+    assert classify("no HTTP 429 observed", "") is None
+
+
+def test_no_status_429_not_classified() -> None:
+    assert classify("no status 429 errors", "") is None

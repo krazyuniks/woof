@@ -524,3 +524,89 @@ mode = "baseline"
 
     assert outcome.ok
     assert "baseline-suppressed" in outcome.summary
+
+
+# ---------------------------------------------------------------------------
+# Schema-invalid baseline fails closed — R3 fix
+# ---------------------------------------------------------------------------
+
+
+def test_baseline_missing_captured_at_fails_closed(tmp_path: Path) -> None:
+    """A baseline missing required captured_at suppresses nothing; the gate blocks."""
+    fail_cmd = _python_command("raise SystemExit(1)")
+    _write_quality_gates(
+        tmp_path,
+        f"""\
+[gates.lint]
+command = {_toml_string(fail_cmd)}
+timeout_seconds = 5
+mode = "baseline"
+""",
+    )
+    woof_dir = tmp_path / ".woof"
+    woof_dir.mkdir(exist_ok=True)
+    (woof_dir / "quality-gates-baseline.json").write_text(
+        json.dumps({"gates": {"lint": {"command": fail_cmd, "passed": False}}})
+    )
+
+    outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
+
+    assert not outcome.ok
+    assert outcome.severity == "blocker"
+    assert outcome.evidence is not None
+    assert "ignored" in outcome.evidence
+
+
+def test_baseline_gate_missing_passed_field_fails_closed(tmp_path: Path) -> None:
+    """A baseline where a gate entry is missing the required 'passed' field suppresses nothing."""
+    fail_cmd = _python_command("raise SystemExit(1)")
+    _write_quality_gates(
+        tmp_path,
+        f"""\
+[gates.lint]
+command = {_toml_string(fail_cmd)}
+timeout_seconds = 5
+mode = "baseline"
+""",
+    )
+    woof_dir = tmp_path / ".woof"
+    woof_dir.mkdir(exist_ok=True)
+    (woof_dir / "quality-gates-baseline.json").write_text(
+        json.dumps(
+            {
+                "captured_at": "2026-06-16T00:00:00Z",
+                "gates": {"lint": {"command": fail_cmd}},  # missing 'passed'
+            }
+        )
+    )
+
+    outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
+
+    assert not outcome.ok
+    assert outcome.severity == "blocker"
+    assert outcome.evidence is not None
+    assert "ignored" in outcome.evidence
+
+
+def test_schema_valid_baseline_with_captured_at_suppresses(tmp_path: Path) -> None:
+    """A fully schema-valid baseline (with captured_at) still suppresses a red-at-capture gate."""
+    fail_cmd = _python_command("raise SystemExit(1)")
+    _write_quality_gates(
+        tmp_path,
+        f"""\
+[gates.lint]
+command = {_toml_string(fail_cmd)}
+timeout_seconds = 5
+mode = "baseline"
+""",
+    )
+    # _write_baseline always writes a captured_at field — this is the schema-valid form.
+    _write_baseline(tmp_path, {"lint": {"command": fail_cmd, "passed": False}})
+
+    outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
+
+    assert outcome.ok
+    assert outcome.severity == "minor"
+    assert "baseline-suppressed" in outcome.summary
+    assert outcome.evidence is not None
+    assert "baseline-suppressed finding" in outcome.evidence

@@ -35,6 +35,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel, ValidationError
+
 from woof.checks import CheckContext, CheckOutcome
 
 CHECK_ID = "check_1_quality_gates"
@@ -47,6 +49,16 @@ OUTPUT_LIMIT = 1200
 _MODE_STRICT = "strict"
 _MODE_BASELINE = "baseline"
 _VALID_MODES = {_MODE_STRICT, _MODE_BASELINE}
+
+
+class _BaselineGateModel(BaseModel):
+    command: str
+    passed: bool
+
+
+class _BaselineRecord(BaseModel):
+    captured_at: str
+    gates: dict[str, _BaselineGateModel]
 
 
 @dataclass(frozen=True)
@@ -85,7 +97,7 @@ def check_1_quality_gates_runner(ctx: CheckContext) -> CheckOutcome:
             paths=[CONFIG_PATH],
         )
 
-    baseline = _load_baseline(ctx.repo_root)
+    baseline, baseline_warning = _load_baseline(ctx.repo_root)
     runs = [_run_gate(ctx.repo_root, spec) for spec in specs]
 
     blocking_failures: list[_GateRun] = []
@@ -108,14 +120,19 @@ def check_1_quality_gates_runner(ctx: CheckContext) -> CheckOutcome:
         else:
             blocking_failures.append(run)
 
+    def _append_warning(evidence: str | None) -> str | None:
+        if not baseline_warning:
+            return evidence
+        return f"{evidence}\n\n{baseline_warning}" if evidence else baseline_warning
+
     if blocking_failures:
         return CheckOutcome(
             id=CHECK_ID,
             ok=False,
             severity="blocker",
             summary=f"{len(blocking_failures)} quality gate command(s) failed",
-            evidence=_format_evidence(
-                blocking_failures, non_blocking_findings, suppressed_findings
+            evidence=_append_warning(
+                _format_evidence(blocking_failures, non_blocking_findings, suppressed_findings)
             ),
             paths=[CONFIG_PATH],
             command=_single_command(blocking_failures),
@@ -133,10 +150,22 @@ def check_1_quality_gates_runner(ctx: CheckContext) -> CheckOutcome:
                 f"{len(non_blocking_findings)} non-blocking quality gate finding(s); "
                 "blocking gates passed"
             ),
-            evidence=_format_evidence([], non_blocking_findings, suppressed_findings),
+            evidence=_append_warning(
+                _format_evidence([], non_blocking_findings, suppressed_findings)
+            ),
             paths=[CONFIG_PATH],
             command=_single_command(all_findings),
             exit_code=_single_exit_code(all_findings),
+        )
+
+    if baseline_warning:
+        return CheckOutcome(
+            id=CHECK_ID,
+            ok=True,
+            severity="minor",
+            summary=f"all {len(runs)} quality gate command(s) passed; baseline file was ignored",
+            evidence=baseline_warning,
+            paths=[CONFIG_PATH],
         )
 
     return CheckOutcome(
@@ -167,28 +196,26 @@ def _is_suppressed(run: _GateRun, baseline: dict[str, _BaselineEntry]) -> bool:
     return not entry.passed
 
 
-def _load_baseline(repo_root: Path) -> dict[str, _BaselineEntry]:
+def _load_baseline(repo_root: Path) -> tuple[dict[str, _BaselineEntry], str | None]:
     baseline_path = repo_root / BASELINE_PATH
     if not baseline_path.exists():
-        return {}
+        return {}, None
     try:
         data = json.loads(baseline_path.read_text())
     except (OSError, json.JSONDecodeError):
-        return {}
+        return {}, None
     if not isinstance(data, dict):
-        return {}
-    gates = data.get("gates", {})
-    if not isinstance(gates, dict):
-        return {}
-    result: dict[str, _BaselineEntry] = {}
-    for name, entry in gates.items():
-        if not isinstance(entry, dict):
-            continue
-        command = entry.get("command")
-        passed = entry.get("passed")
-        if isinstance(command, str) and isinstance(passed, bool):
-            result[name] = _BaselineEntry(command=command, passed=passed)
-    return result
+        return {}, None
+    try:
+        record = _BaselineRecord.model_validate(data)
+    except ValidationError as exc:
+        errors = "; ".join(
+            f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in exc.errors()
+        )
+        return {}, f"baseline file ignored (schema invalid — {errors})"
+    return {
+        name: _BaselineEntry(command=g.command, passed=g.passed) for name, g in record.gates.items()
+    }, None
 
 
 def _load_gate_specs(config_path: Path) -> tuple[list[_GateSpec], str | None]:

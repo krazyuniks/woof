@@ -513,3 +513,64 @@ def test_plan_critique_node_rejects_rollup_mismatch_info_top_blocker_finding_R5(
 
     assert output.status == NodeStatus.HALTED
     assert output.triggered_by == ["schema_validation_failed"]
+
+
+# ---------------------------------------------------------------------------
+# E21 S1 — playbook menu replaces bundled bodies
+# ---------------------------------------------------------------------------
+
+
+def test_playbook_menu_lists_all_research_playbooks() -> None:
+    menu = nodes._discovery_bucket_playbooks("research")
+    playbook_dir = nodes.tool_root() / "playbooks" / "discovery" / "research"
+    expected_stems = sorted(p.stem for p in playbook_dir.glob("*.md"))
+    for stem in expected_stems:
+        assert stem in menu, f"playbook {stem!r} missing from research menu"
+
+
+def test_playbook_menu_lists_all_thinking_playbooks() -> None:
+    menu = nodes._discovery_bucket_playbooks("thinking")
+    playbook_dir = nodes.tool_root() / "playbooks" / "discovery" / "consider"
+    expected_stems = sorted(p.stem for p in playbook_dir.glob("*.md"))
+    for stem in expected_stems:
+        assert stem in menu, f"playbook {stem!r} missing from thinking menu"
+
+
+def test_playbook_menu_carries_absolute_paths() -> None:
+    for bucket, subdir in [("research", "research"), ("thinking", "consider")]:
+        menu = nodes._discovery_bucket_playbooks(bucket)
+        playbook_dir = nodes.tool_root() / "playbooks" / "discovery" / subdir
+        for path in sorted(playbook_dir.glob("*.md")):
+            assert str(path.resolve()) in menu, (
+                f"absolute path for {path.name!r} missing from {bucket} menu"
+            )
+
+
+def test_playbook_menu_descriptions_derived_from_files() -> None:
+    for bucket, subdir in [("research", "research"), ("thinking", "consider")]:
+        menu = nodes._discovery_bucket_playbooks(bucket)
+        playbook_dir = nodes.tool_root() / "playbooks" / "discovery" / subdir
+        for path in sorted(playbook_dir.glob("*.md")):
+            desc = nodes._playbook_description(path)
+            assert desc in menu, (
+                f"description {desc!r} for {path.name!r} missing from {bucket} menu"
+            )
+
+
+def test_playbook_menu_materially_smaller_than_bundled_bodies() -> None:
+    for bucket, subdir in [("research", "research"), ("thinking", "consider")]:
+        menu = nodes._discovery_bucket_playbooks(bucket)
+        playbook_dir = nodes.tool_root() / "playbooks" / "discovery" / subdir
+        old_sections = [
+            f"## Building-block playbook: {p.stem}\n\n{p.read_text(encoding='utf-8').strip()}"
+            for p in sorted(playbook_dir.glob("*.md"))
+        ]
+        old_form = "\n\n---\n\n".join(old_sections)
+        assert len(menu) < len(old_form) * 0.2, (
+            f"{bucket}: menu ({len(menu)} bytes) is not materially smaller than "
+            f"bundled form ({len(old_form)} bytes)"
+        )
+
+
+def test_ideate_bucket_returns_empty_menu() -> None:
+    assert nodes._discovery_bucket_playbooks("ideate") == ""

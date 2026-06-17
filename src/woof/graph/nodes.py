@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+import yaml
+
 from woof.gate.write import write_gate, write_gate_for_trigger, write_gate_from_check_result
 from woof.graph.dispositions import (
     FrontMatterError,
@@ -407,8 +409,8 @@ _DISCOVERY_BUCKET_NEXT_NODE = {
     "thinking": NodeType.DISCOVERY_IDEATE,
     "ideate": NodeType.DISCOVERY_SYNTHESIS,
 }
-# Building-block playbook directory bundled into each producer prompt. The
-# ideate bucket has no building blocks; its node prompt is self-contained.
+# Building-block playbook directory for each producer's menu. The ideate
+# bucket has no building blocks; its node prompt is self-contained.
 _DISCOVERY_BUCKET_PLAYBOOK_SUBDIR = {
     "research": "research",
     "thinking": "consider",
@@ -579,24 +581,45 @@ def _discovery_bucket_artefacts(repo_root: Path, epic_id: int, bucket: str) -> l
     return _existing_prompt_artefacts(repo_root, [directory / "spark.md", *source_paths])
 
 
-def _discovery_bucket_playbooks(bucket: str) -> str:
-    """Return the bundled building-block playbook text for a producer bucket.
+def _playbook_description(path: Path) -> str:
+    """Extract the one-line description from a playbook's YAML frontmatter.
 
-    The playbook text is embedded directly into the producer prompt so a
-    consumer without Woof's source checkout on the dispatch path still receives
-    the full Stage-1 technique set. The ideate bucket has no building
-    blocks and returns an empty string.
+    Returns the ``summary`` field when present; falls back to the first
+    Markdown heading in the file body.
     """
+    text = path.read_text(encoding="utf-8")
+    if text.startswith("---"):
+        parts = text.split("---", 2)
+        if len(parts) >= 3:
+            try:
+                front = yaml.safe_load(parts[1])
+                if isinstance(front, dict) and front.get("summary"):
+                    return str(front["summary"])
+            except yaml.YAMLError:
+                pass
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            return stripped.lstrip("#").strip()
+    return path.stem
 
+
+def _discovery_bucket_playbooks(bucket: str) -> str:
+    """Return a playbook menu for a producer bucket.
+
+    Each line names a playbook, gives its one-line description, and provides
+    the absolute path so the producer can open whichever it needs on demand.
+    The ideate bucket has no building blocks and returns an empty string.
+    """
     subdir = _DISCOVERY_BUCKET_PLAYBOOK_SUBDIR[bucket]
     if subdir is None:
         return ""
     playbook_dir = tool_root() / "playbooks" / "discovery" / subdir
-    sections = [
-        f"## Building-block playbook: {path.stem}\n\n{path.read_text(encoding='utf-8').strip()}"
+    lines = [
+        f"- **{path.stem}**: {_playbook_description(path)} — `{path.resolve()}`"
         for path in sorted(playbook_dir.glob("*.md"))
     ]
-    return "\n\n---\n\n".join(sections)
+    return "\n".join(lines)
 
 
 def _discovery_bucket_prompt(

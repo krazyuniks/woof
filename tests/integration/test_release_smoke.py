@@ -9,14 +9,18 @@ agent-skill ecosystem, shell wrappers, or host paths. It:
 3. runs ``woof init --tracker local`` in a throwaway consumer worktree;
 4. confirms the scaffolded ``.woof/`` config is shaped for the local tracker
    and validates against the bundled schema;
-5. confirms the Stage 1 Discovery producer nodes build fully self-contained
-   dispatch prompts from the installed package - the building-block playbooks
-   are embedded and no Woof-author-local skill, wrapper, or host path leaks in.
+5. confirms the Stage 1 Discovery producer nodes build self-contained dispatch
+   prompts from the installed package - the building-block playbook menu (every
+   technique's name, summary, and resolvable install path) is embedded, those
+   paths resolve to real files in the consumer's install, and no
+   Woof-author-local skill, wrapper, or host path leaks in.
 
 The Stage 1 check is the portability proof for BHID-001: a stranger running
 ``woof wf`` against their own repo, without the Woof author's
-``~/.claude/plugins`` ecosystem, still receives the full Stage 1 technique set
-in the dispatched producer prompt.
+``~/.claude/plugins`` ecosystem, still receives the full Stage 1 technique menu -
+each technique resolvable from their own bundled wheel - in the dispatched
+producer prompt. The menu carries the consumer's own install paths, not the
+author's, so it depends on no Woof-author-local environment (E21 S1).
 """
 
 from __future__ import annotations
@@ -47,8 +51,8 @@ FORBIDDEN_PROMPT_TOKENS = [
     "$ARGUMENTS",
 ]
 
-# Building-block playbook stems each Stage 1 producer prompt must embed so the
-# graph dispatches the full technique set without Woof-author-local skills.
+# Building-block playbook stems each Stage 1 producer prompt must list in its menu
+# so the graph offers the full technique set without Woof-author-local skills.
 RESEARCH_PLAYBOOKS = sorted(
     [
         "competitive",
@@ -99,7 +103,24 @@ def forbidden_hits(text):
 
 
 def playbook_stems(text):
-    return sorted(re.findall(r"(?m)^## Building-block playbook: (.+)$", text))
+    return sorted(re.findall(r"(?m)^- \\*\\*(.+?)\\*\\*:", text))
+
+
+def menu_paths(text):
+    # Each menu line is ``- **stem**: summary - `<absolute path>` `` so the path
+    # is the trailing backtick span; scope extraction to those lines only.
+    paths = []
+    for line in text.splitlines():
+        if line.startswith("- **"):
+            m = re.search(r"`([^`]+\\.md)`\\s*$", line)
+            if m:
+                paths.append(m.group(1))
+    return paths
+
+
+def paths_resolve(text):
+    paths = menu_paths(text)
+    return bool(paths) and all(Path(p).is_file() for p in paths)
 
 
 result = {"tool_root": str(tool_root()), "buckets": {}}
@@ -108,6 +129,7 @@ for bucket in ("research", "thinking", "ideate"):
     result["buckets"][bucket] = {
         "length": len(prompt),
         "playbook_stems": playbook_stems(prompt),
+        "playbook_paths_resolve": paths_resolve(prompt),
         "forbidden_hits": forbidden_hits(prompt),
     }
 synthesis = _discovery_synthesis_prompt(consumer, epic_id)
@@ -231,10 +253,13 @@ def test_release_smoke(tmp_path: Path) -> None:
     assert REPO_ROOT not in resolved_root.parents
 
     buckets = report["buckets"]
-    # The research and thinking nodes embed their full building-block sets so a
-    # consumer without Woof-author-local agent skills still gets every angle.
+    # The research and thinking nodes list their full building-block menu so a
+    # consumer without Woof-author-local agent skills can still open every angle,
+    # and every menu path resolves to a real file in the consumer's install.
     assert buckets["research"]["playbook_stems"] == RESEARCH_PLAYBOOKS
     assert buckets["thinking"]["playbook_stems"] == THINKING_PLAYBOOKS
+    assert buckets["research"]["playbook_paths_resolve"]
+    assert buckets["thinking"]["playbook_paths_resolve"]
     # The ideate node is self-contained and has no building-block set.
     assert buckets["ideate"]["playbook_stems"] == []
     assert buckets["ideate"]["length"] > 0

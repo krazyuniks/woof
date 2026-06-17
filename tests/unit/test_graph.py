@@ -1155,7 +1155,10 @@ def test_discovery_research_node_dispatches_primary_and_bundles_playbooks(
 
     assert captured["role"] == "primary"
     assert '"node_type": "discovery_research"' in captured["prompt"]
-    assert "Building-block playbook: landscape" in captured["prompt"]
+    # The research node lists its building-block playbooks as a menu of resolvable
+    # paths rather than embedding their bodies (E21 S1).
+    assert "**landscape**" in captured["prompt"]
+    assert "playbooks/discovery/research/landscape.md" in captured["prompt"]
     assert "AskUserQuestion" not in captured["prompt"]
     assert captured["artefacts_loaded"] == [
         ".woof/epics/E220/spark.md",

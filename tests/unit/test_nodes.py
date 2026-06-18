@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from woof.graph import nodes
+from woof.graph.epilogue import DISPATCH_DENIAL_EPILOGUE
 from woof.graph.git import git_env
 from woof.graph.state import NodeInput, NodeStatus, NodeType
 from woof.graph.transitions import StageStateError
@@ -656,3 +657,107 @@ def test_plan_validate_cache_hit_recorded_in_plan_critiqued_event(tmp_path: Path
     ok2, _, hit2 = nodes._validate_plan(tmp_path, 63, plan_path)
     assert ok2 is True
     assert hit2 is True
+
+
+# ---------------------------------------------------------------------------
+# E21 S3 — single canonical denial epilogue
+# ---------------------------------------------------------------------------
+
+
+def _epilogue_text() -> str:
+    return DISPATCH_DENIAL_EPILOGUE.strip()
+
+
+def test_discovery_bucket_prompt_ends_with_canonical_epilogue_research(tmp_path: Path) -> None:
+    _write_spark(tmp_path, 70)
+    prompt = nodes._discovery_bucket_prompt(tmp_path, 70, "research")
+    assert prompt.rstrip("\n").endswith(_epilogue_text())
+    assert prompt.count(_epilogue_text()) == 1
+
+
+def test_discovery_bucket_prompt_ends_with_canonical_epilogue_thinking(tmp_path: Path) -> None:
+    directory = _write_spark(tmp_path, 71)
+    (directory / "discovery" / "research").mkdir(parents=True)
+    (directory / "discovery" / "research" / "research.md").write_text("# Research\n\nDone.\n")
+    prompt = nodes._discovery_bucket_prompt(tmp_path, 71, "thinking")
+    assert prompt.rstrip("\n").endswith(_epilogue_text())
+    assert prompt.count(_epilogue_text()) == 1
+
+
+def test_discovery_bucket_prompt_ends_with_canonical_epilogue_ideate(tmp_path: Path) -> None:
+    _write_spark(tmp_path, 72)
+    prompt = nodes._discovery_bucket_prompt(tmp_path, 72, "ideate")
+    assert prompt.rstrip("\n").endswith(_epilogue_text())
+    assert prompt.count(_epilogue_text()) == 1
+
+
+def test_discovery_synthesis_prompt_ends_with_canonical_epilogue(tmp_path: Path) -> None:
+    _write_spark(tmp_path, 73)  # epic.jsonl required for transitions
+    prompt = nodes._discovery_synthesis_prompt(tmp_path, 73)
+    assert prompt.rstrip("\n").endswith(_epilogue_text())
+    assert prompt.count(_epilogue_text()) == 1
+
+
+def test_epic_definition_prompt_ends_with_canonical_epilogue(tmp_path: Path) -> None:
+    _write_spark(tmp_path, 74)
+    prompt = nodes._epic_definition_prompt(tmp_path, 74)
+    assert prompt.rstrip("\n").endswith(_epilogue_text())
+    assert prompt.count(_epilogue_text()) == 1
+
+
+def test_breakdown_planning_prompt_ends_with_canonical_epilogue(tmp_path: Path) -> None:
+    directory = _write_spark(tmp_path, 75)
+    _write_minimal_epic(directory, 75)
+    prompt = nodes._breakdown_planning_prompt(tmp_path, 75)
+    assert prompt.rstrip("\n").endswith(_epilogue_text())
+    assert prompt.count(_epilogue_text()) == 1
+
+
+def test_plan_critique_prompt_ends_with_canonical_epilogue(tmp_path: Path) -> None:
+    directory = _write_spark(tmp_path, 76)
+    _write_minimal_epic(directory, 76)
+    _write_stage3_plan(directory, 76)
+    prompt = nodes._plan_critique_prompt(tmp_path, 76)
+    assert prompt.rstrip("\n").endswith(_epilogue_text())
+    assert prompt.count(_epilogue_text()) == 1
+
+
+def test_story_critique_prompt_ends_with_canonical_epilogue(tmp_path: Path) -> None:
+    directory = _write_spark(tmp_path, 77)
+    _write_minimal_epic(directory, 77)
+    _write_stage3_plan(directory, 77)
+    prompt = nodes._story_critique_prompt(tmp_path, 77, "S1")
+    assert prompt.rstrip("\n").endswith(_epilogue_text())
+    assert prompt.count(_epilogue_text()) == 1
+
+
+def test_executor_dispatch_prompt_ends_with_canonical_epilogue() -> None:
+    prompt = nodes._executor_dispatch_prompt(
+        repo_root=Path("/fake"),
+        epic_id=78,
+        story_id="S1",
+        cartography_refs=[],
+        files_txt_slice=[],
+    )
+    assert prompt.rstrip("\n").endswith(_epilogue_text())
+    assert prompt.count(_epilogue_text()) == 1
+
+
+def test_playbooks_contain_no_per_playbook_denial_text() -> None:
+    """No playbook file carries its own 'Do not run Woof graph commands' denial copy."""
+    playbook_root = nodes.tool_root() / "playbooks"
+    offenders = []
+    for path in sorted(playbook_root.rglob("*.md")):
+        text = path.read_text(encoding="utf-8").lower()
+        if "do not run woof graph commands" in text or "do not run woof" in text:
+            offenders.append(str(path.relative_to(nodes.tool_root())))
+    assert offenders == [], f"Playbooks still carry denial copies: {offenders}"
+
+
+def test_epilogue_forbids_woof_check_not_the_project_quality_command() -> None:
+    """The executor (execution playbook) runs its project quality command during
+    red-green-refactor. The shared epilogue, appended last, must forbid the Woof
+    gate verb (`woof check`) specifically - a bare 'checks' ban would contradict
+    the executor's own instruction."""
+    assert "woof check" in DISPATCH_DENIAL_EPILOGUE
+    assert "quality command" in DISPATCH_DENIAL_EPILOGUE

@@ -64,6 +64,5 @@ Output rules:
 
 - Write only `plan.json` at the declared `plan_path`.
 - Do not author `PLAN.md`; the graph renders the declared `plan_markdown_path` deterministically from `plan.json`.
-- Do not run Woof graph commands, dispatch commands, checks, gates, commits, reviewer work, or story execution.
 - Do not write `gate.md`, critique files, dispositions, event logs, or implementation code.
 - Do not select the next node or describe what should happen after this node. The graph validates the plan and selects the next node.

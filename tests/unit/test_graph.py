@@ -1374,7 +1374,9 @@ def test_discovery_synthesis_node_dispatches_primary_and_validates_outputs(
         ".woof/codebase/TARGET-ARCHITECTURE.md",
         ".woof/codebase/PRINCIPLES.md",
     ]
-    assert "The graph validates the files and selects the next node." in captured["prompt"]
+    from woof.graph.epilogue import DISPATCH_DENIAL_EPILOGUE
+
+    assert DISPATCH_DENIAL_EPILOGUE.strip() in captured["prompt"]
     _assert_planning_node_input_schema(
         tmp_path,
         nodes._discovery_synthesis_payload(tmp_path, 22),

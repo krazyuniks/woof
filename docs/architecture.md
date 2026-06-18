@@ -107,7 +107,7 @@ Current E2 rollout: S1 and S2 are shipped - readiness evaluation, the full check
 - `breakdown_planning` producer reads `EPIC.md` and produces `plan.json` (validated against `plan.schema.json`).
 - `plan_critique` reviewer reads `EPIC.md`, `plan.json`, and the rendered `PLAN.md`; produces `critique/plan.md` with severity classification (`info`, `minor`, `blocker`).
 
-The producer prompt for plan generation lives at `playbooks/planning/breakdown.md`. Architecture defines the contract; the playbook owns prompt-level planning rules such as story sizing, path discipline, output limits, and the instruction not to run graph commands or select successors.
+The producer prompt for plan generation lives at `playbooks/planning/breakdown.md`. Architecture defines the contract; the playbook owns prompt-level planning rules such as story sizing, path discipline, and output limits. The instruction not to run graph commands or select successors is the single canonical denial epilogue (`src/woof/graph/epilogue.py`), appended to every dispatch prompt by the graph rather than carried per playbook.
 
 ### Stage 4 — Plan gate
 

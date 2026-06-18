@@ -100,7 +100,6 @@ REQUIRED_STAGE3_BREAKDOWN_PROMPT_PHRASES = (
     "Contract ownership",
     "Right-sized stories",
     "Do not author `PLAN.md`",
-    "Do not run Woof graph commands",
     "Do not write `gate.md`",
     "Do not select the next node",
 )

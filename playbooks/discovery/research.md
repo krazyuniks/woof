@@ -29,7 +29,3 @@ Write one Markdown artefact per angle you apply into the declared `bucket_dir`
 (`.woof/epics/E<N>/discovery/research/`). Name each file after its angle, for
 example `landscape.md`, `feasibility.md`, or `options.md`. Produce at least one
 non-empty artefact.
-
-Do not run Woof graph commands, dispatch commands, checks, gates, commits, thinking,
-ideate, synthesis, definition, breakdown planning, or reviewer work. The
-graph validates the bucket and selects the next node.

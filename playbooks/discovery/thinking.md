@@ -29,7 +29,3 @@ Write one Markdown artefact per lens you apply into the declared `bucket_dir`
 (`.woof/epics/E<N>/discovery/thinking/`). Name each file after its lens, for
 example `first-principles.md`, `inversion.md`, or `second-order.md`. Produce at
 least one non-empty artefact.
-
-Do not run Woof graph commands, dispatch commands, checks, gates, commits, ideate,
-synthesis, definition, breakdown planning, or reviewer work. The graph
-validates the bucket and selects the next node.

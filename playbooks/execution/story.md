@@ -93,7 +93,6 @@ Use `outcome: "aborted_with_position"` when the story cannot be completed inside
 ## Do Not
 
 - Do not dispatch the reviewer or any other subprocess.
-- Do not run `woof check`.
 - Do not write or edit `gate.md`.
 - Do not commit.
 - Do not select the next step.

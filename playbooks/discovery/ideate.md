@@ -40,7 +40,4 @@ Write at least one non-empty Markdown artefact into the declared `bucket_dir`
   concise description, its main tradeoff, and the conditions under which it is
   the right choice.
 
-Do not converge to a single answer; that is the job of Stage 1 synthesis and
-Stage 2 Definition. Do not run Woof graph commands, dispatch commands, checks, gates,
-commits, synthesis, definition, breakdown planning, or reviewer work. The graph
-validates the bucket and selects the next node.
+Do not converge to a single answer; that is the job of Stage 1 synthesis and Stage 2 Definition.

@@ -31,6 +31,7 @@ from woof.graph.dispositions import (
     validate_story_disposition,
     write_deterministic_story_disposition,
 )
+from woof.graph.epilogue import DISPATCH_DENIAL_EPILOGUE
 from woof.graph.git import changed_paths, git, head_branch_drift_detected, staged_paths
 from woof.graph.manifest import build_story_manifest, verify_staged_manifest
 from woof.graph.pathspec import PathspecEvaluationError, filter_paths_matching
@@ -644,7 +645,7 @@ def _discovery_bucket_prompt(
     playbooks = _discovery_bucket_playbooks(bucket)
     if playbooks:
         prompt = f"{prompt}\n\n---\n\n# Building-block playbooks\n\n{playbooks}\n"
-    return prompt
+    return prompt + DISPATCH_DENIAL_EPILOGUE
 
 
 def _discovery_synthesis_payload(
@@ -860,9 +861,12 @@ def _discovery_synthesis_prompt(
     cartography_refs: list[str] | None = None,
 ) -> str:
     payload = _discovery_synthesis_payload(repo_root, epic_id, cartography_refs=cartography_refs)
-    return _prompt_template(
-        tool_root() / "playbooks" / "discovery" / "synthesis.md",
-        {"planning_input_json": json.dumps(payload, indent=2, sort_keys=True)},
+    return (
+        _prompt_template(
+            tool_root() / "playbooks" / "discovery" / "synthesis.md",
+            {"planning_input_json": json.dumps(payload, indent=2, sort_keys=True)},
+        )
+        + DISPATCH_DENIAL_EPILOGUE
     )
 
 
@@ -872,9 +876,12 @@ def _epic_definition_prompt(
     cartography_refs: list[str] | None = None,
 ) -> str:
     payload = _epic_definition_payload(repo_root, epic_id, cartography_refs=cartography_refs)
-    return _prompt_template(
-        tool_root() / "playbooks" / "discovery" / "definition.md",
-        {"planning_input_json": json.dumps(payload, indent=2, sort_keys=True)},
+    return (
+        _prompt_template(
+            tool_root() / "playbooks" / "discovery" / "definition.md",
+            {"planning_input_json": json.dumps(payload, indent=2, sort_keys=True)},
+        )
+        + DISPATCH_DENIAL_EPILOGUE
     )
 
 
@@ -884,9 +891,12 @@ def _breakdown_planning_prompt(
     cartography_refs: list[str] | None = None,
 ) -> str:
     payload = _breakdown_planning_payload(repo_root, epic_id, cartography_refs=cartography_refs)
-    return _prompt_template(
-        tool_root() / "playbooks" / "planning" / "breakdown.md",
-        {"planning_input_json": json.dumps(payload, indent=2, sort_keys=True)},
+    return (
+        _prompt_template(
+            tool_root() / "playbooks" / "planning" / "breakdown.md",
+            {"planning_input_json": json.dumps(payload, indent=2, sort_keys=True)},
+        )
+        + DISPATCH_DENIAL_EPILOGUE
     )
 
 
@@ -903,7 +913,7 @@ def _plan_critique_prompt(
         f"{json.dumps(payload, indent=2, sort_keys=True)}\n"
         "```\n\n"
         f"{template}"
-    )
+    ) + DISPATCH_DENIAL_EPILOGUE
 
 
 def _story_critique_prompt(
@@ -922,7 +932,7 @@ def _story_critique_prompt(
         f"{json.dumps(payload, indent=2, sort_keys=True)}\n"
         "```\n\n"
         f"{template}"
-    )
+    ) + DISPATCH_DENIAL_EPILOGUE
 
 
 def _executor_dispatch_prompt(
@@ -949,7 +959,7 @@ def _executor_dispatch_prompt(
         f"{json.dumps(payload, indent=2, sort_keys=True)}\n"
         "```\n\n"
         f"{base}"
-    )
+    ) + DISPATCH_DENIAL_EPILOGUE
 
 
 def _validate_epic(repo_root: Path, epic_path: Path) -> tuple[bool, str]:

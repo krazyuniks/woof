@@ -29,4 +29,4 @@ Read the declared spark and discovery source paths. Produce only these synthesis
 - `ARCHITECTURE.md` - approach family, important boundaries, and rejected alternatives.
 - `OPEN_QUESTIONS.md` - unresolved questions, each as `## OQ<n> - <question>` with `Deferral reason: <reason>` or `Decision needed by: <boundary>`. If none remain, write `No open questions.`
 
-Write the files under the declared `synthesis_dir`. Do not run Woof graph commands, dispatch commands, checks, gates, commits, definition, breakdown planning, or reviewer work. The graph validates the files and selects the next node.
+Write the files under the declared `synthesis_dir`.

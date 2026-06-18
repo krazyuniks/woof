@@ -20,6 +20,7 @@ build/
 .woof/codebase/tree.txt
 .woof/codebase/freshness.json
 .woof/.preflight-*
+.woof/.agents-schema-cache
 docs/continuation-prompt.md
 .gemini/
 .agents/

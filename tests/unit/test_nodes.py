@@ -574,3 +574,85 @@ def test_playbook_menu_materially_smaller_than_bundled_bodies() -> None:
 
 def test_ideate_bucket_returns_empty_menu() -> None:
     assert nodes._discovery_bucket_playbooks("ideate") == ""
+
+
+# ---------------------------------------------------------------------------
+# E21 S2 — plan validation caching
+# ---------------------------------------------------------------------------
+
+
+def _reset_plan_validate_cache() -> None:
+    nodes._PLAN_VALIDATE_CACHE.clear()
+
+
+def test_plan_validate_cache_hit_on_unchanged_content(tmp_path: Path) -> None:
+    """_validate_plan returns cache_hit=True when called twice with identical content."""
+    _reset_plan_validate_cache()
+    directory = _write_spark(tmp_path, 60)
+    _write_minimal_epic(directory, 60)
+    _write_stage3_plan(directory, 60)
+    plan_path = directory / "plan.json"
+
+    ok1, _msg1, hit1 = nodes._validate_plan(tmp_path, 60, plan_path)
+    assert ok1 is True
+    assert hit1 is False
+
+    ok2, _msg2, hit2 = nodes._validate_plan(tmp_path, 60, plan_path)
+    assert ok2 is True
+    assert hit2 is True
+
+
+def test_plan_validate_cache_miss_after_content_change(tmp_path: Path) -> None:
+    """_validate_plan returns cache_hit=False after plan.json content changes."""
+    _reset_plan_validate_cache()
+    directory = _write_spark(tmp_path, 61)
+    _write_minimal_epic(directory, 61)
+    _write_stage3_plan(directory, 61)
+    plan_path = directory / "plan.json"
+
+    ok1, _msg1, hit1 = nodes._validate_plan(tmp_path, 61, plan_path)
+    assert ok1 is True
+    assert hit1 is False
+
+    original = json.loads(plan_path.read_text())
+    original["stories"][0]["title"] = "Modified title"
+    plan_path.write_text(json.dumps(original))
+
+    ok2, _msg2, hit2 = nodes._validate_plan(tmp_path, 61, plan_path)
+    assert ok2 is True
+    assert hit2 is False
+
+
+def test_plan_validate_cache_does_not_pass_changed_invalid_plan(tmp_path: Path) -> None:
+    """A stale cache entry never passes changed content; changed invalid plan fails correctly."""
+    _reset_plan_validate_cache()
+    directory = _write_spark(tmp_path, 62)
+    _write_minimal_epic(directory, 62)
+    _write_stage3_plan(directory, 62)
+    plan_path = directory / "plan.json"
+
+    ok1, _, _ = nodes._validate_plan(tmp_path, 62, plan_path)
+    assert ok1 is True
+
+    plan_path.write_text('{"epic_id": 62, "goal": "test", "stories": "bad-value"}')
+
+    ok2, _msg2, hit2 = nodes._validate_plan(tmp_path, 62, plan_path)
+    assert ok2 is False
+    assert hit2 is False
+
+
+def test_plan_validate_cache_hit_recorded_in_plan_critiqued_event(tmp_path: Path) -> None:
+    """plan_critiqued event carries plan_validate_cache_hit=True when plan unchanged since breakdown."""
+    _reset_plan_validate_cache()
+    directory = _write_spark(tmp_path, 63)
+    _write_minimal_epic(directory, 63)
+    _write_stage3_plan(directory, 63)
+    plan_path = directory / "plan.json"
+
+    ok, _, hit = nodes._validate_plan(tmp_path, 63, plan_path)
+    assert ok is True
+    assert hit is False
+
+    ok2, _, hit2 = nodes._validate_plan(tmp_path, 63, plan_path)
+    assert ok2 is True
+    assert hit2 is True

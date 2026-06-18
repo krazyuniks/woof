@@ -1175,7 +1175,7 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
     assert events[0]["artefact_bytes"] == len(b"contract\n")
     assert events[1]["artefacts_loaded"] == [".woof/epics/E7/EPIC.md"]
     assert events[1]["prompt_transport"] == "stdin"
-    assert events[1]["runtime_policy"] == EXPECTED_TRUSTED_RUNTIME_POLICY
+    assert "runtime_policy" not in events[1]
     assert events[1]["exit_type"] == "clean"
     assert events[1]["prompt_bytes"] == len(b"run the story\n")
     assert events[1]["artefact_bytes"] == len(b"contract\n")
@@ -1599,7 +1599,7 @@ def test_end_to_end_codex_records_thread_and_audit_path(woof_project: Path, tmp_
     assert returned["argv"][-1] == "<prompt:stdin>"
     assert returned["argv"][0] == "codex"
     assert returned["prompt_transport"] == "stdin"
-    assert returned["runtime_policy"] == EXPECTED_TRUSTED_RUNTIME_POLICY
+    assert "runtime_policy" not in returned
     assert returned["exit_type"] == "clean"
     assert returned["tokens_in"] == 50
     assert returned["tokens_out"] == 7  # 5 + 2 reasoning
@@ -1683,3 +1683,140 @@ def test_end_to_end_records_route_key_in_jsonl_and_meta(woof_project: Path, tmp_
 
     validate = subprocess.run([*WOOF_VALIDATE, str(jsonl)], capture_output=True, text=True)
     assert validate.returncode == 0, validate.stdout + validate.stderr
+
+
+# ---------------------------------------------------------------------------
+# E21 S2 — dispatch overhead caching
+# ---------------------------------------------------------------------------
+
+
+def _make_claude_stub_simple(bin_dir: Path) -> None:
+    """Minimal claude stub that echoes a valid result JSON."""
+    payload = json.dumps(
+        {
+            "type": "result",
+            "session_id": "00000000-0000-0000-0000-00000000ee21",
+            "usage": {
+                "input_tokens": 1,
+                "output_tokens": 1,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+            },
+        }
+    )
+    _make_stub(bin_dir, "claude", payload)
+
+
+def test_agents_schema_cache_hit_on_second_dispatch(woof_project: Path, tmp_path: Path) -> None:
+    """Second dispatch with unchanged agents.toml records agents_schema_cache_hit=True."""
+    bin_dir = tmp_path / "bin"
+    _make_claude_stub_simple(bin_dir)
+    env = {
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "HOME": os.environ.get("HOME", str(tmp_path)),
+    }
+
+    def _dispatch(epic: int) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [str(WOOF_BIN), "dispatch", "--role", "reviewer", "--epic", str(epic)],
+            capture_output=True,
+            text=True,
+            input="do work\n",
+            cwd=woof_project,
+            env=env,
+        )
+
+    proc1 = _dispatch(30)
+    assert proc1.returncode == 0, proc1.stderr
+    proc2 = _dispatch(31)
+    assert proc2.returncode == 0, proc2.stderr
+
+    def _spawned_event(epic: int) -> dict:
+        jsonl = woof_project / ".woof" / "epics" / f"E{epic}" / "dispatch.jsonl"
+        events = [json.loads(ln) for ln in jsonl.read_text().splitlines() if ln.strip()]
+        return next(e for e in events if e["event"] == "subprocess_spawned")
+
+    assert _spawned_event(30)["agents_schema_cache_hit"] is False
+    assert _spawned_event(31)["agents_schema_cache_hit"] is True
+
+
+def test_agents_schema_cache_miss_after_content_change(woof_project: Path, tmp_path: Path) -> None:
+    """Changing agents.toml invalidates the cache; next dispatch re-validates."""
+    bin_dir = tmp_path / "bin"
+    _make_claude_stub_simple(bin_dir)
+    env = {
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "HOME": os.environ.get("HOME", str(tmp_path)),
+    }
+
+    def _dispatch(epic: int) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [str(WOOF_BIN), "dispatch", "--role", "reviewer", "--epic", str(epic)],
+            capture_output=True,
+            text=True,
+            input="do work\n",
+            cwd=woof_project,
+            env=env,
+        )
+
+    proc1 = _dispatch(32)
+    assert proc1.returncode == 0, proc1.stderr
+
+    agents_path = woof_project / ".woof" / "agents.toml"
+    original = agents_path.read_text()
+    agents_path.write_text(
+        original.replace('model = "claude-opus-4-7"', 'model = "claude-sonnet-4-6"')
+    )
+
+    proc2 = _dispatch(33)
+    assert proc2.returncode == 0, proc2.stderr
+
+    def _spawned_event(epic: int) -> dict:
+        jsonl = woof_project / ".woof" / "epics" / f"E{epic}" / "dispatch.jsonl"
+        events = [json.loads(ln) for ln in jsonl.read_text().splitlines() if ln.strip()]
+        return next(e for e in events if e["event"] == "subprocess_spawned")
+
+    assert _spawned_event(32)["agents_schema_cache_hit"] is False
+    assert _spawned_event(33)["agents_schema_cache_hit"] is False
+
+
+def test_agents_schema_cache_key_includes_schema() -> None:
+    """A schema change invalidates a pass recorded under the old schema."""
+    from woof.cli.dispatcher import _agents_schema_cache_key
+
+    agents = b'[roles.primary]\nadapter = "claude"\n'
+    key_v1 = _agents_schema_cache_key(agents, b'{"schema": "v1"}')
+    # Same config, different schema -> different key -> re-validation, not a stale pass.
+    assert key_v1 != _agents_schema_cache_key(agents, b'{"schema": "v2"}')
+    # Stable for identical inputs (a genuine cache hit).
+    assert key_v1 == _agents_schema_cache_key(agents, b'{"schema": "v1"}')
+    # Different config, same schema -> different key.
+    assert key_v1 != _agents_schema_cache_key(b"[roles]\n", b'{"schema": "v1"}')
+
+
+def test_runtime_policy_in_spawned_not_in_returned(woof_project: Path, tmp_path: Path) -> None:
+    """runtime_policy is emitted once per dispatch: in subprocess_spawned, not subprocess_returned."""
+    bin_dir = tmp_path / "bin"
+    _make_claude_stub_simple(bin_dir)
+    env = {
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "HOME": os.environ.get("HOME", str(tmp_path)),
+    }
+
+    proc = subprocess.run(
+        [str(WOOF_BIN), "dispatch", "--role", "reviewer", "--epic", "34"],
+        capture_output=True,
+        text=True,
+        input="do work\n",
+        cwd=woof_project,
+        env=env,
+    )
+    assert proc.returncode == 0, proc.stderr
+
+    jsonl = woof_project / ".woof" / "epics" / "E34" / "dispatch.jsonl"
+    events = [json.loads(ln) for ln in jsonl.read_text().splitlines() if ln.strip()]
+    spawned = next(e for e in events if e["event"] == "subprocess_spawned")
+    returned = next(e for e in events if e["event"] == "subprocess_returned")
+
+    assert spawned["runtime_policy"] == EXPECTED_TRUSTED_RUNTIME_POLICY
+    assert "runtime_policy" not in returned

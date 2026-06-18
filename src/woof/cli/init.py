@@ -317,6 +317,7 @@ GITIGNORE_BEGIN = "# >>> woof"
 GITIGNORE_END = "# <<< woof"
 GITIGNORE_ENTRIES = [
     ".woof/.current-epic",
+    ".woof/.agents-schema-cache",
     ".woof/epics/*/gate.md",
     ".woof/epics/*/.wf.lock",
     ".woof/epics/*/.last-sync",

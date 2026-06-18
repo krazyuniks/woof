@@ -8,6 +8,7 @@ The top-level CLI module only wires the ``woof dispatch`` command.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -819,22 +820,62 @@ def _run_ajv(schema_path: Path, data_json: bytes) -> tuple[bool, str]:
     return proc.returncode == 0, output
 
 
-def cmd_dispatch(args: argparse.Namespace) -> int:
-    _ensure_ajv()
+def _agents_schema_cache_path(repo_root: Path) -> Path:
+    return repo_root / ".woof" / ".agents-schema-cache"
 
+
+def _agents_schema_cache_key(agents_bytes: bytes, schema_bytes: bytes) -> str:
+    """Cache key over both the config and the schema it was validated against.
+
+    Folding the schema in means a Woof upgrade that changes agents.schema.json
+    invalidates a pass recorded for an unchanged agents.toml under the old schema,
+    instead of skipping re-validation against the new (possibly stricter) rules.
+    """
+    return hashlib.sha256(agents_bytes + b"\0" + schema_bytes).hexdigest()
+
+
+def _check_agents_schema_cache(repo_root: Path, cache_key: str) -> bool:
+    """Return True if agents.toml has already been validated under this cache key."""
+    try:
+        return _agents_schema_cache_path(repo_root).read_text().strip() == cache_key
+    except OSError:
+        return False
+
+
+def _write_agents_schema_cache(repo_root: Path, cache_key: str) -> None:
+    """Record that agents.toml passed schema validation under this cache key."""
+    cache_path = _agents_schema_cache_path(repo_root)
+    try:
+        tmp = cache_path.with_suffix(".tmp")
+        tmp.write_text(cache_key + "\n")
+        tmp.replace(cache_path)
+    except OSError:
+        pass
+
+
+def cmd_dispatch(args: argparse.Namespace) -> int:
     repo_root = find_woof_root(Path.cwd().resolve())
     agents_path = repo_root / ".woof" / "agents.toml"
     if not agents_path.is_file():
         sys.stderr.write(f"woof: {agents_path} not found; cannot dispatch\n")
         return 2
 
-    with agents_path.open("rb") as fh:
-        agents = tomllib.load(fh)
-
-    ok, output = _run_ajv(AGENTS_SCHEMA_PATH, json.dumps(agents).encode())
-    if not ok:
-        sys.stderr.write(f"woof: {agents_path}: schema invalid\n{output}\n")
-        return 2
+    agents_bytes = agents_path.read_bytes()
+    agents = tomllib.loads(agents_bytes.decode("utf-8"))
+    try:
+        schema_bytes = AGENTS_SCHEMA_PATH.read_bytes()
+    except OSError:
+        # Missing schema: empty key still misses, then ajv runs and fails cleanly.
+        schema_bytes = b""
+    agents_schema_cache_key = _agents_schema_cache_key(agents_bytes, schema_bytes)
+    agents_schema_cache_hit = _check_agents_schema_cache(repo_root, agents_schema_cache_key)
+    if not agents_schema_cache_hit:
+        _ensure_ajv()
+        ok, output = _run_ajv(AGENTS_SCHEMA_PATH, json.dumps(agents).encode())
+        if not ok:
+            sys.stderr.write(f"woof: {agents_path}: schema invalid\n{output}\n")
+            return 2
+        _write_agents_schema_cache(repo_root, agents_schema_cache_key)
 
     try:
         route = resolve_agent_route(agents, args.role, route_key=args.route_key)
@@ -939,6 +980,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
             "argv": event_argv,
             "prompt_transport": "stdin",
             "runtime_policy": trusted_runtime_policy(),
+            "agents_schema_cache_hit": agents_schema_cache_hit,
             "artefacts_loaded": artefacts_loaded,
             "prompt_bytes": prompt_bytes,
             "artefact_bytes": artefact_bytes,
@@ -1062,7 +1104,6 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         "mcp": mcp_names,
         "argv": event_argv,
         "prompt_transport": "stdin",
-        "runtime_policy": trusted_runtime_policy(),
         "artefacts_loaded": artefacts_loaded,
         "prompt_bytes": prompt_bytes,
         "artefact_bytes": artefact_bytes,

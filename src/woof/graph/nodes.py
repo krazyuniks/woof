@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -81,6 +82,11 @@ DispatchExitType = str
 # Default number of failed readiness cycles before escalation. Configurable via
 # .woof/prerequisites.toml [readiness].escalation_threshold.
 DEFAULT_READINESS_ESCALATION_THRESHOLD = 3
+
+# In-process cache for plan.json schema validation keyed by SHA-256 content hash.
+# Valid across multiple node calls within a single runner invocation; a changed
+# plan.json produces a different hash and always re-validates.
+_PLAN_VALIDATE_CACHE: dict[str, tuple[bool, str]] = {}
 
 _DISPATCH_SUCCESS_EXIT_TYPES = {"clean", "completed_lingering"}
 _DISPATCH_FAILURE_EXIT_TYPES = {
@@ -957,7 +963,18 @@ def _validate_epic(repo_root: Path, epic_path: Path) -> tuple[bool, str]:
     return proc.returncode == 0, (proc.stdout + proc.stderr).strip()
 
 
-def _validate_plan(repo_root: Path, epic_id: int, plan_path: Path) -> tuple[bool, str]:
+def _validate_plan(repo_root: Path, epic_id: int, plan_path: Path) -> tuple[bool, str, bool]:
+    """Validate plan.json; returns (ok, message, cache_hit).
+
+    Results are cached by SHA-256 of plan.json content within this process.
+    A changed plan.json always re-validates; a stale cache never passes new content.
+    """
+    content = plan_path.read_bytes()
+    content_hash = hashlib.sha256(content).hexdigest()
+    cached = _PLAN_VALIDATE_CACHE.get(content_hash)
+    if cached is not None:
+        return cached[0], cached[1], True
+
     proc = subprocess.run(
         [*_woof_subprocess_argv(), "validate", "--schema", "plan", str(plan_path)],
         cwd=repo_root,
@@ -966,14 +983,22 @@ def _validate_plan(repo_root: Path, epic_id: int, plan_path: Path) -> tuple[bool
         text=True,
     )
     if proc.returncode != 0:
-        return False, (proc.stdout + proc.stderr).strip()
+        result: tuple[bool, str] = (False, (proc.stdout + proc.stderr).strip())
+        _PLAN_VALIDATE_CACHE[content_hash] = result
+        return result[0], result[1], False
     try:
         plan = load_plan(repo_root, epic_id)
     except (StageStateError, ValueError) as exc:
-        return False, str(exc)
+        result = (False, str(exc))
+        _PLAN_VALIDATE_CACHE[content_hash] = result
+        return result[0], result[1], False
     if plan.epic_id != epic_id:
-        return False, f"plan epic_id {plan.epic_id} does not match E{epic_id}"
-    return True, (proc.stdout + proc.stderr).strip()
+        result = (False, f"plan epic_id {plan.epic_id} does not match E{epic_id}")
+        _PLAN_VALIDATE_CACHE[content_hash] = result
+        return result[0], result[1], False
+    result = (True, (proc.stdout + proc.stderr).strip())
+    _PLAN_VALIDATE_CACHE[content_hash] = result
+    return result[0], result[1], False
 
 
 def _validate_plan_critique(
@@ -1697,7 +1722,7 @@ def breakdown_planning_node(inp: NodeInput) -> NodeOutput:
             paths=paths,
         )
 
-    plan_ok, plan_message = _validate_plan(inp.repo_root, inp.epic_id, plan_path)
+    plan_ok, plan_message, _plan_cache_hit = _validate_plan(inp.repo_root, inp.epic_id, plan_path)
     if not plan_ok:
         return _planning_halt(
             inp,
@@ -1730,6 +1755,7 @@ def breakdown_planning_node(inp: NodeInput) -> NodeOutput:
             "event": "breakdown_planned",
             "at": _now(),
             "epic_id": inp.epic_id,
+            "plan_validate_cache_hit": _plan_cache_hit,
             "paths": paths,
         },
     )
@@ -1770,7 +1796,7 @@ def plan_critique_node(inp: NodeInput) -> NodeOutput:
             paths=[_relpath(inp.repo_root, path) for path in required],
         )
 
-    plan_ok, plan_message = _validate_plan(inp.repo_root, inp.epic_id, plan_path)
+    plan_ok, plan_message, plan_cache_hit = _validate_plan(inp.repo_root, inp.epic_id, plan_path)
     if not plan_ok:
         return _planning_halt(
             inp,
@@ -1863,6 +1889,7 @@ def plan_critique_node(inp: NodeInput) -> NodeOutput:
             "epic_id": inp.epic_id,
             "severity": severity,
             "finding_count": finding_count,
+            "plan_validate_cache_hit": plan_cache_hit,
             "paths": [critique_relpath],
         },
     )
@@ -1947,7 +1974,7 @@ def plan_gate_open_node(inp: NodeInput) -> NodeOutput:
             paths=paths,
         )
 
-    plan_ok, plan_message = _validate_plan(inp.repo_root, inp.epic_id, plan_path)
+    plan_ok, plan_message, _ = _validate_plan(inp.repo_root, inp.epic_id, plan_path)
     if not plan_ok:
         return _planning_halt(
             inp,

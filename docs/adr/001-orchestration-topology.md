@@ -1,10 +1,12 @@
 ---
 type: adr
-status: accepted
+status: superseded by ADR-010
 date: 2026-05-27
 ---
 
 # ADR-001: Orchestration Topology
+
+Superseded by ADR-010. The retained principle is deterministic Python graph authority; the active topology is the merged Woof engine with tmux-harness dispatch.
 
 2026-06-01 update: ADR-007 withdraws the `woof graph` command API and the `/woof:run` orchestrator skill described in the original decision. The retained decision is the layered ownership model: state on disk, Python engine, operator skill, and isolated dispatched workers. The current implementation exposes the engine through `woof wf` and the operator surface through the `/woof` umbrella.
 

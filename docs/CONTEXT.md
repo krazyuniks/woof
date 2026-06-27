@@ -1,25 +1,36 @@
 # Woof Context
 
-The glossary for Woof's design docs - what the words in `architecture.md`, the ADRs, and the
-backlog mean. New or changed terms are promoted here at epic close-out (see `architecture.md`
-section 15, Change control).
+This glossary defines Woof's project-specific terms. Architecture, ADRs, and backlog entries refer here rather than redefining terms.
 
 ## Glossary
 
-- **Cartography** - the artefact group at `.woof/codebase/`: durable design docs, mapper-authored AS-IS docs, and mechanical files.
-- **Mechanical layer** - `tags`, `files.txt`, `freshness.json`, and planned generated indexes such as `.woof/codebase/structural/`; cheap, post-commit refreshed, and gitignored.
-- **Structural cartography index** - ADR-009's generated files/symbols/edges SQLite artefact under `.woof/codebase/structural/`.
-- **Structural impact context** - token-bounded callers/callees/dependencies output from `woof cartography impact`, used first by the Stage-5 reviewer.
-- **Producer** - the LLM-dispatched node that creates an artefact for a graph stage.
-- **Reviewer** - the LLM-dispatched node that critiques the producer's output in an isolated context.
-- **Mapper subagent** - a Claude subagent launched by the `/woof` map-codebase flow to author one or two cartography docs.
-- **Readiness gate** - deterministic halt after Stage 2 when `EPIC.md` is not concrete enough for planning.
-- **Strict quality gate** - quality gate mode where any failure blocks.
-- **Baseline quality gate** - quality gate mode where a pre-existing red command is recorded and only deterioration blocks.
-- **Blocker evidence** - machine-resolvable evidence attached to a blocker finding, such as file:line, story id, outcome id, contract-decision id, schema ref, or gate id.
-- **HEAD/branch drift** - unexpected git position movement during dispatch or commit that is not explained by a graph-owned commit.
-- **Conformance audit** - deterministic diff-scoped audit that checks implemented production changes against `EPIC.md`, plan contracts, and consumer invariants.
-- **Run lineage** - a single `run_id` carried by every epic/dispatch event so one epic execution is reconstructable as a single end-to-end trace and replayable from disk.
-- **Completed-but-lingering** - a dispatched worker that emitted its terminal result but whose process has not exited because a spawned child holds the stdout pipe open. Classified as completed, not as a timeout.
-- **Resume-to-correct** - on a recoverable producer-output failure, resuming the producer's captured model session with the deterministic failure evidence as feedback, instead of a cold re-dispatch.
-- **Graded recovery ladder** - bounded sequence applied before a gate-open: deterministic salvage, normalisation with safe defaults, bounded retry (compacted payload or resume-to-correct), then gate.
+- **Intake** - the boundary that turns a source idea, issue, docs epic, or pre-decomposed backlog into executable `work_units[]` plus run metadata.
+- **Epic** - the upstream design contract for a body of work. An epic may be sparse or enriched; when present, it decomposes into `work_units[]`.
+- **Sparse epic** - an initial epic draft, issue body, or idea that may need enrichment before decomposition.
+- **Enriched epic** - an epic with enough outcomes, decisions, acceptance criteria, and context to decompose without inventing intent.
+- **Brainstorm enrichment** - the interactive design step that can turn a sparse epic into an enriched epic before decomposition.
+- **Pre-decomposed intake** - a supplied `work_units[]` backlog that skips epic enrichment and decomposition because the executable work already exists.
+- **Work unit** - the executable unit Woof produces, checks, reviews, fixes, publishes, and merges. Avoid: story.
+- **Contract-trace fields** - optional work-unit fields that link executable work to epic outcomes, contract decisions, path scope, and test expectations.
+- **Run metadata** - source, repo, policy, upstream issue links, run identity, and other non-executable facts needed for audit and orchestration.
+- **Producer** - the LLM worker that creates or fixes an artefact for a work unit.
+- **Reviewer** - the independent LLM worker that critiques the current diff and evidence.
+- **Warm producer** - the producer session kept alive across bounded fix rounds for one work unit.
+- **Fresh reviewer** - a reviewer context that is independent for each review round and receives the full current diff and evidence.
+- **Attached execution resource** - a live tmux session used to perform work while disk remains the authority for what work should happen.
+- **Profile A** - worktree-per-work-unit delivery with a pull request and serial merge coordinator.
+- **Profile B** - single-tree delivery with graph-owned commit and push.
+- **Cartography** - the `.woof/codebase/` artefact group used for repo understanding: design docs, mapper-authored AS-IS docs, lexical files, and optional structural indexes.
+- **Cartography floor** - the minimum cartography capability a repo policy requires before a run may proceed.
+- **Mechanical layer** - regenerated cartography artefacts such as `tags`, `files.txt`, `freshness.json`, and structural indexes.
+- **Structural cartography index** - generated files/symbols/edges data under `.woof/codebase/structural/` for impact-aware review and conformance checks.
+- **Structural impact context** - token-bounded callers, callees, imports, and dependency evidence produced from structural cartography.
+- **Check floor** - the deterministic checks a repo policy requires before review or publish.
+- **Readiness gate** - deterministic halt when an epic or work-unit set is not concrete enough for the next step declared by policy.
+- **Blocker evidence** - machine-resolvable evidence attached to a blocker finding, such as file:line, work-unit id, outcome id, contract-decision id, schema ref, or gate id.
+- **Conformance audit** - deterministic diff-scoped audit that checks production changes against epic contracts, work-unit trace fields, policy, and cartography.
+- **Run lineage** - a single run identity carried by events and artefacts so execution is reconstructable and replayable from disk.
+- **Review instability** - conflicting reviewer verdicts over the same diff hash and prompt version.
+- **Completed-but-lingering** - a worker that emitted its terminal result but whose process or child process still holds the stream open.
+- **Resume-to-correct** - recovery that feeds deterministic failure evidence back to the warm producer instead of cold re-producing.
+- **Graded recovery ladder** - bounded recovery before opening a gate: deterministic salvage, safe normalisation, bounded retry, then gate.

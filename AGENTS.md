@@ -2,9 +2,9 @@
 
 ## Project shape
 
-Woof is an inner-loop SDLC tool for AI-assisted development. It has four layers: state on disk (`.woof/`), a Python graph library (`src/woof/`), a Claude Code operator skill layer (`skills/`: the `woof` umbrella over the `woof` CLI plus the `woof-brainstorm` design specialist), and dispatched producer/reviewer/mapper subagents.
+Woof is the orchestration engine for AI-assisted software delivery. It has five layers: state on disk (`.woof/`), a Python graph library (`src/woof/`), the shared interactive tmux dispatch substrate, a Claude Code operator skill layer (`skills/`: the `woof` umbrella over the `woof` CLI plus the `woof-brainstorm` design specialist), and dispatched producer/reviewer/mapper workers.
 
-Authority for design decisions: ADRs under `docs/adr/`. Authority for system architecture: `docs/architecture.md`. Authority for open work: `docs/backlog.md`. Authority for execution sequencing: `docs/implementation-plan.md`.
+Authority for design decisions: ADRs under `docs/adr/`. Authority for system architecture: `docs/architecture.md`. Authority for glossary terms: `docs/CONTEXT.md`. Authority for open work: `docs/backlog.md`.
 
 ## Commands
 
@@ -28,13 +28,13 @@ Do not introduce parallel Make, npm, tox, or ad-hoc shell entry points while a `
 
 ## Code boundaries
 
-- `src/woof/graph/` — deterministic graph transitions, the `woof wf` runner, validation, and JSONL audit.
+- `src/woof/graph/` — deterministic graph transitions, the runner, validation, gates, profile publish/merge decisions, and JSONL audit.
 - `src/woof/cli/` — CLI command surface (`woof wf`, `woof init`, `woof preflight`, `woof hooks install`, `woof observe`, `woof validate`, etc.).
-- `src/woof/checks/` — Stage-5 check runners.
+- `src/woof/checks/` — deterministic check runners.
 - `src/woof/gate/` — gate authoring helpers.
 - `src/woof/trackers/` — `Tracker` protocol and adapters.
 - `src/woof/bench/` — eval harness.
-- `schemas/` — JSON Schema contracts.
+- `schemas/` — JSON Schema contracts, including the canonical `work_units[]` execution shape.
 - `playbooks/` — producer and reviewer prompt templates.
 - `languages/` — per-language registry: install instructions, LSP binaries, tree-sitter grammars, refresh-cartography templates.
 - `skills/` — Claude Code skill bundles: `woof` (the umbrella operator surface) and `woof-brainstorm` (the generated design specialist; regenerate with `just gen-brainstorm`).
@@ -43,9 +43,10 @@ Do not introduce parallel Make, npm, tox, or ad-hoc shell entry points while a `
 
 - Read the relevant schema before changing artefact shape.
 - Update docs in the same change as code when behaviour, commands, or contracts move.
-- Preserve the layered topology (ADR-001, updated by ADR-007). Python owns graph orchestration through `woof wf`; the `/woof` skill is the operator surface; state is on disk.
-- Preserve the role-routing policy (ADR-002). Stage 5 producer is Claude (LSP); reviewer is Codex. Other stages are the reverse.
-- Preserve the cartography prerequisite (ADR-004). Do not introduce nodes that bypass `.woof/codebase/` content loading.
+- Preserve the merged topology (ADR-010). Intake varies; execution runs one engine path over `work_units[]`.
+- Preserve `work_units[]` as the executable contract (ADR-011). Do not reintroduce story/work-unit mirrors.
+- Preserve the tmux harness dispatch boundary (ADR-012). Do not add headless `claude -p`, `codex exec`, or equivalent one-shot reasoning paths.
+- Preserve policy-driven rigour and cartography (ADR-013). Cartography remains first-class, with the required floor declared by repo policy.
 - Do not introduce a parallel operator surface for running epics. The operator entry point is the `/woof` umbrella, which runs `woof wf` (ADR-007).
 - Do not add a parallel state-mutation path. Skill-facing state changes go through typed `woof wf` verbs (`new`, `--resolve`, `reset`); never hand-edit `.woof/` state.
 - Do not commit runtime state: locks, current-epic markers, generated audit raw data, and the mechanical cartography layer are gitignored.

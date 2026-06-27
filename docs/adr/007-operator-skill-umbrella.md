@@ -1,10 +1,12 @@
 ---
 type: adr
-status: accepted
+status: accepted, amended by ADR-010 and ADR-011
 date: 2026-06-01
 ---
 
 # ADR-007: Single-Umbrella Operator Skill
+
+Amended by ADR-010 and ADR-011. The single `/woof` operator surface remains; old discovery bucket and story wording yields to intake and `work_units[]`.
 
 ## Context
 

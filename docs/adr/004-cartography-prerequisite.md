@@ -1,10 +1,12 @@
 ---
 type: adr
-status: accepted
+status: superseded by ADR-013
 date: 2026-05-27
 ---
 
 # ADR-004: Cartography Prerequisite
+
+Superseded by ADR-013. Cartography remains first-class, but the required cartography floor is declared by repo policy instead of being mandatory for every run.
 
 ## Context
 

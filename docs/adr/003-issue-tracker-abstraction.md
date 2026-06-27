@@ -1,10 +1,12 @@
 ---
 type: adr
-status: accepted
+status: superseded by ADR-011
 date: 2026-05-27
 ---
 
 # ADR-003: Issue-Tracker Abstraction
+
+Superseded by ADR-011 for execution-shape projection. Tracker integration remains relevant, but the active execution contract is `work_units[]`, not `plan.json` stories.
 
 ## Context
 

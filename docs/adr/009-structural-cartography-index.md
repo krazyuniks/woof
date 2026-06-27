@@ -1,10 +1,12 @@
 ---
 type: adr
-status: accepted
+status: accepted, amended by ADR-013
 date: 2026-06-07
 ---
 
 # ADR-009: Structural Cartography Index
+
+Amended by ADR-013. Structural cartography remains the target for impact-aware context; the required floor is policy-driven rather than universal.
 
 ## Context
 

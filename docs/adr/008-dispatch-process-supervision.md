@@ -1,10 +1,12 @@
 ---
 type: adr
-status: accepted
+status: superseded by ADR-012
 date: 2026-06-03
 ---
 
 # ADR-008: Dispatch Process Supervision
+
+Superseded by ADR-012. Worker supervision and completion handling move behind the shared interactive tmux harness boundary.
 
 Extends ADR-006 (operational resilience). ADR-006 made dispatch telemetry and
 runaway protection part of the graph contract; this ADR fixes how a single

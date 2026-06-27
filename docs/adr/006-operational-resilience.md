@@ -1,10 +1,12 @@
 ---
 type: adr
-status: accepted
+status: superseded by ADR-012 and ADR-013
 date: 2026-05-30
 ---
 
 # ADR-006: Operational Resilience Guardrails
+
+Superseded by ADR-012 and ADR-013. Resilience remains part of the target, but dispatch supervision and rigour activation now sit behind the tmux harness and repo policy.
 
 ## Context
 

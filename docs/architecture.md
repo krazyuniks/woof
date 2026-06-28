@@ -6,7 +6,7 @@ This document is the system-design source of truth. It describes the target syst
 
 Woof is the orchestration engine for AI-assisted software delivery. It turns an epic or pre-decomposed `work_units[]` backlog into verified code changes through deterministic graph control, interactive LLM workers, project-owned verification, independent review, and auditable publish/merge steps.
 
-The durable boundary is the consumer repository. Woof assumes a Git worktree, `.woof/` state, repo-local policy, repo-local verification commands, and the operator's subscription CLI harnesses.
+The durable boundary is the consumer repository. Woof assumes a Git worktree, `.woof/` state, repo-local policy, repo-local verification commands, and the operator's subscription CLI harnesses. The engine owns harness adapters, launch, execution, readiness, output parsing, and validation. Repo policy owns only which harness/model/effort fills each worker slot.
 
 ## 1. Principles
 
@@ -14,7 +14,7 @@ The durable boundary is the consumer repository. Woof assumes a Git worktree, `.
 - **Disk authority.** Files under `.woof/` are the source of truth. Live sessions are attached execution resources, not state authority.
 - **Work units execute.** `work_units[]` are the executable units. An epic normally decomposes into work units; a supplied `work_units[]` backlog is already decomposed input.
 - **Deterministic control.** Python owns graph progression, validation, gates, checks, audit, and publish/merge decisions. LLM workers produce or review bounded artefacts; they do not choose graph successors.
-- **Policy over modes.** Repo policy declares profile, gate command, role routes, deterministic check floor, and cartography floor. These capabilities activate checks and context loading without creating separate engine paths.
+- **Policy over modes.** Repo policy declares delivery profile, producer/reviewer run profile, gate command, deterministic check floor, and cartography floor. These capabilities activate checks and context loading without creating separate engine paths.
 - **Cartography remains first-class.** Cartography is a policy-enforced capability for context, impact analysis, and conformance checks. Lean runs may require less cartography; richer runs may require full structural cartography.
 - **Warm producer, fresh reviewer.** The producer stays warm across bounded fix rounds. The reviewer is independent and fresh each round.
 - **Evidence before confidence.** Reviewer blockers and deterministic findings cite resolvable evidence. Confidence-like metadata is advisory and never gate-affecting on its own.
@@ -142,7 +142,7 @@ Repo policy is stored under `.woof/` and declares:
 - project verification command;
 - default base branch and GitHub repo;
 - ready label and merge path groups;
-- producer/reviewer route preferences;
+- producer/reviewer run profile: slot -> harness/model/effort;
 - deterministic check floor;
 - cartography floor.
 

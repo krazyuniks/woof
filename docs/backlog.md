@@ -19,11 +19,12 @@ work_units:
     kind: build
     state: todo
     priority: high
-    summary: Add profile, gate command, route preferences, check floor, and cartography floor to `.woof/` policy.
+    summary: Add delivery profile, producer/reviewer run profile, gate command, check floor, and cartography floor to `.woof/` policy.
     deps: [schema-unification]
     acceptance:
       - A repo can be onboarded without editing engine Python.
       - Policy validates profile A and profile B settings.
+      - Policy declares producer and reviewer harness/model/effort slots in the consuming repo; the engine owns harness adapters, execution, parsing, and validation.
       - Missing required policy or cartography floor data fails preflight.
   - id: intake-enrichment
     title: Implement epic sources, enrichment, and pre-decomposed intake
@@ -70,6 +71,7 @@ work_units:
       - Profile A waits for mergeability/check recompute after main moves, spaces deploy-triggering merges until the configured terminal deploy checks settle, and treats proved Terraform state-lock contention as bounded-retryable rather than terminal.
       - Partial-merge reconciliation records already-merged units before halting on any later terminal failure.
       - "Shared-file sibling conflicts are reconciled semantically: the later slice's intended diff is reapplied onto current main, expected symbols/tests are verified after resolution, and the gate reruns before merge."
+      - Runner absorption preserves project-owned producer/reviewer slot selection and engine-owned harness adapters, execution, parsing, and validation.
       - Profile B commits and pushes through graph-owned transactions.
   - id: run-lineage-immutable-attempts
     title: Add run lineage and immutable attempt artefacts

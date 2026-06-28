@@ -37,16 +37,16 @@ def _ctx(root: Path, paths: list[str], story_id: str = "S1") -> CheckContext:
     plan = {
         "epic_id": 7,
         "goal": "test scope",
-        "stories": [
+        "work_units": [
             {
                 "id": "S1",
                 "title": "Scoped story",
-                "intent": "Touch allowed files only",
+                "summary": "Touch allowed files only",
                 "paths": paths,
                 "satisfies": ["O1"],
                 "implements_contract_decisions": [],
                 "uses_contract_decisions": [],
-                "depends_on": [],
+                "deps": [],
                 "tests": {"count": 1, "types": ["unit"]},
                 "status": "in_progress",
             }

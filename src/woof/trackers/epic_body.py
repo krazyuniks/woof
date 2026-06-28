@@ -118,16 +118,16 @@ def render_epic_issue_body(
 
 def render_plan_summary(plan: Plan) -> str:
     out = ["## Plan Summary\n\n"]
-    for story in plan.stories:
-        out.append(f"- **{story.id}** — {_single_line(story.title)}\n")
+    for unit in plan.work_units:
+        out.append(f"- **{unit.id}** — {_single_line(unit.title)}\n")
     out.append("\n")
     return "".join(out)
 
 
 def render_completion_summary(plan: Plan) -> str:
-    total = len(plan.stories)
-    done = sum(1 for story in plan.stories if story.status == "done")
-    noun = "story" if total == 1 else "stories"
+    total = len(plan.work_units)
+    done = sum(1 for unit in plan.work_units if unit.status == "done")
+    noun = "work unit" if total == 1 else "work units"
     return f"## Closing Summary\n\nEpic completed with {done}/{total} planned {noun} done.\n\n"
 
 

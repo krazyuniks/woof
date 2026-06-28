@@ -75,7 +75,7 @@ def test_executor_subprocess_crash_gate_can_abandon_story(tmp_path: Path) -> Non
     plan = json.loads((epic_dir(consumer) / "plan.json").read_text(encoding="utf-8"))
     # E17 P4 / D-AB: abandon_story is honest - the story is terminal-abandoned,
     # not done, and the epic completes on its (here, only) remaining work.
-    assert plan["stories"][0]["status"] == "abandoned"
+    assert plan["work_units"][0]["status"] == "abandoned"
     epic_events = jsonl(epic_dir(consumer) / "epic.jsonl")
     assert any(event.get("event") == "story_abandoned" for event in epic_events)
     assert not any(event.get("event") == "story_completed" for event in epic_events)
@@ -150,8 +150,8 @@ def test_empty_diff_gate_approval_marks_story_complete_without_commit(tmp_path: 
     assert completed[-1]["status"] == "epic_complete"
     assert latest_commit_subject(consumer, env) == before
     plan = json.loads((epic_dir(consumer) / "plan.json").read_text(encoding="utf-8"))
-    assert plan["stories"][0]["status"] == "done"
-    assert plan["stories"][0]["empty_diff"] is True
+    assert plan["work_units"][0]["status"] == "done"
+    assert plan["work_units"][0]["empty_diff"] is True
     assert not (epic_dir(consumer) / "executor_result.json").exists()
 
 
@@ -194,7 +194,7 @@ def test_interrupted_commit_resume_commits_existing_transaction(tmp_path: Path) 
 
     plan_path = epic_dir(consumer) / "plan.json"
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
-    plan["stories"][0]["status"] = "done"
+    plan["work_units"][0]["status"] = "done"
     plan_path.write_text(json.dumps(plan, indent=2) + "\n", encoding="utf-8")
     with (epic_dir(consumer) / "epic.jsonl").open("a", encoding="utf-8") as handle:
         handle.write(

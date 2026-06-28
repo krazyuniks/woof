@@ -38,28 +38,28 @@ def _plan_json(*, done: bool = False) -> str:
         {
             "epic_id": 42,
             "goal": "Ship comment publishing.",
-            "stories": [
+            "work_units": [
                 {
                     "id": "S1",
                     "title": "Create comment API",
-                    "intent": "Add the write API.",
+                    "summary": "Add the write API.",
                     "paths": ["src/comments.py"],
                     "satisfies": ["O1"],
                     "implements_contract_decisions": ["CD1"],
                     "uses_contract_decisions": [],
-                    "depends_on": [],
+                    "deps": [],
                     "tests": {"count": 2, "types": ["unit"]},
                     "status": status,
                 },
                 {
                     "id": "S2",
                     "title": "Render live comments",
-                    "intent": "Show new comments in real time.",
+                    "summary": "Show new comments in real time.",
                     "paths": ["src/live.py"],
                     "satisfies": ["O2"],
                     "implements_contract_decisions": [],
                     "uses_contract_decisions": ["CD1", "CD2"],
-                    "depends_on": ["S1"],
+                    "deps": ["S1"],
                     "tests": {"count": 1, "types": ["integration"]},
                     "status": status,
                 },
@@ -227,7 +227,7 @@ def test_invalid_front_matter(tmp_path: Path) -> None:
     (epic_dir / "EPIC.md").write_text(
         _epic_md(
             "epic_id: 1\ntitle: T\nobservable_outcomes: [{id: O1, statement: x, verification: automated}]\ncontract_decisions: []\n",
-            "intent",
+            "summary",
         )
     )
     proc = _run(project, "render-epic", "--epic", "1")
@@ -458,7 +458,9 @@ def test_wf_epic_completion_syncs_closing_summary_and_closes_issue(
     assert proc.stdout == "woof wf: human_review -> epic_complete: E42 complete\n"
     pushed_body = (bin_dir / "_last_body").read_text()
     assert "## Plan Summary\n\n" in pushed_body
-    assert "## Closing Summary\n\nEpic completed with 2/2 planned stories done.\n\n" in pushed_body
+    assert (
+        "## Closing Summary\n\nEpic completed with 2/2 planned work units done.\n\n" in pushed_body
+    )
     assert (bin_dir / "_closed").exists()
     last_sync = json.loads((epic_dir / ".last-sync").read_text())
     assert last_sync["updated_at"] == "2026-01-03T00:00:00Z"

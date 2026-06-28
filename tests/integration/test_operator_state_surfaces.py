@@ -110,16 +110,16 @@ mcp = []
             {
                 "epic_id": 5,
                 "goal": "Expose operator state.",
-                "stories": [
+                "work_units": [
                     {
                         "id": "S1",
                         "title": "Report state",
-                        "intent": "Expose current state to operators.",
+                        "summary": "Expose current state to operators.",
                         "paths": ["src/**/*.py"],
                         "satisfies": ["O1"],
                         "implements_contract_decisions": [],
                         "uses_contract_decisions": [],
-                        "depends_on": [],
+                        "deps": [],
                         "tests": {"count": 1, "types": ["unit"]},
                         "status": "in_progress",
                     }

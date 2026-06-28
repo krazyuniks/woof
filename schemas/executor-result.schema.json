@@ -43,7 +43,7 @@
         { "type": "null" },
         { "type": "string" }
       ],
-      "description": "Prose position authored by the producer explaining why it halted. Required for aborted_with_position and empty_diff outcomes. The graph passes this verbatim to woof gate write."
+      "description": "Prose position authored by the producer explaining why it halted. Required for aborted_with_position and empty_diff outcomes. The graph passes this verbatim to its gate authoring helper."
     }
   },
   "allOf": [

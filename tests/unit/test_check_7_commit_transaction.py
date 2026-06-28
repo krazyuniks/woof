@@ -30,7 +30,7 @@ def _plan(story: dict | None = None) -> dict:
     return {
         "epic_id": 7,
         "goal": "test commit transaction",
-        "stories": [
+        "work_units": [
             story
             or {
                 "id": "S1",

@@ -673,19 +673,19 @@ def _route_policy_model_profile(route_policy: Mapping[str, Any]) -> str | None:
 def _story_statuses(observe_report: Mapping[str, Any] | None) -> list[dict[str, Any]]:
     if not observe_report:
         return []
-    stories = observe_report.get("status", {}).get("plan", {}).get("stories", [])
-    if not isinstance(stories, list):
+    work_units = observe_report.get("status", {}).get("plan", {}).get("work_units", [])
+    if not isinstance(work_units, list):
         return []
     statuses = []
-    for story in stories:
-        if not isinstance(story, Mapping):
+    for unit in work_units:
+        if not isinstance(unit, Mapping):
             continue
         statuses.append(
             {
-                "id": story.get("id"),
-                "title": story.get("title"),
-                "status": story.get("status"),
-                "satisfies": story.get("satisfies", []),
+                "id": unit.get("id"),
+                "title": unit.get("title"),
+                "status": unit.get("status"),
+                "satisfies": unit.get("satisfies", []),
             }
         )
     return statuses
@@ -979,13 +979,17 @@ def _plan_story_paths(repo_root: Path) -> list[str]:
     if not plan_paths:
         return []
     try:
-        payload = json.loads(plan_paths[-1].read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
+        from woof.graph.state import Plan
+
+        payload = Plan.model_validate_json(plan_paths[-1].read_text(encoding="utf-8")).model_dump(
+            exclude_none=True
+        )
+    except ValueError:
         return []
     paths: list[str] = []
-    for story in payload.get("stories") or []:
-        if isinstance(story, Mapping):
-            paths.extend(str(item) for item in story.get("paths") or [])
+    for unit in payload.get("work_units") or []:
+        if isinstance(unit, Mapping):
+            paths.extend(str(item) for item in unit.get("paths") or [])
     return sorted(set(paths))
 
 
@@ -1082,14 +1086,14 @@ def _reviewer_severity(
         if event.get("event") == "plan_critiqued" and event.get("severity")
     ]
     critique_dir = repo_root / ".woof" / "epics" / f"E{epic_id}" / "critique"
-    stories: dict[str, str] = {}
+    work_units: dict[str, str] = {}
     if critique_dir.is_dir():
         for path in sorted(critique_dir.glob("story-*.md")):
             front = _markdown_front_matter(path)
             severity = front.get("severity")
             if isinstance(severity, str):
-                stories[path.stem.removeprefix("story-")] = severity
-    return {"plan": plan[-1] if plan else None, "stories": stories}
+                work_units[path.stem.removeprefix("story-")] = severity
+    return {"plan": plan[-1] if plan else None, "work_units": work_units}
 
 
 def _markdown_front_matter(path: Path) -> dict[str, Any]:
@@ -1560,20 +1564,21 @@ def write_plan(prompt: str) -> None:
     plan = {
         "epic_id": eid,
         "goal": "Measure a small valid epic from deterministic Definition through one story.",
-        "stories": [
+        "work_units": [
             {
                 "id": "S1",
                 "title": "Add benchmark note helper",
-                "intent": "Create a tiny helper, test marker, and JSON Schema contract.",
+                "summary": "Create a tiny helper, test marker, and JSON Schema contract.",
                 "paths": [
                     "bench_note.py",
                     "tests/test_bench_note.py",
                     "schemas/bench-note.schema.json",
                 ],
+                "acceptance": ["O1 is verified by a unit test and JSON Schema contract."],
                 "satisfies": ["O1"],
                 "implements_contract_decisions": ["CD1"],
                 "uses_contract_decisions": [],
-                "depends_on": [],
+                "deps": [],
                 "tests": {"count": 1, "types": ["unit"]},
                 "status": "pending",
             }

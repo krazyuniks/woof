@@ -1,1 +1,1 @@
-# woof gate package — mechanical gate.md authoring.
+# Mechanical gate.md authoring helpers.

@@ -13,6 +13,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WOOF_BIN = REPO_ROOT / "bin" / "woof"
@@ -42,6 +43,7 @@ def test_shipped_schema_compiles(schema_path: Path) -> None:
 def test_shipped_schema_count() -> None:
     """Schema directory holds the designed artefact and graph schemas."""
     expected = {
+        "backlog.schema.json",
         "epic.schema.json",
         "brainstorm.schema.json",
         "plan.schema.json",
@@ -89,16 +91,16 @@ def _minimal_plan() -> dict:
     return {
         "epic_id": 1,
         "goal": "demo plan for tests",
-        "stories": [
+        "work_units": [
             {
                 "id": "S1",
                 "title": "first story",
-                "intent": "do the thing",
+                "summary": "do the thing",
                 "paths": ["src/**/*.py"],
                 "satisfies": ["O1"],
                 "implements_contract_decisions": [],
                 "uses_contract_decisions": [],
-                "depends_on": [],
+                "deps": [],
                 "tests": {"count": 1, "types": ["unit"]},
                 "status": "pending",
             }
@@ -122,6 +124,62 @@ def test_validate_plan_missing_goal_fails(tmp_path: Path, run_woof) -> None:
     proc = run_woof("validate", str(path))
     assert proc.returncode == 1
     assert "INVALID" in proc.stdout
+
+
+# ---------------------------------------------------------------------------
+# Backlog front matter (Markdown)
+# ---------------------------------------------------------------------------
+
+
+def _minimal_backlog() -> dict:
+    return {
+        "schema_version": 1,
+        "type": "backlog",
+        "project_ref": "woof",
+        "status": "active",
+        "executor": {
+            "name": "vault_foreman",
+            "contract_version": 1,
+            "project": "woof",
+            "timeouts": {"produce_timeout_min": 180},
+            "drain": {"merge_after_ready_pr": True},
+        },
+        "work_units": [
+            {
+                "id": "schema-unification",
+                "title": "Unify execution schema",
+                "kind": "build",
+                "state": "todo",
+                "priority": "high",
+                "summary": "Move execution onto work_units.",
+                "acceptance": ["work_units validate"],
+                "deps": [],
+            }
+        ],
+    }
+
+
+def _write_front_matter(path: Path, payload: dict) -> None:
+    path.write_text("---\n" + yaml.safe_dump(payload, sort_keys=False) + "---\n# Backlog\n")
+
+
+def test_validate_real_backlog_accepts_document_executor(run_woof) -> None:
+    proc = run_woof("validate", str(REPO_ROOT / "docs" / "backlog.md"))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "valid (backlog)" in proc.stdout
+
+
+def test_validate_backlog_rejects_per_unit_wave_field(tmp_path: Path, run_woof) -> None:
+    payload = _minimal_backlog()
+    payload["work_units"][0]["wave"] = 1
+    path = tmp_path / "backlog.md"
+    _write_front_matter(path, payload)
+
+    proc = run_woof("validate", str(path))
+
+    assert proc.returncode == 1
+    assert "INVALID" in proc.stdout
+    assert "must NOT have additional properties" in proc.stdout
 
 
 # ---------------------------------------------------------------------------

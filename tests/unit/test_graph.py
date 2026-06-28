@@ -19,7 +19,7 @@ from woof.graph.git import git_env
 from woof.graph.lock import LOCK_FILENAME, WorkflowLockError
 from woof.graph.manifest import build_story_manifest, verify_staged_manifest
 from woof.graph.runner import run_graph
-from woof.graph.state import NodeInput, NodeOutput, NodeStatus, NodeType, StorySpec
+from woof.graph.state import NodeInput, NodeOutput, NodeStatus, NodeType, WorkUnitSpec
 from woof.graph.transitions import (
     StageStateError,
     append_epic_event,
@@ -53,16 +53,16 @@ def _write_plan(root: Path, epic_id: int = 1) -> Path:
     plan = {
         "epic_id": epic_id,
         "goal": "test graph",
-        "stories": [
+        "work_units": [
             {
                 "id": "S1",
                 "title": "first",
-                "intent": "do work",
+                "summary": "do work",
                 "paths": ["src/*.py"],
                 "satisfies": ["O1"],
                 "implements_contract_decisions": [],
                 "uses_contract_decisions": [],
-                "depends_on": [],
+                "deps": [],
                 "tests": {"count": 1, "types": ["unit"]},
                 "status": "pending",
             }
@@ -88,7 +88,7 @@ def test_mark_story_status_raises_for_unknown_story(tmp_path: Path) -> None:
         mark_story_status(tmp_path, 1, "S404", "done")
 
     plan = json.loads((directory / "plan.json").read_text(encoding="utf-8"))
-    assert plan["stories"][0]["status"] == "pending"
+    assert plan["work_units"][0]["status"] == "pending"
 
 
 def test_story_prompt_is_portable_playbook_prompt() -> None:
@@ -459,16 +459,16 @@ def _write_stage3_plan(directory: Path, epic_id: int) -> None:
     plan = {
         "epic_id": epic_id,
         "goal": "Implement the test epic.",
-        "stories": [
+        "work_units": [
             {
                 "id": "S1",
                 "title": "Build the first surface",
-                "intent": "Create the first observable surface.",
+                "summary": "Create the first observable surface.",
                 "paths": ["src/*.py", "tests/*.py"],
                 "satisfies": ["O1"],
                 "implements_contract_decisions": [],
                 "uses_contract_decisions": [],
-                "depends_on": [],
+                "deps": [],
                 "tests": {"count": 1, "types": ["unit"]},
                 "status": "pending",
             }
@@ -609,7 +609,7 @@ def _write_ready_commit_state(
 ) -> Path:
     directory = _write_plan(root, epic_id)
     plan = json.loads((directory / "plan.json").read_text())
-    plan["stories"][0]["status"] = "done"
+    plan["work_units"][0]["status"] = "done"
     (directory / "plan.json").write_text(json.dumps(plan))
     (directory / "dispatch.jsonl").write_text("{}\n")
     executor_result = {
@@ -1647,7 +1647,7 @@ def test_breakdown_planning_node_dispatches_primary_validates_plan_and_renders_m
         ".woof/codebase/TARGET-ARCHITECTURE.md",
         ".woof/codebase/PRINCIPLES.md",
     ]
-    assert "Right-sized stories" in captured["prompt"]
+    assert "Right-sized work units" in captured["prompt"]
     assert "Do not author `PLAN.md`" in captured["prompt"]
     _assert_planning_node_input_schema(
         tmp_path,
@@ -1684,7 +1684,7 @@ def test_breakdown_planning_node_rejects_crossref_invalid_plan_before_critique(
         captured["role"] = role
         _write_stage3_plan(directory, epic_id)
         plan = json.loads((directory / "plan.json").read_text())
-        plan["stories"][0]["satisfies"] = ["O999"]
+        plan["work_units"][0]["satisfies"] = ["O999"]
         (directory / "plan.json").write_text(json.dumps(plan))
         return subprocess.CompletedProcess([], 0, "", "")
 
@@ -2047,8 +2047,8 @@ def test_verification_stages_changed_story_paths_before_stage5_checks(tmp_path: 
 
     directory = _write_plan(tmp_path, 1)
     plan = json.loads((directory / "plan.json").read_text())
-    plan["stories"][0]["paths"] = ["src/*.py", "tests/*.py"]
-    plan["stories"][0]["status"] = "in_progress"
+    plan["work_units"][0]["paths"] = ["src/*.py", "tests/*.py"]
+    plan["work_units"][0]["status"] = "in_progress"
     (directory / "plan.json").write_text(json.dumps(plan))
     _write_minimal_epic(directory, 1)
     (directory / "dispatch.jsonl").write_text("{}\n")
@@ -2386,6 +2386,44 @@ def test_graph_resumes_interrupted_commit_transaction(tmp_path: Path) -> None:
     assert subject.stdout.strip() == "feat: E1 S1 - first"
 
 
+def test_commit_gates_when_verified_staged_tree_changes(tmp_path: Path) -> None:
+    _init_git_repo(tmp_path)
+    directory = _write_ready_commit_state(tmp_path, 1)
+    story = transitions.load_plan(tmp_path, 1).work_units[0]
+    manifest = build_story_manifest(tmp_path, 1, story)
+    _git(tmp_path, "add", "--", *manifest.expected_paths, check=True)
+    verified_tree = _git(
+        tmp_path,
+        "write-tree",
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    verified_paths = _git(
+        tmp_path,
+        "diff",
+        "--cached",
+        "--name-only",
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    check_result_path = directory / "check-result.json"
+    check_result = json.loads(check_result_path.read_text())
+    check_result["verified_tree"] = verified_tree
+    check_result["verified_paths"] = verified_paths
+    check_result_path.write_text(json.dumps(check_result))
+
+    (tmp_path / "src" / "app.py").write_text("print('tampered after verification')\n")
+    _git(tmp_path, "add", "--", "src/app.py", check=True)
+
+    outputs = run_graph(tmp_path, 1, once=True)
+
+    assert outputs[0].status == NodeStatus.GATE_OPENED
+    assert outputs[0].triggered_by == ["check_7_commit_transaction"]
+    assert "Verified transaction changed before commit" in outputs[0].message
+
+
 def test_commit_writes_epic_completed_into_commit_for_mixed_done_abandoned_epic(
     tmp_path: Path,
 ) -> None:
@@ -2396,9 +2434,9 @@ def test_commit_writes_epic_completed_into_commit_for_mixed_done_abandoned_epic(
     _init_git_repo(tmp_path)
     directory = _write_ready_commit_state(tmp_path, 1)
     plan = json.loads((directory / "plan.json").read_text())
-    plan["stories"] = [
-        {**plan["stories"][0], "id": "S1", "status": "done"},
-        {**plan["stories"][0], "id": "S2", "title": "second", "status": "abandoned"},
+    plan["work_units"] = [
+        {**plan["work_units"][0], "id": "S1", "status": "done"},
+        {**plan["work_units"][0], "id": "S2", "title": "second", "status": "abandoned"},
     ]
     (directory / "plan.json").write_text(json.dumps(plan))
 
@@ -2687,20 +2725,20 @@ def test_failed_check_result_reopens_structured_gate_on_reentry(tmp_path: Path) 
 def test_successor_selection_respects_dependency_closure(tmp_path: Path) -> None:
     directory = _write_plan(tmp_path, 12)
     plan = json.loads((directory / "plan.json").read_text())
-    plan["stories"] = [
+    plan["work_units"] = [
         {
-            **plan["stories"][0],
+            **plan["work_units"][0],
             "id": "S1",
             "title": "first",
             "status": "done",
-            "depends_on": [],
+            "deps": [],
         },
         {
-            **plan["stories"][0],
+            **plan["work_units"][0],
             "id": "S2",
             "title": "second",
             "status": "pending",
-            "depends_on": ["S1"],
+            "deps": ["S1"],
         },
     ]
     (directory / "plan.json").write_text(json.dumps(plan))
@@ -2713,7 +2751,7 @@ def test_run_graph_opens_recoverable_gate_when_dependencies_are_unsatisfied(
 ) -> None:
     directory = _write_plan(tmp_path, 13)
     plan = json.loads((directory / "plan.json").read_text())
-    plan["stories"][0]["depends_on"] = ["S99"]
+    plan["work_units"][0]["deps"] = ["S99"]
     (directory / "plan.json").write_text(json.dumps(plan))
 
     outputs = run_graph(tmp_path, 13)
@@ -2725,7 +2763,7 @@ def test_run_graph_opens_recoverable_gate_when_dependencies_are_unsatisfied(
             epic_id=13,
             gate_path=".woof/epics/E13/gate.md",
             triggered_by=["incomplete_stage_state"],
-            message="E13 has pending stories, but no story has satisfied dependencies",
+            message="E13 has pending work units, but no work unit has satisfied dependencies",
         )
     ]
     gate_fm = _read_gate_fm(directory / "gate.md")
@@ -2802,7 +2840,7 @@ def test_wf_epic_reports_complete_epic_as_json(tmp_path: Path) -> None:
     )
     directory = _write_plan(tmp_path, 7)
     plan = json.loads((directory / "plan.json").read_text())
-    plan["stories"][0]["status"] = "done"
+    plan["work_units"][0]["status"] = "done"
     (directory / "plan.json").write_text(json.dumps(plan))
     _write_minimal_epic(directory, 7)
     remote_body = "Remote intent.\n\n## Observable Outcomes\n\n- stale\n"
@@ -3297,9 +3335,9 @@ def test_wf_resolve_abandon_story_skips_to_next_ready_story(tmp_path: Path) -> N
     directory = _write_plan(tmp_path, 34)
     _write_last_sync(directory, 34)
     plan = json.loads((directory / "plan.json").read_text())
-    plan["stories"] = [
-        {**plan["stories"][0], "id": "S1", "status": "in_progress"},
-        {**plan["stories"][0], "id": "S2", "title": "second", "status": "pending"},
+    plan["work_units"] = [
+        {**plan["work_units"][0], "id": "S1", "status": "in_progress"},
+        {**plan["work_units"][0], "id": "S2", "title": "second", "status": "pending"},
     ]
     (directory / "plan.json").write_text(json.dumps(plan))
     (directory / "executor_result.json").write_text(
@@ -3332,7 +3370,7 @@ def test_wf_resolve_abandon_story_skips_to_next_ready_story(tmp_path: Path) -> N
     assert proc.returncode == 0, proc.stderr
     plan_after = json.loads((directory / "plan.json").read_text())
     # abandon_story is now honest: the story is terminal-abandoned, not done.
-    assert plan_after["stories"][0]["status"] == "abandoned"
+    assert plan_after["work_units"][0]["status"] == "abandoned"
     events = [
         json.loads(line)
         for line in (directory / "epic.jsonl").read_text().splitlines()
@@ -3351,9 +3389,9 @@ def test_wf_resolve_retry_story_resets_and_re_dispatches_without_redoing_sibling
     directory = _write_plan(tmp_path, 36)
     _write_last_sync(directory, 36)
     plan = json.loads((directory / "plan.json").read_text())
-    plan["stories"] = [
-        {**plan["stories"][0], "id": "S1", "status": "done"},
-        {**plan["stories"][0], "id": "S2", "title": "second", "status": "in_progress"},
+    plan["work_units"] = [
+        {**plan["work_units"][0], "id": "S1", "status": "done"},
+        {**plan["work_units"][0], "id": "S2", "title": "second", "status": "in_progress"},
     ]
     (directory / "plan.json").write_text(json.dumps(plan))
     # S2 crashed mid-execution, leaving stale executor/check/critique/disposition state.
@@ -3388,7 +3426,7 @@ def test_wf_resolve_retry_story_resets_and_re_dispatches_without_redoing_sibling
     proc = _run_woof(tmp_path, "wf", "--epic", "36", "--resolve", "retry_story", env=env)
 
     assert proc.returncode == 0, proc.stderr
-    by_id = {s["id"]: s for s in json.loads((directory / "plan.json").read_text())["stories"]}
+    by_id = {s["id"]: s for s in json.loads((directory / "plan.json").read_text())["work_units"]}
     assert by_id["S2"]["status"] == "pending"  # the crashed story is reset
     assert by_id["S1"]["status"] == "done"  # the done sibling is untouched
     # The crashed story's artefacts are cleared; the sibling's survive.
@@ -3450,9 +3488,9 @@ def _write_story_gate(directory: Path, story_id: str, *, gate_type: str = "story
 def test_wf_resolve_abandon_epic_closes_tracker_and_is_terminal(tmp_path: Path) -> None:
     directory = _write_plan(tmp_path, 40)
     plan = json.loads((directory / "plan.json").read_text())
-    plan["stories"] = [
-        {**plan["stories"][0], "id": "S1", "status": "in_progress"},
-        {**plan["stories"][0], "id": "S2", "title": "second", "status": "pending"},
+    plan["work_units"] = [
+        {**plan["work_units"][0], "id": "S1", "status": "in_progress"},
+        {**plan["work_units"][0], "id": "S2", "title": "second", "status": "pending"},
     ]
     (directory / "plan.json").write_text(json.dumps(plan))
     (directory / "executor_result.json").write_text(
@@ -3486,7 +3524,7 @@ def test_wf_resolve_abandon_epic_closes_tracker_and_is_terminal(tmp_path: Path) 
     # abandon_epic abandons the whole epic; it does not selectively complete or
     # abandon the targeted story, which stays as it was.
     plan_after = json.loads((directory / "plan.json").read_text())
-    assert plan_after["stories"][0]["status"] == "in_progress"
+    assert plan_after["work_units"][0]["status"] == "in_progress"
 
     # next_node returns the abandoned-terminal outcome, distinct from EPIC_COMPLETE.
     assert transitions.epic_abandoned(tmp_path, 40) is True
@@ -3501,7 +3539,7 @@ def test_abandon_epic_keeps_gate_when_tracker_close_fails(tmp_path: Path) -> Non
     # gate stays open and the epic is never marked abandoned.
     directory = _write_plan(tmp_path, 44)
     plan = json.loads((directory / "plan.json").read_text())
-    plan["stories"][0]["status"] = "in_progress"
+    plan["work_units"][0]["status"] = "in_progress"
     (directory / "plan.json").write_text(json.dumps(plan))
     _write_story_gate(directory, "S1")
 
@@ -3528,15 +3566,15 @@ def test_abandon_epic_keeps_gate_when_tracker_close_fails(tmp_path: Path) -> Non
 def test_reconstruction_distinguishes_abandoned_story_from_done(tmp_path: Path) -> None:
     directory = _write_plan(tmp_path, 41)
     plan = json.loads((directory / "plan.json").read_text())
-    plan["stories"] = [
-        {**plan["stories"][0], "id": "S1", "status": "done"},
-        {**plan["stories"][0], "id": "S2", "title": "second", "status": "abandoned"},
+    plan["work_units"] = [
+        {**plan["work_units"][0], "id": "S1", "status": "done"},
+        {**plan["work_units"][0], "id": "S2", "title": "second", "status": "abandoned"},
     ]
     (directory / "plan.json").write_text(json.dumps(plan))
 
     # The plan reloads with distinct statuses: abandoned is not coerced to done.
     reloaded = transitions.load_plan(tmp_path, 41)
-    assert {s.id: s.status for s in reloaded.stories} == {"S1": "done", "S2": "abandoned"}
+    assert {s.id: s.status for s in reloaded.work_units} == {"S1": "done", "S2": "abandoned"}
 
     # Every story is terminal (one done, one abandoned) and there is no
     # epic_abandoned marker: the epic completes - the abandoned story neither
@@ -3569,7 +3607,7 @@ def test_transaction_manifest_requires_audit_and_rejects_extra_staged_file(tmp_p
     (src / "app.py").write_text("print('O1')\n")
     (tmp_path / "extra.txt").write_text("not in story scope\n")
 
-    story = StorySpec(
+    story = WorkUnitSpec(
         id="S1",
         title="first",
         paths=["src/*.py"],
@@ -3609,7 +3647,7 @@ def test_transaction_manifest_reports_missing_expected_index_paths(tmp_path: Pat
     src.mkdir()
     (src / "app.py").write_text("print('O1')\n")
 
-    story = StorySpec(
+    story = WorkUnitSpec(
         id="S1",
         title="first",
         paths=["src/*.py"],
@@ -3654,28 +3692,28 @@ def test_transaction_manifest_excludes_committed_prior_epic_artifacts(tmp_path: 
             {
                 "epic_id": 17,
                 "goal": "test graph",
-                "stories": [
+                "work_units": [
                     {
                         "id": "S1",
                         "title": "first",
-                        "intent": "done",
+                        "summary": "done",
                         "paths": ["src/*.py"],
                         "satisfies": ["O1"],
                         "implements_contract_decisions": [],
                         "uses_contract_decisions": [],
-                        "depends_on": [],
+                        "deps": [],
                         "tests": {"count": 1, "types": ["unit"]},
                         "status": "done",
                     },
                     {
                         "id": "S2",
                         "title": "docs",
-                        "intent": "document",
+                        "summary": "document",
                         "paths": ["README.md"],
                         "satisfies": ["O2"],
                         "implements_contract_decisions": [],
                         "uses_contract_decisions": [],
-                        "depends_on": ["S1"],
+                        "deps": ["S1"],
                         "tests": {"count": 0, "types": ["documentation", "manual"]},
                         "status": "in_progress",
                     },
@@ -3693,7 +3731,7 @@ def test_transaction_manifest_excludes_committed_prior_epic_artifacts(tmp_path: 
     (audit_dir / "new-story.prompt").write_text("new prompt")
     (tmp_path / "README.md").write_text("manual story docs\n")
 
-    story = StorySpec(
+    story = WorkUnitSpec(
         id="S2",
         title="docs",
         paths=["README.md"],
@@ -3727,7 +3765,7 @@ def test_transaction_manifest_honours_recursive_pathspec(tmp_path: Path) -> None
     nested.mkdir(parents=True)
     (nested / "deep.py").write_text("print('O1')\n")
 
-    story = StorySpec(
+    story = WorkUnitSpec(
         id="S1",
         title="first",
         paths=[":(glob)src/**/*.py"],
@@ -4011,7 +4049,7 @@ def test_story_gate_stage_state_halt_approve_leaves_story_pending(tmp_path: Path
         },
     )
     plan = transitions.load_plan(tmp_path, 75)
-    story = next(s for s in plan.stories if s.id == "S1")
+    story = next(s for s in plan.work_units if s.id == "S1")
     assert story.status == "pending"
 
 

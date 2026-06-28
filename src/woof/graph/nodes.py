@@ -48,8 +48,8 @@ from woof.graph.state import (
     NodeStatus,
     NodeType,
     Plan,
-    StorySpec,
     ValidationSummary,
+    WorkUnitSpec,
 )
 from woof.graph.transitions import (
     StageStateError,
@@ -64,6 +64,7 @@ from woof.graph.transitions import (
     discovery_synthesis_dir,
     discovery_synthesis_paths,
     epic_dir,
+    epic_event_exists,
     failed_readiness_cycles,
     load_plan,
     mark_story_status,
@@ -236,6 +237,152 @@ def _validation_summary_from_path(path: Path) -> ValidationSummary | None:
         return _validation_summary(json.loads(path.read_text()))
     except (FileNotFoundError, json.JSONDecodeError):
         return None
+
+
+def _staged_tree(repo_root: Path) -> str:
+    return git(repo_root, "write-tree").stdout.strip()
+
+
+def _record_verified_index(repo_root: Path, result_path: Path) -> None:
+    payload = json.loads(result_path.read_text())
+    payload["verified_tree"] = _staged_tree(repo_root)
+    payload["verified_paths"] = staged_paths(repo_root)
+    result_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+def _check_verified_index(repo_root: Path, check_result: dict) -> str | None:
+    expected_tree = check_result.get("verified_tree")
+    expected_paths = check_result.get("verified_paths")
+    if expected_tree is None and expected_paths is None:
+        return None
+    if not isinstance(expected_tree, str):
+        return "check-result.json has no verified_tree pin"
+    if not isinstance(expected_paths, list) or not all(
+        isinstance(path, str) for path in expected_paths
+    ):
+        return "check-result.json has no valid verified_paths pin"
+
+    actual_tree = _staged_tree(repo_root)
+    actual_paths = staged_paths(repo_root)
+    if actual_tree != expected_tree:
+        return f"staged tree changed after verification: {expected_tree} -> {actual_tree}"
+    if actual_paths != expected_paths:
+        return f"staged paths changed after verification: {expected_paths} -> {actual_paths}"
+    return None
+
+
+def _tree_blob(repo_root: Path, tree: str, path: str) -> str | None:
+    proc = git(repo_root, "show", f"{tree}:{path}", check=False)
+    if proc.returncode != 0:
+        return None
+    return proc.stdout
+
+
+def _plan_matches_completed_resume_delta(
+    repo_root: Path, epic_id: int, story_id: str, verified_tree: str
+) -> bool:
+    plan_path = f".woof/epics/E{epic_id}/plan.json"
+    base_text = _tree_blob(repo_root, verified_tree, plan_path)
+    if base_text is None:
+        return False
+    try:
+        base_plan = Plan.model_validate_json(base_text)
+        current_plan = load_plan(repo_root, epic_id)
+    except ValueError:
+        return False
+
+    expected_units: list[WorkUnitSpec] = []
+    found = False
+    for unit in base_plan.work_units:
+        data = unit.model_dump(exclude_none=True)
+        if unit.id == story_id:
+            data["status"] = "done"
+            found = True
+        expected_units.append(WorkUnitSpec.model_validate(data))
+    if not found:
+        return False
+    expected_plan = Plan(
+        epic_id=base_plan.epic_id,
+        goal=base_plan.goal,
+        work_units=expected_units,
+    )
+    return current_plan.model_dump(exclude_none=True) == expected_plan.model_dump(exclude_none=True)
+
+
+def _epic_events_match_completed_resume_delta(
+    repo_root: Path, epic_id: int, story_id: str, verified_tree: str
+) -> bool:
+    event_path = f".woof/epics/E{epic_id}/epic.jsonl"
+    base_text = _tree_blob(repo_root, verified_tree, event_path)
+    if base_text is None:
+        return False
+    current_path = repo_root / event_path
+    try:
+        current_text = current_path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+
+    base_lines = [line for line in base_text.splitlines() if line.strip()]
+    current_lines = [line for line in current_text.splitlines() if line.strip()]
+    if current_lines[: len(base_lines)] != base_lines:
+        return False
+    added_lines = current_lines[len(base_lines) :]
+    if not added_lines:
+        return True
+
+    for raw in added_lines:
+        try:
+            event = json.loads(raw)
+        except json.JSONDecodeError:
+            return False
+        if not isinstance(event, dict):
+            return False
+        event_name = event.get("event")
+        if event_name == "story_completed" or event_name == "transaction_manifest_verified":
+            if event.get("story_id") != story_id:
+                return False
+        elif event_name == "epic_completed":
+            if event.get("epic_id") != epic_id:
+                return False
+        else:
+            return False
+    return True
+
+
+def _completed_resume_delta_is_graph_owned(
+    repo_root: Path, epic_id: int, story_id: str, check_result: dict
+) -> bool:
+    verified_tree = check_result.get("verified_tree")
+    if not isinstance(verified_tree, str):
+        return False
+    try:
+        delta_paths = sorted(
+            git(repo_root, "diff", "--cached", "--name-only", verified_tree).stdout.splitlines()
+        )
+    except subprocess.CalledProcessError:
+        return False
+    allowed_paths = {
+        f".woof/epics/E{epic_id}/plan.json",
+        f".woof/epics/E{epic_id}/epic.jsonl",
+    }
+    if not delta_paths or any(path not in allowed_paths for path in delta_paths):
+        return False
+    if not epic_event_exists(
+        repo_root,
+        epic_id,
+        event="story_completed",
+        story_id=story_id,
+    ):
+        return False
+    if (
+        f".woof/epics/E{epic_id}/plan.json" in delta_paths
+        and not _plan_matches_completed_resume_delta(repo_root, epic_id, story_id, verified_tree)
+    ):
+        return False
+    return (
+        f".woof/epics/E{epic_id}/epic.jsonl" not in delta_paths
+        or _epic_events_match_completed_resume_delta(repo_root, epic_id, story_id, verified_tree)
+    )
 
 
 def _write_prompt_file(text: str) -> Path:
@@ -507,7 +654,7 @@ def _require_cartography_docs(
     return refs
 
 
-def _executor_files_txt_slice(repo_root: Path, story: StorySpec) -> list[str]:
+def _executor_files_txt_slice(repo_root: Path, story: WorkUnitSpec) -> list[str]:
     """Return the story-scoped subset of .woof/codebase/files.txt lines.
 
     Raises StageStateError(story_gate) if files.txt is missing or the pathspec
@@ -1062,11 +1209,11 @@ def _render_plan_markdown(plan: Plan) -> str:
     out = [
         f"# Plan E{plan.epic_id}\n\n",
         f"{plan.goal}\n\n",
-        "## Stories\n\n",
+        "## Work Units\n\n",
         "| ID | Title | Status | Satisfies | Implements CDs | Uses CDs | Depends On | Paths | Tests |\n",
         "|---|---|---|---|---|---|---|---|---|\n",
     ]
-    for story in plan.stories:
+    for story in plan.work_units:
         tests = story.tests if isinstance(story.tests, dict) else {}
         test_types = tests.get("types", [])
         if not isinstance(test_types, list):
@@ -1080,7 +1227,7 @@ def _render_plan_markdown(plan: Plan) -> str:
             f"{_table_cell(_csv(story.satisfies))} | "
             f"{_table_cell(_csv(story.implements_contract_decisions))} | "
             f"{_table_cell(_csv(story.uses_contract_decisions))} | "
-            f"{_table_cell(_csv(story.depends_on))} | "
+            f"{_table_cell(_csv(story.deps))} | "
             f"{_table_cell(_csv(story.paths))} | "
             f"{_table_cell(str(test_count) + ' ' + _csv([str(item) for item in test_types]))} |\n"
         )
@@ -1872,7 +2019,7 @@ def plan_critique_node(inp: NodeInput) -> NodeOutput:
             paths=[critique_relpath],
         )
 
-    plan_dict: dict = json.loads(plan_path.read_text())
+    plan_dict = Plan.model_validate_json(plan_path.read_text()).model_dump(exclude_none=True)
     critique_ok, critique_message = _validate_plan_critique(
         inp.repo_root, critique_path, plan_dict, directory
     )
@@ -2010,7 +2157,7 @@ def plan_gate_open_node(inp: NodeInput) -> NodeOutput:
             paths=[plan_relpath],
         )
 
-    plan_dict: dict = json.loads(plan_path.read_text())
+    plan_dict = Plan.model_validate_json(plan_path.read_text()).model_dump(exclude_none=True)
     critique_ok, critique_message = _validate_plan_critique(
         inp.repo_root, critique_path, plan_dict, directory
     )
@@ -2228,7 +2375,7 @@ def review_disposition_node(inp: NodeInput) -> NodeOutput:
 
     plan_path = epic_dir(inp.repo_root, inp.epic_id) / "plan.json"
     try:
-        plan_dict: dict = json.loads(plan_path.read_text())
+        plan_dict = Plan.model_validate_json(plan_path.read_text()).model_dump(exclude_none=True)
     except (OSError, ValueError):
         plan_dict = {}
     invariant_errors = validate_critique_invariants(
@@ -2325,8 +2472,11 @@ def _stage_story_transaction_paths(repo_root: Path, epic_id: int, story_id: str)
 def verification_node(inp: NodeInput) -> NodeOutput:
     if not inp.story_id:
         raise ValueError("verification requires story_id")
+    directory = epic_dir(inp.repo_root, inp.epic_id)
     result_path = epic_dir(inp.repo_root, inp.epic_id) / "check-result.json"
     try:
+        _stage_story_transaction_paths(inp.repo_root, inp.epic_id, inp.story_id)
+        prepare_commit_audit(inp.repo_root, directory)
         _stage_story_transaction_paths(inp.repo_root, inp.epic_id, inp.story_id)
     except (subprocess.CalledProcessError, StageStateError, ValueError) as exc:
         return _write_position_gate(
@@ -2379,6 +2529,14 @@ def verification_node(inp: NodeInput) -> NodeOutput:
             validation_summary=validation_summary,
             triggered_by=validation_summary.triggered_by if validation_summary else [],
             message=proc.stderr.strip(),
+        )
+    try:
+        _record_verified_index(inp.repo_root, result_path)
+    except (OSError, json.JSONDecodeError, subprocess.CalledProcessError) as exc:
+        return _write_position_gate(
+            inp,
+            trigger="check_7_commit_transaction",
+            position=f"Verified index could not be pinned after checks passed: {exc}",
         )
     return NodeOutput(
         node_type=inp.node_type,
@@ -2473,6 +2631,47 @@ def commit_node(inp: NodeInput) -> NodeOutput:
             story_id=inp.story_id,
             gate_path=_gate_path(inp.epic_id),
             triggered_by=["audit_redaction"],
+            message=position,
+        )
+
+    check_result_path = directory / "check-result.json"
+    try:
+        check_result = (
+            json.loads(check_result_path.read_text(encoding="utf-8"))
+            if check_result_path.exists()
+            else {}
+        )
+    except (OSError, json.JSONDecodeError) as exc:
+        check_result = {}
+        pin_error = f"check-result.json could not be read for verified transaction pins: {exc}"
+    else:
+        pin_error = _check_verified_index(inp.repo_root, check_result)
+        if pin_error is not None and _completed_resume_delta_is_graph_owned(
+            inp.repo_root,
+            inp.epic_id,
+            inp.story_id,
+            check_result,
+        ):
+            pin_error = None
+    if pin_error is not None:
+        position = f"Verified transaction changed before commit: {pin_error}\n"
+        pos_path = epic_dir(inp.repo_root, inp.epic_id) / "verified-index-position.md"
+        pos_path.write_text(position)
+        write_gate_for_trigger(
+            trigger="check_7_commit_transaction",
+            epic_dir=epic_dir(inp.repo_root, inp.epic_id),
+            story_id=inp.story_id,
+            position_path=pos_path,
+            schema_path=schema_dir() / "gate.schema.json",
+        )
+        pos_path.unlink(missing_ok=True)
+        return NodeOutput(
+            node_type=inp.node_type,
+            status=NodeStatus.GATE_OPENED,
+            epic_id=inp.epic_id,
+            story_id=inp.story_id,
+            gate_path=_gate_path(inp.epic_id),
+            triggered_by=["check_7_commit_transaction"],
             message=position,
         )
 
@@ -2575,7 +2774,7 @@ def commit_node(inp: NodeInput) -> NodeOutput:
         story_id=inp.story_id,
     )
     completed_plan = load_plan(inp.repo_root, inp.epic_id)
-    if all(candidate.status in TERMINAL_STORY_STATUSES for candidate in completed_plan.stories):
+    if all(candidate.status in TERMINAL_STORY_STATUSES for candidate in completed_plan.work_units):
         append_epic_event_once(
             inp.repo_root,
             inp.epic_id,

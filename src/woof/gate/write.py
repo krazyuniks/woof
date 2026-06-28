@@ -1,4 +1,4 @@
-"""woof gate write — mechanical gate.md authoring.
+"""Mechanical gate.md authoring for graph-owned gates.
 
 All YAML front-matter fields are derived deterministically from the
 check-result or trigger arguments. No LLM authors any YAML field.

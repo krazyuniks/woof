@@ -16,7 +16,7 @@ from woof.graph.dispositions import (
 )
 from woof.graph.git import changed_paths, staged_paths
 from woof.graph.manifest import build_story_manifest
-from woof.graph.state import TERMINAL_STORY_STATUSES, NodeStatus, NodeType, Plan, StorySpec
+from woof.graph.state import TERMINAL_STORY_STATUSES, NodeStatus, NodeType, Plan, WorkUnitSpec
 from woof.trackers.base import CONFLICT_TRIGGERS, NON_APPROVING_TRIGGERS
 
 
@@ -182,40 +182,40 @@ def load_plan(repo_root: Path, epic_id: int) -> Plan:
 def write_plan(repo_root: Path, plan: Plan) -> None:
     path = epic_dir(repo_root, plan.epic_id) / "plan.json"
     tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(plan.model_dump_json(indent=2) + "\n")
+    tmp.write_text(plan.model_dump_json(indent=2, exclude_none=True) + "\n")
     tmp.replace(path)
 
 
-def story_by_id(plan: Plan, story_id: str) -> StorySpec:
-    for story in plan.stories:
+def story_by_id(plan: Plan, story_id: str) -> WorkUnitSpec:
+    for story in plan.work_units:
         if story.id == story_id:
             return story
     raise ValueError(f"story {story_id} not found in E{plan.epic_id} plan")
 
 
-def next_ready_story(plan: Plan) -> StorySpec | None:
-    done = {story.id for story in plan.stories if story.status == "done"}
-    for story in plan.stories:
+def next_ready_story(plan: Plan) -> WorkUnitSpec | None:
+    done = {story.id for story in plan.work_units if story.status == "done"}
+    for story in plan.work_units:
         if story.status != "pending":
             continue
-        if all(dep in done for dep in story.depends_on):
+        if all(dep in done for dep in story.deps):
             return story
     return None
 
 
 def mark_story_status(repo_root: Path, epic_id: int, story_id: str, status: str) -> None:
     plan = load_plan(repo_root, epic_id)
-    if all(story.id != story_id for story in plan.stories):
+    if all(story.id != story_id for story in plan.work_units):
         raise StageStateError(f"story {story_id} not found in E{epic_id} plan")
     stories = []
-    for story in plan.stories:
+    for story in plan.work_units:
         if story.id == story_id:
             data = story.model_dump()
             data["status"] = status
-            stories.append(StorySpec.model_validate(data))
+            stories.append(WorkUnitSpec.model_validate(data))
         else:
             stories.append(story)
-    write_plan(repo_root, Plan(epic_id=plan.epic_id, goal=plan.goal, stories=stories))
+    write_plan(repo_root, Plan(epic_id=plan.epic_id, goal=plan.goal, work_units=stories))
 
 
 def append_epic_event(repo_root: Path, epic_id: int, event: dict) -> None:
@@ -411,7 +411,7 @@ def _json_loads_ok(path: Path) -> bool:
     return True
 
 
-def _has_uncommitted_commit_work(repo_root: Path, epic_id: int, story: StorySpec) -> bool:
+def _has_uncommitted_commit_work(repo_root: Path, epic_id: int, story: WorkUnitSpec) -> bool:
     try:
         manifest = build_story_manifest(repo_root, epic_id, story)
         changed = set(changed_paths(repo_root))
@@ -516,10 +516,10 @@ def next_node(repo_root: Path, epic_id: int) -> tuple[NodeType | NodeStatus | No
     if resumable_story is not None:
         return NodeType.COMMIT, resumable_story
 
-    if all(story.status in TERMINAL_STORY_STATUSES for story in plan.stories):
+    if all(story.status in TERMINAL_STORY_STATUSES for story in plan.work_units):
         return None, None
 
-    in_progress = next((story for story in plan.stories if story.status == "in_progress"), None)
+    in_progress = next((story for story in plan.work_units if story.status == "in_progress"), None)
     critique_path = plan_critique_path(repo_root, epic_id)
     if in_progress is None:
         if (directory / "EPIC.md").exists() and not critique_path.exists():
@@ -538,7 +538,7 @@ def next_node(repo_root: Path, epic_id: int) -> tuple[NodeType | NodeStatus | No
         ready = next_ready_story(plan)
         if ready is None:
             raise StageStateError(
-                f"E{epic_id} has pending stories, but no story has satisfied dependencies",
+                f"E{epic_id} has pending work units, but no work unit has satisfied dependencies",
                 operator_recoverable=True,
             )
         return NodeType.EXECUTOR_DISPATCH, ready.id

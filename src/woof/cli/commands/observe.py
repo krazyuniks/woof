@@ -29,7 +29,7 @@ from woof.graph.dispositions import (
     story_disposition_path,
     validate_story_disposition,
 )
-from woof.graph.state import TERMINAL_STORY_STATUSES, Plan, StorySpec
+from woof.graph.state import TERMINAL_STORY_STATUSES, Plan, WorkUnitSpec
 from woof.graph.transitions import (
     definition_revision_requested,
     discovery_bucket_complete,
@@ -63,10 +63,10 @@ TELEMETRY_FIELDS = (
 )
 SUCCESS_EXIT_TYPES = {"clean", "completed_lingering"}
 VIEWS = ("status", "timeline", "gate", "audit", "all")
-# Every legal StorySpec.status value, derived from the graph's Literal so the
+# Every legal WorkUnitSpec.status value, derived from the graph's Literal so the
 # plan summary can never KeyError on a valid status nor silently drop a future
 # one (E17 P4 added "abandoned"). Declaration order is preserved for rendering.
-STORY_STATUSES: tuple[str, ...] = get_args(StorySpec.model_fields["status"].annotation)
+STORY_STATUSES: tuple[str, ...] = get_args(WorkUnitSpec.model_fields["status"].annotation)
 
 
 class ObserveError(RuntimeError):
@@ -304,8 +304,8 @@ def _derive_next_step(
             "reason": f"required planning artefact is malformed: {_display_path(repo_root, plan_path)}",
         }
 
-    in_progress = next((story for story in plan.stories if story.status == "in_progress"), None)
-    if all(story.status in TERMINAL_STORY_STATUSES for story in plan.stories):
+    in_progress = next((unit for unit in plan.work_units if unit.status == "in_progress"), None)
+    if all(unit.status in TERMINAL_STORY_STATUSES for unit in plan.work_units):
         if (directory / "executor_result.json").exists() and (
             directory / "check-result.json"
         ).exists():
@@ -329,7 +329,7 @@ def _derive_next_step(
         return {
             "node": "incomplete_stage_state",
             "story_id": None,
-            "reason": "pending stories exist, but no story has satisfied dependencies",
+            "reason": "pending work units exist, but no work unit has satisfied dependencies",
         }
 
     story_id = in_progress.id
@@ -623,16 +623,16 @@ def _plan_summary(repo_root: Path, directory: Path) -> tuple[dict[str, Any], Pla
             "error": str(exc),
         }, None
     counts = {status: 0 for status in STORY_STATUSES}
-    stories = []
-    for story in plan.stories:
-        counts[story.status] += 1
-        stories.append(
+    work_units = []
+    for unit in plan.work_units:
+        counts[unit.status] += 1
+        work_units.append(
             {
-                "id": story.id,
-                "title": story.title,
-                "status": story.status,
-                "depends_on": story.depends_on,
-                "satisfies": story.satisfies,
+                "id": unit.id,
+                "title": unit.title,
+                "status": unit.status,
+                "deps": unit.deps,
+                "satisfies": unit.satisfies,
             }
         )
     return {
@@ -640,8 +640,8 @@ def _plan_summary(repo_root: Path, directory: Path) -> tuple[dict[str, Any], Pla
         "valid": True,
         "path": _display_path(repo_root, path),
         "goal": plan.goal,
-        "story_counts": counts,
-        "stories": stories,
+        "work_unit_counts": counts,
+        "work_units": work_units,
     }, plan
 
 
@@ -1081,14 +1081,14 @@ def _print_status(status: dict[str, Any]) -> None:
         print("gate: closed")
     plan = status["plan"]
     if plan["valid"]:
-        counts = plan["story_counts"]
+        counts = plan["work_unit_counts"]
         print(
-            "stories: "
+            "work_units: "
             f"pending={counts['pending']} in_progress={counts['in_progress']} "
             f"done={counts['done']} abandoned={counts['abandoned']}"
         )
     else:
-        print(f"stories: unavailable plan_valid={plan['valid']}")
+        print(f"work_units: unavailable plan_valid={plan['valid']}")
     _print_check_summary(status["checks"])
     _print_audit_pointers(status["audit_pointers"])
     _print_dispatch_routes(status["dispatch_routes"])

@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://woof.dev/schemas/backlog.schema.json",
+  "title": "woof backlog front-matter",
+  "description": "Structured front-matter for a Woof backlog. The backlog carries canonical work_units[] plus an optional document-level executor block for transitional VaultForeman drains. Execution mechanics belong on the document, not on individual work units.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "type", "project_ref", "status", "work_units"],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "type": {
+      "type": "string",
+      "const": "backlog"
+    },
+    "project_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["active", "archived", "complete"]
+    },
+    "executor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "contract_version": { "type": "integer", "minimum": 1 },
+        "project": { "type": "string", "minLength": 1 },
+        "timeouts": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "drain": {
+          "type": "object",
+          "additionalProperties": { "type": "boolean" }
+        }
+      }
+    },
+    "work_units": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/backlog_work_unit" }
+    }
+  },
+  "$defs": {
+    "backlog_work_unit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "kind", "state", "priority"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9._-]*$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["build", "decision", "action", "explore"]
+        },
+        "state": {
+          "type": "string",
+          "enum": ["todo", "in_progress", "blocked", "done", "cancelled"]
+        },
+        "priority": {
+          "type": "string",
+          "enum": ["low", "medium", "high"]
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bounded_context": {
+          "type": "string",
+          "minLength": 1
+        },
+        "acceptance": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "deps": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9._-]*$" },
+          "uniqueItems": true
+        },
+        "issue": {
+          "type": "string",
+          "minLength": 1
+        },
+        "body": {
+          "type": "string",
+          "minLength": 1
+        },
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["label", "url"],
+            "properties": {
+              "label": { "type": "string", "minLength": 1 },
+              "url": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    }
+  }
+}

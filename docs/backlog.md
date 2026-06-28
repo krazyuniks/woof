@@ -19,7 +19,7 @@ work_units:
   - id: schema-unification
     title: Unify execution schema on work_units
     kind: build
-    state: todo
+    state: done
     priority: high
     summary: Move the canonical executable unit schema into Woof, retire story-shaped runtime contracts, and preserve graph dependency checks.
     acceptance:
@@ -167,7 +167,7 @@ work_units:
   - id: safety-defect-sweep
     title: Fold remaining safety defects into the merge line
     kind: build
-    state: todo
+    state: done
     priority: medium
     summary: Carry forward verified small safety defects that still matter under the merged architecture.
     deps: [schema-unification]

@@ -40,16 +40,16 @@ mcp = []
             {
                 "epic_id": 5,
                 "goal": "Expose workflow state.",
-                "stories": [
+                "work_units": [
                     {
                         "id": "S1",
                         "title": "Add reporting",
-                        "intent": "Make state inspectable.",
+                        "summary": "Make state inspectable.",
                         "paths": ["src/woof/**/*.py"],
                         "satisfies": ["O1"],
                         "implements_contract_decisions": [],
                         "uses_contract_decisions": [],
-                        "depends_on": [],
+                        "deps": [],
                         "tests": {"count": 1, "types": ["unit"]},
                         "status": "in_progress",
                     }
@@ -454,16 +454,16 @@ def _write_plan_stories(epic_dir: Path, stories: list[tuple[str, str]]) -> None:
             {
                 "epic_id": 5,
                 "goal": "Expose workflow state.",
-                "stories": [
+                "work_units": [
                     {
                         "id": story_id,
                         "title": f"Story {story_id}",
-                        "intent": "",
+                        "summary": "",
                         "paths": [],
                         "satisfies": [],
                         "implements_contract_decisions": [],
                         "uses_contract_decisions": [],
-                        "depends_on": [],
+                        "deps": [],
                         "tests": {},
                         "status": status,
                     }
@@ -488,7 +488,7 @@ def test_observe_plan_summary_counts_abandoned_stories(tmp_path: Path) -> None:
 
     assert proc.returncode == 0, proc.stderr
     payload = json.loads(proc.stdout)
-    assert payload["plan"]["story_counts"] == {
+    assert payload["plan"]["work_unit_counts"] == {
         "pending": 0,
         "in_progress": 1,
         "done": 1,
@@ -498,7 +498,7 @@ def test_observe_plan_summary_counts_abandoned_stories(tmp_path: Path) -> None:
     text = _run_observe(project, "--view", "status")
 
     assert text.returncode == 0, text.stderr
-    assert "stories: pending=0 in_progress=1 done=1 abandoned=1" in text.stdout
+    assert "work_units: pending=0 in_progress=1 done=1 abandoned=1" in text.stdout
 
 
 def test_observe_next_step_is_epic_complete_when_all_stories_terminal(tmp_path: Path) -> None:

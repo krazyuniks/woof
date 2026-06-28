@@ -36,7 +36,7 @@ findings:
   - id: F1
     severity: blocker | minor | info
     summary: <one-line>
-    evidence: <story id or path plus concise evidence>
+    evidence: <work unit id or path plus concise evidence>
   - id: F2
     ...
 ---
@@ -48,20 +48,20 @@ Prose body: per finding, explain (1) what's wrong, (2) why it matters, (3) what 
 
 Evaluate the plan along these axes:
 
-1. **Outcome coverage.** Does every `observable_outcome.id` appear in ≥1 story's `satisfies[]`? An unreferenced outcome is a `blocker`.
-2. **Decomposition quality.** Are stories right-sized (~30–40k tokens of agent work)? Catch over-decomposition (fragments that have no standalone value) AND under-decomposition (catch-all stories bundling unrelated outcomes). Either is `minor` unless an over-stuffed story would obviously not commit cleanly — that is a `blocker`.
-3. **Scope hygiene.** Do `paths[]` overlap between stories beyond intentional shared files already justified by the plan? Duplicate pathspecs are blocked deterministically before this critique; unresolved broader ownership ambiguity is a `blocker`.
-4. **Dependency correctness.** Is `depends_on[]` semantically complete? The graph has already blocked cycles and non-topological ordering. A missing edge (story B calls into a surface story A creates, but B does not depend on A) is a `minor`.
+1. **Outcome coverage.** Does every `observable_outcome.id` appear in ≥1 work unit's `satisfies[]`? An unreferenced outcome is a `blocker`.
+2. **Decomposition quality.** Are work units right-sized (~30–40k tokens of agent work)? Catch over-decomposition (fragments that have no standalone value) AND under-decomposition (catch-all units bundling unrelated outcomes). Either is `minor` unless an over-stuffed unit would obviously not commit cleanly — that is a `blocker`.
+3. **Scope hygiene.** Do `paths[]` overlap between work units beyond intentional shared files already justified by the plan? Duplicate pathspecs are blocked deterministically before this critique; unresolved broader ownership ambiguity is a `blocker`.
+4. **Dependency correctness.** Is `deps[]` semantically complete? The graph has already blocked cycles and non-topological ordering. A missing edge (unit B calls into a surface unit A creates, but B does not depend on A) is a `minor`.
 5. **Contract-decision implementation completeness.** Is every `contract_decision.id` referenced exactly once via `implements_contract_decisions[]`? Double-booking or omission is `blocker`.
 6. **Missed Class-2 (architectural) concerns.** Will the plan, if executed as written, breach BC isolation, the import-linter contracts, the lazy-loading rules, or any other invariant declared in CLAUDE.md / AGENTS.md? `blocker` if so.
-7. **Standalone-slice value.** Once a story's `depends_on[]` are satisfied, can it be demonstrated or verified on its own through its `satisfies[]` outcomes? A story that is pure internal plumbing with no independently checkable outcome should fold into the story it serves — that is a `minor`. A story that claims an outcome it could not actually demonstrate as a standalone slice is a `blocker`.
+7. **Standalone-slice value.** Once a work unit's `deps[]` are satisfied, can it be demonstrated or verified on its own through its `satisfies[]` outcomes? A unit that is pure internal plumbing with no independently checkable outcome should fold into the unit it serves — that is a `minor`. A unit that claims an outcome it could not actually demonstrate as a standalone slice is a `blocker`.
 
 ## Evidence discipline
 
 Every `blocker` finding must carry an `evidence` field that resolves to a known artefact reference. Acceptable reference kinds:
 
 - **file:line** — `path/to/file.py:42` where the file is tracked in the repo.
-- **story id** — `S<n>` for a story in the plan.
+- **work unit id** — the `id` of a work unit in the plan.
 - **observable outcome id** — `O<n>` declared in `EPIC.md`.
 - **contract-decision id** — `CD<n>` declared in `EPIC.md`.
 - **schema ref** — `schemas/foo.schema.json` that exists in the repo.

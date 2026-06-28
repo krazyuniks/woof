@@ -90,7 +90,7 @@ def check_3_scope_runner(ctx: CheckContext) -> CheckOutcome:
 
 
 def _story_for_context(ctx: CheckContext) -> dict | None:
-    for story in ctx.plan.get("stories", []):
+    for story in ctx.plan.get("work_units", []):
         if isinstance(story, dict) and story.get("id") == ctx.story_id:
             return story
     return None

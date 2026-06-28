@@ -246,7 +246,7 @@ def _make_ctx_with_plan(
         story_id=story_id,
         repo_root=REPO_ROOT,
         epic_dir=epic_dir,
-        plan=plan or {"epic_id": 1, "goal": "test", "stories": [{"id": story_id}]},
+        plan=plan or {"epic_id": 1, "goal": "test", "work_units": [{"id": story_id}]},
         critique=None,
     )
 

@@ -62,16 +62,16 @@ def _make_ctx(
         plan={
             "epic_id": 1,
             "goal": "test",
-            "stories": [
+            "work_units": [
                 {
                     "id": "S1",
                     "title": "story",
-                    "intent": "test markers",
+                    "summary": "test markers",
                     "paths": ["tests/"],
                     "satisfies": satisfies,
                     "implements_contract_decisions": [],
                     "uses_contract_decisions": [],
-                    "depends_on": [],
+                    "deps": [],
                     "tests": tests or {"count": 1, "types": ["unit"]},
                     "status": "in_progress",
                 }

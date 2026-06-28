@@ -46,6 +46,7 @@ SCHEMA_DIR = schema_dir()
 
 SCHEMAS: dict[str, str] = {
     "epic": "epic.schema.json",
+    "backlog": "backlog.schema.json",
     "brainstorm": "brainstorm.schema.json",
     "plan": "plan.schema.json",
     "gate": "gate.schema.json",
@@ -73,6 +74,7 @@ SCHEMAS: dict[str, str] = {
 # Filename -> schema (basename match)
 FILENAME_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^EPIC\.md$"), "epic"),
+    (re.compile(r"^backlog\.md$"), "backlog"),
     (re.compile(r"^plan\.json$"), "plan"),
     (re.compile(r"^gate\.md$"), "gate"),
     (re.compile(r"^.+\.jsonl$"), "jsonl-events"),
@@ -131,7 +133,7 @@ def extract_front_matter(path: Path) -> object:
 
 def load_payload(path: Path, schema: str) -> object:
     """Extract the structured payload appropriate for ``schema``."""
-    if schema in {"epic", "brainstorm", "gate", "critique", "disposition"}:
+    if schema in {"epic", "backlog", "brainstorm", "gate", "critique", "disposition"}:
         return extract_front_matter(path)
     if schema in {
         "plan",
@@ -486,7 +488,6 @@ def main() -> int:
 
     from woof.cli.commands.baseline import setup_baseline_parser
     from woof.cli.commands.check import setup_check_parser
-    from woof.cli.commands.gate import setup_gate_parser
     from woof.cli.commands.observe import setup_observe_parser
     from woof.cli.commands.wf import setup_wf_parser
     from woof.cli.hooks import setup_hooks_parser
@@ -519,7 +520,6 @@ def main() -> int:
     setup_observe_parser(sub)
     setup_wf_parser(sub)
     setup_check_parser(sub)
-    setup_gate_parser(sub)
     setup_baseline_parser(sub)
 
     args = parser.parse_args()

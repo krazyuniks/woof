@@ -51,7 +51,7 @@ Two adapters ship:
 - `github`: one GitHub issue per epic. `E<N>` is the GitHub issue number. Push is conflict-detected against `.woof/epics/E<N>/.last-sync`; every graph invocation verifies runtime reachability.
 - `local`: filesystem-only. `.woof/epics/E<N>/` is the authority for an epic. Epic IDs are locally allocated integers. There is no remote, no `.last-sync`, and no sync-conflict gate.
 
-Lifecycle push methods on both adapters render the same managed body shape from local `EPIC.md` and `plan.json`. The `local` adapter still rejects epic completion until every planned story is `done`.
+Lifecycle push methods on both adapters render the same managed body shape from local `EPIC.md` and `plan.json`. The adapters reject epic completion until every planned work unit is terminal.
 
 ## Epic identifiers
 

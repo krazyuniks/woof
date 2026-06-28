@@ -36,7 +36,7 @@
     "work_units": {
       "type": "array",
       "items": { "$ref": "#/$defs/work_unit" },
-      "description": "Consumer-agnostic decomposition guidance. Woof ingests these as discovery source material and re-derives stories through synthesis, definition, and breakdown; may be empty for a kb-topic bundle."
+      "description": "Consumer-agnostic decomposition guidance. Woof ingests these as discovery source material and re-derives work units through synthesis, definition, and breakdown; may be empty for a kb-topic bundle."
     },
     "open_questions": {
       "type": "array",

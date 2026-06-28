@@ -65,16 +65,16 @@ def _write_plan(root: Path, epic_id: int = 1) -> None:
             {
                 "epic_id": epic_id,
                 "goal": "test",
-                "stories": [
+                "work_units": [
                     {
                         "id": "S1",
                         "title": "first",
-                        "intent": "test",
+                        "summary": "test",
                         "paths": ["src/**"],
                         "satisfies": ["O1"],
                         "implements_contract_decisions": [],
                         "uses_contract_decisions": [],
-                        "depends_on": [],
+                        "deps": [],
                         "tests": {"count": 1, "types": ["unit"]},
                         "status": "in_progress",
                     }
@@ -281,28 +281,28 @@ def test_prior_story_dispatch_event_does_not_trigger_drift(tmp_path: Path) -> No
             {
                 "epic_id": 1,
                 "goal": "test",
-                "stories": [
+                "work_units": [
                     {
                         "id": "S1",
                         "title": "first",
-                        "intent": "s1",
+                        "summary": "s1",
                         "paths": [],
                         "satisfies": ["O1"],
                         "implements_contract_decisions": [],
                         "uses_contract_decisions": [],
-                        "depends_on": [],
+                        "deps": [],
                         "tests": {"count": 0, "types": []},
                         "status": "done",
                     },
                     {
                         "id": "S2",
                         "title": "second",
-                        "intent": "s2",
+                        "summary": "s2",
                         "paths": ["src/**"],
                         "satisfies": ["O2"],
                         "implements_contract_decisions": [],
                         "uses_contract_decisions": [],
-                        "depends_on": ["S1"],
+                        "deps": ["S1"],
                         "tests": {"count": 0, "types": []},
                         "status": "in_progress",
                     },

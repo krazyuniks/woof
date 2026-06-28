@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,6 +10,7 @@ from typing import Any
 import yaml
 
 from woof.checks.runners.check_5_plan_crossrefs import stage3_plan_contract_failures
+from woof.graph.state import Plan
 from woof.graph.transitions import discovery_synthesis_paths
 
 
@@ -131,11 +131,11 @@ def validate_stage3_plan_contract(repo_root: Path, epic_path: Path, plan_path: P
 
     failures: list[str] = []
     try:
-        plan = json.loads(plan_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
+        plan = Plan.model_validate_json(plan_path.read_text(encoding="utf-8")).model_dump(
+            exclude_none=True
+        )
+    except ValueError as exc:
         return [f"{_display_path(repo_root, plan_path)}: plan.json parse error: {exc}"]
-    if not isinstance(plan, dict):
-        return [f"{_display_path(repo_root, plan_path)}: plan.json root must be an object"]
 
     epic = _load_epic_front_matter(epic_path)
     if not epic:

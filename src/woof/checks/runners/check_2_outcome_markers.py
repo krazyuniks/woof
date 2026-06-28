@@ -141,10 +141,10 @@ def check_2_outcome_markers_runner(ctx: CheckContext) -> CheckOutcome:
 
 
 def _story_for_id(plan: dict[str, Any], story_id: str) -> dict[str, Any] | None:
-    stories = plan.get("stories", [])
-    if not isinstance(stories, list):
+    work_units = plan.get("work_units", [])
+    if not isinstance(work_units, list):
         return None
-    for story in stories:
+    for story in work_units:
         if isinstance(story, dict) and story.get("id") == story_id:
             return story
     return None

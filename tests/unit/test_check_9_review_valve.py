@@ -25,7 +25,7 @@ def _ctx(repo_root: Path, stories: list[dict], story_id: str = "S2") -> CheckCon
         story_id=story_id,
         repo_root=repo_root,
         epic_dir=epic_dir,
-        plan={"epic_id": 1, "goal": "test", "stories": stories},
+        plan={"epic_id": 1, "goal": "test", "work_units": stories},
         critique=None,
     )
 

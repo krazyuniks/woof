@@ -225,16 +225,16 @@ def _write_current_epic_state(root: Path) -> None:
             {
                 "epic_id": 5,
                 "goal": "Expose operator state.",
-                "stories": [
+                "work_units": [
                     {
                         "id": "S1",
                         "title": "Report current state",
-                        "intent": "Make the current graph state visible.",
+                        "summary": "Make the current graph state visible.",
                         "paths": ["src/woof/**/*.py"],
                         "satisfies": ["O1"],
                         "implements_contract_decisions": [],
                         "uses_contract_decisions": [],
-                        "depends_on": [],
+                        "deps": [],
                         "tests": {"count": 1, "types": ["unit"]},
                         "status": "in_progress",
                     }

@@ -34,7 +34,7 @@ def _ctx(repo_root: Path) -> CheckContext:
         story_id="S1",
         repo_root=repo_root,
         epic_dir=repo_root / ".woof" / "epics" / "E7",
-        plan={"epic_id": 7, "goal": "docs drift", "stories": []},
+        plan={"epic_id": 7, "goal": "docs drift", "work_units": []},
         critique=None,
     )
 

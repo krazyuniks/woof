@@ -132,7 +132,9 @@ def test_stage_5_fails_closed_when_runner_not_implemented(
 
     epic_dir = tmp_path / ".woof" / "epics" / "E1"
     epic_dir.mkdir(parents=True)
-    (epic_dir / "plan.json").write_text(json.dumps({"epic_id": 1, "goal": "test", "stories": []}))
+    (epic_dir / "plan.json").write_text(
+        json.dumps({"epic_id": 1, "goal": "test", "work_units": []})
+    )
     monkeypatch.chdir(tmp_path)
 
     exit_code = cmd_check_stage_5(
@@ -172,7 +174,7 @@ def test_check_stage_5_json_output_conforms_to_schema_O4(tmp_path: Path) -> None
         "[roles]\n\n[review_valve]\nevery_n_stories = 5\nend_of_epic = false\n"
     )
     plan_path = epic_dir / "plan.json"
-    plan_path.write_text(json.dumps({"epic_id": 999, "goal": "test", "stories": []}))
+    plan_path.write_text(json.dumps({"epic_id": 999, "goal": "test", "work_units": []}))
     (critique_dir / "story-S1.md").write_text(
         "---\ntarget: story\ntarget_id: S1\nseverity: blocker\n"
         "timestamp: '2026-01-01T00:00:00Z'\nharness: test\n"
@@ -251,16 +253,16 @@ def test_check_stage_5_reports_review_valve_not_due_as_info(tmp_path: Path) -> N
             {
                 "epic_id": 999,
                 "goal": "test",
-                "stories": [
+                "work_units": [
                     {
                         "id": "S1",
                         "title": "test",
-                        "intent": "test",
+                        "summary": "test",
                         "paths": ["src/**"],
                         "satisfies": ["O1"],
                         "implements_contract_decisions": [],
                         "uses_contract_decisions": [],
-                        "depends_on": [],
+                        "deps": [],
                         "tests": {"count": 1, "types": ["unit"]},
                         "status": "in_progress",
                     }

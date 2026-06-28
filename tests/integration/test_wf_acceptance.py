@@ -120,16 +120,16 @@ def write_plan(prompt: str) -> None:
     plan = {
         "epic_id": eid,
         "goal": "Prove the local-tracker Woof workflow can reach a checked commit.",
-        "stories": [
+        "work_units": [
             {
                 "id": "S1",
                 "title": "Produce acceptance artefact",
-                "intent": "Create a small application artefact, a test marker, and a schema contract.",
+                "summary": "Create a small application artefact, a test marker, and a schema contract.",
                 "paths": ["app.py", "tests/test_app.py", "schemas/acceptance.schema.json"],
                 "satisfies": ["O1"],
                 "implements_contract_decisions": ["CD1"],
                 "uses_contract_decisions": [],
-                "depends_on": [],
+                "deps": [],
                 "tests": {"count": 1, "types": ["unit"]},
                 "status": "pending",
             }

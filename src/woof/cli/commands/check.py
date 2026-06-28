@@ -20,7 +20,9 @@ from pathlib import Path
 
 
 def _load_plan(plan_path: Path) -> dict:
-    return json.loads(plan_path.read_text())
+    from woof.graph.state import Plan
+
+    return Plan.model_validate_json(plan_path.read_text()).model_dump(exclude_none=True)
 
 
 def _load_critique_fm(epic_dir: Path, story_id: str) -> dict | None:

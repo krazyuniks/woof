@@ -7,7 +7,7 @@ from pathlib import Path
 from woof.graph.dispositions import story_disposition_relpath
 from woof.graph.git import changed_paths, staged_paths
 from woof.graph.pathspec import PathspecEvaluationError, filter_paths_matching
-from woof.graph.state import ManifestVerification, StorySpec, TransactionManifest
+from woof.graph.state import ManifestVerification, TransactionManifest, WorkUnitSpec
 
 
 def _rel(repo_root: Path, path: Path) -> str:
@@ -52,7 +52,7 @@ def durable_epic_paths(epic_dir: Path, repo_root: Path) -> list[str]:
     return durable
 
 
-def build_story_manifest(repo_root: Path, epic_id: int, story: StorySpec) -> TransactionManifest:
+def build_story_manifest(repo_root: Path, epic_id: int, story: WorkUnitSpec) -> TransactionManifest:
     """Compute the exact file set expected for a story commit."""
 
     epic_dir = repo_root / ".woof" / "epics" / f"E{epic_id}"

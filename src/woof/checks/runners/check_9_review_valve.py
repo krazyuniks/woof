@@ -44,18 +44,18 @@ def check_9_review_valve_runner(ctx: CheckContext) -> CheckOutcome:
     if isinstance(config, CheckOutcome):
         return config
 
-    stories = ctx.plan.get("stories")
-    if not isinstance(stories, list) or not stories:
+    work_units = ctx.plan.get("work_units")
+    if not isinstance(work_units, list) or not work_units:
         return CheckOutcome(
             id=CHECK_ID,
             ok=False,
             severity="blocker",
-            summary="plan contains no stories; review valve cannot determine cadence",
+            summary="plan contains no work units; review valve cannot determine cadence",
         )
 
     story_ids = [
         sid
-        for story in stories
+        for story in work_units
         if isinstance(story, dict) and isinstance(sid := story.get("id"), str)
     ]
     if ctx.story_id not in story_ids:
@@ -67,7 +67,7 @@ def check_9_review_valve_runner(ctx: CheckContext) -> CheckOutcome:
         )
 
     boundary_index = story_ids.index(ctx.story_id)
-    completed_count = _completed_count_through_boundary(stories, ctx.story_id)
+    completed_count = _completed_count_through_boundary(work_units, ctx.story_id)
     if completed_count < 1:
         return CheckOutcome(
             id=CHECK_ID,
@@ -94,7 +94,7 @@ def check_9_review_valve_runner(ctx: CheckContext) -> CheckOutcome:
         )
 
     periodic_due = completed_count % config.every_n_stories == 0
-    end_due = config.end_of_epic and _is_end_of_epic(stories, ctx.story_id)
+    end_due = config.end_of_epic and _is_end_of_epic(work_units, ctx.story_id)
     if not periodic_due and not end_due:
         return CheckOutcome(
             id=CHECK_ID,

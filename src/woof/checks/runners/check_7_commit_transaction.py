@@ -53,7 +53,7 @@ def _status_entries(repo_root: Path) -> list[tuple[str, str]]:
 
 
 def _story(ctx: CheckContext) -> dict | None:
-    for story in ctx.plan.get("stories", []):
+    for story in ctx.plan.get("work_units", []):
         if isinstance(story, dict) and story.get("id") == ctx.story_id:
             return story
     return None

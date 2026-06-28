@@ -34,6 +34,17 @@
       "type": "array",
       "items": { "$ref": "#/$defs/check_entry" },
       "description": "One entry per registry slot in stage-5 declaration order."
+    },
+    "verified_tree": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40,64}$",
+      "description": "Git index tree hash captured after all Stage-5 checks passed. Commit verifies this before mutating graph state."
+    },
+    "verified_paths": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true,
+      "description": "Exact staged path set captured with verified_tree after all Stage-5 checks passed."
     }
   },
   "$defs": {

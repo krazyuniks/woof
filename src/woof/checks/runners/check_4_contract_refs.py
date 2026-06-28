@@ -105,10 +105,10 @@ def check_4_contract_refs_runner(ctx: CheckContext) -> CheckOutcome:
 
 
 def _story_for_context(ctx: CheckContext) -> dict[str, Any] | None:
-    stories = ctx.plan.get("stories", [])
-    if not isinstance(stories, list):
+    work_units = ctx.plan.get("work_units", [])
+    if not isinstance(work_units, list):
         return None
-    for story in stories:
+    for story in work_units:
         if isinstance(story, dict) and story.get("id") == ctx.story_id:
             return story
     return None

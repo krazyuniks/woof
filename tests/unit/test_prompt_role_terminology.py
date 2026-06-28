@@ -98,7 +98,7 @@ REQUIRED_STAGE3_BREAKDOWN_PROMPT_PHRASES = (
     "Path discipline",
     "Explicit dependencies",
     "Contract ownership",
-    "Right-sized stories",
+    "Right-sized work units",
     "Do not author `PLAN.md`",
     "Do not write `gate.md`",
     "Do not select the next node",

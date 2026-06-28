@@ -43,12 +43,12 @@ def _story(story_id: str, **overrides: Any) -> dict[str, Any]:
     story = {
         "id": story_id,
         "title": f"Story {story_id}",
-        "intent": f"Produce {story_id}",
+        "summary": f"Produce {story_id}",
         "paths": [f"src/{story_id}.py"],
         "satisfies": ["O1"],
         "implements_contract_decisions": [],
         "uses_contract_decisions": [],
-        "depends_on": [],
+        "deps": [],
         "tests": {"count": 1, "types": ["unit"]},
         "status": "pending",
     }
@@ -60,7 +60,7 @@ def _valid_plan() -> dict[str, Any]:
     return {
         "epic_id": 42,
         "goal": "Validate plan cross references.",
-        "stories": [
+        "work_units": [
             _story(
                 "S1",
                 satisfies=["O1"],
@@ -71,7 +71,7 @@ def _valid_plan() -> dict[str, Any]:
                 "S2",
                 satisfies=["O2"],
                 uses_contract_decisions=["CD1"],
-                depends_on=["S1"],
+                deps=["S1"],
                 status="in_progress",
             ),
         ],
@@ -133,64 +133,73 @@ def test_plan_schema_failure_fails(tmp_path: Path) -> None:
     evidence = _failing_evidence(tmp_path, plan)
 
     assert "plan.json schema invalid" in evidence
-    assert "must have required property 'goal'" in evidence
+    assert "must NOT have fewer than 1 characters" in evidence
 
 
 def test_unknown_and_uncovered_outcome_refs_fail(tmp_path: Path) -> None:
     plan = deepcopy(_valid_plan())
-    plan["stories"][1]["satisfies"] = ["O999"]
+    plan["work_units"][1]["satisfies"] = ["O999"]
 
     evidence = _failing_evidence(tmp_path, plan)
 
     assert "S2: satisfies unknown outcome O999" in evidence
-    assert "O2: active observable outcome is not covered by any story" in evidence
+    assert "O2: active observable outcome is not covered by any work unit" in evidence
 
 
 def test_contract_decision_refs_and_ownership_fail(tmp_path: Path) -> None:
     plan = deepcopy(_valid_plan())
-    plan["stories"][0]["implements_contract_decisions"] = []
-    plan["stories"][1]["uses_contract_decisions"] = ["CD999"]
+    plan["work_units"][0]["implements_contract_decisions"] = []
+    plan["work_units"][1]["uses_contract_decisions"] = ["CD999"]
 
     evidence = _failing_evidence(tmp_path, plan)
 
     assert "S2: uses_contract_decisions references unknown contract decision CD999" in evidence
     assert (
-        "CD1: active contract decision must be implemented by exactly one story; owners=[]"
+        "CD1: active contract decision must be implemented by exactly one work unit; owners=[]"
         in evidence
     )
 
 
 def test_duplicate_contract_decision_ownership_fails(tmp_path: Path) -> None:
     plan = deepcopy(_valid_plan())
-    plan["stories"][1]["implements_contract_decisions"] = ["CD1"]
+    plan["work_units"][1]["implements_contract_decisions"] = ["CD1"]
 
     evidence = _failing_evidence(tmp_path, plan)
 
-    assert "CD1: active contract decision must be implemented by exactly one story" in evidence
+    assert "CD1: active contract decision must be implemented by exactly one work unit" in evidence
     assert "owners=['S1', 'S2']" in evidence
 
 
 def test_dependency_closure_fails(tmp_path: Path) -> None:
     plan = deepcopy(_valid_plan())
-    plan["stories"][1]["depends_on"] = ["S999"]
+    plan["work_units"][1]["deps"] = ["S999"]
 
     evidence = _failing_evidence(tmp_path, plan)
 
-    assert "S2: depends_on references unknown story S999" in evidence
+    assert "S2: deps references unknown work unit S999" in evidence
+
+
+def test_self_dependency_fails(tmp_path: Path) -> None:
+    plan = deepcopy(_valid_plan())
+    plan["work_units"][1]["deps"] = ["S2"]
+
+    evidence = _failing_evidence(tmp_path, plan)
+
+    assert "S2: deps references itself" in evidence
 
 
 def test_dependency_order_fails_when_dependency_appears_later(tmp_path: Path) -> None:
     plan = deepcopy(_valid_plan())
-    plan["stories"] = [plan["stories"][1], plan["stories"][0]]
+    plan["work_units"] = [plan["work_units"][1], plan["work_units"][0]]
 
     evidence = _failing_evidence(tmp_path, plan)
 
-    assert "S2: depends_on S1 appears after dependent story" in evidence
+    assert "S2: deps S1 appears after dependent work unit" in evidence
 
 
 def test_dependency_cycle_fails(tmp_path: Path) -> None:
     plan = deepcopy(_valid_plan())
-    plan["stories"][0]["depends_on"] = ["S2"]
+    plan["work_units"][0]["deps"] = ["S2"]
 
     evidence = _failing_evidence(tmp_path, plan)
 
@@ -199,30 +208,30 @@ def test_dependency_cycle_fails(tmp_path: Path) -> None:
 
 def test_duplicate_story_pathspec_fails(tmp_path: Path) -> None:
     plan = deepcopy(_valid_plan())
-    plan["stories"][1]["paths"] = ["src/S1.py"]
+    plan["work_units"][1]["paths"] = ["src/S1.py"]
 
     evidence = _failing_evidence(tmp_path, plan)
 
-    assert "pathspec 'src/S1.py' appears in multiple stories: ['S1', 'S2']" in evidence
+    assert "pathspec 'src/S1.py' appears in multiple work units: ['S1', 'S2']" in evidence
 
 
 def test_status_coherence_fails(tmp_path: Path) -> None:
     plan = deepcopy(_valid_plan())
-    plan["stories"][0]["status"] = "in_progress"
+    plan["work_units"][0]["status"] = "in_progress"
 
     evidence = _failing_evidence(tmp_path, plan)
 
-    assert "multiple stories are in_progress: ['S1', 'S2']" in evidence
+    assert "multiple work units are in_progress: ['S1', 'S2']" in evidence
     assert "S2: status=in_progress but dependency S1 is status=in_progress" in evidence
 
 
 def test_current_story_pending_fails(tmp_path: Path) -> None:
     plan = deepcopy(_valid_plan())
-    plan["stories"][1]["status"] = "pending"
+    plan["work_units"][1]["status"] = "pending"
 
     evidence = _failing_evidence(tmp_path, plan)
 
-    assert "S2: current story is still pending during Stage-5 checks" in evidence
+    assert "S2: current work unit is still pending during Stage-5 checks" in evidence
 
 
 def test_stage3_plan_contract_requires_pending_statuses() -> None:

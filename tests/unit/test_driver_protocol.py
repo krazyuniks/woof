@@ -12,14 +12,14 @@ O8: executor exits non-zero → gate with subprocess_crash
 from __future__ import annotations
 
 import json
-import subprocess
 from pathlib import Path
 
 import pytest
 import yaml
 
+from woof.gate import write as gate_write
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
-WOOF_BIN = REPO_ROOT / "bin" / "woof"
 FIXTURE_DIR = REPO_ROOT / "tests" / "fixtures" / "woof" / "e181_s2"
 
 pytestmark = pytest.mark.host_only
@@ -33,7 +33,7 @@ def _setup_epic(tmp_path: Path, epic_id: int = 181, story_id: str = "S2") -> tup
     plan = {
         "epic_id": epic_id,
         "goal": "test",
-        "stories": [
+        "work_units": [
             {
                 "id": story_id,
                 "title": "test story",
@@ -42,22 +42,13 @@ def _setup_epic(tmp_path: Path, epic_id: int = 181, story_id: str = "S2") -> tup
                 "satisfies": [],
                 "implements_contract_decisions": [],
                 "uses_contract_decisions": [],
-                "depends_on": [],
+                "deps": [],
                 "tests": {},
             }
         ],
     }
     (epic_dir / "plan.json").write_text(json.dumps(plan))
     return tmp_path, epic_dir
-
-
-def _run_gate(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [str(WOOF_BIN), "gate", "write", *args],
-        capture_output=True,
-        text=True,
-        cwd=str(cwd),
-    )
 
 
 def _read_gate_fm(gate_path: Path) -> dict:
@@ -73,20 +64,14 @@ def _read_gate_fm(gate_path: Path) -> dict:
 
 def test_subprocess_crash_writes_gate_O8(tmp_path: Path) -> None:
     """O8: driver invokes gate write with subprocess_crash when executor exits non-zero."""
-    cwd, epic_dir = _setup_epic(tmp_path, 181, "S2")
+    _cwd, epic_dir = _setup_epic(tmp_path, 181, "S2")
 
-    proc = _run_gate(
-        "--epic",
-        "181",
-        "--story",
-        "S2",
-        "--triggered-by",
-        "subprocess_crash",
-        "--exit-code",
-        "1",
-        cwd=cwd,
+    gate_write.write_gate_for_trigger(
+        trigger="subprocess_crash",
+        epic_dir=epic_dir,
+        story_id="S2",
+        exit_code=1,
     )
-    assert proc.returncode == 0, proc.stderr
 
     gate = epic_dir / "gate.md"
     assert gate.exists()
@@ -98,22 +83,16 @@ def test_subprocess_crash_writes_gate_O8(tmp_path: Path) -> None:
 
 def test_executor_aborted_writes_gate_O8(tmp_path: Path) -> None:
     """O8: driver invokes gate write with executor_aborted when outcome=aborted_with_position."""
-    cwd, epic_dir = _setup_epic(tmp_path, 181, "S2")
+    _cwd, epic_dir = _setup_epic(tmp_path, 181, "S2")
     position = tmp_path / "position.md"
     position.write_text("Critique returned blocker; aborting.")
 
-    proc = _run_gate(
-        "--epic",
-        "181",
-        "--story",
-        "S2",
-        "--triggered-by",
-        "executor_aborted",
-        "--from-position",
-        str(position),
-        cwd=cwd,
+    gate_write.write_gate_for_trigger(
+        trigger="executor_aborted",
+        epic_dir=epic_dir,
+        story_id="S2",
+        position_path=position,
     )
-    assert proc.returncode == 0, proc.stderr
 
     gate = epic_dir / "gate.md"
     assert gate.exists()
@@ -125,18 +104,13 @@ def test_executor_aborted_writes_gate_O8(tmp_path: Path) -> None:
 
 def test_empty_diff_writes_gate_O8(tmp_path: Path) -> None:
     """O8: driver invokes gate write with empty_diff_review when outcome=empty_diff."""
-    cwd, epic_dir = _setup_epic(tmp_path, 181, "S2")
+    _cwd, epic_dir = _setup_epic(tmp_path, 181, "S2")
 
-    proc = _run_gate(
-        "--epic",
-        "181",
-        "--story",
-        "S2",
-        "--triggered-by",
-        "empty_diff_review",
-        cwd=cwd,
+    gate_write.write_gate_for_trigger(
+        trigger="empty_diff_review",
+        epic_dir=epic_dir,
+        story_id="S2",
     )
-    assert proc.returncode == 0, proc.stderr
 
     gate = epic_dir / "gate.md"
     assert gate.exists()
@@ -153,8 +127,8 @@ def test_check_6_failure_writes_gate_not_commit_O1_O7(tmp_path: Path) -> None:
     """O1+O7: When check_6 fails (E181 S2 fixture), gate write is called; commit does not occur.
 
     This tests the Python-level gate write logic, not the bash driver directly.
-    The invariant: woof gate write succeeds and gate.md is written; no git commit
-    operation is triggered by the Python code path.
+    The invariant: the Python gate helper succeeds and gate.md is written; no git
+    commit operation is triggered by the Python code path.
     """
     import sys
 

@@ -27,7 +27,7 @@ from woof.graph.state import (
     GateDecision,
     NodeStatus,
     Plan,
-    StorySpec,
+    WorkUnitSpec,
 )
 from woof.graph.transitions import (
     StageStateError,
@@ -116,19 +116,19 @@ def _check_result_ok(check_result_path: Path) -> bool:
 
 def _update_story(repo_root: Path, epic_id: int, story_id: str, **updates: object) -> None:
     plan = load_plan(repo_root, epic_id)
-    stories: list[StorySpec] = []
+    stories: list[WorkUnitSpec] = []
     found = False
-    for story in plan.stories:
+    for story in plan.work_units:
         if story.id == story_id:
             data = story.model_dump()
             data.update(updates)
-            stories.append(StorySpec.model_validate(data))
+            stories.append(WorkUnitSpec.model_validate(data))
             found = True
         else:
             stories.append(story)
     if not found:
         raise StageStateError(f"story {story_id} not found in E{epic_id} plan")
-    write_plan(repo_root, Plan(epic_id=plan.epic_id, goal=plan.goal, stories=stories))
+    write_plan(repo_root, Plan(epic_id=plan.epic_id, goal=plan.goal, work_units=stories))
 
 
 def _abandon_epic(repo_root: Path, epic_id: int, tracker: Tracker) -> list[str]:
@@ -353,7 +353,7 @@ def _apply_gate_resolution_effects(
             # post-completion recovery semantics belong to E18's completion-event
             # reconciliation, not this verb.
             plan = load_plan(repo_root, epic_id)
-            target_story = next((s for s in plan.stories if s.id == story_id), None)
+            target_story = next((s for s in plan.work_units if s.id == story_id), None)
             if target_story is not None and target_story.status in TERMINAL_STORY_STATUSES:
                 raise StageStateError(
                     f"retry_story targets {story_id}, but it is already "

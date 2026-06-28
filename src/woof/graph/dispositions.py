@@ -44,7 +44,7 @@ def resolve_evidence_reference(
 
     The six reference kinds checked in order:
     - file:line (tracked by git)
-    - story id (S<n> present in plan.stories)
+    - story id (S<n> present in plan.work_units)
     - observable outcome id (O<n> present in EPIC.md)
     - contract-decision id (CD<n> present in EPIC.md)
     - schema ref (schemas/*.schema.json exists under repo_root)
@@ -60,7 +60,7 @@ def resolve_evidence_reference(
 
     story_ids = {
         s["id"]
-        for s in plan.get("stories", [])
+        for s in plan.get("work_units", [])
         if isinstance(s, dict) and isinstance(s.get("id"), str)
     }
     if _has_pattern_ref(ev, _STORY_ID_RE, story_ids):

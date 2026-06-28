@@ -32,16 +32,16 @@ def _ctx(
         plan={
             "epic_id": 146,
             "goal": "contract refs",
-            "stories": [
+            "work_units": [
                 {
                     "id": story_id,
                     "title": "contracts",
-                    "intent": "verify contract refs",
+                    "summary": "verify contract refs",
                     "paths": [],
                     "satisfies": [],
                     "implements_contract_decisions": owned,
                     "uses_contract_decisions": [],
-                    "depends_on": [],
+                    "deps": [],
                     "tests": {"count": 0, "types": []},
                     "status": "in_progress",
                 }

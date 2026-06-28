@@ -110,11 +110,11 @@ def test_manifest_aggregation_and_comparison(tmp_path: Path) -> None:
         {
             "epic_id": 1,
             "goal": "Measure the harness.",
-            "stories": [
+            "work_units": [
                 {
                     "id": "S1",
                     "title": "Add helper",
-                    "intent": "Create the helper output.",
+                    "summary": "Create the helper output.",
                     "paths": [
                         "bench_note.py",
                         "tests/test_bench_note.py",
@@ -123,7 +123,7 @@ def test_manifest_aggregation_and_comparison(tmp_path: Path) -> None:
                     "satisfies": ["O1"],
                     "implements_contract_decisions": ["CD1"],
                     "uses_contract_decisions": [],
-                    "depends_on": [],
+                    "deps": [],
                     "tests": {"count": 1},
                     "status": "done",
                 }

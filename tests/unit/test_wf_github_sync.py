@@ -280,7 +280,7 @@ def test_wf_existing_local_epic_requires_last_sync(tmp_path: Path) -> None:
     project = _project(tmp_path)
     epic_dir = project / ".woof" / "epics" / "E77"
     epic_dir.mkdir(parents=True)
-    (epic_dir / "plan.json").write_text('{"epic_id":77,"goal":"x","stories":[]}\n')
+    (epic_dir / "plan.json").write_text('{"epic_id":77,"goal":"x","work_units":[]}\n')
     bin_dir = tmp_path / "bin"
     _make_gh_stub(
         bin_dir,

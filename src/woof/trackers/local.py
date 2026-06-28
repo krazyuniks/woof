@@ -128,8 +128,8 @@ class LocalTracker:
     def complete_epic(self, epic_id: int) -> LifecycleSyncResult:
         front, prose = self._load_epic_markdown(epic_id)
         plan = self._load_plan(epic_id)
-        if any(story.status not in TERMINAL_STORY_STATUSES for story in plan.stories):
-            raise TrackerError(f"E{epic_id} cannot be closed until all plan stories are done")
+        if any(unit.status not in TERMINAL_STORY_STATUSES for unit in plan.work_units):
+            raise TrackerError(f"E{epic_id} cannot be closed until all plan work units are done")
         body = render_epic_issue_body(
             front,
             prose,

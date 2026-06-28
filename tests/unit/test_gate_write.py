@@ -1,9 +1,8 @@
-"""Tests for 'woof gate write' subcommand and gate/write.py — O5.
+"""Tests for gate/write.py.
 
-O5: woof gate write produces gate.md whose YAML front-matter validates
-    against gate.schema.json; gate_type, triggered_by[], opened_at fields
-    are mechanically derived from the check-result; prose body is verbatim
-    from the position file.
+Gate helpers produce gate.md whose YAML front-matter validates against
+gate.schema.json; gate_type, triggered_by[], and event fields are mechanically
+derived from the check-result or trigger.
 """
 
 from __future__ import annotations
@@ -19,19 +18,9 @@ import yaml
 from woof.gate import write as gate_write
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-WOOF_BIN = REPO_ROOT / "bin" / "woof"
 GATE_SCHEMA = REPO_ROOT / "schemas" / "gate.schema.json"
 
 pytestmark = pytest.mark.host_only
-
-
-def _run(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [str(WOOF_BIN), *args],
-        capture_output=True,
-        text=True,
-        cwd=str(cwd or REPO_ROOT),
-    )
 
 
 def _validate_gate_fm(gate_path: Path) -> tuple[bool, str]:
@@ -73,8 +62,8 @@ def _setup_epic_dir(tmp_path: Path, epic_id: int = 999) -> Path:
     return epic_dir
 
 
-def test_gate_write_from_check_result_validates_O5(tmp_path: Path) -> None:
-    """O5: woof gate write --from-check-result produces schema-valid gate.md."""
+def test_gate_write_from_check_result_validates(tmp_path: Path) -> None:
+    """write_gate_from_check_result produces schema-valid gate.md."""
     epic_dir = _setup_epic_dir(tmp_path, 181)
 
     check_result = {
@@ -102,20 +91,13 @@ def test_gate_write_from_check_result_validates_O5(tmp_path: Path) -> None:
     position_file = tmp_path / "position.md"
     position_file.write_text("Critique returned blocker; halting pending investigation.")
 
-    proc = _run(
-        "gate",
-        "write",
-        "--epic",
-        "181",
-        "--story",
-        "S2",
-        "--from-check-result",
-        str(cr_file),
-        "--position-file",
-        str(position_file),
-        cwd=tmp_path,
+    gate_write.write_gate_from_check_result(
+        check_result_path=cr_file,
+        position_path=position_file,
+        epic_dir=epic_dir,
+        story_id="S2",
+        schema_path=GATE_SCHEMA,
     )
-    assert proc.returncode == 0, proc.stderr
 
     gate_path = epic_dir / "gate.md"
     assert gate_path.exists(), "gate.md not written"
@@ -139,24 +121,17 @@ def test_gate_write_from_check_result_validates_O5(tmp_path: Path) -> None:
     assert "## Reviewer position" in text
 
 
-def test_gate_write_for_subprocess_crash_O5(tmp_path: Path) -> None:
-    """O5: woof gate write --triggered-by subprocess_crash writes valid gate.md."""
+def test_gate_write_for_subprocess_crash(tmp_path: Path) -> None:
+    """write_gate_for_trigger with subprocess_crash writes valid gate.md."""
     epic_dir = _setup_epic_dir(tmp_path, 182)
 
-    proc = _run(
-        "gate",
-        "write",
-        "--epic",
-        "182",
-        "--story",
-        "S1",
-        "--triggered-by",
-        "subprocess_crash",
-        "--exit-code",
-        "1",
-        cwd=tmp_path,
+    gate_write.write_gate_for_trigger(
+        trigger="subprocess_crash",
+        epic_dir=epic_dir,
+        story_id="S1",
+        exit_code=1,
+        schema_path=GATE_SCHEMA,
     )
-    assert proc.returncode == 0, proc.stderr
 
     gate_path = epic_dir / "gate.md"
     assert gate_path.exists()
@@ -175,17 +150,13 @@ def test_gate_write_for_subprocess_crash_O5(tmp_path: Path) -> None:
 def test_gate_write_for_tracker_sync_conflict_is_epic_level_gate(tmp_path: Path) -> None:
     epic_dir = _setup_epic_dir(tmp_path, 184)
 
-    proc = _run(
-        "gate",
-        "write",
-        "--epic",
-        "184",
-        "--triggered-by",
-        "tracker_sync_conflict",
-        cwd=tmp_path,
+    gate_write.write_gate_for_trigger(
+        trigger="tracker_sync_conflict",
+        epic_dir=epic_dir,
+        story_id=None,
+        schema_path=GATE_SCHEMA,
     )
 
-    assert proc.returncode == 0, proc.stderr
     gate_path = epic_dir / "gate.md"
     ok, msg = _validate_gate_fm(gate_path)
     assert ok, f"gate.md front-matter invalid: {msg}"
@@ -198,22 +169,16 @@ def test_gate_write_for_tracker_sync_conflict_is_epic_level_gate(tmp_path: Path)
     assert "## Reviewer position" in gate_text
 
 
-def test_gate_write_appends_epic_jsonl_O5(tmp_path: Path) -> None:
-    """O5: gate write appends story_gate_opened event to epic.jsonl."""
+def test_gate_write_appends_epic_jsonl(tmp_path: Path) -> None:
+    """gate write appends story_gate_opened event to epic.jsonl."""
     epic_dir = _setup_epic_dir(tmp_path, 183)
 
-    proc = _run(
-        "gate",
-        "write",
-        "--epic",
-        "183",
-        "--story",
-        "S1",
-        "--triggered-by",
-        "executor_aborted",
-        cwd=tmp_path,
+    gate_write.write_gate_for_trigger(
+        trigger="executor_aborted",
+        epic_dir=epic_dir,
+        story_id="S1",
+        schema_path=GATE_SCHEMA,
     )
-    assert proc.returncode == 0, proc.stderr
 
     jsonl = epic_dir / "epic.jsonl"
     lines = [json.loads(line) for line in jsonl.read_text().splitlines() if line.strip()]

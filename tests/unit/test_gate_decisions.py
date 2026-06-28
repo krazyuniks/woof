@@ -200,16 +200,16 @@ def _write_epic(root: Path, epic_id: int, *, story_status: str = "in_progress") 
     plan = {
         "epic_id": epic_id,
         "goal": "test gate decisions",
-        "stories": [
+        "work_units": [
             {
                 "id": "S1",
                 "title": "first",
-                "intent": "do work",
+                "summary": "do work",
                 "paths": ["src/*.py"],
                 "satisfies": ["O1"],
                 "implements_contract_decisions": [],
                 "uses_contract_decisions": [],
-                "depends_on": [],
+                "deps": [],
                 "tests": {"count": 1, "types": ["unit"]},
                 "status": story_status,
             }
@@ -297,7 +297,7 @@ def test_abandon_story_marks_abandoned_and_records_story_abandoned(tmp_path: Pat
     )
 
     plan = json.loads((directory / "plan.json").read_text())
-    assert plan["stories"][0]["status"] == "abandoned"
+    assert plan["work_units"][0]["status"] == "abandoned"
     events = [
         json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines() if line
     ]
@@ -427,7 +427,7 @@ def test_retry_story_resets_to_pending_and_clears_artefacts(tmp_path: Path) -> N
     )
 
     plan = json.loads((directory / "plan.json").read_text())
-    assert plan["stories"][0]["status"] == "pending"
+    assert plan["work_units"][0]["status"] == "pending"
     for path in artefacts.values():
         assert not path.exists()
     # The reset rewrites plan.json and reports every removed artefact as changed.
@@ -465,16 +465,16 @@ def test_retry_story_leaves_sibling_stories_untouched(tmp_path: Path) -> None:
     directory = tmp_path / ".woof" / "epics" / f"E{epic_id}"
     directory.mkdir(parents=True)
 
-    def _story(story_id: str, status: str, depends_on: list[str]) -> dict:
+    def _story(story_id: str, status: str, deps: list[str]) -> dict:
         return {
             "id": story_id,
             "title": story_id,
-            "intent": "do work",
+            "summary": "do work",
             "paths": ["src/*.py"],
             "satisfies": ["O1"],
             "implements_contract_decisions": [],
             "uses_contract_decisions": [],
-            "depends_on": depends_on,
+            "deps": deps,
             "tests": {"count": 1, "types": ["unit"]},
             "status": status,
         }
@@ -482,7 +482,7 @@ def test_retry_story_leaves_sibling_stories_untouched(tmp_path: Path) -> None:
     plan = {
         "epic_id": epic_id,
         "goal": "two stories",
-        "stories": [_story("S1", "done", []), _story("S2", "in_progress", ["S1"])],
+        "work_units": [_story("S1", "done", []), _story("S2", "in_progress", ["S1"])],
     }
     (directory / "plan.json").write_text(json.dumps(plan))
     (directory / "epic.jsonl").write_text("")
@@ -500,7 +500,7 @@ def test_retry_story_leaves_sibling_stories_untouched(tmp_path: Path) -> None:
         tracker=cast(Tracker, tracker),
     )
 
-    by_id = {s["id"]: s for s in json.loads((directory / "plan.json").read_text())["stories"]}
+    by_id = {s["id"]: s for s in json.loads((directory / "plan.json").read_text())["work_units"]}
     assert by_id["S2"]["status"] == "pending"
     assert by_id["S1"]["status"] == "done"  # sibling status untouched
     # Only the retried story's per-story artefacts are cleared.
@@ -530,7 +530,7 @@ def test_retry_story_without_story_id_is_rejected(tmp_path: Path) -> None:
 
     # The guard fires before any effect: the story is untouched and no audit ran.
     plan = json.loads((directory / "plan.json").read_text())
-    assert plan["stories"][0]["status"] == "in_progress"
+    assert plan["work_units"][0]["status"] == "in_progress"
     events = [
         json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines() if line
     ]
@@ -584,7 +584,7 @@ def test_retry_story_on_done_story_is_rejected(tmp_path: Path) -> None:
     # The guard fires before any effect: status stays done, no audit ran, and the
     # per-story artefacts a successful retry would clear are all still present.
     plan = json.loads((directory / "plan.json").read_text())
-    assert plan["stories"][0]["status"] == "done"
+    assert plan["work_units"][0]["status"] == "done"
     events = [
         json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines() if line
     ]
@@ -616,7 +616,7 @@ def test_retry_story_on_abandoned_story_is_rejected(tmp_path: Path) -> None:
     # The guard fires before any effect: status stays abandoned, no audit ran, and
     # the per-story artefacts a successful retry would clear are all still present.
     plan = json.loads((directory / "plan.json").read_text())
-    assert plan["stories"][0]["status"] == "abandoned"
+    assert plan["work_units"][0]["status"] == "abandoned"
     events = [
         json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines() if line
     ]
@@ -644,7 +644,7 @@ def test_resolve_gate_retry_story_on_done_story_keeps_gate(tmp_path: Path) -> No
     assert rc == 2
     assert gate.exists()  # the gate stays open and unresolved
     plan = json.loads((directory / "plan.json").read_text())
-    assert plan["stories"][0]["status"] == "done"
+    assert plan["work_units"][0]["status"] == "done"
     events = [
         json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines() if line
     ]

@@ -120,16 +120,16 @@ def write_plan(prompt: str) -> None:
     plan = {
         "epic_id": eid,
         "goal": "Prove gate and interrupted-commit recovery through the CLI.",
-        "stories": [
+        "work_units": [
             {
                 "id": "S1",
                 "title": "Produce gate acceptance artefact",
-                "intent": "Create a small artefact, a test marker, and a schema contract.",
+                "summary": "Create a small artefact, a test marker, and a schema contract.",
                 "paths": ["app.py", "tests/test_app.py", "schemas/acceptance.schema.json"],
                 "satisfies": ["O1"],
                 "implements_contract_decisions": ["CD1"],
                 "uses_contract_decisions": [],
-                "depends_on": [],
+                "deps": [],
                 "tests": {"count": 1, "types": ["unit"]},
                 "status": "pending",
             }

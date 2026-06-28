@@ -53,16 +53,16 @@ def _write_plan(root: Path, epic_id: int = 1, story_paths: list[str] | None = No
             {
                 "epic_id": epic_id,
                 "goal": "test",
-                "stories": [
+                "work_units": [
                     {
                         "id": "S1",
                         "title": "first",
-                        "intent": "test",
+                        "summary": "test",
                         "paths": story_paths or ["src/**"],
                         "satisfies": ["O1"],
                         "implements_contract_decisions": [],
                         "uses_contract_decisions": [],
-                        "depends_on": [],
+                        "deps": [],
                         "tests": {"count": 0, "types": []},
                         "status": "in_progress",
                     }

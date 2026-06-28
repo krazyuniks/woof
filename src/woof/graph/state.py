@@ -6,7 +6,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class NodeType(StrEnum):
@@ -70,24 +70,62 @@ GateDecision = Literal[
 ]
 
 
-class StorySpec(BaseModel):
+class WorkUnitSpec(BaseModel):
     id: str
     title: str
-    intent: str = ""
+    summary: str = ""
+    bounded_context: str | None = None
     paths: list[str] = Field(default_factory=list)
+    acceptance: list[str] = Field(default_factory=list)
+    deps: list[str] = Field(default_factory=list)
     satisfies: list[str] = Field(default_factory=list)
     implements_contract_decisions: list[str] = Field(default_factory=list)
     uses_contract_decisions: list[str] = Field(default_factory=list)
-    depends_on: list[str] = Field(default_factory=list)
     tests: dict = Field(default_factory=dict)
     status: Literal["pending", "in_progress", "done", "abandoned"]
     empty_diff: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalise_legacy_story_shape(cls, data: object) -> object:
+        """Accept legacy story-shaped plans at the single durable inbound point."""
+        if not isinstance(data, dict):
+            return data
+        payload = dict(data)
+        if "summary" not in payload and "intent" in payload:
+            payload["summary"] = payload.pop("intent")
+        if "deps" in payload and "depends_on" in payload:
+            raise ValueError("work unit cannot carry both deps and legacy depends_on")
+        if "deps" not in payload and "depends_on" in payload:
+            payload["deps"] = payload.pop("depends_on")
+        return payload
+
+    @property
+    def intent(self) -> str:
+        return self.summary
+
+    @property
+    def depends_on(self) -> list[str]:
+        return self.deps
 
 
 class Plan(BaseModel):
     epic_id: int
     goal: str = ""
-    stories: list[StorySpec]
+    work_units: list[WorkUnitSpec]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalise_legacy_story_shape(cls, data: object) -> object:
+        """Normalise legacy ``stories[]`` into canonical ``work_units[]`` once."""
+        if not isinstance(data, dict):
+            return data
+        payload = dict(data)
+        if "work_units" in payload and "stories" in payload:
+            raise ValueError("plan cannot carry both work_units and legacy stories")
+        if "work_units" not in payload and "stories" in payload:
+            payload["work_units"] = payload.pop("stories")
+        return payload
 
 
 class NodeInput(BaseModel):

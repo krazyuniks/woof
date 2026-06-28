@@ -77,12 +77,12 @@ def _story(**overrides: Any) -> dict[str, Any]:
     story = {
         "id": "S1",
         "title": "Story 1",
-        "intent": "Exercise a Stage-5 check contract.",
+        "summary": "Exercise a Stage-5 check contract.",
         "paths": ["src/"],
         "satisfies": ["O1"],
         "implements_contract_decisions": [],
         "uses_contract_decisions": [],
-        "depends_on": [],
+        "deps": [],
         "tests": {"count": 1, "types": ["unit"]},
         "status": "in_progress",
     }
@@ -94,7 +94,7 @@ def _plan(*stories: dict[str, Any], epic_id: int = 1) -> dict[str, Any]:
     return {
         "epic_id": epic_id,
         "goal": "Exercise Stage-5 checker contracts.",
-        "stories": list(stories) or [_story()],
+        "work_units": list(stories) or [_story()],
     }
 
 

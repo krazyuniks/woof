@@ -52,7 +52,7 @@ def _seed_epic(project: Path, epic_id: int) -> Path:
 
     # Removed: every derived artefact, telemetry log, and runtime file.
     (epic_dir / "EPIC.md").write_text(f"---\nepic_id: {epic_id}\n---\n")
-    (epic_dir / "plan.json").write_text(f'{{"epic_id":{epic_id},"goal":"x","stories":[]}}\n')
+    (epic_dir / "plan.json").write_text(f'{{"epic_id":{epic_id},"goal":"x","work_units":[]}}\n')
     (epic_dir / "PLAN.md").write_text("# Plan\n")
     (epic_dir / "executor_result.json").write_text('{"outcome":"staged_for_verification"}\n')
     (epic_dir / "check-result.json").write_text('{"ok":true}\n')

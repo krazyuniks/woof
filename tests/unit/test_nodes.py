@@ -58,16 +58,16 @@ def _write_plan(root: Path, epic_id: int = 1) -> Path:
     plan = {
         "epic_id": epic_id,
         "goal": "test",
-        "stories": [
+        "work_units": [
             {
                 "id": "S1",
                 "title": "first",
-                "intent": "do work",
+                "summary": "do work",
                 "paths": ["src/*.py"],
                 "satisfies": ["O1"],
                 "implements_contract_decisions": [],
                 "uses_contract_decisions": [],
-                "depends_on": [],
+                "deps": [],
                 "tests": {"count": 1, "types": ["unit"]},
                 "status": "pending",
             }
@@ -111,16 +111,16 @@ def _write_stage3_plan(directory: Path, epic_id: int) -> None:
     plan = {
         "epic_id": epic_id,
         "goal": "Implement the test epic.",
-        "stories": [
+        "work_units": [
             {
                 "id": "S1",
                 "title": "Build the first surface",
-                "intent": "Create the first observable surface.",
+                "summary": "Create the first observable surface.",
                 "paths": ["src/*.py"],
                 "satisfies": ["O1"],
                 "implements_contract_decisions": [],
                 "uses_contract_decisions": [],
-                "depends_on": [],
+                "deps": [],
                 "tests": {"count": 1, "types": ["unit"]},
                 "status": "pending",
             }
@@ -616,7 +616,7 @@ def test_plan_validate_cache_miss_after_content_change(tmp_path: Path) -> None:
     assert hit1 is False
 
     original = json.loads(plan_path.read_text())
-    original["stories"][0]["title"] = "Modified title"
+    original["work_units"][0]["title"] = "Modified title"
     plan_path.write_text(json.dumps(original))
 
     ok2, _msg2, hit2 = nodes._validate_plan(tmp_path, 61, plan_path)
@@ -635,7 +635,7 @@ def test_plan_validate_cache_does_not_pass_changed_invalid_plan(tmp_path: Path) 
     ok1, _, _ = nodes._validate_plan(tmp_path, 62, plan_path)
     assert ok1 is True
 
-    plan_path.write_text('{"epic_id": 62, "goal": "test", "stories": "bad-value"}')
+    plan_path.write_text('{"epic_id": 62, "goal": "test", "work_units": "bad-value"}')
 
     ok2, _msg2, hit2 = nodes._validate_plan(tmp_path, 62, plan_path)
     assert ok2 is False

@@ -81,28 +81,28 @@ def _plan_payload(epic_id: int = 1, *, done: bool = False) -> dict[str, Any]:
     return {
         "epic_id": epic_id,
         "goal": "Ship comment publishing.",
-        "stories": [
+        "work_units": [
             {
                 "id": "S1",
                 "title": "Create comment API",
-                "intent": "Add the write API.",
+                "summary": "Add the write API.",
                 "paths": ["src/comments.py"],
                 "satisfies": ["O1"],
                 "implements_contract_decisions": ["CD1"],
                 "uses_contract_decisions": [],
-                "depends_on": [],
+                "deps": [],
                 "tests": {"count": 2, "types": ["unit"]},
                 "status": status,
             },
             {
                 "id": "S2",
                 "title": "Render live comments",
-                "intent": "Show new comments in real time.",
+                "summary": "Show new comments in real time.",
                 "paths": ["src/live.py"],
                 "satisfies": ["O2"],
                 "implements_contract_decisions": [],
                 "uses_contract_decisions": ["CD1"],
-                "depends_on": ["S1"],
+                "deps": ["S1"],
                 "tests": {"count": 1, "types": ["integration"]},
                 "status": status,
             },
@@ -496,7 +496,7 @@ def test_tracker_contract_epic_completion_requires_done_plan(
 ) -> None:
     epic_id = _prepare_contract_epic(tracker_contract)
 
-    with pytest.raises(TrackerError, match="cannot be closed until all plan stories are done"):
+    with pytest.raises(TrackerError, match="cannot be closed until all plan work units are done"):
         tracker_contract.tracker.complete_epic(epic_id)
 
 
@@ -511,7 +511,7 @@ def test_tracker_contract_epic_completion_renders_and_closes(
     assert result.closed is True
     assert "## Plan Summary" in result.body
     assert "## Closing Summary" in result.body
-    assert "Epic completed with 2/2 planned stories done." in result.body
+    assert "Epic completed with 2/2 planned work units done." in result.body
     if tracker_contract.kind == "github":
         assert tracker_contract.gh is not None
         assert result.changed is True

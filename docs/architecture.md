@@ -166,6 +166,12 @@ Profiles define publish and merge shape only. They do not change the engine path
 
 Both profiles run producer, deterministic checks, reviewer, fix rounds, and audit in the same order.
 
+Profile A merge is a deploy-aware transaction queue. After main moves, Woof waits for GitHub mergeability and
+required-check recomputation to settle before attempting the next PR. After each merge, Woof waits for the
+configured deploy-triggering checks to reach a terminal state before merging the next ready PR. Terraform
+state-lock failures are retryable only when the check log proves lock contention; other deploy failures remain
+terminal. Already-merged units are reconciled before any later terminal halt is reported.
+
 ## 9. State and Audit
 
 Woof records:

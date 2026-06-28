@@ -66,7 +66,9 @@ work_units:
     deps: [schema-unification, policy-model, warm-session-seam]
     acceptance:
       - Work units run in dependency order with blocked/downstream reporting.
-      - Profile A publishes ready pull requests and serially merges the ready queue.
+      - Profile A publishes ready pull requests and serially merges the ready queue as deploy-aware transactions.
+      - Profile A waits for mergeability/check recompute after main moves, spaces deploy-triggering merges until the configured terminal deploy checks settle, and treats proved Terraform state-lock contention as bounded-retryable rather than terminal.
+      - Partial-merge reconciliation records already-merged units before halting on any later terminal failure.
       - Profile B commits and pushes through graph-owned transactions.
   - id: run-lineage-immutable-attempts
     title: Add run lineage and immutable attempt artefacts
@@ -121,7 +123,7 @@ work_units:
     deps: [intake-enrichment, runner-loop-absorption, run-lineage-immutable-attempts, cartography-continuity]
     acceptance:
       - A complete run produces, gates, reviews, fixes, publishes, and records audit artefacts.
-      - Resume and gate handling are exercised.
+      - Resume, gate handling, and Profile A merge-settle/deploy-spacing behaviour are exercised.
       - The result identifies any required fix before Freeflo migration.
   - id: freeflo-cutover
     title: Cut Freeflo onto the merged Woof engine

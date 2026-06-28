@@ -69,6 +69,7 @@ work_units:
       - Profile A publishes ready pull requests and serially merges the ready queue as deploy-aware transactions.
       - Profile A waits for mergeability/check recompute after main moves, spaces deploy-triggering merges until the configured terminal deploy checks settle, and treats proved Terraform state-lock contention as bounded-retryable rather than terminal.
       - Partial-merge reconciliation records already-merged units before halting on any later terminal failure.
+      - "Shared-file sibling conflicts are reconciled semantically: the later slice's intended diff is reapplied onto current main, expected symbols/tests are verified after resolution, and the gate reruns before merge."
       - Profile B commits and pushes through graph-owned transactions.
   - id: run-lineage-immutable-attempts
     title: Add run lineage and immutable attempt artefacts

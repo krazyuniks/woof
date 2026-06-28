@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import os
-import shlex
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
@@ -20,7 +19,7 @@ WOOF_BIN = REPO_ROOT / "bin" / "woof"
 EXPECTED_TRUSTED_RUNTIME_POLICY = {
     "mode": "trusted-local",
     "woof_runtime_constraints": [],
-    "cli_permission_mode": "broad public CLI permission flags",
+    "cli_permission_mode": "interactive TUI harness profile flags",
     "safety_boundary": (
         "commit-safety checks, reviewer critique, human gates, transaction manifests, "
         "and commit decisions"
@@ -84,7 +83,7 @@ def run_dispatch(
 # ---------------------------------------------------------------------------
 
 
-def test_dry_run_reviewer_uses_raw_claude_argv(woof_project: Path) -> None:
+def test_dry_run_reviewer_uses_tmux_harness_profile_argv(woof_project: Path) -> None:
     proc = run_dispatch(
         woof_project,
         "--role",
@@ -98,20 +97,14 @@ def test_dry_run_reviewer_uses_raw_claude_argv(woof_project: Path) -> None:
     assert proc.returncode == 0, proc.stderr
     payload = json.loads(proc.stdout)
     assert payload["argv"] == [
-        "claude",
-        "--dangerously-skip-permissions",
-        "--strict-mcp-config",
-        "--mcp-config",
-        '{"mcpServers":{}}',
-        "-p",
-        "--output-format",
-        "json",
+        "cld",
         "--model",
         "claude-opus-4-7",
         "--effort",
         "max",
+        "--dangerously-skip-permissions",
     ]
-    assert payload["prompt_transport"] == "stdin"
+    assert payload["prompt_transport"] == "tmux_harness_prompt_file"
     assert payload["epic"] == 42
     assert payload["story"] == "S3"
     assert payload["role"] == "reviewer"
@@ -119,7 +112,6 @@ def test_dry_run_reviewer_uses_raw_claude_argv(woof_project: Path) -> None:
     assert payload["harness"] == "claude"
     assert payload["effort"] == "max"
     assert payload["mcp"] == []
-    assert payload["mcp_config"] == '{"mcpServers":{}}'
     assert payload["timeout_min"] == 15
     assert payload["timeouts"] == {
         "default_minutes": 15,
@@ -130,7 +122,7 @@ def test_dry_run_reviewer_uses_raw_claude_argv(woof_project: Path) -> None:
     assert payload["runtime_policy"] == EXPECTED_TRUSTED_RUNTIME_POLICY
 
 
-def test_dry_run_primary_uses_raw_codex_argv(woof_project: Path) -> None:
+def test_dry_run_primary_uses_tmux_harness_profile_argv(woof_project: Path) -> None:
     proc = run_dispatch(
         woof_project,
         "--role",
@@ -144,20 +136,18 @@ def test_dry_run_primary_uses_raw_codex_argv(woof_project: Path) -> None:
     payload = json.loads(proc.stdout)
     assert payload["argv"] == [
         "codex",
-        "exec",
-        "--json",
-        "--skip-git-repo-check",
-        "--dangerously-bypass-approvals-and-sandbox",
         "-s",
         "danger-full-access",
-        "--model",
+        "-a",
+        "never",
+        "-m",
         "gpt-5.5",
         "-c",
-        'model_reasoning_effort="xhigh"',
+        "model_reasoning_effort=xhigh",
         "--max-turns",
         "20",
     ]
-    assert payload["prompt_transport"] == "stdin"
+    assert payload["prompt_transport"] == "tmux_harness_prompt_file"
     assert payload["story"] is None
     assert payload["adapter"] == "codex"
     assert payload["harness"] == "codex"
@@ -204,9 +194,9 @@ default_minutes = 15
     assert payload["profile_role"] == "primary"
     assert payload["model"] == "gpt-5.5-mini"
     assert payload["effort"] == "low"
-    assert "--model" in payload["argv"]
+    assert "-m" in payload["argv"]
     assert "gpt-5.5-mini" in payload["argv"]
-    assert 'model_reasoning_effort="low"' in payload["argv"]
+    assert "model_reasoning_effort=low" in payload["argv"]
 
 
 def test_env_model_profile_selects_alternate_profile(woof_project: Path) -> None:
@@ -300,7 +290,7 @@ def test_route_key_group_override_flips_adapter(woof_project: Path) -> None:
     payload = json.loads(proc.stdout)
     assert payload["adapter"] == "claude"
     assert payload["route_key"] == "execution"
-    assert payload["argv"][0] == "claude"
+    assert payload["argv"][0] == "cld"
 
 
 def test_route_key_falls_back_to_base_role_when_group_undeclared(woof_project: Path) -> None:
@@ -499,7 +489,7 @@ def test_prompt_file_overrides_stdin(woof_project: Path, tmp_path: Path) -> None
     )
     assert proc.returncode == 0, proc.stderr
     payload = json.loads(proc.stdout)
-    assert payload["prompt_transport"] == "stdin"
+    assert payload["prompt_transport"] == "tmux_harness_prompt_file"
     assert "from file" not in payload["argv"]
 
 
@@ -891,29 +881,18 @@ def test_reserve_audit_base_avoids_existing_prompt_collision(tmp_path: Path) -> 
 
 
 def test_build_argv_minimal_role() -> None:
-    """A role with no model, mcp, think, or flags produces a minimal argv."""
+    """The consolidated harness registry produces interactive TUI launch argv."""
     mod = _import_woof_module()
-    argv = mod.build_argv("claude", {"adapter": "claude"}, "hi")
-    assert argv == [
-        "claude",
-        "--dangerously-skip-permissions",
-        "--strict-mcp-config",
-        "--mcp-config",
-        '{"mcpServers":{}}',
-        "-p",
-        "--output-format",
-        "json",
-    ]
+    argv = mod.build_launch_argv("claude", model="", effort="")
+    assert argv == ["cld", "--dangerously-skip-permissions"]
 
-    argv = mod.build_argv("codex", {"adapter": "codex"}, "hi")
+    argv = mod.build_launch_argv("codex", model="", effort="")
     assert argv == [
         "codex",
-        "exec",
-        "--json",
-        "--skip-git-repo-check",
-        "--dangerously-bypass-approvals-and-sandbox",
         "-s",
         "danger-full-access",
+        "-a",
+        "never",
     ]
 
 
@@ -943,7 +922,7 @@ default_minutes = 15
     payload = json.loads(proc.stdout)
     assert payload["config_role"] == "story-executor"
     assert payload["adapter"] == "claude"
-    assert payload["argv"][0] == "claude"
+    assert payload["argv"][0] == "cld"
 
 
 def test_named_mcp_generates_strict_claude_config(woof_project: Path) -> None:
@@ -973,16 +952,9 @@ args = ["-y", "chrome-devtools-mcp@latest"]
     assert proc.returncode == 0, proc.stderr
     payload = json.loads(proc.stdout)
     assert payload["mcp"] == ["chrome-devtools"]
-    assert json.loads(payload["mcp_config"]) == {
-        "mcpServers": {
-            "chrome-devtools": {
-                "command": "npx",
-                "args": ["-y", "chrome-devtools-mcp@latest"],
-            }
-        }
-    }
-    assert "--strict-mcp-config" in payload["argv"]
-    assert "--mcp-config" in payload["argv"]
+    assert payload["argv"][0] == "cld"
+    assert "--strict-mcp-config" not in payload["argv"]
+    assert "--mcp-config" not in payload["argv"]
 
 
 def test_named_mcp_requires_declared_server(woof_project: Path) -> None:
@@ -1003,8 +975,10 @@ def test_named_mcp_requires_declared_server(woof_project: Path) -> None:
         "--dry-run",
     )
 
-    assert proc.returncode == 2
-    assert "[mcp_servers.chrome-devtools]" in proc.stderr
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    assert payload["mcp"] == ["chrome-devtools"]
+    assert payload["argv"][0] == "cld"
 
 
 def test_named_mcp_rejects_absolute_host_paths(woof_project: Path) -> None:
@@ -1030,8 +1004,10 @@ command = "/usr/local/bin/local-mcp"
         "--dry-run",
     )
 
-    assert proc.returncode == 2
-    assert "host-specific path" in proc.stderr
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    assert payload["mcp"] == ["local-server"]
+    assert payload["argv"][0] == "cld"
 
 
 # ---------------------------------------------------------------------------
@@ -1044,50 +1020,72 @@ WOOF_VALIDATE = [str(WOOF_BIN), "validate", "--schema", "jsonl-events"]
 
 
 def _make_stub(bin_dir: Path, name: str, payload: str, stdin_path: Path | None = None) -> None:
-    """Write an executable shell script at ``bin_dir/name`` that prints ``payload``."""
+    """Write an interactive TUI stub that honours tmux_harness' file protocol."""
     bin_dir.mkdir(parents=True, exist_ok=True)
-    script = bin_dir / name
-    stdin_line = f"cat > {shlex.quote(str(stdin_path))}" if stdin_path else "cat >/dev/null"
-    script.write_text(
-        f"#!/bin/sh\n{stdin_line}\ncat <<'__WOOF_PAYLOAD__'\n{payload}\n__WOOF_PAYLOAD__\n"
-    )
-    script.chmod(0o755)
+    names = {name}
+    if name == "claude":
+        names.add("cld")
+    for executable in names:
+        script = bin_dir / executable
+        script.write_text(
+            f"""#!/usr/bin/env python3
+import pathlib
+import re
+import sys
+
+payload = {payload!r}
+stdin_path = {str(stdin_path)!r}
+print("ready > ", flush=True)
+buf = ""
+for line in sys.stdin:
+    buf += line
+    prompt = re.search(r"(\\S+/prompt\\.txt)", buf)
+    answer = re.search(r"(\\S+/answer\\.txt)", buf)
+    done = re.search(r"(\\S+/answer\\.done)", buf)
+    if prompt and answer and done:
+        original = pathlib.Path(prompt.group(1)).read_text(encoding="utf-8")
+        if stdin_path != "None":
+            pathlib.Path(stdin_path).write_text(original, encoding="utf-8")
+        pathlib.Path(answer.group(1)).write_text(payload, encoding="utf-8")
+        pathlib.Path(done.group(1)).write_text("DONE", encoding="utf-8")
+        break
+""",
+            encoding="utf-8",
+        )
+        script.chmod(0o755)
 
 
 def _make_lingering_stub(bin_dir: Path, name: str, payload: str, stdin_path: Path) -> None:
-    """Write a stub that emits a terminal payload and then lingers."""
-    bin_dir.mkdir(parents=True, exist_ok=True)
-    script = bin_dir / name
-    script.write_text(
-        f"""#!/usr/bin/env python3
-import pathlib
-import sys
-import time
-
-pathlib.Path({str(stdin_path)!r}).write_text(sys.stdin.read(), encoding="utf-8")
-print({payload!r}, flush=True)
-time.sleep(5)
-""",
-        encoding="utf-8",
-    )
-    script.chmod(0o755)
+    """The tmux harness completes on sentinel files; lingering stdout is no longer used."""
+    _make_stub(bin_dir, name, payload, stdin_path)
 
 
-def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: Path) -> None:
-    mod = _import_woof_module()
-    bin_dir = tmp_path / "bin"
-    claude_response = json.dumps(
+def _structured_payload(
+    *,
+    verdict: str = "pass",
+    evidence: str = "S1",
+    session_id: str = "worker-session-1",
+    tokens_in: int = 7,
+    tokens_out: int = 11,
+) -> str:
+    return json.dumps(
         {
-            "type": "result",
-            "session_id": "00000000-0000-0000-0000-000000000001",
+            "verdict": verdict,
+            "evidence": evidence,
             "usage": {
-                "input_tokens": 7,
-                "output_tokens": 11,
+                "input_tokens": tokens_in,
+                "output_tokens": tokens_out,
                 "cache_read_input_tokens": 0,
                 "cache_creation_input_tokens": 13,
             },
+            "session": {"id": session_id, "thread_id": "thread-1"},
         }
     )
+
+
+def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    claude_response = _structured_payload(session_id="worker-session-claude")
     stdin_path = tmp_path / "claude.stdin"
     _make_stub(bin_dir, "claude", claude_response, stdin_path=stdin_path)
     epic_dir = woof_project / ".woof" / "epics" / "E7"
@@ -1132,7 +1130,6 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
     assert meta["adapter"] == "claude"
     assert meta["role"] == "reviewer"
     assert meta["effort"] == "max"
-    assert meta["mcp_config"] == '{"mcpServers":{}}'
     assert meta["epic_id"] == 7
     assert meta["story_id"] == "S2"
     assert meta["artefacts_loaded"] == [".woof/epics/E7/EPIC.md"]
@@ -1142,7 +1139,7 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
     assert meta["terminal_seen"] is True
     assert meta["prompt_bytes"] == len(b"run the story\n")
     assert meta["artefact_bytes"] == len(b"contract\n")
-    assert meta["output_bytes"] == len(claude_response.encode()) + 1
+    assert meta["output_bytes"] == len(claude_response.encode())
     assert meta["stderr_bytes"] == 0
     assert meta["tokens"] == {
         "tokens_in": 7,
@@ -1150,12 +1147,11 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
         "cache_read_tokens": 0,
         "cache_write_tokens": 13,
     }
-    assert meta["cc_session_id"] == "00000000-0000-0000-0000-000000000001"
-    assert (
-        meta["claude_transcript_path"]
-        == f"~/.claude/projects/{mod.claude_project_slug(woof_project)}/"
-        "00000000-0000-0000-0000-000000000001.jsonl"
-    )
+    assert meta["verdict"] == "pass"
+    assert meta["evidence"] == "S1"
+    assert meta["worker_session_id"] == "worker-session-claude"
+    assert meta["worker_session_thread_id"] == "thread-1"
+    assert meta["tmux_transport"] == "tmux:claude"
 
     # dispatch.jsonl events validate against the shipped schema
     jsonl = woof_project / ".woof" / "epics" / "E7" / "dispatch.jsonl"
@@ -1166,25 +1162,27 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
     assert events[1]["event"] == "subprocess_returned"
     assert events[0]["effort"] == "max"
     assert events[0]["mcp"] == []
-    assert events[0]["argv"][-1] == "<prompt:stdin>"
-    assert events[0]["argv"][0] == "claude"
-    assert events[0]["prompt_transport"] == "stdin"
+    assert events[0]["argv"][-1] == "<prompt:tmux-file>"
+    assert events[0]["argv"][0] == "cld"
+    assert events[0]["prompt_transport"] == "tmux_harness_prompt_file"
     assert events[0]["runtime_policy"] == EXPECTED_TRUSTED_RUNTIME_POLICY
     assert events[0]["artefacts_loaded"] == [".woof/epics/E7/EPIC.md"]
     assert events[0]["prompt_bytes"] == len(b"run the story\n")
     assert events[0]["artefact_bytes"] == len(b"contract\n")
     assert events[1]["artefacts_loaded"] == [".woof/epics/E7/EPIC.md"]
-    assert events[1]["prompt_transport"] == "stdin"
+    assert events[1]["prompt_transport"] == "tmux_harness_prompt_file"
     assert "runtime_policy" not in events[1]
     assert events[1]["exit_type"] == "clean"
     assert events[1]["prompt_bytes"] == len(b"run the story\n")
     assert events[1]["artefact_bytes"] == len(b"contract\n")
-    assert events[1]["output_bytes"] == len(claude_response.encode()) + 1
+    assert events[1]["output_bytes"] == len(claude_response.encode())
     assert events[1]["stderr_bytes"] == 0
     assert events[1]["tokens_in"] == 7
     assert events[1]["tokens_out"] == 11
-    assert events[1]["cc_session_id"] == "00000000-0000-0000-0000-000000000001"
-    assert events[1]["claude_transcript_path"].startswith("~/.claude/projects/")
+    assert events[1]["verdict"] == "pass"
+    assert events[1]["evidence"] == "S1"
+    assert events[1]["worker_session_id"] == "worker-session-claude"
+    assert events[1]["tmux_transport"] == "tmux:claude"
 
     validate = subprocess.run([*WOOF_VALIDATE, str(jsonl)], capture_output=True, text=True)
     assert validate.returncode == 0, validate.stdout + validate.stderr
@@ -1222,18 +1220,26 @@ def _make_stderr_stub(
     stderr_text: str,
     stdin_path: Path | None = None,
 ) -> None:
-    """Stub that emits ``stderr_text`` on stderr before printing ``payload`` on stdout."""
-    import shlex
-
+    """Interactive TUI stub that never writes a sentinel and leaves an error in the pane."""
     bin_dir.mkdir(parents=True, exist_ok=True)
-    script = bin_dir / name
-    stdin_line = f"cat > {shlex.quote(str(stdin_path))}" if stdin_path else "cat >/dev/null"
-    script.write_text(
-        f"#!/bin/sh\n{stdin_line}\n"
-        f"printf '%s\\n' {shlex.quote(stderr_text)} >&2\n"
-        f"cat <<'__WOOF_PAYLOAD__'\n{payload}\n__WOOF_PAYLOAD__\n"
-    )
-    script.chmod(0o755)
+    names = {name}
+    if name == "claude":
+        names.add("cld")
+    for executable in names:
+        script = bin_dir / executable
+        script.write_text(
+            f"""#!/usr/bin/env python3
+import sys
+import time
+
+print("ready > ", flush=True)
+print({stderr_text!r}, flush=True)
+for _line in sys.stdin:
+    time.sleep(60)
+""",
+            encoding="utf-8",
+        )
+        script.chmod(0o755)
 
 
 def test_subprocess_returned_records_head_branch_fields(
@@ -1292,6 +1298,8 @@ def test_subprocess_returned_records_error_signature_from_stderr(
     git_woof_project: Path, tmp_path: Path
 ) -> None:
     """subprocess_returned carries error_signature when the subprocess writes to stderr."""
+    agents = git_woof_project / ".woof" / "agents.toml"
+    agents.write_text(agents.read_text().replace("default_minutes = 15", "default_minutes = 0.001"))
     bin_dir = tmp_path / "bin"
     claude_response = json.dumps(
         {
@@ -1321,7 +1329,7 @@ def test_subprocess_returned_records_error_signature_from_stderr(
         cwd=git_woof_project,
         env=env,
     )
-    assert proc.returncode == 0, proc.stderr
+    assert proc.returncode == 1, proc.stderr
 
     jsonl = git_woof_project / ".woof" / "epics" / "E21" / "dispatch.jsonl"
     events = [json.loads(ln) for ln in jsonl.read_text().splitlines() if ln.strip()]
@@ -1343,21 +1351,12 @@ def test_subprocess_returned_records_rate_limit_when_detected(
 ) -> None:
     """subprocess_returned carries rate_limit='rate_limited' when adapter signals it."""
     bin_dir = tmp_path / "bin"
-    claude_response = json.dumps(
-        {
-            "type": "result",
-            "session_id": "00000000-0000-0000-0000-000000000012",
-            "usage": {
-                "input_tokens": 1,
-                "output_tokens": 1,
-                "cache_read_input_tokens": 0,
-                "cache_creation_input_tokens": 0,
-            },
-        }
+    claude_response = _structured_payload(
+        evidence="API error: 429 too many requests - rate limit exceeded",
+        session_id="worker-session-rate-limit",
     )
-    stderr_text = "API error: 429 too many requests - rate limit exceeded"
     stdin_path = tmp_path / "claude.stdin"
-    _make_stderr_stub(bin_dir, "claude", claude_response, stderr_text, stdin_path)
+    _make_stub(bin_dir, "claude", claude_response, stdin_path)
     env = {
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
         "HOME": os.environ.get("HOME", str(tmp_path)),
@@ -1462,7 +1461,7 @@ def test_existing_consumers_unaffected_by_new_optional_fields() -> None:
     assert exit_code == 0
 
 
-def test_end_to_end_completed_lingering_counts_as_success(
+def test_end_to_end_tmux_sentinel_completion_counts_as_success(
     woof_project: Path, tmp_path: Path
 ) -> None:
     agents_path = woof_project / ".woof" / "agents.toml"
@@ -1476,17 +1475,10 @@ def test_end_to_end_completed_lingering_counts_as_success(
         )
     )
     bin_dir = tmp_path / "bin"
-    claude_response = json.dumps(
-        {
-            "type": "result",
-            "session_id": "00000000-0000-0000-0000-000000000002",
-            "usage": {
-                "input_tokens": 1,
-                "output_tokens": 2,
-                "cache_read_input_tokens": 0,
-                "cache_creation_input_tokens": 0,
-            },
-        }
+    claude_response = _structured_payload(
+        session_id="worker-session-sentinel",
+        tokens_in=1,
+        tokens_out=2,
     )
     stdin_path = tmp_path / "claude.stdin"
     _make_lingering_stub(bin_dir, "claude", claude_response, stdin_path)
@@ -1509,7 +1501,7 @@ def test_end_to_end_completed_lingering_counts_as_success(
         input="finish then linger\n",
         cwd=woof_project,
         env=env,
-        timeout=3,
+        timeout=20,
     )
 
     assert proc.returncode == 0, proc.stderr
@@ -1518,18 +1510,16 @@ def test_end_to_end_completed_lingering_counts_as_success(
     events = [json.loads(ln) for ln in jsonl.read_text().splitlines() if ln.strip()]
     assert [event["event"] for event in events] == [
         "subprocess_spawned",
-        "subprocess_killed",
         "subprocess_returned",
     ]
-    assert events[1]["exit_type"] == "completed_lingering"
-    assert events[1]["reason"] == "completed_lingering"
-    assert events[2]["exit_type"] == "completed_lingering"
-    assert events[2]["tokens_in"] == 1
-    assert events[2]["tokens_out"] == 2
+    assert events[1]["exit_type"] == "clean"
+    assert events[1]["tokens_in"] == 1
+    assert events[1]["tokens_out"] == 2
+    assert events[1]["worker_session_id"] == "worker-session-sentinel"
 
     meta_file = next((woof_project / ".woof" / "epics" / "E8" / "audit").glob("*.meta"))
     meta = json.loads(meta_file.read_text())
-    assert meta["exit_type"] == "completed_lingering"
+    assert meta["exit_type"] == "clean"
     assert meta["timed_out"] is False
     assert meta["terminal_seen"] is True
 
@@ -1539,33 +1529,17 @@ def test_end_to_end_completed_lingering_counts_as_success(
 
 def test_end_to_end_codex_records_thread_and_audit_path(woof_project: Path, tmp_path: Path) -> None:
     bin_dir = tmp_path / "bin"
-    codex_stream = "\n".join(
-        [
-            json.dumps({"type": "thread.started", "thread_id": "thr-1"}),
-            json.dumps(
-                {
-                    "type": "item.started",
-                    "item": {"id": "item_1", "type": "command_execution"},
-                }
-            ),
-            json.dumps(
-                {
-                    "type": "item.completed",
-                    "item": {"id": "item_1", "type": "command_execution"},
-                }
-            ),
-            json.dumps(
-                {
-                    "type": "turn.completed",
-                    "usage": {
-                        "input_tokens": 50,
-                        "cached_input_tokens": 10,
-                        "output_tokens": 5,
-                        "reasoning_output_tokens": 2,
-                    },
-                }
-            ),
-        ]
+    codex_stream = json.dumps(
+        {
+            "verdict": "pass",
+            "evidence": "S1",
+            "usage": {
+                "tokens_in": 50,
+                "cache_read_tokens": 10,
+                "tokens_out": 7,
+            },
+            "session": {"thread_id": "thr-1"},
+        }
     )
     stdin_path = tmp_path / "codex.stdin"
     _make_stub(bin_dir, "codex", codex_stream, stdin_path=stdin_path)
@@ -1596,26 +1570,26 @@ def test_end_to_end_codex_records_thread_and_audit_path(woof_project: Path, tmp_
     events = [json.loads(ln) for ln in jsonl.read_text().splitlines() if ln.strip()]
     returned = events[1]
     assert returned["effort"] == "xhigh"
-    assert returned["argv"][-1] == "<prompt:stdin>"
+    assert returned["argv"][-1] == "<prompt:tmux-file>"
     assert returned["argv"][0] == "codex"
-    assert returned["prompt_transport"] == "stdin"
+    assert returned["prompt_transport"] == "tmux_harness_prompt_file"
     assert "runtime_policy" not in returned
     assert returned["exit_type"] == "clean"
     assert returned["tokens_in"] == 50
-    assert returned["tokens_out"] == 7  # 5 + 2 reasoning
+    assert returned["tokens_out"] == 7
     assert returned["cache_read_tokens"] == 10
     assert returned["prompt_bytes"] == len(b"critique me\n")
     assert returned["artefact_bytes"] == 0
-    assert returned["output_bytes"] == len(codex_stream.encode()) + 1
+    assert returned["output_bytes"] == len(codex_stream.encode())
     assert returned["stderr_bytes"] == 0
-    assert returned["command_count"] == 1
-    assert returned["codex_audit_path"].startswith(".woof/epics/E9/audit/codex-primary-")
+    assert returned["verdict"] == "pass"
+    assert returned["worker_session_thread_id"] == "thr-1"
 
     meta_file = next((woof_project / ".woof" / "epics" / "E9" / "audit").glob("*.meta"))
     meta = json.loads(meta_file.read_text())
-    assert meta["command_count"] == 1
     assert meta["exit_type"] == "clean"
     assert meta["prompt_bytes"] == len(b"critique me\n")
+    assert meta["worker_session_thread_id"] == "thr-1"
 
     validate = subprocess.run([*WOOF_VALIDATE, str(jsonl)], capture_output=True, text=True)
     assert validate.returncode == 0, validate.stdout + validate.stderr

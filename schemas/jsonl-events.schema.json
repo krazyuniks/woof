@@ -83,13 +83,13 @@
     },
     "harness": {
       "type": "string",
-      "enum": ["claude", "codex", "cld", "cod", "in-session"],
-      "description": "Public adapter that spawned the subprocess. cld/cod are retained only for legacy audit logs."
+      "enum": ["claude", "codex", "deepseek", "reasonix", "pi", "glm", "cld", "cod", "deepclaude", "in-session"],
+      "description": "Interactive TUI harness profile used for dispatch. cld/cod/deepclaude are retained as legacy aliases."
     },
     "adapter": {
       "type": "string",
-      "enum": ["claude", "codex", "in-session"],
-      "description": "Resolved public dispatch adapter."
+      "enum": ["claude", "codex", "deepseek", "reasonix", "pi", "glm", "in-session"],
+      "description": "Resolved interactive TUI dispatch profile."
     },
     "config_role": {
       "type": "string",
@@ -130,7 +130,12 @@
       "type": "array",
       "items": { "type": "string" },
       "minItems": 1,
-      "description": "Resolved public command argv. Prompt payloads sent through stdin are represented with <prompt:stdin> in durable events."
+      "description": "Resolved harness launch argv. Prompt payloads delivered through tmux_harness prompt files are represented with <prompt:tmux-file> in durable events."
+    },
+    "prompt_transport": {
+      "type": "string",
+      "enum": ["stdin", "tmux_harness_prompt_file"],
+      "description": "How the full prompt body was delivered to the worker. stdin is retained for legacy audit logs."
     },
     "pid": {
       "type": "integer",
@@ -203,6 +208,36 @@
       "type": "string",
       "pattern": "^~/\\.claude/projects/[^/]+/[^/]+\\.jsonl$",
       "description": "Portable home-relative reference to Claude Code's native project transcript."
+    },
+    "tmux_session": {
+      "type": "string",
+      "minLength": 1,
+      "description": "tmux_harness session name for the logical dispatch."
+    },
+    "tmux_transport": {
+      "type": "string",
+      "minLength": 1,
+      "description": "tmux_harness transport identifier."
+    },
+    "worker_session_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Structured worker session identifier reported by the harness payload."
+    },
+    "worker_session_path": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Structured worker session path reported by the harness payload."
+    },
+    "worker_session_transcript_path": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Structured worker transcript path reported by the harness payload."
+    },
+    "worker_session_thread_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Structured worker thread id reported by the harness payload."
     },
     "codex_audit_path": {
       "type": "string",
@@ -305,6 +340,19 @@
       "type": "string",
       "enum": ["rate_limited"],
       "description": "Rate-limit classification on subprocess_returned. Present only when the adapter stdout/stderr signals rate-limiting (HTTP 429, 'too many requests', 'overloaded', etc.); absent otherwise."
+    },
+    "verdict": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Structured dispatch verdict reported by the worker payload."
+    },
+    "evidence": {
+      "description": "Structured evidence reported by the worker payload."
+    },
+    "result_artefacts": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Structured artefact references reported by the worker payload."
     },
     "head_before": {
       "type": "string",

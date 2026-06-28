@@ -146,7 +146,7 @@ Repo policy is stored in `.woof/policy.toml` and declares:
 - deterministic check floor;
 - cartography floor.
 
-Specialised `.woof/` files remain subordinate policy inputs: `agents.toml` supplies the current dispatcher route table until the tmux harness swap absorbs run-profile selection, `prerequisites.toml` supplies host/tool/cartography prerequisite details, and `quality-gates.toml` supplies named gate commands. `policy.toml` is the spine that selects the delivery, run-profile, check, and cartography floors.
+Specialised `.woof/` files remain subordinate policy inputs: `agents.toml` supplies compatibility defaults for legacy route fields, `prerequisites.toml` supplies host/tool/cartography prerequisite details, and `quality-gates.toml` supplies named gate commands. `policy.toml` is the spine that selects the delivery, run-profile, check, and cartography floors, including producer/reviewer harness, model, and effort.
 
 The cartography floor determines what preflight enforces and what context the engine loads. Cartography remains a capability of the same engine path:
 

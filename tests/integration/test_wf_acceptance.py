@@ -22,6 +22,7 @@ PRIMARY_STUB = r'''#!/usr/bin/env python3
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -58,6 +59,39 @@ def write(path: Path, text: str) -> None:
 
 def git_add(*paths: str) -> None:
     subprocess.run(["git", "add", "--", *paths], check=True)
+
+
+def read_tmux_prompt() -> tuple[str, Path, Path]:
+    print("ready > ", flush=True)
+    buf = ""
+    for line in sys.stdin:
+        buf += line
+        prompt = re.search(r"(\S+/prompt\.txt)", buf)
+        answer = re.search(r"(\S+/answer\.txt)", buf)
+        done = re.search(r"(\S+/answer\.done)", buf)
+        if prompt and answer and done:
+            text = Path(prompt.group(1)).read_text(encoding="utf-8")
+            root = repo_root(text)
+            if root is not None:
+                os.chdir(root)
+            return text, Path(answer.group(1)), Path(done.group(1))
+    raise SystemExit("tmux prompt paths not found")
+
+
+def repo_root(prompt: str) -> str | None:
+    launched = os.environ.get("WOOF_REPO_ROOT")
+    if launched:
+        return launched
+    configured = os.environ.get("WOOF_ACCEPTANCE_ROOT")
+    if configured:
+        return configured
+    match = re.search(r'"repo_root":\s*"([^"]+)"', prompt)
+    if match:
+        return match.group(1)
+    match = re.search(r"(/[^\"'\s]+?)/\.woof/epics/E\d+/", prompt)
+    if match:
+        return match.group(1)
+    return None
 
 
 def discovery_bucket(prompt: str) -> str | None:
@@ -206,7 +240,7 @@ No reviewer findings.
 
 
 def main() -> int:
-    prompt = sys.stdin.read()
+    prompt, answer_path, done_path = read_tmux_prompt()
     bucket = discovery_bucket(prompt)
     if bucket:
         write_discovery_bucket(prompt)
@@ -222,20 +256,17 @@ def main() -> int:
         write_disposition(prompt)
     else:
         raise SystemExit("primary stub did not recognise prompt")
-    print(json.dumps({"type": "thread.started", "thread_id": "acceptance-thread"}))
-    print(
+    answer_path.write_text(
         json.dumps(
             {
-                "type": "turn.completed",
-                "usage": {
-                    "input_tokens": 10,
-                    "cached_input_tokens": 0,
-                    "output_tokens": 5,
-                    "reasoning_output_tokens": 0,
-                },
+                "verdict": "pass",
+                "usage": {"tokens_in": 10, "tokens_out": 5},
+                "session": {"thread_id": "acceptance-thread"},
             }
-        )
+        ),
+        encoding="utf-8",
     )
+    done_path.write_text("DONE", encoding="utf-8")
     return 0
 
 
@@ -247,6 +278,7 @@ REVIEWER_STUB = r'''#!/usr/bin/env python3
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -272,6 +304,39 @@ def story_id(prompt: str) -> str:
 def write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
+
+
+def read_tmux_prompt() -> tuple[str, Path, Path]:
+    print("ready > ", flush=True)
+    buf = ""
+    for line in sys.stdin:
+        buf += line
+        prompt = re.search(r"(\S+/prompt\.txt)", buf)
+        answer = re.search(r"(\S+/answer\.txt)", buf)
+        done = re.search(r"(\S+/answer\.done)", buf)
+        if prompt and answer and done:
+            text = Path(prompt.group(1)).read_text(encoding="utf-8")
+            root = repo_root(text)
+            if root is not None:
+                os.chdir(root)
+            return text, Path(answer.group(1)), Path(done.group(1))
+    raise SystemExit("tmux prompt paths not found")
+
+
+def repo_root(prompt: str) -> str | None:
+    launched = os.environ.get("WOOF_REPO_ROOT")
+    if launched:
+        return launched
+    configured = os.environ.get("WOOF_ACCEPTANCE_ROOT")
+    if configured:
+        return configured
+    match = re.search(r'"repo_root":\s*"([^"]+)"', prompt)
+    if match:
+        return match.group(1)
+    match = re.search(r"(/[^\"'\s]+?)/\.woof/epics/E\d+/", prompt)
+    if match:
+        return match.group(1)
+    return None
 
 
 def write_plan_critique(prompt: str) -> None:
@@ -312,27 +377,24 @@ Story is ready.
 
 
 def main() -> int:
-    prompt = sys.stdin.read()
+    prompt, answer_path, done_path = read_tmux_prompt()
     if '"node_type": "plan_critique"' in prompt:
         write_plan_critique(prompt)
     elif '"node_type": "critique_dispatch"' in prompt:
         write_story_critique(prompt)
     else:
         raise SystemExit("reviewer stub did not recognise prompt")
-    print(
+    answer_path.write_text(
         json.dumps(
             {
-                "type": "result",
-                "session_id": "00000000-0000-0000-0000-000000000001",
-                "usage": {
-                    "input_tokens": 10,
-                    "output_tokens": 5,
-                    "cache_read_input_tokens": 0,
-                    "cache_creation_input_tokens": 0,
-                },
+                "verdict": "pass",
+                "usage": {"tokens_in": 10, "tokens_out": 5},
+                "session": {"id": "00000000-0000-0000-0000-000000000001"},
             }
-        )
+        ),
+        encoding="utf-8",
     )
+    done_path.write_text("DONE", encoding="utf-8")
     return 0
 
 
@@ -368,6 +430,7 @@ def _write_cli_stubs(bin_dir: Path) -> None:
     bin_dir.mkdir()
     _write_executable(bin_dir / "codex", PRIMARY_STUB)
     _write_executable(bin_dir / "claude", REVIEWER_STUB)
+    _write_executable(bin_dir / "cld", REVIEWER_STUB)
 
 
 def _acceptance_env(tmp_path: Path, *, isolated: bool = False) -> dict[str, str]:
@@ -396,6 +459,7 @@ def _run_woof(
 
 
 def _configure_consumer(consumer: Path, env: dict[str, str], woof_cmd: list[str]) -> None:
+    env["WOOF_ACCEPTANCE_ROOT"] = str(consumer)
     _assert_ok(_run(["git", "init"], cwd=consumer, env=env))
     _assert_ok(_run(["git", "config", "user.email", "test@example.com"], cwd=consumer, env=env))
     _assert_ok(_run(["git", "config", "user.name", "Workflow Test"], cwd=consumer, env=env))

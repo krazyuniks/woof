@@ -468,9 +468,9 @@ timeout_seconds = 30
         "explicit adapter, model, effort, and runtime-mode disclosure"
     )
     assert primary_route["notes"] == [
-        "trusted-local runtime: Woof does not constrain dispatched agents at runtime; "
-        "commit safety is enforced through deterministic checks, reviewer critique, "
-        "human gates, transaction manifests, and commit decisions"
+        "trusted-local runtime: Woof dispatches subscription CLIs through tmux_harness; "
+        "commit safety is enforced through deterministic checks, reviewer critique, human gates, "
+        "transaction manifests, and commit decisions"
     ]
     execution_primary = next(
         finding

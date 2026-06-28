@@ -53,7 +53,7 @@ work_units:
   - id: dispatch-swap
     title: Replace headless dispatch with the tmux harness
     kind: build
-    state: todo
+    state: done
     priority: high
     summary: Remove headless worker dispatch and consume structured results from the shared interactive tmux harness.
     deps: [schema-unification, policy-model]

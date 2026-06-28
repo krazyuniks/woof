@@ -1,8 +1,8 @@
-"""Dispatch adapter boundary for Woof subprocesses.
+"""Dispatch adapter boundary for Woof worker sessions.
 
-This module owns public CLI adapter route resolution, command construction,
-Claude MCP JSON rendering, durable dispatch audit events, and token parsing.
-The top-level CLI module only wires the ``woof dispatch`` command.
+This module owns policy run-profile resolution, tmux harness launch argv
+construction, durable dispatch audit events, and structured result capture. The
+top-level CLI module only wires the ``woof dispatch`` command.
 """
 
 from __future__ import annotations
@@ -13,11 +13,9 @@ import json
 import os
 import re
 import shutil
-import signal
 import subprocess
 import sys
 import tempfile
-import threading
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -25,11 +23,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from woof.cli.harness_registry import build_launch_argv, canonical_harness, get_profile
+from woof.cli.policy import load_policy, policy_path
 from woof.graph.git import current_branch, head_sha
 from woof.lib.audit_config import load_audit_config
 from woof.lib.error_signature import normalise as _normalise_error_sig
 from woof.lib.rate_limit import classify as _classify_rate_limit
-from woof.lib.supervise import ExitType, supervise
 from woof.paths import schema_dir
 
 ADAPTERS = {"claude", "codex"}
@@ -56,10 +55,17 @@ TRUSTED_RUNTIME_MODE = "trusted-local"
 MODEL_PROFILE_ENV = "WOOF_MODEL_PROFILE"
 NODE_GROUPS = frozenset({"discovery", "definition", "planning", "execution"})
 TRUSTED_RUNTIME_NOTE = (
-    "trusted-local runtime: Woof does not constrain dispatched agents at runtime; "
+    "trusted-local runtime: Woof dispatches subscription CLIs through tmux_harness; "
     "commit safety is enforced through deterministic checks, reviewer critique, "
     "human gates, transaction manifests, and commit decisions"
 )
+POLICY_ROLE_SLOTS = {
+    "primary": "producer",
+    "planner": "producer",
+    "story-executor": "producer",
+    "reviewer": "reviewer",
+    "critiquer": "reviewer",
+}
 
 
 @dataclass(frozen=True)
@@ -102,7 +108,7 @@ def trusted_runtime_policy() -> dict[str, Any]:
     return {
         "mode": TRUSTED_RUNTIME_MODE,
         "woof_runtime_constraints": [],
-        "cli_permission_mode": "broad public CLI permission flags",
+        "cli_permission_mode": "interactive TUI harness profile flags",
         "safety_boundary": (
             "commit-safety checks, reviewer critique, human gates, transaction manifests, "
             "and commit decisions"
@@ -496,6 +502,50 @@ def _role_effort(adapter: str, role: dict[str, Any]) -> str | None:
     return effort
 
 
+def _policy_route(repo_root: Path, requested_role: str, route_key: str | None) -> RoleRoute | None:
+    path = policy_path(repo_root)
+    if not path.is_file():
+        return None
+    policy = load_policy(repo_root)
+    if not isinstance(policy, dict):
+        raise DispatchConfigError(str(policy))
+    slot_name = POLICY_ROLE_SLOTS.get(requested_role)
+    if slot_name is None:
+        return None
+    profile_name = policy.get("default_run_profile")
+    profiles = policy.get("run_profiles") or {}
+    if not isinstance(profile_name, str) or not isinstance(profiles, dict):
+        raise DispatchConfigError("policy default_run_profile and run_profiles must be declared")
+    profile = profiles.get(profile_name)
+    if not isinstance(profile, dict):
+        raise DispatchConfigError(f"policy run profile {profile_name!r} is not declared")
+    slot = profile.get(slot_name)
+    if not isinstance(slot, dict):
+        raise DispatchConfigError(f"policy run profile {profile_name!r} has no {slot_name} slot")
+    harness = slot.get("harness")
+    model = slot.get("model")
+    effort = slot.get("effort")
+    if not isinstance(harness, str) or not harness.strip():
+        raise DispatchConfigError(
+            f"policy run profile {profile_name!r}.{slot_name}.harness missing"
+        )
+    if not isinstance(model, str) or not model.strip():
+        raise DispatchConfigError(f"policy run profile {profile_name!r}.{slot_name}.model missing")
+    if not isinstance(effort, str) or not effort.strip():
+        raise DispatchConfigError(f"policy run profile {profile_name!r}.{slot_name}.effort missing")
+    canonical = canonical_harness(harness)
+    get_profile(canonical)
+    return RoleRoute(
+        requested_role=requested_role,
+        config_role=slot_name,
+        adapter=canonical,
+        config={"harness": canonical, "model": model, "effort": effort},
+        model_profile=profile_name,
+        profile_role=slot_name,
+        route_key=route_key,
+    )
+
+
 def dispatch_timeouts(agents: dict[str, Any]) -> DispatchTimeouts:
     block = agents.get("timeouts") or {}
     if not isinstance(block, dict):
@@ -609,17 +659,17 @@ def _claude_mcp_config(role: dict[str, Any], mcp_servers: dict[str, Any] | None 
     return json.dumps({"mcpServers": rendered}, separators=(",", ":"), sort_keys=True)
 
 
-def build_argv(
+def build_headless_argv(
     adapter: str,
     role: dict[str, Any],
     prompt: str,
     *,
     mcp_servers: dict[str, Any] | None = None,
 ) -> list[str]:
-    """Construct a public claude/codex invocation argv from a role definition.
+    """Construct the legacy public claude/codex argv from a role definition.
 
-    The prompt is intentionally not appended to argv. ``cmd_dispatch`` sends it
-    on stdin so large playbook-bundled prompts do not hit Linux MAX_ARG_STRLEN.
+    Runtime dispatch uses tmux harness profiles. This helper remains only for
+    compatibility with preflight and historical dry-run callers.
     """
     flags = [str(flag) for flag in role.get("flags") or []]
     model = role.get("model")
@@ -663,6 +713,20 @@ def build_argv(
     else:
         raise DispatchConfigError(f"cannot dispatch adapter {adapter!r}")
     return argv
+
+
+def build_argv(
+    adapter: str,
+    role: dict[str, Any],
+    prompt: str,
+    *,
+    mcp_servers: dict[str, Any] | None = None,
+) -> list[str]:
+    """Backward-compatible alias for preflight/dry-run callers.
+
+    Runtime dispatch uses :func:`build_launch_argv` plus ``tmux_harness``.
+    """
+    return build_headless_argv(adapter, role, prompt, mcp_servers=mcp_servers)
 
 
 def claude_project_slug(repo_root: Path) -> str:
@@ -709,23 +773,7 @@ def normalise_artefacts_loaded(repo_root: Path, values: list[str] | None) -> lis
 
 def audit_argv(wrapped_argv: list[str]) -> list[str]:
     """Return argv suitable for durable audit events without duplicating the prompt."""
-    return [*wrapped_argv, "<prompt:stdin>"]
-
-
-def dispatch_return_code(exit_type: ExitType, exit_code: int | None) -> int:
-    if exit_type in {ExitType.CLEAN, ExitType.COMPLETED_LINGERING}:
-        return 0
-    if exit_type is ExitType.NONZERO:
-        return exit_code if exit_code is not None else 1
-    if exit_type is ExitType.OPERATOR_CANCEL:
-        return 130
-    return 124
-
-
-def dispatch_kill_reason(exit_type: ExitType) -> str:
-    if exit_type is ExitType.OPERATOR_CANCEL:
-        return "manual_cancel"
-    return exit_type.value
+    return [*wrapped_argv, "<prompt:tmux-file>"]
 
 
 def audit_file_stem(
@@ -853,34 +901,118 @@ def _write_agents_schema_cache(repo_root: Path, cache_key: str) -> None:
         pass
 
 
+def _structured_result(answer: str) -> dict[str, Any]:
+    try:
+        parsed = json.loads(answer)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _tmux_capture_api():
+    try:
+        from tmux_harness import HarnessDispatchError, capture_argv
+    except ModuleNotFoundError:
+        candidates = [
+            Path(__file__).resolve().parents[4] / "agent-toolkit" / "skills" / "tmux-harness",
+            Path.home() / "Work" / "agent-toolkit" / "skills" / "tmux-harness",
+            Path("/home/ryan/Work/agent-toolkit/skills/tmux-harness"),
+        ]
+        for candidate in candidates:
+            if candidate.is_dir():
+                sys.path.insert(0, str(candidate))
+                from tmux_harness import HarnessDispatchError, capture_argv
+
+                break
+        else:
+            raise
+    return capture_argv, HarnessDispatchError
+
+
+def _structured_usage(result: dict[str, Any]) -> dict[str, int]:
+    usage = result.get("usage")
+    if not isinstance(usage, dict):
+        return {}
+    mapped: dict[str, int] = {}
+    aliases = {
+        "tokens_in": ("tokens_in", "input_tokens"),
+        "tokens_out": ("tokens_out", "output_tokens"),
+        "cache_read_tokens": ("cache_read_tokens", "cache_read_input_tokens"),
+        "cache_write_tokens": ("cache_write_tokens", "cache_creation_input_tokens"),
+    }
+    for target, keys in aliases.items():
+        for key in keys:
+            value = usage.get(key)
+            if isinstance(value, int) and value >= 0:
+                mapped[target] = value
+                break
+    return mapped
+
+
+def _result_session_metadata(result: dict[str, Any], tmux_meta: dict[str, Any]) -> dict[str, Any]:
+    session = result.get("session")
+    metadata: dict[str, Any] = {}
+    if isinstance(session, dict):
+        for key in ("id", "path", "transcript_path", "thread_id"):
+            value = session.get(key)
+            if isinstance(value, str) and value:
+                metadata[f"worker_session_{key}"] = value
+    tmux_session = tmux_meta.get("session")
+    if isinstance(tmux_session, str) and tmux_session:
+        metadata["tmux_session"] = tmux_session
+    transport = tmux_meta.get("transport")
+    if isinstance(transport, str) and transport:
+        metadata["tmux_transport"] = transport
+    return metadata
+
+
+def _copy_result_fields(event: dict[str, Any], result: dict[str, Any]) -> None:
+    verdict = result.get("verdict")
+    if isinstance(verdict, str) and verdict:
+        event["verdict"] = verdict
+    evidence = result.get("evidence")
+    if isinstance(evidence, str | list | dict):
+        event["evidence"] = evidence
+    artefacts = result.get("artefacts")
+    if isinstance(artefacts, list):
+        event["result_artefacts"] = [str(item) for item in artefacts]
+
+
 def cmd_dispatch(args: argparse.Namespace) -> int:
     repo_root = find_woof_root(Path.cwd().resolve())
     agents_path = repo_root / ".woof" / "agents.toml"
-    if not agents_path.is_file():
-        sys.stderr.write(f"woof: {agents_path} not found; cannot dispatch\n")
-        return 2
+    agents: dict[str, Any] = {}
+    agents_schema_cache_hit = False
+    if agents_path.is_file():
+        agents_bytes = agents_path.read_bytes()
+        agents = tomllib.loads(agents_bytes.decode("utf-8"))
+        try:
+            schema_bytes = AGENTS_SCHEMA_PATH.read_bytes()
+        except OSError:
+            # Missing schema: empty key still misses, then ajv runs and fails cleanly.
+            schema_bytes = b""
+        agents_schema_cache_key = _agents_schema_cache_key(agents_bytes, schema_bytes)
+        agents_schema_cache_hit = _check_agents_schema_cache(repo_root, agents_schema_cache_key)
+        if not agents_schema_cache_hit:
+            _ensure_ajv()
+            ok, output = _run_ajv(AGENTS_SCHEMA_PATH, json.dumps(agents).encode())
+            if not ok:
+                sys.stderr.write(f"woof: {agents_path}: schema invalid\n{output}\n")
+                return 2
+            _write_agents_schema_cache(repo_root, agents_schema_cache_key)
 
-    agents_bytes = agents_path.read_bytes()
-    agents = tomllib.loads(agents_bytes.decode("utf-8"))
     try:
-        schema_bytes = AGENTS_SCHEMA_PATH.read_bytes()
-    except OSError:
-        # Missing schema: empty key still misses, then ajv runs and fails cleanly.
-        schema_bytes = b""
-    agents_schema_cache_key = _agents_schema_cache_key(agents_bytes, schema_bytes)
-    agents_schema_cache_hit = _check_agents_schema_cache(repo_root, agents_schema_cache_key)
-    if not agents_schema_cache_hit:
-        _ensure_ajv()
-        ok, output = _run_ajv(AGENTS_SCHEMA_PATH, json.dumps(agents).encode())
-        if not ok:
-            sys.stderr.write(f"woof: {agents_path}: schema invalid\n{output}\n")
-            return 2
-        _write_agents_schema_cache(repo_root, agents_schema_cache_key)
-
-    try:
-        route = resolve_agent_route(agents, args.role, route_key=args.route_key)
+        route = _policy_route(repo_root, args.role, args.route_key)
+        if route is None:
+            if not agents_path.is_file():
+                sys.stderr.write(
+                    f"woof: neither {policy_path(repo_root)} nor {agents_path} declares a "
+                    "dispatch route\n"
+                )
+                return 2
+            route = resolve_agent_route(agents, args.role, route_key=args.route_key)
     except DispatchConfigError as exc:
-        sys.stderr.write(f"woof: {exc} in {agents_path}\n")
+        sys.stderr.write(f"woof: {exc}\n")
         return 2
 
     if route.adapter == "in-session":
@@ -906,26 +1038,31 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         timeouts = dispatch_timeouts(agents)
         audit_config = load_audit_config(agents)
     except (DispatchConfigError, TypeError, ValueError) as exc:
-        sys.stderr.write(f"woof: {exc} in {agents_path}\n")
+        sys.stderr.write(f"woof: {exc}\n")
         return 2
 
-    mcp_servers = agents.get("mcp_servers") or {}
     try:
         effort = _role_effort(route.adapter, route.config)
         mcp_names = _mcp_names(route.config)
-        argv = build_argv(route.adapter, route.config, prompt, mcp_servers=mcp_servers)
+        argv = build_launch_argv(
+            route.adapter,
+            model=route.config.get("model"),
+            effort=effort,
+        )
+        argv.extend(str(flag) for flag in route.config.get("flags") or [])
         artefacts_loaded = normalise_artefacts_loaded(repo_root, args.artefacts_loaded)
         artefact_bytes = artefacts_byte_count(repo_root, artefacts_loaded)
-    except DispatchConfigError as exc:
+    except (DispatchConfigError, ValueError) as exc:
         sys.stderr.write(f"woof: {exc}\n")
         return 2
 
     prompt_bytes = len(prompt.encode("utf-8"))
+    prompt_transport = "tmux_harness_prompt_file"
 
     if args.dry_run:
         payload = {
             "argv": argv,
-            "prompt_transport": "stdin",
+            "prompt_transport": prompt_transport,
             "runtime_policy": trusted_runtime_policy(),
             "epic": args.epic,
             "story": args.story,
@@ -946,8 +1083,6 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
             "prompt_bytes": prompt_bytes,
             "artefact_bytes": artefact_bytes,
         }
-        if route.adapter == "claude":
-            payload["mcp_config"] = _claude_mcp_config(route.config, mcp_servers)
         print(json.dumps(payload))
         return 0
 
@@ -962,148 +1097,101 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
 
     dispatch_jsonl = epic_dir / "dispatch.jsonl"
     event_argv = audit_argv(argv)
-
-    spawned_pid: int | None = None
-
-    def on_spawn(pid: int) -> None:
-        nonlocal spawned_pid
-        spawned_pid = pid
-        spawned_event: dict = {
-            "event": "subprocess_spawned",
-            "at": iso_utc(started_at),
-            "epic_id": args.epic,
-            "role": args.role,
-            "harness": route.adapter,
-            "adapter": route.adapter,
-            "pid": pid,
-            "mcp": mcp_names,
-            "argv": event_argv,
-            "prompt_transport": "stdin",
-            "runtime_policy": trusted_runtime_policy(),
-            "agents_schema_cache_hit": agents_schema_cache_hit,
-            "artefacts_loaded": artefacts_loaded,
-            "prompt_bytes": prompt_bytes,
-            "artefact_bytes": artefact_bytes,
-        }
-        if route.config_role != args.role:
-            spawned_event["config_role"] = route.config_role
-        if route.model_profile:
-            spawned_event["model_profile"] = route.model_profile
-        if route.profile_role:
-            spawned_event["profile_role"] = route.profile_role
-        if route.route_key:
-            spawned_event["route_key"] = route.route_key
-        if args.story:
-            spawned_event["story_id"] = args.story
-        if route.config.get("model"):
-            spawned_event["model"] = route.config["model"]
-        if effort:
-            spawned_event["effort"] = effort
-        append_jsonl(dispatch_jsonl, spawned_event)
+    launcher_pid = os.getpid()
 
     head_before = head_sha(repo_root)
     branch_before = current_branch(repo_root)
+    spawned_event: dict[str, Any] = {
+        "event": "subprocess_spawned",
+        "at": iso_utc(started_at),
+        "epic_id": args.epic,
+        "role": args.role,
+        "harness": route.adapter,
+        "adapter": route.adapter,
+        "pid": launcher_pid,
+        "mcp": mcp_names,
+        "argv": event_argv,
+        "prompt_transport": prompt_transport,
+        "runtime_policy": trusted_runtime_policy(),
+        "agents_schema_cache_hit": agents_schema_cache_hit,
+        "artefacts_loaded": artefacts_loaded,
+        "prompt_bytes": prompt_bytes,
+        "artefact_bytes": artefact_bytes,
+    }
+    if route.config_role != args.role:
+        spawned_event["config_role"] = route.config_role
+    if route.model_profile:
+        spawned_event["model_profile"] = route.model_profile
+    if route.profile_role:
+        spawned_event["profile_role"] = route.profile_role
+    if route.route_key:
+        spawned_event["route_key"] = route.route_key
+    if args.story:
+        spawned_event["story_id"] = args.story
+    if route.config.get("model"):
+        spawned_event["model"] = route.config["model"]
+    if effort:
+        spawned_event["effort"] = effort
+    append_jsonl(dispatch_jsonl, spawned_event)
 
-    cancel = threading.Event()
-    previous_sigint = signal.getsignal(signal.SIGINT)
-
-    def on_sigint(signum: int, frame: object) -> None:
-        cancel.set()
-
-    signal.signal(signal.SIGINT, on_sigint)
+    answer = ""
+    stderr = ""
+    tmux_meta: dict[str, Any] = {}
+    exit_type = "clean"
+    reported_exit_code = 0
+    tmux_capture_argv, tmux_error = _tmux_capture_api()
+    launch_env = {key: value for key, value in os.environ.items() if key.startswith("WOOF_")}
+    launch_env["WOOF_REPO_ROOT"] = str(repo_root)
     try:
-        result = supervise(
-            argv,
-            stdin=prompt,
-            is_terminal=terminal_detector(route.adapter),
-            idle_seconds=timeouts.idle_seconds,
-            wallclock_seconds=timeouts.wallclock_seconds,
-            completion_grace_seconds=timeouts.completion_grace_seconds,
-            completion_tail_cap_seconds=timeouts.completion_tail_cap_seconds,
-            max_captured_bytes=audit_config.max_bytes,
-            stdout_path=output_file,
-            stderr_path=stderr_file,
-            on_spawn=on_spawn,
-            cancel=cancel,
+        answer, tmux_meta = tmux_capture_argv(
+            ["env", *(f"{key}={value}" for key, value in sorted(launch_env.items())), *argv],
+            prompt,
+            label=route.adapter,
+            model=route.config.get("model"),
+            effort=effort,
+            completion_timeout_s=int(timeouts.wallclock_seconds),
         )
-    except KeyboardInterrupt:
-        ended_at = datetime.now(UTC)
-        if spawned_pid is not None:
-            append_jsonl(
-                dispatch_jsonl,
-                {
-                    "event": "subprocess_killed",
-                    "at": iso_utc(ended_at),
-                    "epic_id": args.epic,
-                    "pid": spawned_pid,
-                    "signal": "SIGINT",
-                    "reason": dispatch_kill_reason(ExitType.OPERATOR_CANCEL),
-                    "exit_type": ExitType.OPERATOR_CANCEL.value,
-                },
-            )
-        return 130
-    finally:
-        signal.signal(signal.SIGINT, previous_sigint)
+    except tmux_error as exc:
+        stderr = str(exc)
+        exit_type = "nonzero"
+        reported_exit_code = 1
 
     ended_at = datetime.now(UTC)
     head_after = head_sha(repo_root)
     branch_after = current_branch(repo_root)
-    stdout = result.stdout
-    stderr = result.stderr
-    duration_ms = result.duration_ms
-    output_bytes = (
-        output_file.stat().st_size if output_file.exists() else len(stdout.encode("utf-8"))
-    )
-    stderr_bytes = (
-        stderr_file.stat().st_size if stderr_file.exists() else len(stderr.encode("utf-8"))
-    )
+    if len(answer.encode("utf-8")) > audit_config.max_bytes:
+        answer = answer.encode("utf-8")[: audit_config.max_bytes].decode("utf-8", errors="replace")
+    structured = _structured_result(answer)
+    verdict = str(structured.get("verdict") or "").strip().lower()
+    if exit_type == "clean" and verdict in {"error", "fail", "failed", "blocked"}:
+        exit_type = "nonzero"
+        reported_exit_code = 1
+        evidence = structured.get("evidence")
+        if not stderr and isinstance(evidence, str):
+            stderr = evidence
+    output_file.write_text(answer, encoding="utf-8")
+    stderr_file.write_text(stderr, encoding="utf-8")
+    output_bytes = len(answer.encode("utf-8"))
+    stderr_bytes = len(stderr.encode("utf-8"))
+    duration_ms = int(tmux_meta.get("latency_ms") or (ended_at - started_at).total_seconds() * 1000)
+    tokens = _structured_usage(structured)
 
-    if route.adapter == "claude":
-        tokens, session_id = parse_claude_output(stdout)
-        thread_id = None
-        command_count = 0
-    else:
-        tokens, thread_id = parse_codex_output(stdout)
-        session_id = None
-        command_count = count_codex_command_executions(stdout)
-
-    timed_out = result.exit_type in {ExitType.IDLE_KILL, ExitType.WALLCLOCK_TIMEOUT}
-    reported_exit_code = dispatch_return_code(result.exit_type, result.exit_code)
-    if result.exit_type in {
-        ExitType.IDLE_KILL,
-        ExitType.WALLCLOCK_TIMEOUT,
-        ExitType.COMPLETED_LINGERING,
-        ExitType.OPERATOR_CANCEL,
-    }:
-        append_jsonl(
-            dispatch_jsonl,
-            {
-                "event": "subprocess_killed",
-                "at": iso_utc(ended_at),
-                "epic_id": args.epic,
-                "pid": result.pid,
-                "signal": result.signalled or "SIGTERM",
-                "reason": dispatch_kill_reason(result.exit_type),
-                "exit_type": result.exit_type.value,
-            },
-        )
-
-    returned: dict = {
+    returned: dict[str, Any] = {
         "event": "subprocess_returned",
         "at": iso_utc(ended_at),
         "epic_id": args.epic,
         "role": args.role,
         "harness": route.adapter,
         "adapter": route.adapter,
-        "pid": result.pid,
-        "exit_type": result.exit_type.value,
+        "pid": launcher_pid,
+        "exit_type": exit_type,
         "exit_code": reported_exit_code,
         "duration_ms": duration_ms,
-        "timed_out": timed_out,
-        "terminal_seen": result.terminal_seen,
+        "timed_out": False,
+        "terminal_seen": True,
         "mcp": mcp_names,
         "argv": event_argv,
-        "prompt_transport": "stdin",
+        "prompt_transport": prompt_transport,
         "artefacts_loaded": artefacts_loaded,
         "prompt_bytes": prompt_bytes,
         "artefact_bytes": artefact_bytes,
@@ -1126,16 +1214,12 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         returned["effort"] = effort
     if tokens:
         returned.update(tokens)
-    if session_id:
-        returned["cc_session_id"] = session_id
-        returned["claude_transcript_path"] = claude_transcript_path(repo_root, session_id)
-    if route.adapter == "codex":
-        returned["codex_audit_path"] = str(base.relative_to(repo_root))
-        returned["command_count"] = command_count
+    returned.update(_result_session_metadata(structured, tmux_meta))
+    _copy_result_fields(returned, structured)
     error_sig = _normalise_error_sig(stderr) if stderr.strip() else None
     if error_sig:
         returned["error_signature"] = error_sig
-    rl = _classify_rate_limit(stdout, stderr)
+    rl = _classify_rate_limit(answer, stderr)
     if rl is not None:
         returned["rate_limit"] = rl
     if head_before is not None:
@@ -1163,36 +1247,28 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         "mcp": mcp_names,
         "flags": route.config.get("flags") or [],
         "argv": event_argv,
-        "prompt_transport": "stdin",
+        "prompt_transport": prompt_transport,
         "runtime_policy": trusted_runtime_policy(),
         "artefacts_loaded": artefacts_loaded,
-        "pid": result.pid,
+        "pid": launcher_pid,
         "started_at": iso_utc(started_at),
         "ended_at": iso_utc(ended_at),
         "duration_ms": duration_ms,
-        "exit_type": result.exit_type.value,
+        "exit_type": exit_type,
         "exit_code": reported_exit_code,
-        "timed_out": timed_out,
-        "terminal_seen": result.terminal_seen,
-        "stdout_truncated": result.stdout_truncated,
-        "stderr_truncated": result.stderr_truncated,
-        "signal": result.signalled,
+        "timed_out": False,
+        "terminal_seen": True,
         "timeouts": timeouts.as_payload(),
         "prompt_bytes": prompt_bytes,
         "artefact_bytes": artefact_bytes,
         "output_bytes": output_bytes,
         "stderr_bytes": stderr_bytes,
         "tokens": tokens,
+        "structured_result": structured,
+        "tmux_harness": tmux_meta,
     }
-    if route.adapter == "claude":
-        meta["mcp_config"] = _claude_mcp_config(route.config, mcp_servers)
-    else:
-        meta["command_count"] = command_count
-    if session_id:
-        meta["cc_session_id"] = session_id
-        meta["claude_transcript_path"] = claude_transcript_path(repo_root, session_id)
-    if thread_id:
-        meta["codex_thread_id"] = thread_id
+    _copy_result_fields(meta, structured)
+    meta.update(_result_session_metadata(structured, tmux_meta))
     meta_file.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
 
     return reported_exit_code

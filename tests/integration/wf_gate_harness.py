@@ -60,6 +60,36 @@ def git_add(*paths: str) -> None:
     subprocess.run(["git", "add", "--", *paths], check=True)
 
 
+def read_tmux_prompt() -> tuple[str, Path, Path]:
+    print("ready > ", flush=True)
+    buf = ""
+    for line in sys.stdin:
+        buf += line
+        prompt = re.search(r"(\S+/prompt\.txt)", buf)
+        answer = re.search(r"(\S+/answer\.txt)", buf)
+        done = re.search(r"(\S+/answer\.done)", buf)
+        if prompt and answer and done:
+            text = Path(prompt.group(1)).read_text(encoding="utf-8")
+            root = repo_root(text)
+            if root is not None:
+                os.chdir(root)
+            return text, Path(answer.group(1)), Path(done.group(1))
+    raise SystemExit("tmux prompt paths not found")
+
+
+def repo_root(prompt: str) -> str | None:
+    launched = os.environ.get("WOOF_REPO_ROOT")
+    if launched:
+        return launched
+    match = re.search(r'"repo_root":\s*"([^"]+)"', prompt)
+    if match:
+        return match.group(1)
+    match = re.search(r"(/[^\"'\s]+?)/\.woof/epics/E\d+/", prompt)
+    if match:
+        return match.group(1)
+    return None
+
+
 def discovery_bucket(prompt: str) -> str | None:
     for bucket in ("research", "thinking", "ideate"):
         if f'"node_type": "discovery_{bucket}"' in prompt:
@@ -235,7 +265,9 @@ No reviewer findings.
 
 
 def main() -> int:
-    prompt = sys.stdin.read()
+    prompt, answer_path, done_path = read_tmux_prompt()
+    verdict = "pass"
+    evidence = None
     bucket = discovery_bucket(prompt)
     if bucket:
         write_discovery_bucket(prompt)
@@ -248,25 +280,24 @@ def main() -> int:
     elif '"node_type": "executor_dispatch"' in prompt:
         code = execute_story(prompt)
         if code != 0:
-            return code
+            verdict = "error"
+            evidence = f"executor exited with code {code}"
     elif "Primary disposition prompt" in prompt:
         write_disposition(prompt)
     else:
         raise SystemExit("primary stub did not recognise prompt")
-    print(json.dumps({"type": "thread.started", "thread_id": "gate-thread"}))
-    print(
+    answer_path.write_text(
         json.dumps(
             {
-                "type": "turn.completed",
-                "usage": {
-                    "input_tokens": 10,
-                    "cached_input_tokens": 0,
-                    "output_tokens": 5,
-                    "reasoning_output_tokens": 0,
-                },
+                "verdict": verdict,
+                "evidence": evidence,
+                "usage": {"tokens_in": 10, "tokens_out": 5},
+                "session": {"thread_id": "gate-thread"},
             }
-        )
+        ),
+        encoding="utf-8",
     )
+    done_path.write_text("DONE", encoding="utf-8")
     return 0
 
 
@@ -304,6 +335,36 @@ def story_id(prompt: str) -> str:
 def write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
+
+
+def read_tmux_prompt() -> tuple[str, Path, Path]:
+    print("ready > ", flush=True)
+    buf = ""
+    for line in sys.stdin:
+        buf += line
+        prompt = re.search(r"(\S+/prompt\.txt)", buf)
+        answer = re.search(r"(\S+/answer\.txt)", buf)
+        done = re.search(r"(\S+/answer\.done)", buf)
+        if prompt and answer and done:
+            text = Path(prompt.group(1)).read_text(encoding="utf-8")
+            root = repo_root(text)
+            if root is not None:
+                os.chdir(root)
+            return text, Path(answer.group(1)), Path(done.group(1))
+    raise SystemExit("tmux prompt paths not found")
+
+
+def repo_root(prompt: str) -> str | None:
+    launched = os.environ.get("WOOF_REPO_ROOT")
+    if launched:
+        return launched
+    match = re.search(r'"repo_root":\s*"([^"]+)"', prompt)
+    if match:
+        return match.group(1)
+    match = re.search(r"(/[^\"'\s]+?)/\.woof/epics/E\d+/", prompt)
+    if match:
+        return match.group(1)
+    return None
 
 
 def write_plan_critique(prompt: str) -> None:
@@ -357,27 +418,24 @@ harness: gate-reviewer
 
 
 def main() -> int:
-    prompt = sys.stdin.read()
+    prompt, answer_path, done_path = read_tmux_prompt()
     if '"node_type": "plan_critique"' in prompt:
         write_plan_critique(prompt)
     elif '"node_type": "critique_dispatch"' in prompt:
         write_story_critique(prompt)
     else:
         raise SystemExit("reviewer stub did not recognise prompt")
-    print(
+    answer_path.write_text(
         json.dumps(
             {
-                "type": "result",
-                "session_id": "00000000-0000-0000-0000-000000000002",
-                "usage": {
-                    "input_tokens": 10,
-                    "output_tokens": 5,
-                    "cache_read_input_tokens": 0,
-                    "cache_creation_input_tokens": 0,
-                },
+                "verdict": "pass",
+                "usage": {"tokens_in": 10, "tokens_out": 5},
+                "session": {"id": "00000000-0000-0000-0000-000000000002"},
             }
-        )
+        ),
+        encoding="utf-8",
     )
+    done_path.write_text("DONE", encoding="utf-8")
     return 0
 
 
@@ -414,6 +472,7 @@ def write_cli_stubs(bin_dir: Path) -> None:
     bin_dir.mkdir()
     write_executable(bin_dir / "codex", PRIMARY_STUB)
     write_executable(bin_dir / "claude", REVIEWER_STUB)
+    write_executable(bin_dir / "cld", REVIEWER_STUB)
 
 
 def acceptance_env(tmp_path: Path, scenario: str) -> dict[str, str]:

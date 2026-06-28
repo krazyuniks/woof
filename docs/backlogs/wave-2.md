@@ -32,7 +32,7 @@ work_units:
   - id: dispatch-swap
     title: Replace headless dispatch with the tmux harness
     kind: build
-    state: todo
+    state: done
     priority: high
     summary: Remove headless worker dispatch and consume structured results from the shared interactive tmux harness. Consolidate VaultForeman's harness/model/effort registry into Woof's dispatcher before absorbing produce/review logic.
     deps: [schema-unification, policy-model]

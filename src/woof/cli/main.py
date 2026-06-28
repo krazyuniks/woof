@@ -7,7 +7,7 @@ Subcommands:
     init         Scaffold a fresh .woof/ consumer config and .gitignore block.
     hooks        Manage Woof-owned git hook blocks.
     validate     Validate artefacts against woof JSON Schemas via ajv-cli.
-    dispatch     Spawn a public CLI subprocess for a role declared in agents.toml.
+    dispatch     Run a role through the configured tmux harness profile.
     audit-bundle Copy referenced Claude transcripts into an epic audit folder.
     render-epic  Render EPIC.md front-matter into the managed tracker body;
                  optionally sync to the tracker with conflict detection.
@@ -408,15 +408,15 @@ def main() -> int:
 
     dispatch = sub.add_parser(
         "dispatch",
-        help="spawn a public CLI subprocess for a role declared in agents.toml",
+        help="dispatch a role through the configured tmux harness profile",
     )
     dispatch.add_argument(
         "target",
         nargs="?",
         choices=sorted(ADAPTERS),
-        help="deprecated adapter target; role routes now resolve this from .woof/agents.toml",
+        help="deprecated adapter target; role routes now resolve from policy or .woof/agents.toml",
     )
-    dispatch.add_argument("--role", required=True, help="role name from .woof/agents.toml")
+    dispatch.add_argument("--role", required=True, help="dispatch role name")
     dispatch.add_argument(
         "--epic",
         type=int,

@@ -4,7 +4,6 @@ import ast
 import hashlib
 import json
 import os
-import shlex
 import socket
 import subprocess
 from pathlib import Path
@@ -129,33 +128,58 @@ default_minutes = 15
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     stdin_capture = tmp_path / "executor.stdin"
-    script = bin_dir / "claude"
-    claude_response = json.dumps(
+    harness_response = json.dumps(
         {
-            "type": "result",
-            "session_id": "00000000-0000-0000-0000-000000000002",
-            "usage": {"input_tokens": 1, "output_tokens": 1},
+            "verdict": "pass",
+            "evidence": "Stub story executed.",
+            "usage": {"tokens_in": 1, "tokens_out": 1},
+            "session": {"id": "00000000-0000-0000-0000-000000000002"},
         }
     )
-    script.write_text(
-        "#!/usr/bin/env bash\n"
-        "set -euo pipefail\n"
-        f"cat > {shlex.quote(str(stdin_capture))}\n"
-        "mkdir -p src .woof/epics/E1\n"
-        "printf '%s\\n' 'print(\"O1\")' > src/app.py\n"
-        "cat > .woof/epics/E1/executor_result.json <<'JSON'\n"
-        "{\n"
-        '  "epic_id": 1,\n'
-        '  "story_id": "S1",\n'
-        '  "outcome": "staged_for_verification",\n'
-        '  "commit_subject": "feat: E1 S1 - run stub story",\n'
-        '  "commit_body": "Stub story executed.",\n'
-        '  "position": null\n'
-        "}\n"
-        "JSON\n"
-        f"printf '%s\\n' {shlex.quote(claude_response)}\n"
+    for executable in ("claude", "cld"):
+        script = bin_dir / executable
+        script.write_text(
+            f"""#!/usr/bin/env python3
+import pathlib
+import re
+import sys
+import os
+
+payload = {harness_response!r}
+stdin_capture = pathlib.Path({str(stdin_capture)!r})
+repo_root = pathlib.Path(os.environ["WOOF_REPO_ROOT"])
+print("ready > ", flush=True)
+buf = ""
+for line in sys.stdin:
+    buf += line
+    prompt = re.search(r"(\\S+/prompt\\.txt)", buf)
+    answer = re.search(r"(\\S+/answer\\.txt)", buf)
+    done = re.search(r"(\\S+/answer\\.done)", buf)
+    if not (prompt and answer and done):
+        continue
+    original = pathlib.Path(prompt.group(1)).read_text(encoding="utf-8")
+    stdin_capture.write_text(original, encoding="utf-8")
+    (repo_root / "src").mkdir(exist_ok=True)
+    (repo_root / ".woof/epics/E1").mkdir(parents=True, exist_ok=True)
+    (repo_root / "src/app.py").write_text('print("O1")\\n', encoding="utf-8")
+    (repo_root / ".woof/epics/E1/executor_result.json").write_text(
+        '{{\\n'
+        '  "epic_id": 1,\\n'
+        '  "story_id": "S1",\\n'
+        '  "outcome": "staged_for_verification",\\n'
+        '  "commit_subject": "feat: E1 S1 - run stub story",\\n'
+        '  "commit_body": "Stub story executed.",\\n'
+        '  "position": null\\n'
+        '}}\\n',
+        encoding="utf-8",
     )
-    script.chmod(0o755)
+    pathlib.Path(answer.group(1)).write_text(payload, encoding="utf-8")
+    pathlib.Path(done.group(1)).write_text("DONE", encoding="utf-8")
+    break
+""",
+            encoding="utf-8",
+        )
+        script.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
 
     output = nodes.executor_dispatch_node(
@@ -175,8 +199,8 @@ default_minutes = 15
     result = json.loads((directory / "executor_result.json").read_text())
     assert result["commit_subject"] == "feat: E1 S1 - run stub story"
     events = [json.loads(line) for line in (directory / "dispatch.jsonl").read_text().splitlines()]
-    assert events[0]["prompt_transport"] == "stdin"
-    assert events[0]["argv"][-1] == "<prompt:stdin>"
+    assert events[0]["prompt_transport"] == "tmux_harness_prompt_file"
+    assert events[0]["argv"][-1] == "<prompt:tmux-file>"
 
 
 def test_executor_dispatch_completed_lingering_advances(

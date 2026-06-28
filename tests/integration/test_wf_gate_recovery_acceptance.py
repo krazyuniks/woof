@@ -66,7 +66,7 @@ def test_executor_subprocess_crash_gate_can_abandon_story(tmp_path: Path) -> Non
     assert outputs[-1]["status"] == "gate_opened"
     assert outputs[-1]["triggered_by"] == ["subprocess_crash"]
     assert_gate(consumer, gate_type="story_gate", triggered_by=["subprocess_crash"])
-    assert (epic_dir(consumer) / "gate.md").read_text(encoding="utf-8").find("exit code 42") >= 0
+    assert (epic_dir(consumer) / "gate.md").read_text(encoding="utf-8").find("exit_code: 1") >= 0
 
     _resolve(consumer, env, "abandon_story")
     completed = _run_epic_json(consumer, env)

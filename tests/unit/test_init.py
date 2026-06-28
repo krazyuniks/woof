@@ -52,6 +52,7 @@ def test_init_creates_starter_config_and_gitignore_block(tmp_path: Path, run_woo
 
     assert proc.returncode == 0, proc.stderr + proc.stdout
     woof_dir = tmp_path / ".woof"
+    assert (woof_dir / "policy.toml").is_file()
     assert (woof_dir / "prerequisites.toml").is_file()
     assert (woof_dir / "agents.toml").is_file()
     assert (woof_dir / "quality-gates.toml").is_file()
@@ -60,6 +61,9 @@ def test_init_creates_starter_config_and_gitignore_block(tmp_path: Path, run_woo
 
     prereq = (woof_dir / "prerequisites.toml").read_text()
     assert "[tracker]" in prereq
+    policy = (woof_dir / "policy.toml").read_text()
+    assert 'profile = "B"' in policy
+    assert "default_run_profile" in policy
     agents = (woof_dir / "agents.toml").read_text()
     assert "Runtime model: trusted-local automation" in agents
 
@@ -187,6 +191,7 @@ def test_init_templates_validate_against_schemas(tmp_path: Path, run_woof) -> No
     woof_dir = tmp_path / ".woof"
 
     for filename, schema in (
+        ("policy.toml", "policy"),
         ("agents.toml", "agents"),
         ("test-markers.toml", "test-markers"),
     ):

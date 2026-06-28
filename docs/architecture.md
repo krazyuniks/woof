@@ -135,7 +135,7 @@ The reviewer is fresh each round. A reviewer session may stay warm only as a lau
 
 ## 7. Policy and Cartography
 
-Repo policy is stored under `.woof/` and declares:
+Repo policy is stored in `.woof/policy.toml` and declares:
 
 - profile (`A` worktree+PR, or `B` single-tree);
 - repo root and toolchain root;
@@ -145,6 +145,8 @@ Repo policy is stored under `.woof/` and declares:
 - producer/reviewer run profile: slot -> harness/model/effort;
 - deterministic check floor;
 - cartography floor.
+
+Specialised `.woof/` files remain subordinate policy inputs: `agents.toml` supplies the current dispatcher route table until the tmux harness swap absorbs run-profile selection, `prerequisites.toml` supplies host/tool/cartography prerequisite details, and `quality-gates.toml` supplies named gate commands. `policy.toml` is the spine that selects the delivery, run-profile, check, and cartography floors.
 
 The cartography floor determines what preflight enforces and what context the engine loads. Cartography remains a capability of the same engine path:
 

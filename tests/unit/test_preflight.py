@@ -58,6 +58,51 @@ model = "gpt-5.5"
 effort = "xhigh"
 """
 
+STANDARD_POLICY = """\
+schema_version = 1
+default_run_profile = "default"
+
+[delivery]
+profile = "B"
+repo_root = "."
+toolchain_root = "."
+base_branch = "main"
+
+[profiles.B]
+commit = true
+push = true
+
+[verification]
+command = "just check"
+timeout_seconds = 600
+
+[run_profiles.default.producer]
+harness = "codex"
+model = "gpt-5.5"
+effort = "xhigh"
+
+[run_profiles.default.reviewer]
+harness = "claude"
+model = "claude-opus-4-7"
+effort = "max"
+
+[checks]
+floor = [
+  "quality-gates",
+  "outcome-markers",
+  "scope",
+  "contract-refs",
+  "plan-crossrefs",
+  "critique-blocker",
+  "commit-transaction",
+  "docs-drift",
+  "review-valve",
+]
+
+[cartography]
+floor = "structural"
+"""
+
 CARTOGRAPHY_PREREQS = """\
 [infra]
 just = "any"
@@ -134,11 +179,14 @@ def _write_project(
     root: Path,
     *,
     prerequisites: str,
+    policy: str | None = STANDARD_POLICY,
     agents: str | None = STANDARD_AGENTS,
     quality_gates: str | None = None,
 ) -> None:
     woof_dir = root / ".woof"
     woof_dir.mkdir()
+    if policy is not None:
+        (woof_dir / "policy.toml").write_text(policy)
     (woof_dir / "prerequisites.toml").write_text(prerequisites)
     if agents is not None:
         (woof_dir / "agents.toml").write_text(agents)
@@ -156,12 +204,14 @@ def _write_ready_project(
     root: Path,
     *,
     prerequisites: str,
+    policy: str | None = STANDARD_POLICY,
     agents: str | None = STANDARD_AGENTS,
     quality_gates: str | None = None,
 ) -> None:
     _write_project(
         root,
         prerequisites=_with_cartography_contract(prerequisites),
+        policy=policy,
         agents=agents,
         quality_gates=quality_gates,
     )
@@ -384,8 +434,16 @@ timeout_seconds = 30
     assert payload["ok"] is True
     assert {finding["id"] for finding in payload["findings"]} >= {
         "woof.install",
+        "config.policy",
         "config.prerequisites",
         "config.agents",
+        "policy.delivery",
+        "policy.verification",
+        "policy.run_profile",
+        "policy.run_profile.producer",
+        "policy.run_profile.reviewer",
+        "policy.check_floor",
+        "policy.cartography_floor",
         "agents.primary.route",
         "agents.reviewer.route",
         "agents.reviewer.mcp_config",
@@ -761,6 +819,50 @@ repo = "example/project"
     agents = next(finding for finding in payload["findings"] if finding["id"] == "agents.config")
     assert agents["ok"] is False
     assert "agents.toml" in agents["detail"]
+
+
+def test_preflight_requires_policy_toml(tmp_path: Path, run_woof) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _stub_core_tools(bin_dir)
+
+    _write_ready_project(
+        tmp_path,
+        prerequisites="""\
+[infra]
+just = "any"
+git = "any"
+gh = "any"
+
+[commands]
+claude = "any"
+codex = "any"
+
+[validators]
+ajv = "any"
+ajv-formats = "any"
+
+[tracker]
+kind = "github"
+repo = "example/project"
+""",
+        policy=None,
+    )
+
+    proc = run_woof(
+        "preflight",
+        "--project-root",
+        str(tmp_path),
+        "--format",
+        "json",
+        env=_env_with_path(bin_dir),
+    )
+
+    assert proc.returncode == 1
+    payload = json.loads(proc.stdout)
+    policy = next(finding for finding in payload["findings"] if finding["id"] == "policy.config")
+    assert policy["ok"] is False
+    assert "policy.toml" in policy["detail"]
 
 
 def test_preflight_runs_host_and_server_checks(tmp_path: Path, run_woof) -> None:
@@ -1524,6 +1626,9 @@ repo = "example/project"
 
     assert proc.returncode == 1
     payload = json.loads(proc.stdout)
+    floor = next(f for f in payload["findings"] if f["id"] == "policy.cartography_floor")
+    assert floor["ok"] is False
+    assert "requires .woof/prerequisites.toml [cartography]" in floor["detail"]
     contract = next(f for f in payload["findings"] if f["id"] == "cartography.contract")
     assert contract["ok"] is False
     assert "no [cartography] block" in contract["detail"]

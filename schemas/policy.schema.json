@@ -1,0 +1,249 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://woof.dev/schemas/policy.schema.json",
+  "title": "woof repo policy",
+  "description": "Project-side policy declaration at .woof/policy.toml. The policy selects the delivery profile, project verification command, producer/reviewer run profile slots, deterministic check floor, and cartography floor. Woof owns harness adapters, execution, parsing, validation, and graph transitions; consumer repositories own the policy values.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "delivery",
+    "profiles",
+    "verification",
+    "default_run_profile",
+    "run_profiles",
+    "checks",
+    "cartography"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "delivery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profile", "repo_root", "toolchain_root", "base_branch"],
+      "properties": {
+        "profile": {
+          "type": "string",
+          "enum": ["A", "B"],
+          "description": "A = worktree plus pull request delivery; B = single-tree graph-owned commit and push."
+        },
+        "repo_root": {
+          "$ref": "#/$defs/portable_path",
+          "description": "Consumer repository root, relative to the policy file's repository root."
+        },
+        "toolchain_root": {
+          "$ref": "#/$defs/portable_path",
+          "description": "Directory where project verification commands run, relative to repo_root."
+        },
+        "base_branch": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "profiles": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "A": { "$ref": "#/$defs/profile_a" },
+        "B": { "$ref": "#/$defs/profile_b" }
+      },
+      "minProperties": 1
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command"],
+      "properties": {
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Project verification command run from delivery.toolchain_root."
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 600
+        }
+      }
+    },
+    "default_run_profile": {
+      "type": "string",
+      "minLength": 1
+    },
+    "run_profiles": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9_.-]+$"
+      },
+      "additionalProperties": { "$ref": "#/$defs/run_profile" },
+      "minProperties": 1
+    },
+    "checks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["floor"],
+      "properties": {
+        "floor": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/check_id" },
+          "description": "Deterministic checks required before graph-owned publish or commit."
+        }
+      }
+    },
+    "cartography": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["floor"],
+      "properties": {
+        "floor": {
+          "type": "string",
+          "enum": ["none", "design", "lexical", "structural"],
+          "description": "Minimum cartography floor preflight enforces and the graph may load."
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "delivery": {
+            "properties": { "profile": { "const": "A" } },
+            "required": ["profile"]
+          }
+        },
+        "required": ["delivery"]
+      },
+      "then": {
+        "properties": {
+          "profiles": { "required": ["A"] }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "delivery": {
+            "properties": { "profile": { "const": "B" } },
+            "required": ["profile"]
+          }
+        },
+        "required": ["delivery"]
+      },
+      "then": {
+        "properties": {
+          "profiles": { "required": ["B"] }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "portable_path": {
+      "type": "string",
+      "minLength": 1,
+      "not": {
+        "pattern": "^(?:/|[A-Za-z]:)"
+      }
+    },
+    "profile_a": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["github_repo", "ready_label", "merge_path_groups"],
+      "properties": {
+        "github_repo": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+        },
+        "ready_label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "merge_path_groups": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/path_group" },
+          "uniqueItems": true,
+          "default": []
+        },
+        "terminal_deploy_checks": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true,
+          "default": []
+        }
+      }
+    },
+    "profile_b": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "push"],
+      "properties": {
+        "commit": {
+          "type": "boolean",
+          "description": "Graph owns the commit transaction for ready work units."
+        },
+        "push": {
+          "type": "boolean",
+          "description": "Graph pushes the committed transaction to the selected branch."
+        }
+      }
+    },
+    "run_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["producer", "reviewer"],
+      "properties": {
+        "producer": { "$ref": "#/$defs/run_profile_slot" },
+        "reviewer": { "$ref": "#/$defs/run_profile_slot" }
+      }
+    },
+    "run_profile_slot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["harness", "model", "effort"],
+      "properties": {
+        "harness": {
+          "type": "string",
+          "enum": ["claude", "codex", "cld", "cod"],
+          "description": "Subscription CLI harness slot. Legacy cld/cod spellings are accepted as migration input."
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "effort": {
+          "type": "string",
+          "enum": ["low", "medium", "high", "xhigh", "max"]
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    },
+    "check_id": {
+      "type": "string",
+      "enum": [
+        "quality-gates",
+        "outcome-markers",
+        "scope",
+        "contract-refs",
+        "plan-crossrefs",
+        "critique-blocker",
+        "commit-transaction",
+        "docs-drift",
+        "review-valve"
+      ]
+    },
+    "path_group": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

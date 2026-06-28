@@ -53,6 +53,7 @@ SCHEMAS: dict[str, str] = {
     "critique": "critique.schema.json",
     "disposition": "disposition.schema.json",
     "jsonl-events": "jsonl-events.schema.json",
+    "policy": "policy.schema.json",
     "prerequisites": "prerequisites.schema.json",
     "agents": "agents.schema.json",
     "test-markers": "test-markers.schema.json",
@@ -78,6 +79,7 @@ FILENAME_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^plan\.json$"), "plan"),
     (re.compile(r"^gate\.md$"), "gate"),
     (re.compile(r"^.+\.jsonl$"), "jsonl-events"),
+    (re.compile(r"^policy\.toml$"), "policy"),
     (re.compile(r"^prerequisites\.toml$"), "prerequisites"),
     (re.compile(r"^agents\.toml$"), "agents"),
     (re.compile(r"^test-markers\.toml$"), "test-markers"),
@@ -150,6 +152,7 @@ def load_payload(path: Path, schema: str) -> object:
     }:
         return json.loads(path.read_text())
     if schema in {
+        "policy",
         "prerequisites",
         "agents",
         "test-markers",

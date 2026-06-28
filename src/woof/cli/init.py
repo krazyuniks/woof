@@ -270,6 +270,54 @@ max_bytes = 262144
 redact_patterns = []
 """
 
+POLICY_TEMPLATE = """\
+# Woof repo-local policy. Verified by `woof preflight`.
+# Replace every <replace> placeholder before invoking `woof wf`.
+
+schema_version = 1
+default_run_profile = "default"
+
+[delivery]
+profile = "B"
+repo_root = "."
+toolchain_root = "."
+base_branch = "main"
+
+[profiles.B]
+commit = true
+push = true
+
+[verification]
+command = "<replace project verification command, e.g. just check>"
+timeout_seconds = 600
+
+[run_profiles.default.producer]
+harness = "codex"
+model = "gpt-5.5"
+effort = "xhigh"
+
+[run_profiles.default.reviewer]
+harness = "claude"
+model = "claude-opus-4-7"
+effort = "max"
+
+[checks]
+floor = [
+  "quality-gates",
+  "outcome-markers",
+  "scope",
+  "contract-refs",
+  "plan-crossrefs",
+  "critique-blocker",
+  "commit-transaction",
+  "docs-drift",
+  "review-valve",
+]
+
+[cartography]
+floor = "design"
+"""
+
 QUALITY_GATES_TEMPLATE = """\
 # Stage 5 Check 1 runs each gate from the consumer repository root. Blocking
 # gates must exit 0 within `timeout_seconds`; set `blocking = false` to record
@@ -525,6 +573,7 @@ def run_init(
     prereq_path = woof_dir / "prerequisites.toml"
     prereq_existed = prereq_path.is_file()
     targets: list[tuple[str, str]] = [
+        ("policy.toml", POLICY_TEMPLATE),
         ("prerequisites.toml", _prerequisites_template(resolved_tracker, requested, inferred_repo)),
         ("agents.toml", AGENTS_TEMPLATE),
         ("quality-gates.toml", QUALITY_GATES_TEMPLATE),

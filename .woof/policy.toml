@@ -1,0 +1,50 @@
+# Woof self-hosting repo-local policy.
+
+schema_version = 1
+default_run_profile = "woof-codex-produce-opus-review"
+
+[delivery]
+profile = "B"
+repo_root = "."
+toolchain_root = "."
+base_branch = "main"
+
+[profiles.A]
+github_repo = "krazyuniks/woof"
+ready_label = "ready"
+merge_path_groups = ["default"]
+terminal_deploy_checks = []
+
+[profiles.B]
+commit = true
+push = true
+
+[verification]
+command = "just check"
+timeout_seconds = 600
+
+[run_profiles.woof-codex-produce-opus-review.producer]
+harness = "codex"
+model = "gpt-5.5"
+effort = "high"
+
+[run_profiles.woof-codex-produce-opus-review.reviewer]
+harness = "claude"
+model = "opus"
+effort = "xhigh"
+
+[checks]
+floor = [
+  "quality-gates",
+  "outcome-markers",
+  "scope",
+  "contract-refs",
+  "plan-crossrefs",
+  "critique-blocker",
+  "commit-transaction",
+  "docs-drift",
+  "review-valve",
+]
+
+[cartography]
+floor = "structural"

@@ -30,7 +30,7 @@ work_units:
   - id: policy-model
     title: Move project policy into repo-local Woof config
     kind: build
-    state: todo
+    state: done
     priority: high
     summary: Add delivery profile, producer/reviewer run profile, gate command, check floor, and cartography floor to `.woof/` policy.
     deps: [schema-unification]

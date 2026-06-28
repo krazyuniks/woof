@@ -26,7 +26,7 @@ Run Woof against the repository you want it to manage. The `/woof` skill walks y
 woof init
 ```
 
-`woof init` scaffolds `.woof/`; you then author the target architecture and design principles, install the cartography hook (`woof hooks install`), and start your first epic with `woof wf new "<spark>"`.
+`woof init` scaffolds `.woof/`, including `policy.toml` for delivery profile, verification command, producer/reviewer run-profile slots, deterministic check floor, and cartography floor. You then author the target architecture and design principles, install the cartography hook (`woof hooks install`), and start your first epic with `woof wf new "<spark>"`.
 
 ## Operator workflow
 

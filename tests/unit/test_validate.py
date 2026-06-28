@@ -51,6 +51,7 @@ def test_shipped_schema_count() -> None:
         "critique.schema.json",
         "disposition.schema.json",
         "jsonl-events.schema.json",
+        "policy.schema.json",
         "prerequisites.schema.json",
         "agents.schema.json",
         "test-markers.schema.json",
@@ -80,6 +81,84 @@ def test_validate_real_prerequisites(run_woof) -> None:
     proc = run_woof("validate", str(REPO_ROOT / ".woof" / "prerequisites.toml"))
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "valid (prerequisites)" in proc.stdout
+
+
+def test_validate_real_policy(run_woof) -> None:
+    proc = run_woof("validate", str(REPO_ROOT / ".woof" / "policy.toml"))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "valid (policy)" in proc.stdout
+
+
+def _policy_toml(*, profile: str) -> str:
+    profile_block = (
+        """\
+[profiles.A]
+github_repo = "example/project"
+ready_label = "ready"
+merge_path_groups = ["default"]
+terminal_deploy_checks = []
+"""
+        if profile == "A"
+        else """\
+[profiles.B]
+commit = true
+push = true
+"""
+    )
+    return f"""\
+schema_version = 1
+default_run_profile = "default"
+
+[delivery]
+profile = "{profile}"
+repo_root = "."
+toolchain_root = "."
+base_branch = "main"
+
+{profile_block}
+[verification]
+command = "just check"
+timeout_seconds = 600
+
+[run_profiles.default.producer]
+harness = "codex"
+model = "gpt-5.5"
+effort = "xhigh"
+
+[run_profiles.default.reviewer]
+harness = "claude"
+model = "opus"
+effort = "xhigh"
+
+[checks]
+floor = ["quality-gates"]
+
+[cartography]
+floor = "none"
+"""
+
+
+@pytest.mark.parametrize("profile", ["A", "B"])
+def test_validate_policy_accepts_selected_delivery_profile(
+    tmp_path: Path, run_woof, profile: str
+) -> None:
+    path = tmp_path / "policy.toml"
+    path.write_text(_policy_toml(profile=profile))
+
+    proc = run_woof("validate", str(path))
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "valid (policy)" in proc.stdout
+
+
+def test_validate_policy_rejects_missing_selected_profile_block(tmp_path: Path, run_woof) -> None:
+    path = tmp_path / "policy.toml"
+    path.write_text(_policy_toml(profile="A").replace("[profiles.A]", "[profiles.B]"))
+
+    proc = run_woof("validate", str(path))
+
+    assert proc.returncode == 1
+    assert "INVALID" in proc.stdout
 
 
 # ---------------------------------------------------------------------------

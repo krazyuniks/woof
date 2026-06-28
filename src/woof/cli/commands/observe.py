@@ -22,6 +22,7 @@ from woof.cli.dispatcher import (
     selected_model_profile,
     trusted_runtime_policy,
 )
+from woof.cli.policy import load_policy, policy_path
 from woof.graph.dispositions import (
     critique_severity,
     read_markdown_front_matter,
@@ -175,11 +176,13 @@ def build_operator_state_summary(repo_root: Path) -> dict[str, Any]:
     """Build the preflight operator-state summary without mutating workflow state."""
 
     current_epic = _current_epic_summary(repo_root)
+    repo_policy = _repo_policy_summary(repo_root)
     dispatch_routes = _dispatch_routes_summary(repo_root)
     runtime_policy = trusted_runtime_policy()
     selected = current_epic.get("epic_id")
     summary: dict[str, Any] = {
         "current_epic": current_epic,
+        "repo_policy": repo_policy,
         "dispatch_routes": dispatch_routes,
         "runtime_policy": runtime_policy,
         "epic": None,
@@ -504,6 +507,41 @@ def _dispatch_routes_summary(repo_root: Path) -> dict[str, Any]:
             group_routes[role_name] = route_summary
         routes_by_group[group] = group_routes
     summary["routes"] = routes_by_group
+    return summary
+
+
+def _repo_policy_summary(repo_root: Path) -> dict[str, Any]:
+    path = policy_path(repo_root)
+    summary: dict[str, Any] = {
+        "path": _display_path(repo_root, path),
+        "exists": path.is_file(),
+        "ok": False,
+    }
+    loaded = load_policy(repo_root)
+    if not isinstance(loaded, dict):
+        summary["error"] = loaded
+        return summary
+    delivery = loaded.get("delivery") or {}
+    cartography = loaded.get("cartography") or {}
+    default_run_profile = loaded.get("default_run_profile")
+    run_profiles = loaded.get("run_profiles") or {}
+    summary.update(
+        {
+            "ok": True,
+            "delivery_profile": delivery.get("profile") if isinstance(delivery, dict) else None,
+            "base_branch": delivery.get("base_branch") if isinstance(delivery, dict) else None,
+            "toolchain_root": delivery.get("toolchain_root")
+            if isinstance(delivery, dict)
+            else None,
+            "default_run_profile": default_run_profile,
+            "run_profile_exists": isinstance(run_profiles, dict)
+            and isinstance(default_run_profile, str)
+            and default_run_profile in run_profiles,
+            "cartography_floor": cartography.get("floor")
+            if isinstance(cartography, dict)
+            else None,
+        }
+    )
     return summary
 
 

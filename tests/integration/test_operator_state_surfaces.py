@@ -52,6 +52,42 @@ echo "ajv 8.0.0"
 def _write_consumer(root: Path) -> None:
     epic_dir = root / ".woof" / "epics" / "E5"
     epic_dir.mkdir(parents=True)
+    (root / ".woof" / "policy.toml").write_text(
+        """\
+schema_version = 1
+default_run_profile = "default"
+
+[delivery]
+profile = "B"
+repo_root = "."
+toolchain_root = "."
+base_branch = "main"
+
+[profiles.B]
+commit = true
+push = true
+
+[verification]
+command = "just test"
+timeout_seconds = 300
+
+[run_profiles.default.producer]
+harness = "codex"
+model = "gpt-5.5"
+effort = "xhigh"
+
+[run_profiles.default.reviewer]
+harness = "claude"
+model = "claude-opus-4-7"
+effort = "max"
+
+[checks]
+floor = ["quality-gates"]
+
+[cartography]
+floor = "structural"
+"""
+    )
     (root / ".woof" / "prerequisites.toml").write_text(
         """\
 [infra]

@@ -35,23 +35,37 @@ from woof.cli.dispatcher import (
     build_argv,
     resolve_agent_route,
 )
-from woof.cli.init import AGENTS_TEMPLATE
+from woof.cli.init import AGENTS_TEMPLATE, POLICY_TEMPLATE
 from woof.cli.main import (
     SCHEMAS,
     load_payload,
     run_ajv,
+)
+from woof.cli.policy import (
+    CARTOGRAPHY_FLOORS,
+    CHECK_FLOOR_IDS,
+    CODEX_EFFORTS,
+    DELIVERY_PROFILES,
+    EFFORTS,
+    HARNESS_TO_ADAPTER,
+    POLICY_RELPATH,
+    RUN_PROFILE_ROLES,
+    cartography_floor,
+    load_policy,
 )
 from woof.lib.audit import scan_text_for_secrets
 from woof.paths import schema_dir, tool_root
 from woof.trackers.github import GITHUB_RATE_LIMIT_SAFETY_MARGIN, github_core_remaining
 
 CONFIG_SCHEMAS = {
+    "policy.toml": "policy",
     "prerequisites.toml": "prerequisites",
     "agents.toml": "agents",
     "quality-gates.toml": "quality-gates",
     "test-markers.toml": "test-markers",
     "docs-paths.toml": "docs-paths",
 }
+REQUIRED_CONFIGS = {"policy.toml", "prerequisites.toml"}
 
 PREREQUISITES_TEMPLATE = """\
 # Woof project prerequisites. Verified by `woof preflight`.
@@ -86,7 +100,7 @@ staleness_floor_hours = 168
 summary_min_chars = 200
 """
 
-CACHE_VERSION = 4  # v4: adds cartography ctags floor check
+CACHE_VERSION = 5  # v5: adds repo-local policy.toml to the preflight floor
 FLOOR_CACHE_TTL = timedelta(hours=24)
 RUNTIME_CACHE_TTL = timedelta(minutes=5)
 
@@ -163,6 +177,7 @@ def cmd_preflight(args: argparse.Namespace) -> int:
 def run_preflight(repo_root: Path, *, force: bool = False) -> PreflightResult:
     operator_state = build_operator_state_summary(repo_root)
     prereq_path = repo_root / ".woof" / "prerequisites.toml"
+    policy = load_policy(repo_root)
     if not prereq_path.is_file():
         return PreflightResult(
             repo_root=repo_root,
@@ -188,7 +203,7 @@ def run_preflight(repo_root: Path, *, force: bool = False) -> PreflightResult:
                 cache_key=cache_key,
                 ttl=FLOOR_CACHE_TTL,
                 force=force,
-                producer=lambda: _run_floor_checks(repo_root, prereq),
+                producer=lambda: _run_floor_checks(repo_root, prereq, policy),
             )
         )
         findings.extend(
@@ -240,17 +255,22 @@ def _load_toml(path: Path) -> dict[str, Any] | str:
         return f"{path}: TOML parse error: {exc}"
 
 
-def _run_floor_checks(repo_root: Path, prereq: dict[str, Any]) -> list[PreflightFinding]:
+def _run_floor_checks(
+    repo_root: Path, prereq: dict[str, Any], policy: dict[str, Any] | str
+) -> list[PreflightFinding]:
     findings: list[PreflightFinding] = []
     findings.extend(_check_woof_install())
     findings.extend(_check_config_schemas(repo_root))
+    findings.extend(_check_repo_policy(repo_root, policy, prereq))
     findings.extend(_check_declared_binaries(prereq))
     findings.extend(_check_role_routes(repo_root))
     findings.extend(_check_ajv_formats(prereq))
     findings.extend(_check_language_tools(prereq))
     findings.extend(_check_tree_sitter(prereq))
     findings.extend(_check_quality_gate_commands(repo_root))
-    findings.extend(_check_cartography(repo_root, prereq))
+    findings.extend(
+        _check_cartography(repo_root, prereq, policy if isinstance(policy, dict) else None)
+    )
     findings.extend(_check_host_prerequisites(repo_root, prereq))
     findings.extend(_check_server_prerequisites(repo_root, prereq))
     return findings
@@ -371,7 +391,7 @@ def _cache_input_paths(repo_root: Path, prereq: dict[str, Any]) -> list[Path]:
     paths = [
         woof_dir / filename
         for filename in CONFIG_SCHEMAS
-        if (woof_dir / filename).is_file() or filename == "prerequisites.toml"
+        if (woof_dir / filename).is_file() or filename in REQUIRED_CONFIGS
     ]
     languages = set((prereq.get("lsp") or {}).get("languages") or [])
     languages.update(
@@ -388,6 +408,7 @@ def _utc_now() -> datetime:
 def _check_woof_install() -> list[PreflightFinding]:
     root = tool_root()
     required = [
+        root / "schemas" / "policy.schema.json",
         root / "schemas" / "prerequisites.schema.json",
         root / "schemas" / "agents.schema.json",
         root / "languages",
@@ -428,7 +449,7 @@ def _check_config_schemas(repo_root: Path) -> list[PreflightFinding]:
     findings: list[PreflightFinding] = []
     for filename, schema in CONFIG_SCHEMAS.items():
         path = repo_root / ".woof" / filename
-        if filename != "prerequisites.toml" and not path.is_file():
+        if filename not in REQUIRED_CONFIGS and not path.is_file():
             continue
         if not path.is_file():
             findings.append(
@@ -700,6 +721,238 @@ def _check_mcp_server_command(
 
 def _agents_template() -> str:
     return f"Create .woof/agents.toml, for example:\n{AGENTS_TEMPLATE}"
+
+
+def _policy_template() -> str:
+    return f"Create {POLICY_RELPATH}, for example:\n{POLICY_TEMPLATE}"
+
+
+def _check_repo_policy(
+    repo_root: Path, policy: dict[str, Any] | str, prereq: dict[str, Any]
+) -> list[PreflightFinding]:
+    if not isinstance(policy, dict):
+        return [
+            PreflightFinding(
+                id="policy.config",
+                label="policy.toml",
+                ok=False,
+                detail=policy,
+                install=_policy_template(),
+            )
+        ]
+
+    findings: list[PreflightFinding] = []
+    findings.append(_check_policy_delivery(policy))
+    findings.append(_check_policy_verification(policy))
+    findings.extend(_check_policy_run_profile(policy))
+    findings.append(_check_policy_check_floor(policy))
+    findings.append(_check_policy_cartography_floor(policy, prereq))
+    return findings
+
+
+def _check_policy_delivery(policy: dict[str, Any]) -> PreflightFinding:
+    delivery = policy.get("delivery") or {}
+    profiles = policy.get("profiles") or {}
+    errors: list[str] = []
+    if not isinstance(delivery, dict):
+        errors.append("[delivery] must be a table")
+        delivery = {}
+    if not isinstance(profiles, dict):
+        errors.append("[profiles] must be a table")
+        profiles = {}
+
+    selected = delivery.get("profile")
+    if selected not in DELIVERY_PROFILES:
+        errors.append("delivery.profile must be A or B")
+    elif selected not in profiles:
+        errors.append(f"[profiles.{selected}] is required for delivery.profile={selected}")
+
+    for key in ("repo_root", "toolchain_root", "base_branch"):
+        value = delivery.get(key)
+        if not isinstance(value, str) or not value.strip():
+            errors.append(f"delivery.{key} must be declared")
+
+    if selected == "A" and isinstance(profiles.get("A"), dict):
+        profile_a = profiles["A"]
+        for key in ("github_repo", "ready_label"):
+            value = profile_a.get(key)
+            if not isinstance(value, str) or not value.strip():
+                errors.append(f"profiles.A.{key} must be declared")
+        merge_path_groups = profile_a.get("merge_path_groups")
+        if not isinstance(merge_path_groups, list):
+            errors.append("profiles.A.merge_path_groups must be an array")
+
+    if selected == "B" and isinstance(profiles.get("B"), dict):
+        profile_b = profiles["B"]
+        for key in ("commit", "push"):
+            if not isinstance(profile_b.get(key), bool):
+                errors.append(f"profiles.B.{key} must be boolean")
+
+    return PreflightFinding(
+        id="policy.delivery",
+        label="repo policy delivery profile",
+        ok=not errors,
+        detail=(
+            f"profile={selected}, base_branch={delivery.get('base_branch')}, "
+            f"toolchain_root={delivery.get('toolchain_root')}"
+            if not errors
+            else "; ".join(errors)
+        ),
+        required="delivery.profile A or B with selected profile settings",
+    )
+
+
+def _check_policy_verification(policy: dict[str, Any]) -> PreflightFinding:
+    verification = policy.get("verification") or {}
+    errors: list[str] = []
+    if not isinstance(verification, dict):
+        errors.append("[verification] must be a table")
+        verification = {}
+    command = verification.get("command")
+    if not isinstance(command, str) or not command.strip():
+        errors.append("verification.command must be declared")
+    elif "<replace" in command:
+        errors.append("verification.command still contains a <replace> placeholder")
+    timeout = verification.get("timeout_seconds")
+    if timeout is not None and (
+        not isinstance(timeout, int) or isinstance(timeout, bool) or timeout < 1
+    ):
+        errors.append("verification.timeout_seconds must be a positive integer")
+
+    return PreflightFinding(
+        id="policy.verification",
+        label="repo policy verification command",
+        ok=not errors,
+        detail=f"command={command}" if not errors else "; ".join(errors),
+        required="project verification command",
+    )
+
+
+def _check_policy_run_profile(policy: dict[str, Any]) -> list[PreflightFinding]:
+    run_profiles = policy.get("run_profiles") or {}
+    default_name = policy.get("default_run_profile")
+    if not isinstance(run_profiles, dict):
+        return [
+            PreflightFinding(
+                id="policy.run_profile",
+                label="repo policy run profile",
+                ok=False,
+                detail="[run_profiles] must be a table",
+                required="default run profile with producer and reviewer slots",
+            )
+        ]
+    if not isinstance(default_name, str) or not default_name.strip():
+        return [
+            PreflightFinding(
+                id="policy.run_profile",
+                label="repo policy run profile",
+                ok=False,
+                detail="default_run_profile must be declared",
+                required="default run profile with producer and reviewer slots",
+            )
+        ]
+    selected = run_profiles.get(default_name)
+    if not isinstance(selected, dict):
+        return [
+            PreflightFinding(
+                id="policy.run_profile",
+                label="repo policy run profile",
+                ok=False,
+                detail=f"default_run_profile {default_name!r} is not declared",
+                required="default run profile with producer and reviewer slots",
+            )
+        ]
+
+    findings = [
+        PreflightFinding(
+            id="policy.run_profile",
+            label="repo policy run profile",
+            ok=True,
+            detail=f"default_run_profile={default_name}",
+            required="default run profile with producer and reviewer slots",
+        )
+    ]
+    for role in RUN_PROFILE_ROLES:
+        findings.append(_check_policy_run_profile_slot(default_name, role, selected.get(role)))
+    return findings
+
+
+def _check_policy_run_profile_slot(profile_name: str, role: str, slot: object) -> PreflightFinding:
+    errors: list[str] = []
+    if not isinstance(slot, dict):
+        errors.append(f"run_profiles.{profile_name}.{role} must be a table")
+        slot = {}
+
+    harness = slot.get("harness")
+    adapter = HARNESS_TO_ADAPTER.get(str(harness)) if harness is not None else None
+    if adapter is None:
+        errors.append(f"run_profiles.{profile_name}.{role}.harness must be claude or codex")
+
+    model = slot.get("model")
+    if not isinstance(model, str) or not model.strip():
+        errors.append(f"run_profiles.{profile_name}.{role}.model must be declared")
+
+    effort = slot.get("effort")
+    if effort not in EFFORTS:
+        errors.append(f"run_profiles.{profile_name}.{role}.effort is not supported")
+    elif adapter == "codex" and effort not in CODEX_EFFORTS:
+        errors.append("codex run-profile effort must be low, medium, high, or xhigh")
+
+    return PreflightFinding(
+        id=f"policy.run_profile.{role}",
+        label=f"repo policy {role} slot",
+        ok=not errors,
+        detail=(
+            f"profile={profile_name}, harness={harness}, model={model}, effort={effort}"
+            if not errors
+            else "; ".join(errors)
+        ),
+        required="harness, model, and effort",
+    )
+
+
+def _check_policy_check_floor(policy: dict[str, Any]) -> PreflightFinding:
+    checks = policy.get("checks") or {}
+    errors: list[str] = []
+    if not isinstance(checks, dict):
+        errors.append("[checks] must be a table")
+        checks = {}
+    floor = checks.get("floor")
+    floor_values: list[str] = []
+    if not isinstance(floor, list) or not floor:
+        errors.append("checks.floor must list at least one check")
+    else:
+        floor_values = [str(item) for item in floor]
+        unknown = [item for item in floor_values if item not in CHECK_FLOOR_IDS]
+        if unknown:
+            errors.append("unknown checks.floor value(s): " + ", ".join(sorted(unknown)))
+
+    return PreflightFinding(
+        id="policy.check_floor",
+        label="repo policy check floor",
+        ok=not errors,
+        detail=", ".join(floor_values) if not errors else "; ".join(errors),
+        required="deterministic check floor",
+    )
+
+
+def _check_policy_cartography_floor(
+    policy: dict[str, Any], prereq: dict[str, Any]
+) -> PreflightFinding:
+    floor = cartography_floor(policy)
+    errors: list[str] = []
+    if floor not in CARTOGRAPHY_FLOORS:
+        errors.append("cartography.floor must be none, design, lexical, or structural")
+    elif floor != "none" and not isinstance(prereq.get("cartography"), dict):
+        errors.append(f"cartography.floor={floor} requires .woof/prerequisites.toml [cartography]")
+
+    return PreflightFinding(
+        id="policy.cartography_floor",
+        label="repo policy cartography floor",
+        ok=not errors,
+        detail=f"floor={floor}" if not errors else "; ".join(errors),
+        required="cartography floor and matching cartography prerequisites when required",
+    )
 
 
 def _check_declared_binaries(prereq: dict[str, Any]) -> list[PreflightFinding]:
@@ -1055,26 +1308,26 @@ References:
 """
 
 
-def _check_cartography(repo_root: Path, prereq: dict[str, Any]) -> list[PreflightFinding]:
+def _check_cartography(
+    repo_root: Path, prereq: dict[str, Any], policy: dict[str, Any] | None = None
+) -> list[PreflightFinding]:
     """Validate the cartography artefact group at ``.woof/codebase/`` (ADR-004).
 
-    Cartography is mandatory infrastructure. A missing ``[cartography]`` block
-    now means a legacy consumer has not been onboarded to the current setup path,
-    so preflight fails with an actionable setup/map-codebase pointer. When the
-    block is declared, preflight fails closed on a missing or non-executable
-    ``scripts/refresh-cartography``, a missing or stub design doc
-    (``TARGET-ARCHITECTURE.md``, ``PRINCIPLES.md``), or a missing
-    mechanical-layer file (``tags``, ``files.txt``, ``freshness.json``).
+    The repo policy decides the required floor. ``none`` skips the artefact
+    group. ``design`` requires the human-authored target/principles docs.
+    ``lexical`` and ``structural`` additionally require the refresh script and
+    current mechanical files (``tags``, ``files.txt``, ``freshness.json``).
     """
+
+    floor = cartography_floor(policy) if isinstance(policy, dict) else None
+    if floor == "none":
+        return []
 
     cartography = prereq.get("cartography")
     required = isinstance(cartography, dict)
     findings: list[PreflightFinding] = []
     if not required:
         return [_check_cartography_onboarding(repo_root)]
-
-    script = _check_cartography_script(repo_root)
-    findings.append(script)
 
     min_chars = int(cartography.get("summary_min_chars") or DEFAULT_SUMMARY_MIN_CHARS)
     stub_marker = str(cartography.get("stub_marker") or DEFAULT_STUB_MARKER)
@@ -1088,13 +1341,17 @@ def _check_cartography(repo_root: Path, prereq: dict[str, Any]) -> list[Prefligh
                 stub_marker=stub_marker,
             )
         )
-    findings.append(_check_cartography_mechanical(repo_root))
-    if cartography.get("languages"):
-        findings.append(_check_cartography_ctags())
-    floor_hours = int(cartography.get("staleness_floor_hours") or DEFAULT_STALENESS_FLOOR_HOURS)
-    freshness = _check_cartography_freshness(repo_root, floor_hours=floor_hours)
-    if freshness is not None:
-        findings.append(freshness)
+
+    if floor in {None, "lexical", "structural"}:
+        script = _check_cartography_script(repo_root)
+        findings.append(script)
+        findings.append(_check_cartography_mechanical(repo_root))
+        if cartography.get("languages"):
+            findings.append(_check_cartography_ctags())
+        floor_hours = int(cartography.get("staleness_floor_hours") or DEFAULT_STALENESS_FLOOR_HOURS)
+        freshness = _check_cartography_freshness(repo_root, floor_hours=floor_hours)
+        if freshness is not None:
+            findings.append(freshness)
     return findings
 
 

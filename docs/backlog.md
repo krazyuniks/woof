@@ -3,6 +3,18 @@ schema_version: 1
 type: backlog
 project_ref: woof
 status: active
+executor:
+  name: vault_foreman
+  contract_version: 1
+  project: woof
+  timeouts:
+    produce_timeout_min: 180
+  drain:
+    merge_after_ready_pr: true
+    rerun_after_merge: true
+    mark_unit_done_after_publish: true
+    commit_backlog_state: true
+    stop_when_no_eligible_units: true
 work_units:
   - id: schema-unification
     title: Unify execution schema on work_units
@@ -12,6 +24,7 @@ work_units:
     summary: Move the canonical executable unit schema into Woof, retire story-shaped runtime contracts, and preserve graph dependency checks.
     acceptance:
       - Canonical Woof schema validates required work-unit fields and optional contract-trace fields.
+      - Backlog front matter accepts the document-level executor block needed by transitional VaultForeman drains without adding custom per-unit wave fields.
       - Durable readers and writers use work_units without transitional story mirrors.
       - Duplicate ids, dangling deps, self-deps, and cycles fail validation.
   - id: policy-model
@@ -43,6 +56,7 @@ work_units:
     state: todo
     priority: high
     summary: Remove headless worker dispatch and consume structured results from the shared interactive tmux harness.
+    deps: [schema-unification, policy-model]
     acceptance:
       - Producer and reviewer dispatches launch through tmux harness profiles.
       - Prompt-file delivery and structured result capture are covered by tests.
@@ -171,12 +185,32 @@ The architecture target is `docs/architecture.md`. Decision records are in `docs
 
 ## Operating Order
 
-1. Land schema unification, repo-local policy, intake, dispatch swap, and the warm-session seam.
-2. Absorb the VaultForeman runner loop and add immutable run lineage.
-3. Preserve cartography through policy floors and wire conformance checks to data.
-4. Prove the merged engine on a guarded run.
-5. Cut Freeflo over.
-6. Retire the standalone VaultForeman runner.
+1. Hand-build schema unification and the safety-defect sweep.
+2. Build the policy spine by hand, then drain policy-adjacent runner work in dependency order.
+3. Drain the warm-session, cartography-continuity, and intake-enrichment units.
+4. Drain runner-loop absorption, conformance audit, and eval instrumentation.
+5. Run the guarded first flight manually.
+6. Cut Freeflo over manually, then retire or wrap the standalone VaultForeman runner.
+
+## Wave Instructions
+
+The `How` value controls execution mechanics:
+
+- `hand-build` means the operator decomposes and implements the unit directly in the Woof checkout, using normal repo checks and commits. It is for contract/spine work that is too foundational to hand to the transitional runner.
+- `vf-drain` means the unit is decomposed into a schema-valid `work_units[]` sub-backlog and run through `vf orchestrate`. The Woof VaultForeman run profile lives in `VAULT_FOREMAN.md`; backlog front matter owns only executor, timeout, drain, and state-update policy. Do not run `vf orchestrate docs/backlog.md` while hand-build or manual wave units are still `todo`; drain from a wave sub-backlog or after the earlier units are marked done.
+- `manual` means an operational proof, cutover, or retirement step where the operator owns sequencing and judgement. It may run tools, but it is not an unattended producer drain.
+
+| Wave | Units | How | Instructions |
+|---|---|---|---|
+| 0 | Runner-asset source map | done | Source map is in `~/Work/vault/records/radianit/projects/woof/planning/runner-asset-source-map.md`. |
+| 1 | `schema-unification`, `safety-defect-sweep` | hand-build | Start here. Preserve one canonical `work_units[]` schema, keep the VaultForeman `executor` document block valid for transitional drains, retire story-shaped runtime mirrors, and keep graph dependency validation fail-closed. |
+| 2 | `policy-model`, `dispatch-swap`, `run-lineage-immutable-attempts` | hand-build + vf-drain | Hand-build the repo-local policy schema/spine first. In `dispatch-swap`, consolidate VaultForeman's harness/model/effort registry into Woof's dispatcher before any produce/review logic is absorbed. |
+| 3 | `warm-session-seam`, `cartography-continuity`, `intake-enrichment` | vf-drain | Drain after the dispatch registry is unified, so warm producer and fresh reviewer sessions use the single adapter contract. |
+| 4 | `runner-loop-absorption`, `conformance-audit`, `eval-instrumentation` | vf-drain | Absorb Profile A/B drain, deploy-aware merge pacing, partial-merge reconciliation, semantic sibling-conflict reconciliation, review cache, and usage/run telemetry. Producer reads the runner-asset source map. |
+| 5 | `first-flight` | manual | Prove the merged engine on a throwaway or guarded low-risk backlog before Freeflo. Exercise resume, gate handling, Profile A merge-settle/deploy-spacing, and audit evidence. |
+| 6 | `freeflo-cutover`, `vaultforeman-retirement` | manual | Cut Freeflo over only after first flight. Resolve the `lane_plan.py` / `lane_launcher.py` design call here; retire standalone VaultForeman once Freeflo is stable on Woof. |
+
+Same-day requirements are placed as follows: project-owned producer/reviewer run profiles are in `policy-model` and preserved by `runner-loop-absorption`; deploy-aware Profile A merge and partial-merge reconciliation are in `runner-loop-absorption` and exercised by `first-flight`; semantic sibling-conflict reconciliation is in `runner-loop-absorption`; the dispatch registry mismatch is an explicit `dispatch-swap` prerequisite before the warm-session and runner-loop waves.
 
 ## Notes
 

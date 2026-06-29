@@ -136,62 +136,39 @@ effort = "high"
         "    statement: Stub outcome\n"
         "    verification: automated\n---\n"
     )
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    stdin_capture = tmp_path / "executor.stdin"
-    harness_response = json.dumps(
-        {
-            "verdict": "pass",
-            "evidence": "Stub work unit executed.",
-            "usage": {"tokens_in": 1, "tokens_out": 1},
-            "session": {"id": "00000000-0000-0000-0000-000000000002"},
-        }
-    )
-    for executable in ("claude", "cld"):
-        script = bin_dir / executable
-        script.write_text(
-            f"""#!/usr/bin/env python3
-import pathlib
-import re
-import sys
-import os
+    captured: dict[str, Any] = {}
 
-payload = {harness_response!r}
-stdin_capture = pathlib.Path({str(stdin_capture)!r})
-repo_root = pathlib.Path(os.environ["WOOF_REPO_ROOT"])
-print("ready > ", flush=True)
-buf = ""
-for line in sys.stdin:
-    buf += line
-    prompt = re.search(r"(\\S+/prompt\\.txt)", buf)
-    answer = re.search(r"(\\S+/answer\\.txt)", buf)
-    done = re.search(r"(\\S+/answer\\.done)", buf)
-    if not (prompt and answer and done):
-        continue
-    original = pathlib.Path(prompt.group(1)).read_text(encoding="utf-8")
-    stdin_capture.write_text(original, encoding="utf-8")
-    (repo_root / "src").mkdir(exist_ok=True)
-    (repo_root / ".woof/epics/E1").mkdir(parents=True, exist_ok=True)
-    (repo_root / "src/app.py").write_text('print("O1")\\n', encoding="utf-8")
-    (repo_root / ".woof/epics/E1/executor_result.json").write_text(
-        '{{\\n'
-        '  "epic_id": 1,\\n'
-        '  "work_unit_id": "S1",\\n'
-        '  "outcome": "staged_for_verification",\\n'
-        '  "commit_subject": "feat: E1 S1 - run stub work unit",\\n'
-        '  "commit_body": "Stub work unit executed.",\\n'
-        '  "position": null\\n'
-        '}}\\n',
-        encoding="utf-8",
-    )
-    pathlib.Path(answer.group(1)).write_text(payload, encoding="utf-8")
-    pathlib.Path(done.group(1)).write_text("DONE", encoding="utf-8")
-    break
-""",
-            encoding="utf-8",
+    def fake_dispatch(
+        repo_root: Path,
+        role: str,
+        epic_id: int,
+        work_unit_id: str | None,
+        prompt: str,
+        artefacts_loaded: list[str] | None = None,
+        route_key: str | None = None,
+        session_mode: str = "one-shot",
+    ) -> nodes.DispatchRunResult:
+        captured["prompt"] = prompt
+        captured["role"] = role
+        captured["route_key"] = route_key
+        captured["session_mode"] = session_mode
+        (repo_root / "src").mkdir(exist_ok=True)
+        (repo_root / "src/app.py").write_text('print("O1")\n', encoding="utf-8")
+        (directory / "executor_result.json").write_text(
+            json.dumps(
+                {
+                    "epic_id": epic_id,
+                    "work_unit_id": work_unit_id,
+                    "outcome": "staged_for_verification",
+                    "commit_subject": "feat: E1 S1 - run stub work unit",
+                    "commit_body": "Stub work unit executed.",
+                    "position": None,
+                }
+            )
         )
-        script.chmod(0o755)
-    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+        return _dispatch_result("completed_lingering")
+
+    monkeypatch.setattr(nodes, "_run_dispatch", fake_dispatch)
 
     output = nodes.executor_dispatch_node(
         NodeInput(
@@ -203,15 +180,15 @@ for line in sys.stdin:
     )
 
     assert output.status == NodeStatus.COMPLETED
-    prompt = stdin_capture.read_text()
+    prompt = captured["prompt"]
     assert "/wf:execute-work-unit" not in prompt
     assert '"node_type": "executor_dispatch"' in prompt
     assert "commit_subject" in prompt
+    assert captured["role"] == "primary"
+    assert captured["route_key"] == "execution"
+    assert captured["session_mode"] == "warm-producer"
     result = json.loads((directory / "executor_result.json").read_text())
     assert result["commit_subject"] == "feat: E1 S1 - run stub work unit"
-    events = [json.loads(line) for line in (directory / "dispatch.jsonl").read_text().splitlines()]
-    assert events[0]["prompt_transport"] == "tmux_harness_prompt_file"
-    assert events[0]["argv"][-1] == "<prompt:tmux-file>"
 
 
 def test_executor_dispatch_completed_lingering_advances(
@@ -228,12 +205,14 @@ def test_executor_dispatch_completed_lingering_advances(
         prompt: str,
         artefacts_loaded: list[str] | None = None,
         route_key: str | None = None,
+        session_mode: str = "one-shot",
     ) -> nodes.DispatchRunResult:
         assert repo_root == tmp_path
         assert role == "primary"
         assert epic_id == 1
         assert work_unit_id == "S1"
         assert '"node_type": "executor_dispatch"' in prompt
+        assert session_mode == "warm-producer"
         assert artefacts_loaded == [
             ".woof/epics/E1/plan.json",
             ".woof/codebase/STRUCTURE.md",
@@ -285,7 +264,9 @@ def test_executor_dispatch_failure_exit_types_open_existing_crash_gate(
         prompt: str,
         artefacts_loaded: list[str] | None = None,
         route_key: str | None = None,
+        session_mode: str = "one-shot",
     ) -> nodes.DispatchRunResult:
+        assert session_mode == "warm-producer"
         return _dispatch_result(exit_type, returncode=returncode, stderr=f"{exit_type} failed")
 
     monkeypatch.setattr(nodes, "_run_dispatch", fake_dispatch)
@@ -415,6 +396,14 @@ def _write_codebase_docs(root: Path) -> None:
     ]:
         (codebase_dir / name).write_text(f"# {name}\n\nStub.\n")
     (codebase_dir / "files.txt").write_text("")
+
+
+def _write_fix_round_budget(root: Path, max_rounds: int) -> None:
+    woof_dir = root / ".woof"
+    woof_dir.mkdir(exist_ok=True)
+    agents = woof_dir / "agents.toml"
+    existing = agents.read_text(encoding="utf-8") if agents.exists() else ""
+    agents.write_text(existing + f"\n[fix_rounds]\nmax_rounds_per_blocker = {max_rounds}\n")
 
 
 def _read_gate_fm(gate_path: Path) -> dict:
@@ -998,6 +987,54 @@ def test_run_dispatch_appends_route_key_to_argv(
     assert args[args.index("--route-key") + 1] == "execution"
 
 
+def test_run_dispatch_appends_session_mode_to_argv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_run(
+        args: list[str],
+        *,
+        cwd: Path,
+        env: dict[str, str] | None = None,
+        capture_output: bool,
+        text: bool,
+    ) -> subprocess.CompletedProcess[str]:
+        captured["args"] = args
+        dispatch_jsonl = cwd / ".woof" / "epics" / "E1" / "dispatch.jsonl"
+        dispatch_jsonl.parent.mkdir(parents=True, exist_ok=True)
+        dispatch_jsonl.write_text(
+            json.dumps(
+                {
+                    "event": "subprocess_returned",
+                    "epic_id": 1,
+                    "role": "primary",
+                    "work_unit_id": "S1",
+                    "pid": 1234,
+                    "exit_type": "completed_lingering",
+                    "exit_code": 0,
+                }
+            )
+            + "\n"
+        )
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(nodes.subprocess, "run", fake_run)
+
+    nodes._run_dispatch(
+        tmp_path,
+        role="primary",
+        epic_id=1,
+        work_unit_id="S1",
+        prompt="do work",
+        session_mode="warm-producer",
+    )
+
+    args = captured["args"]
+    assert "--session-mode" in args
+    assert args[args.index("--session-mode") + 1] == "warm-producer"
+
+
 def test_run_dispatch_omits_route_key_from_argv_when_none(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1059,6 +1096,7 @@ def test_dispatch_call_sites_pass_correct_route_key() -> None:
         "plan_critique_node": "planning",
         "executor_dispatch_node": "execution",
         "critique_dispatch_node": "execution",
+        "review_disposition_node": "execution",
     }
 
     functions = {item.name: item for item in module.body if isinstance(item, _ast.FunctionDef)}
@@ -1092,6 +1130,7 @@ def test_dispatch_consumers_route_results_through_shared_classifier() -> None:
         "plan_critique_node",
         "executor_dispatch_node",
         "critique_dispatch_node",
+        "review_disposition_node",
     }
     functions = {item.name: item for item in module.body if isinstance(item, ast.FunctionDef)}
     dispatch_consumers = {
@@ -2272,6 +2311,7 @@ def test_review_disposition_repairs_invalid_non_blocking_timestamp(
 
 def test_reviewer_blocker_opens_gate_without_primary_debate(tmp_path: Path, monkeypatch) -> None:
     directory = _write_plan(tmp_path, 1)
+    _write_fix_round_budget(tmp_path, 0)
     mark_work_unit_state(tmp_path, 1, "S1", "in_progress")
     (directory / "executor_result.json").write_text(
         json.dumps(
@@ -2317,6 +2357,118 @@ def test_reviewer_blocker_opens_gate_without_primary_debate(tmp_path: Path, monk
     gate_text = gate.read_text()
     assert "## Primary position" in gate_text
     assert "## Reviewer position" in gate_text
+
+
+def test_reviewer_blocker_dispatches_warm_fix_round_and_requeues_fresh_review(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    directory = _write_plan(tmp_path, 101)
+    _write_codebase_docs(tmp_path)
+    mark_work_unit_state(tmp_path, 101, "S1", "in_progress")
+    (directory / "executor_result.json").write_text(
+        json.dumps(
+            {
+                "epic_id": 101,
+                "work_unit_id": "S1",
+                "outcome": "staged_for_verification",
+                "commit_body": "done",
+                "position": None,
+            }
+        )
+    )
+    critique_dir = directory / "critique"
+    critique_dir.mkdir()
+    critique_path = critique_dir / "work-unit-S1.md"
+    critique_path.write_text(
+        "---\ntarget: work_unit\ntarget_id: S1\nseverity: blocker\n"
+        "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
+        "findings:\n  - id: F1\n    severity: blocker\n    summary: missing assertion\n"
+        "    evidence: 'S1 does not assert the required outcome'\n"
+        "---\nReviewer says the staged test does not assert O1.\n"
+    )
+    captured: dict[str, Any] = {}
+
+    def fake_dispatch(
+        repo_root: Path,
+        role: str,
+        epic_id: int,
+        work_unit_id: str | None,
+        prompt: str,
+        artefacts_loaded: list[str] | None = None,
+        route_key: str | None = None,
+        session_mode: str = "one-shot",
+    ) -> nodes.DispatchRunResult:
+        captured.update(
+            {
+                "role": role,
+                "prompt": prompt,
+                "route_key": route_key,
+                "session_mode": session_mode,
+                "artefacts_loaded": artefacts_loaded,
+            }
+        )
+        assert not (directory / "executor_result.json").exists()
+        (directory / "executor_result.json").write_text(
+            json.dumps(
+                {
+                    "epic_id": epic_id,
+                    "work_unit_id": work_unit_id,
+                    "outcome": "staged_for_verification",
+                    "commit_body": "fixed",
+                    "position": None,
+                }
+            )
+        )
+        return _dispatch_result("completed_lingering")
+
+    monkeypatch.setattr(nodes, "_run_dispatch", fake_dispatch)
+
+    output = nodes.review_disposition_node(
+        NodeInput(
+            node_type=NodeType.REVIEW_DISPOSITION,
+            epic_id=101,
+            work_unit_id="S1",
+            repo_root=tmp_path,
+        )
+    )
+
+    assert output.status == NodeStatus.COMPLETED
+    assert output.next_node == NodeType.CRITIQUE_DISPATCH
+    assert captured["role"] == "primary"
+    assert captured["route_key"] == "execution"
+    assert captured["session_mode"] == "warm-producer"
+    assert "Reviewer Blocker Evidence" in captured["prompt"]
+    assert "missing assertion" in captured["prompt"]
+    assert not critique_path.exists()
+    assert next_node(tmp_path, 101) == (NodeType.CRITIQUE_DISPATCH, "S1")
+    events = [json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines()]
+    assert [event["event"] for event in events[-2:]] == [
+        "work_unit_fix_round_started",
+        "work_unit_fix_round_completed",
+    ]
+    assert events[-2]["round"] == 1
+    assert events[-2]["max_rounds_per_blocker"] == 2
+
+
+def test_missing_executor_result_with_blocker_critique_resumes_fix_round(tmp_path: Path) -> None:
+    directory = _write_plan(tmp_path, 102)
+    mark_work_unit_state(tmp_path, 102, "S1", "in_progress")
+    critique_dir = directory / "critique"
+    critique_dir.mkdir()
+    (critique_dir / "work-unit-S1.md").write_text(
+        "---\ntarget: work_unit\ntarget_id: S1\nseverity: blocker\n"
+        "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
+        "findings:\n  - id: F1\n    severity: blocker\n    summary: interrupted fix\n"
+        "    evidence: 'S1 does not implement the required contract'\n---\n"
+    )
+
+    assert next_node(tmp_path, 102) == (NodeType.REVIEW_DISPOSITION, "S1")
+
+
+def test_fix_round_budget_defaults_to_two_and_can_be_disabled(tmp_path: Path) -> None:
+    assert nodes._fix_round_budget(tmp_path) == 2
+    _write_fix_round_budget(tmp_path, 0)
+    assert nodes._fix_round_budget(tmp_path) == 0
 
 
 def test_reviewer_blocker_without_evidence_opens_incomplete_gate(tmp_path: Path) -> None:
@@ -2711,6 +2863,7 @@ def test_malformed_check_result_opens_incomplete_state_gate(tmp_path: Path) -> N
 
 def test_failed_check_result_reopens_structured_gate_on_reentry(tmp_path: Path) -> None:
     directory = _write_plan(tmp_path, 1)
+    _write_fix_round_budget(tmp_path, 0)
     mark_work_unit_state(tmp_path, 1, "S1", "in_progress")
     (directory / "executor_result.json").write_text(
         json.dumps(
@@ -2940,6 +3093,7 @@ def test_wf_epic_halts_when_gate_is_open(tmp_path: Path) -> None:
 
 
 def test_wf_gate_case_reports_stable_json_contract(tmp_path: Path) -> None:
+    _write_fix_round_budget(tmp_path, 0)
     _write_tracker_prerequisites(tmp_path)
     directory = _write_plan(tmp_path, 11)
     mark_work_unit_state(tmp_path, 11, "S1", "in_progress")

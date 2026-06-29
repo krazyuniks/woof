@@ -61,20 +61,24 @@ def git_add(*paths: str) -> None:
     subprocess.run(["git", "add", "--", *paths], check=True)
 
 
-def read_tmux_prompt() -> tuple[str, Path, Path]:
+def read_tmux_prompt() -> tuple[str, Path | None, Path | None]:
     print("ready > ", flush=True)
     buf = ""
     for line in sys.stdin:
         buf += line
-        prompt = re.search(r"(\S+/prompt\.txt)", buf)
+        prompt = re.search(r"(\S+/(?:prompt\.txt|[^\s]+\.prompt))", buf)
         answer = re.search(r"(\S+/answer\.txt)", buf)
         done = re.search(r"(\S+/answer\.done)", buf)
-        if prompt and answer and done:
+        if prompt and (not prompt.group(1).endswith("/prompt.txt") or (answer and done)):
             text = Path(prompt.group(1)).read_text(encoding="utf-8")
             root = repo_root(text)
             if root is not None:
                 os.chdir(root)
-            return text, Path(answer.group(1)), Path(done.group(1))
+            return (
+                text,
+                Path(answer.group(1)) if answer else None,
+                Path(done.group(1)) if done else None,
+            )
     raise SystemExit("tmux prompt paths not found")
 
 
@@ -256,17 +260,18 @@ def main() -> int:
         write_disposition(prompt)
     else:
         raise SystemExit("primary stub did not recognise prompt")
-    answer_path.write_text(
-        json.dumps(
-            {
-                "verdict": "pass",
-                "usage": {"tokens_in": 10, "tokens_out": 5},
-                "session": {"thread_id": "acceptance-thread"},
-            }
-        ),
-        encoding="utf-8",
-    )
-    done_path.write_text("DONE", encoding="utf-8")
+    if answer_path and done_path:
+        answer_path.write_text(
+            json.dumps(
+                {
+                    "verdict": "pass",
+                    "usage": {"tokens_in": 10, "tokens_out": 5},
+                    "session": {"thread_id": "acceptance-thread"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        done_path.write_text("DONE", encoding="utf-8")
     return 0
 
 
@@ -306,20 +311,24 @@ def write(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
-def read_tmux_prompt() -> tuple[str, Path, Path]:
+def read_tmux_prompt() -> tuple[str, Path | None, Path | None]:
     print("ready > ", flush=True)
     buf = ""
     for line in sys.stdin:
         buf += line
-        prompt = re.search(r"(\S+/prompt\.txt)", buf)
+        prompt = re.search(r"(\S+/(?:prompt\.txt|[^\s]+\.prompt))", buf)
         answer = re.search(r"(\S+/answer\.txt)", buf)
         done = re.search(r"(\S+/answer\.done)", buf)
-        if prompt and answer and done:
+        if prompt and (not prompt.group(1).endswith("/prompt.txt") or (answer and done)):
             text = Path(prompt.group(1)).read_text(encoding="utf-8")
             root = repo_root(text)
             if root is not None:
                 os.chdir(root)
-            return text, Path(answer.group(1)), Path(done.group(1))
+            return (
+                text,
+                Path(answer.group(1)) if answer else None,
+                Path(done.group(1)) if done else None,
+            )
     raise SystemExit("tmux prompt paths not found")
 
 
@@ -384,17 +393,18 @@ def main() -> int:
         write_work_unit_critique(prompt)
     else:
         raise SystemExit("reviewer stub did not recognise prompt")
-    answer_path.write_text(
-        json.dumps(
-            {
-                "verdict": "pass",
-                "usage": {"tokens_in": 10, "tokens_out": 5},
-                "session": {"id": "00000000-0000-0000-0000-000000000001"},
-            }
-        ),
-        encoding="utf-8",
-    )
-    done_path.write_text("DONE", encoding="utf-8")
+    if answer_path and done_path:
+        answer_path.write_text(
+            json.dumps(
+                {
+                    "verdict": "pass",
+                    "usage": {"tokens_in": 10, "tokens_out": 5},
+                    "session": {"id": "00000000-0000-0000-0000-000000000001"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        done_path.write_text("DONE", encoding="utf-8")
     return 0
 
 

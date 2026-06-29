@@ -60,20 +60,24 @@ def git_add(*paths: str) -> None:
     subprocess.run(["git", "add", "--", *paths], check=True)
 
 
-def read_tmux_prompt() -> tuple[str, Path, Path]:
+def read_tmux_prompt() -> tuple[str, Path | None, Path | None]:
     print("ready > ", flush=True)
     buf = ""
     for line in sys.stdin:
         buf += line
-        prompt = re.search(r"(\S+/prompt\.txt)", buf)
+        prompt = re.search(r"(\S+/(?:prompt\.txt|[^\s]+\.prompt))", buf)
         answer = re.search(r"(\S+/answer\.txt)", buf)
         done = re.search(r"(\S+/answer\.done)", buf)
-        if prompt and answer and done:
+        if prompt and (not prompt.group(1).endswith("/prompt.txt") or (answer and done)):
             text = Path(prompt.group(1)).read_text(encoding="utf-8")
             root = repo_root(text)
             if root is not None:
                 os.chdir(root)
-            return text, Path(answer.group(1)), Path(done.group(1))
+            return (
+                text,
+                Path(answer.group(1)) if answer else None,
+                Path(done.group(1)) if done else None,
+            )
     raise SystemExit("tmux prompt paths not found")
 
 
@@ -199,7 +203,12 @@ def write_work_unit_files() -> None:
 
 
 def execute_work_unit(prompt: str) -> int:
-    scenario = os.environ.get("WOOF_GATE_SCENARIO", "happy")
+    scenario_path = Path(".woof/gate-scenario")
+    scenario = (
+        scenario_path.read_text(encoding="utf-8").strip()
+        if scenario_path.exists()
+        else os.environ.get("WOOF_GATE_SCENARIO", "happy")
+    )
     eid = epic_id(prompt)
     sid = work_unit_id(prompt)
     if scenario == "subprocess_crash":
@@ -282,22 +291,25 @@ def main() -> int:
         if code != 0:
             verdict = "error"
             evidence = f"executor exited with code {code}"
+            if not answer_path:
+                return code
     elif "Primary disposition prompt" in prompt:
         write_disposition(prompt)
     else:
         raise SystemExit("primary stub did not recognise prompt")
-    answer_path.write_text(
-        json.dumps(
-            {
-                "verdict": verdict,
-                "evidence": evidence,
-                "usage": {"tokens_in": 10, "tokens_out": 5},
-                "session": {"thread_id": "gate-thread"},
-            }
-        ),
-        encoding="utf-8",
-    )
-    done_path.write_text("DONE", encoding="utf-8")
+    if answer_path and done_path:
+        answer_path.write_text(
+            json.dumps(
+                {
+                    "verdict": verdict,
+                    "evidence": evidence,
+                    "usage": {"tokens_in": 10, "tokens_out": 5},
+                    "session": {"thread_id": "gate-thread"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        done_path.write_text("DONE", encoding="utf-8")
     return 0
 
 
@@ -337,20 +349,24 @@ def write(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
-def read_tmux_prompt() -> tuple[str, Path, Path]:
+def read_tmux_prompt() -> tuple[str, Path | None, Path | None]:
     print("ready > ", flush=True)
     buf = ""
     for line in sys.stdin:
         buf += line
-        prompt = re.search(r"(\S+/prompt\.txt)", buf)
+        prompt = re.search(r"(\S+/(?:prompt\.txt|[^\s]+\.prompt))", buf)
         answer = re.search(r"(\S+/answer\.txt)", buf)
         done = re.search(r"(\S+/answer\.done)", buf)
-        if prompt and answer and done:
+        if prompt and (not prompt.group(1).endswith("/prompt.txt") or (answer and done)):
             text = Path(prompt.group(1)).read_text(encoding="utf-8")
             root = repo_root(text)
             if root is not None:
                 os.chdir(root)
-            return text, Path(answer.group(1)), Path(done.group(1))
+            return (
+                text,
+                Path(answer.group(1)) if answer else None,
+                Path(done.group(1)) if done else None,
+            )
     raise SystemExit("tmux prompt paths not found")
 
 
@@ -388,7 +404,13 @@ Plan is executable.
 def write_work_unit_critique(prompt: str) -> None:
     eid = epic_id(prompt)
     sid = work_unit_id(prompt)
-    if os.environ.get("WOOF_GATE_SCENARIO") == "reviewer_blocker":
+    scenario_path = Path(".woof/gate-scenario")
+    scenario = (
+        scenario_path.read_text(encoding="utf-8").strip()
+        if scenario_path.exists()
+        else os.environ.get("WOOF_GATE_SCENARIO")
+    )
+    if scenario == "reviewer_blocker":
         severity = "blocker"
         findings = (
             "findings:\n"
@@ -425,17 +447,18 @@ def main() -> int:
         write_work_unit_critique(prompt)
     else:
         raise SystemExit("reviewer stub did not recognise prompt")
-    answer_path.write_text(
-        json.dumps(
-            {
-                "verdict": "pass",
-                "usage": {"tokens_in": 10, "tokens_out": 5},
-                "session": {"id": "00000000-0000-0000-0000-000000000002"},
-            }
-        ),
-        encoding="utf-8",
-    )
-    done_path.write_text("DONE", encoding="utf-8")
+    if answer_path and done_path:
+        answer_path.write_text(
+            json.dumps(
+                {
+                    "verdict": "pass",
+                    "usage": {"tokens_in": 10, "tokens_out": 5},
+                    "session": {"id": "00000000-0000-0000-0000-000000000002"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        done_path.write_text("DONE", encoding="utf-8")
     return 0
 
 
@@ -497,7 +520,9 @@ def configure_consumer(
     assert_ok(run(["git", "config", "user.name", "Workflow Test"], cwd=consumer, env=env))
     assert_ok(run([str(WOOF_BIN), "init", "--tracker", "local"], cwd=consumer, env=env))
     gitignore = consumer / ".gitignore"
-    gitignore.write_text(gitignore.read_text(encoding="utf-8") + "\n__pycache__/\n*.pyc\n")
+    gitignore.write_text(
+        gitignore.read_text(encoding="utf-8") + "\n.woof/gate-scenario\n__pycache__/\n*.pyc\n"
+    )
 
     (consumer / ".woof" / "policy.toml").write_text(
         """\
@@ -599,6 +624,7 @@ def create_stage5_consumer(
     consumer = tmp_path / "consumer"
     consumer.mkdir()
     configure_consumer(consumer, env, quality_gate_command=quality_gate_command)
+    (consumer / ".woof" / "gate-scenario").write_text(scenario + "\n", encoding="utf-8")
 
     created = run(
         [str(WOOF_BIN), "wf", "new", "ship gate acceptance artefact", "--format", "json"],

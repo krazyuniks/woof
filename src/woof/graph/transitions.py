@@ -551,6 +551,13 @@ def next_node(repo_root: Path, epic_id: int) -> tuple[NodeType | NodeStatus | No
     check_result_path = directory / "check-result.json"
 
     if not result_path.exists():
+        if critique_path.exists():
+            try:
+                critique_front = read_markdown_front_matter(critique_path).front
+            except (FileNotFoundError, ValueError):
+                return NodeType.GATE_OPEN, in_progress.id
+            if critique_severity(critique_front) == "blocker":
+                return NodeType.REVIEW_DISPOSITION, in_progress.id
         return NodeType.GATE_OPEN, in_progress.id
     if not _json_loads_ok(result_path):
         return NodeType.GATE_OPEN, in_progress.id

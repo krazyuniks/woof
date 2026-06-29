@@ -27,6 +27,8 @@
         "plan_gate_resolved",
         "gate_resolved",
         "work_unit_started",
+        "work_unit_fix_round_started",
+        "work_unit_fix_round_completed",
         "work_unit_completed",
         "work_unit_retried",
         "work_unit_abandoned",

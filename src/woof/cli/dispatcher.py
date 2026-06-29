@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import tomllib
 import uuid
 from dataclasses import dataclass
@@ -48,6 +49,7 @@ TRUSTED_RUNTIME_NOTE = (
 )
 POLICY_ROLE_SLOTS = {"primary": "producer", "reviewer": "reviewer"}
 REVIEW_PROMPT_VERSION_PREFIX = "sha256:"
+DEFAULT_READINESS_SECONDS = 60
 
 
 @dataclass(frozen=True)
@@ -445,6 +447,26 @@ def _tmux_capture_api():
     return capture_argv, HarnessDispatchError
 
 
+def _tmux_warm_api():
+    try:
+        from tmux_harness import deliver_prompt_file, read_file_kickoff, tmux
+    except ModuleNotFoundError:
+        candidates = [
+            Path(__file__).resolve().parents[4] / "agent-toolkit" / "skills" / "tmux-harness",
+            Path.home() / "Work" / "agent-toolkit" / "skills" / "tmux-harness",
+            Path("/home/ryan/Work/agent-toolkit/skills/tmux-harness"),
+        ]
+        for candidate in candidates:
+            if candidate.is_dir():
+                sys.path.insert(0, str(candidate))
+                from tmux_harness import deliver_prompt_file, read_file_kickoff, tmux
+
+                break
+        else:
+            raise
+    return deliver_prompt_file, read_file_kickoff, tmux
+
+
 def _structured_usage(result: dict[str, Any]) -> dict[str, int]:
     usage = result.get("usage")
     if not isinstance(usage, dict):
@@ -492,6 +514,23 @@ def _copy_result_fields(event: dict[str, Any], result: dict[str, Any]) -> None:
     artefacts = result.get("artefacts")
     if isinstance(artefacts, list):
         event["result_artefacts"] = [str(item) for item in artefacts]
+
+
+def _warm_session_name(run_id: str, work_unit_id: str, role: str) -> str:
+    run = _safe_audit_component(run_id, fallback="run")
+    unit = _safe_audit_component(work_unit_id, fallback="unit")
+    role_component = _safe_audit_component(role, fallback="role")
+    return f"woof-{run}-{unit}-{role_component}"
+
+
+def _executor_result_ready(path: Path, epic_id: int, work_unit_id: str) -> bool:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except OSError:
+        return False
+    except json.JSONDecodeError:
+        return True
+    return payload.get("epic_id") == epic_id and payload.get("work_unit_id") == work_unit_id
 
 
 def ensure_run_metadata(epic_dir: Path, epic_id: int, created_at: datetime) -> str:
@@ -750,6 +789,11 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
             f"woof: --work-unit {args.work_unit!r}: must match ^[A-Za-z][A-Za-z0-9._-]*$\n"
         )
         return 2
+    if args.session_mode == "warm-producer" and (args.role != "primary" or args.work_unit is None):
+        sys.stderr.write(
+            "woof: --session-mode warm-producer requires --role primary and --work-unit\n"
+        )
+        return 2
 
     prompt = Path(args.prompt_file).read_text() if args.prompt_file else sys.stdin.read()
     if not prompt.strip():
@@ -821,6 +865,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
             "diff_hash": diff_hash,
             "work_unit_id": work_unit_id,
             "review_cache_key": review_cache_key,
+            "session_mode": args.session_mode,
         }
         print(json.dumps(payload))
         return 0
@@ -999,6 +1044,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         "mcp": mcp_names,
         "argv": event_argv,
         "prompt_transport": prompt_transport,
+        "session_mode": args.session_mode,
         "runtime_policy": trusted_runtime_policy(),
         "agents_schema_cache_hit": agents_schema_cache_hit,
         "artefacts_loaded": artefacts_loaded,
@@ -1021,6 +1067,182 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     if effort:
         spawned_event["effort"] = effort
     append_jsonl(dispatch_jsonl, spawned_event)
+
+    if args.session_mode == "warm-producer":
+        assert work_unit_id is not None
+        ended_at = datetime.now(UTC)
+        answer = ""
+        stderr = ""
+        reported_exit_code = 0
+        exit_type = "clean"
+        tmux_meta: dict[str, Any] = {}
+        session = _warm_session_name(run_id, work_unit_id, args.role)
+        result_path = epic_dir / "executor_result.json"
+        try:
+            deliver_prompt_file, read_file_kickoff, tmux = _tmux_warm_api()
+            reattached = tmux.has_session(session)
+            respawned = not reattached
+            if respawned:
+                tmux.launch_session(session, repo_root, argv)
+                tmux.wait_for_input_ready(
+                    session,
+                    readiness_timeout_s=DEFAULT_READINESS_SECONDS,
+                )
+            deliver_prompt_file(
+                session,
+                base.with_suffix(".prompt"),
+                read_file_kickoff(base.with_suffix(".prompt")),
+                prompt=None,
+            )
+            deadline = time.monotonic() + timeouts.wallclock_seconds
+            while time.monotonic() < deadline:
+                if _executor_result_ready(result_path, args.epic, work_unit_id):
+                    break
+                if not tmux.has_session(session):
+                    reported_exit_code = 1
+                    exit_type = "nonzero"
+                    stderr = (
+                        f"warm producer session {session!r} exited before writing "
+                        f"{_relpath(repo_root, result_path)}"
+                    )
+                    break
+                time.sleep(1.0)
+            else:
+                reported_exit_code = 124
+                exit_type = "wallclock_timeout"
+                stderr = (
+                    f"warm producer session {session!r} did not write "
+                    f"{_relpath(repo_root, result_path)} within {int(timeouts.wallclock_seconds)}s"
+                )
+            answer = tmux.capture_pane_tail(session, 80)
+            tmux_meta = {
+                "transport": f"tmux:{route.adapter}",
+                "harness": route.adapter,
+                "model": route.config.get("model"),
+                "effort": effort,
+                "session": session,
+                "reattached": reattached,
+                "respawned": respawned,
+            }
+        except Exception as exc:
+            stderr = str(exc)
+            reported_exit_code = 1
+            exit_type = "nonzero"
+        ended_at = datetime.now(UTC)
+        output_file.write_text(answer, encoding="utf-8")
+        stderr_file.write_text(stderr, encoding="utf-8")
+        output_bytes = len(answer.encode("utf-8"))
+        stderr_bytes = len(stderr.encode("utf-8"))
+        duration_ms = int((ended_at - started_at).total_seconds() * 1000)
+        returned: dict[str, Any] = {
+            "event": "subprocess_returned",
+            "at": iso_utc(ended_at),
+            "epic_id": args.epic,
+            "role": args.role,
+            "harness": route.adapter,
+            "adapter": route.adapter,
+            "pid": launcher_pid,
+            "exit_type": exit_type,
+            "exit_code": reported_exit_code,
+            "duration_ms": duration_ms,
+            "timed_out": exit_type == "wallclock_timeout",
+            "terminal_seen": reported_exit_code == 0,
+            "mcp": mcp_names,
+            "argv": event_argv,
+            "prompt_transport": prompt_transport,
+            "session_mode": args.session_mode,
+            "artefacts_loaded": artefacts_loaded,
+            "prompt_bytes": prompt_bytes,
+            "artefact_bytes": artefact_bytes,
+            "output_bytes": output_bytes,
+            "stderr_bytes": stderr_bytes,
+            **lineage_fields,
+        }
+        if route.config_role != args.role:
+            returned["config_role"] = route.config_role
+        if route.model_profile:
+            returned["model_profile"] = route.model_profile
+        if route.profile_role:
+            returned["profile_role"] = route.profile_role
+        if route.route_key:
+            returned["route_key"] = route.route_key
+        if args.work_unit:
+            returned["work_unit_id"] = args.work_unit
+        if route.config.get("model"):
+            returned["model"] = route.config["model"]
+        if effort:
+            returned["effort"] = effort
+        returned.update(_result_session_metadata({}, tmux_meta))
+        if "reattached" in tmux_meta:
+            returned["producer_session_reattached"] = bool(tmux_meta["reattached"])
+            returned["producer_session_respawned"] = bool(tmux_meta["respawned"])
+        append_jsonl(dispatch_jsonl, returned)
+
+        audit_paths = {
+            "prompt": _relpath(repo_root, base.with_suffix(".prompt")),
+            "output": _relpath(repo_root, output_file),
+            "stderr": _relpath(repo_root, stderr_file),
+            "meta": _relpath(repo_root, meta_file),
+        }
+        attempt_payload = {
+            "attempt_kind": "dispatch",
+            "audit_paths": audit_paths,
+            "ended_at": iso_utc(ended_at),
+            "epic_id": args.epic,
+            "exit_code": reported_exit_code,
+            "exit_type": exit_type,
+            "role": args.role,
+            "started_at": iso_utc(started_at),
+            "verdict": "",
+            "session_mode": args.session_mode,
+            **lineage_fields,
+        }
+        attempt_path = _write_attempt_file(epic_dir, attempt_id, attempt_payload)
+
+        meta = {
+            "harness": route.adapter,
+            "adapter": route.adapter,
+            "role": args.role,
+            "config_role": route.config_role,
+            "model_profile": route.model_profile,
+            "profile_role": route.profile_role,
+            "route_key": route.route_key,
+            "epic_id": args.epic,
+            "work_unit_id": args.work_unit,
+            "model": route.config.get("model"),
+            "effort": effort,
+            "mcp": mcp_names,
+            "flags": route.config.get("flags") or [],
+            "argv": event_argv,
+            "prompt_transport": prompt_transport,
+            "session_mode": args.session_mode,
+            "runtime_policy": trusted_runtime_policy(),
+            "artefacts_loaded": artefacts_loaded,
+            "pid": launcher_pid,
+            "started_at": iso_utc(started_at),
+            "ended_at": iso_utc(ended_at),
+            "duration_ms": duration_ms,
+            "exit_type": exit_type,
+            "exit_code": reported_exit_code,
+            "timed_out": exit_type == "wallclock_timeout",
+            "terminal_seen": reported_exit_code == 0,
+            "timeouts": timeouts.as_payload(),
+            "prompt_bytes": prompt_bytes,
+            "artefact_bytes": artefact_bytes,
+            "output_bytes": output_bytes,
+            "stderr_bytes": stderr_bytes,
+            "tokens": {},
+            "structured_result": {},
+            "tmux_harness": tmux_meta,
+            "attempt_path": _relpath(repo_root, attempt_path),
+            **lineage_fields,
+        }
+        meta.update(_result_session_metadata({}, tmux_meta))
+        if "reattached" in tmux_meta:
+            meta["producer_session_reattached"] = bool(tmux_meta["reattached"])
+            meta["producer_session_respawned"] = bool(tmux_meta["respawned"])
+        meta_file.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+        return reported_exit_code
 
     answer = ""
     stderr = ""

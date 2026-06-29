@@ -97,6 +97,7 @@ _DISPATCH_FAILURE_EXIT_TYPES = {
     "wallclock_timeout",
     "operator_cancel",
 }
+DEFAULT_FIX_ROUNDS_PER_BLOCKER = 2
 
 
 @dataclass(frozen=True)
@@ -135,6 +136,24 @@ def _readiness_escalation_threshold(repo_root: Path) -> int:
     except (OSError, tomllib.TOMLDecodeError):
         pass
     return DEFAULT_READINESS_ESCALATION_THRESHOLD
+
+
+def _fix_round_budget(repo_root: Path) -> int:
+    path = repo_root / ".woof" / "agents.toml"
+    try:
+        with path.open("rb") as fh:
+            data = tomllib.load(fh)
+    except (OSError, tomllib.TOMLDecodeError):
+        return DEFAULT_FIX_ROUNDS_PER_BLOCKER
+    block = data.get("fix_rounds")
+    if not isinstance(block, dict):
+        return DEFAULT_FIX_ROUNDS_PER_BLOCKER
+    value = block.get("max_rounds_per_blocker", DEFAULT_FIX_ROUNDS_PER_BLOCKER)
+    return (
+        value
+        if isinstance(value, int) and value >= 0 and not isinstance(value, bool)
+        else DEFAULT_FIX_ROUNDS_PER_BLOCKER
+    )
 
 
 def _woof_subprocess_argv() -> list[str]:
@@ -1246,6 +1265,77 @@ def _work_unit_prompt(epic_id: int, work_unit_id: str) -> str:
     )
 
 
+def _blocker_signature(critique: MarkdownFrontMatter) -> str:
+    blockers = [
+        {
+            "id": str(finding.get("id") or ""),
+            "summary": str(finding.get("summary") or ""),
+            "evidence": str(finding.get("evidence") or ""),
+        }
+        for finding in critique_findings(critique.front)
+        if finding.get("severity") == "blocker"
+    ]
+    payload = json.dumps(blockers, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _fix_rounds_used(
+    repo_root: Path, epic_id: int, work_unit_id: str, blocker_signature: str
+) -> int:
+    events_path = epic_dir(repo_root, epic_id) / "epic.jsonl"
+    if not events_path.exists():
+        return 0
+    used = 0
+    for line in events_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if (
+            isinstance(event, dict)
+            and event.get("event") == "work_unit_fix_round_started"
+            and event.get("work_unit_id") == work_unit_id
+            and event.get("blocker_signature") == blocker_signature
+        ):
+            used += 1
+    return used
+
+
+def _fix_round_prompt(
+    repo_root: Path,
+    epic_id: int,
+    work_unit_id: str,
+    *,
+    critique: MarkdownFrontMatter,
+    base_prompt: str,
+) -> str:
+    critique_rel = work_unit_critique_path(epic_dir(repo_root, epic_id), work_unit_id)
+    return (
+        "# Work Unit Fix Round\n\n"
+        "Continue the same work-unit producer session. Address the reviewer blocker "
+        "evidence below, update the staged work-unit diff, and rewrite "
+        f"`.woof/epics/E{epic_id}/executor_result.json` when complete.\n\n"
+        "Do not dispatch the reviewer. Do not commit. Do not open or edit gate.md.\n\n"
+        "## Reviewer Blocker Evidence\n\n"
+        f"Source: `{_relpath(repo_root, critique_rel)}`\n\n"
+        f"{reviewer_blocker_gate_body(epic_id=epic_id, work_unit_id=work_unit_id, critique=critique)}"
+        "\n\n## Producer Contract\n\n"
+        f"{base_prompt}"
+    )
+
+
+def _clear_fix_round_artefacts(repo_root: Path, epic_id: int, work_unit_id: str) -> None:
+    directory = epic_dir(repo_root, epic_id)
+    for path in (
+        directory / "executor_result.json",
+        directory / "check-result.json",
+        work_unit_disposition_path(directory, work_unit_id),
+    ):
+        path.unlink(missing_ok=True)
+
+
 def _work_unit_context_artefacts(repo_root: Path, epic_id: int) -> list[str]:
     directory = epic_dir(repo_root, epic_id)
     return _existing_prompt_artefacts(
@@ -1285,6 +1375,7 @@ def _run_dispatch(
     prompt: str,
     artefacts_loaded: list[str] | None = None,
     route_key: str | None = None,
+    session_mode: str = "one-shot",
 ) -> DispatchRunResult:
     prompt_file = _write_prompt_file(prompt)
     dispatch_jsonl = epic_dir(repo_root, epic_id) / "dispatch.jsonl"
@@ -1304,6 +1395,8 @@ def _run_dispatch(
             args.extend(["--work-unit", work_unit_id])
         if route_key:
             args.extend(["--route-key", route_key])
+        if session_mode != "one-shot":
+            args.extend(["--session-mode", session_mode])
         for artefact in artefacts_loaded or []:
             args.extend(["--artefact", artefact])
         proc = subprocess.run(
@@ -2239,6 +2332,7 @@ def executor_dispatch_node(inp: NodeInput) -> NodeOutput:
             _codebase_doc_relpath("files.txt"),
         ],
         route_key="execution",
+        session_mode="warm-producer",
     )
     dispatch = _classify_dispatch_result(proc)
     if not dispatch.ok:
@@ -2395,6 +2489,109 @@ def review_disposition_node(inp: NodeInput) -> NodeOutput:
         return _write_disposition_incomplete_gate(inp, "\n".join(invariant_errors))
 
     if severity == "blocker":
+        blocker_signature = _blocker_signature(critique)
+        budget = _fix_round_budget(inp.repo_root)
+        rounds_used = _fix_rounds_used(
+            inp.repo_root, inp.epic_id, inp.work_unit_id, blocker_signature
+        )
+        if rounds_used < budget:
+            carto_refs = _require_cartography_docs(
+                inp.repo_root,
+                _EXECUTOR_CARTOGRAPHY_DOCS,
+                "work_unit_gate",
+                work_unit_id=inp.work_unit_id,
+            )
+            work_unit = work_unit_by_id(load_plan(inp.repo_root, inp.epic_id), inp.work_unit_id)
+            files_txt_slice = _work_unit_files_txt_slice(inp.repo_root, work_unit)
+            base_prompt = _executor_dispatch_prompt(
+                inp.repo_root,
+                inp.epic_id,
+                inp.work_unit_id,
+                cartography_refs=carto_refs,
+                files_txt_slice=files_txt_slice,
+            )
+            round_number = rounds_used + 1
+            prompt = _fix_round_prompt(
+                inp.repo_root,
+                inp.epic_id,
+                inp.work_unit_id,
+                critique=critique,
+                base_prompt=base_prompt,
+            )
+            append_epic_event(
+                inp.repo_root,
+                inp.epic_id,
+                {
+                    "event": "work_unit_fix_round_started",
+                    "at": _now(),
+                    "epic_id": inp.epic_id,
+                    "work_unit_id": inp.work_unit_id,
+                    "round": round_number,
+                    "max_rounds_per_blocker": budget,
+                    "blocker_signature": blocker_signature,
+                    "critique_path": work_unit_critique_path(directory, inp.work_unit_id)
+                    .relative_to(inp.repo_root)
+                    .as_posix(),
+                },
+            )
+            _clear_fix_round_artefacts(inp.repo_root, inp.epic_id, inp.work_unit_id)
+            proc = _run_dispatch(
+                inp.repo_root,
+                role="primary",
+                epic_id=inp.epic_id,
+                work_unit_id=inp.work_unit_id,
+                prompt=prompt,
+                artefacts_loaded=[
+                    *_work_unit_context_artefacts(inp.repo_root, inp.epic_id),
+                    *carto_refs,
+                    _codebase_doc_relpath("files.txt"),
+                ],
+                route_key="execution",
+                session_mode="warm-producer",
+            )
+            dispatch = _classify_dispatch_result(proc)
+            if not dispatch.ok:
+                write_gate_for_trigger(
+                    trigger="subprocess_crash",
+                    epic_dir=directory,
+                    work_unit_id=inp.work_unit_id,
+                    exit_code=dispatch.gate_exit_code,
+                    schema_path=schema_dir() / "gate.schema.json",
+                )
+                return NodeOutput(
+                    node_type=inp.node_type,
+                    status=NodeStatus.GATE_OPENED,
+                    epic_id=inp.epic_id,
+                    work_unit_id=inp.work_unit_id,
+                    gate_path=_gate_path(inp.epic_id),
+                    triggered_by=["subprocess_crash"],
+                    message=dispatch.message,
+                )
+            work_unit_critique_path(directory, inp.work_unit_id).unlink(missing_ok=True)
+            append_epic_event(
+                inp.repo_root,
+                inp.epic_id,
+                {
+                    "event": "work_unit_fix_round_completed",
+                    "at": _now(),
+                    "epic_id": inp.epic_id,
+                    "work_unit_id": inp.work_unit_id,
+                    "round": round_number,
+                    "max_rounds_per_blocker": budget,
+                    "blocker_signature": blocker_signature,
+                },
+            )
+            return NodeOutput(
+                node_type=inp.node_type,
+                status=NodeStatus.COMPLETED,
+                epic_id=inp.epic_id,
+                work_unit_id=inp.work_unit_id,
+                next_node=NodeType.CRITIQUE_DISPATCH,
+                message=(
+                    f"reviewer blocker returned to warm producer "
+                    f"({round_number}/{budget} fix rounds)"
+                ),
+            )
         body = reviewer_blocker_gate_body(
             epic_id=inp.epic_id,
             work_unit_id=inp.work_unit_id,

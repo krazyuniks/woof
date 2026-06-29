@@ -192,6 +192,45 @@ def test_dry_run_primary_uses_tmux_harness_profile_argv(woof_project: Path) -> N
     assert payload["runtime_policy"] == EXPECTED_TRUSTED_RUNTIME_POLICY
 
 
+def test_dry_run_warm_producer_records_session_mode(woof_project: Path) -> None:
+    proc = run_dispatch(
+        woof_project,
+        "--role",
+        "primary",
+        "--epic",
+        "42",
+        "--work-unit",
+        "S1",
+        "--session-mode",
+        "warm-producer",
+        "--dry-run",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    assert payload["session_mode"] == "warm-producer"
+    assert payload["role"] == "primary"
+    assert payload["work_unit_id"] == "S1"
+
+
+def test_warm_producer_requires_primary_work_unit(woof_project: Path) -> None:
+    proc = run_dispatch(
+        woof_project,
+        "--role",
+        "reviewer",
+        "--epic",
+        "42",
+        "--work-unit",
+        "S1",
+        "--session-mode",
+        "warm-producer",
+        "--dry-run",
+    )
+
+    assert proc.returncode == 2
+    assert "warm-producer requires --role primary and --work-unit" in proc.stderr
+
+
 def test_model_profile_overrides_route_model_and_effort(woof_project: Path) -> None:
     _write_policy(
         woof_project,

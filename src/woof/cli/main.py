@@ -431,6 +431,12 @@ def main() -> int:
         help="node group selecting the dispatch route overlay; optional",
     )
     dispatch.add_argument(
+        "--session-mode",
+        choices=("one-shot", "warm-producer"),
+        default="one-shot",
+        help="worker session lifecycle; warm-producer reuses or respawns the producer tmux session",
+    )
+    dispatch.add_argument(
         "--prompt-file",
         help="path to a file holding the prompt; if omitted, prompt is read from stdin",
     )

@@ -322,9 +322,11 @@ def test_executor_dispatch_artefacts_include_mapped_carto_refs_and_files_txt(
         prompt: str,
         artefacts_loaded: list[str] | None = None,
         route_key: str | None = None,
+        session_mode: str = "one-shot",
     ) -> nodes.DispatchRunResult:
         captured["artefacts_loaded"] = artefacts_loaded
         captured["prompt"] = prompt
+        captured["session_mode"] = session_mode
         return nodes.DispatchRunResult(
             process=subprocess.CompletedProcess([], 0, "", ""),
             exit_type="completed_lingering",
@@ -344,6 +346,7 @@ def test_executor_dispatch_artefacts_include_mapped_carto_refs_and_files_txt(
     assert ".woof/codebase/TARGET-ARCHITECTURE.md" in loaded
     assert ".woof/codebase/PRINCIPLES.md" in loaded
     assert ".woof/codebase/files.txt" in loaded
+    assert captured["session_mode"] == "warm-producer"
     assert '"files_txt_slice"' in captured["prompt"]
 
 
@@ -376,8 +379,10 @@ def test_executor_dispatch_files_txt_slice_filtered_by_work_unit_paths(
         prompt: str,
         artefacts_loaded: list[str] | None = None,
         route_key: str | None = None,
+        session_mode: str = "one-shot",
     ) -> nodes.DispatchRunResult:
         captured["prompt"] = prompt
+        captured["session_mode"] = session_mode
         return nodes.DispatchRunResult(
             process=subprocess.CompletedProcess([], 0, "", ""),
             exit_type="completed_lingering",
@@ -392,6 +397,7 @@ def test_executor_dispatch_files_txt_slice_filtered_by_work_unit_paths(
     )
 
     prompt = captured["prompt"]
+    assert captured["session_mode"] == "warm-producer"
     payload = json.loads(prompt.split("```json\n", 1)[1].split("\n```", 1)[0])
     files_txt_slice = payload["inputs"]["files_txt_slice"]
     assert "src/app.py" in files_txt_slice

@@ -156,6 +156,8 @@ The structured result contract includes verdict, evidence, usage, session identi
 
 The producer session is an attached execution resource for the active work unit. It persists across bounded fix rounds so reviewer findings can be returned to the same context. If it dies, resume reconstructs from disk and reattaches or respawns.
 
+The fix-round budget lives in `.woof/agents.toml` as `[fix_rounds].max_rounds_per_blocker`, defaulting to two rounds for the same blocker signature before the graph opens a human gate.
+
 The reviewer is fresh each round. A reviewer session may stay warm only as a launch optimisation when its context is cleared and the full current diff is supplied again.
 
 ## 7. Policy and Cartography

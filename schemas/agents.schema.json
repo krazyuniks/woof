@@ -49,6 +49,18 @@
         }
       }
     },
+    "fix_rounds": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_rounds_per_blocker": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 2,
+          "description": "Maximum warm-producer fix rounds for the same reviewer blocker signature before opening a human gate."
+        }
+      }
+    },
     "audit": {
       "type": "object",
       "additionalProperties": false,

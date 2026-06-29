@@ -224,6 +224,9 @@ default_minutes = 30
 every_n_work_units = 5
 end_of_epic = true
 
+[fix_rounds]
+max_rounds_per_blocker = 2
+
 [audit]
 enabled = true
 max_bytes = 262144

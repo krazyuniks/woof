@@ -47,6 +47,7 @@ Do not introduce parallel Make, npm, tox, or ad-hoc shell entry points while a `
 - Preserve `work_units[]` as the executable contract (ADR-011). Do not reintroduce story/work-unit mirrors.
 - Preserve the tmux harness dispatch boundary (ADR-012). Do not add headless `claude -p`, `codex exec`, or equivalent one-shot reasoning paths.
 - Preserve policy-driven rigour and cartography (ADR-013). Cartography remains first-class, with the required floor declared by repo policy.
+- Single source of truth. Every concept has one authoritative home and one bounded scope. Routing and run profiles live only in `.woof/policy.toml`; the executable unit has one schema; the dispatch registry owns harness/model/effort vocabulary. Never declare a concept in two files, and never ship a back-compat alias without its deletion in the same change.
 - Do not introduce a parallel operator surface for running epics. The operator entry point is the `/woof` umbrella, which runs `woof wf` (ADR-007).
 - Do not add a parallel state-mutation path. Skill-facing state changes go through typed `woof wf` verbs (`new`, `--resolve`, `reset`); never hand-edit `.woof/` state.
 - Do not commit runtime state: locks, current-epic markers, generated audit raw data, and the mechanical cartography layer are gitignored.

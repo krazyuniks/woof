@@ -50,6 +50,7 @@ work_units:
       - Epic-backed intake follows sparse epic to optional enrichment to epic to work_units.
       - Pre-decomposed work_units validate and skip decomposition.
       - Intake records run metadata without reverse-generating a missing epic.
+      - Decomposition produces work_units through the existing breakdown playbook and brainstorm enrichment, not a second decomposer; the auto-decompose step this unit builds replaces the manual decompose earlier waves relied on.
   - id: dispatch-swap
     title: Replace headless dispatch with the tmux harness
     kind: build
@@ -61,6 +62,32 @@ work_units:
       - Producer and reviewer dispatches launch through tmux harness profiles.
       - Prompt-file delivery and structured result capture are covered by tests.
       - Engine code consumes verdict, evidence, usage, and session metadata without parsing raw terminal scrollback.
+  - id: execution-shape-unification
+    title: Converge the execution kernel on the one work_units schema
+    kind: build
+    state: todo
+    priority: high
+    summary: Collapse the runtime plan/story shape onto the canonical work_units shape (one lifecycle field, work-unit ids, named checks and gates), remove the story_id/work_unit_id mirror, and retire story-named playbooks and self-cartography. Realises the ADR-011 convergence that schema-unification left at the intake boundary.
+    deps: [schema-unification]
+    acceptance:
+      - One canonical work-unit schema validates id, title, kind, state, and the optional contract-trace fields; the plan/runtime artefact and the backlog artefact share it, with no status-versus-state dual lifecycle.
+      - Runtime gates, checks, dispositions, and events key on work-unit id; no event carries both story_id and work_unit_id.
+      - Deterministic checks and gate types are named around work units rather than numbered Stage-5 story checks, and the gate writer can emit the work-unit gate.
+      - Producer and reviewer playbooks and Woof's self-cartography use work-unit terminology; no story.md playbook remains.
+      - An invariant guard test covers the single inbound legacy-shape normaliser (accept legacy input, reject dual shape), and a duplicate work-unit id case is tested.
+      - Dead back-compat aliases are deleted in this change.
+  - id: config-routing-ssot
+    title: Make policy.toml the single routing and run-profile authority
+    kind: build
+    state: todo
+    priority: high
+    summary: Consolidate routing, run profiles, and harness/model/effort vocabulary to one home each; retire the agents.toml routing duplication and the dead headless dispatch builders.
+    deps: [policy-model, dispatch-swap]
+    acceptance:
+      - Producer and reviewer routing and run profiles are declared only in policy.toml; agents.toml no longer carries route or model-profile fields, and any non-routing scope it keeps lives in its own bounded file.
+      - Harness, model, and effort vocabulary has one source of truth in the dispatch registry; effort, adapter, and alias maps are not re-declared across policy.py, dispatcher.py, and harness_registry.py.
+      - Every harness the registry declares is reachable through a policy run profile, or is explicitly removed.
+      - The headless claude -p and codex exec argv builders and their parsers are deleted; route probes use a registry-based check.
   - id: warm-session-seam
     title: Implement warm producer and fresh reviewer fix rounds
     kind: build
@@ -72,6 +99,7 @@ work_units:
       - Reviewer blocker evidence is pasted back to the same producer session within budget.
       - Each review round receives a fresh reviewer context and the full current diff.
       - Resume can reattach or respawn the producer from disk authority.
+      - The fix-round budget is bounded and configurable, defaulting to two rounds per blocker before a gate opens.
   - id: runner-loop-absorption
     title: Absorb VaultForeman runner loop and profiles
     kind: build
@@ -103,7 +131,7 @@ work_units:
     kind: build
     state: todo
     priority: medium
-    summary: Reconcile existing cartography, structural index work, and policy floors with the merged engine.
+    summary: Move cartography-floor selection into policy.toml cartography.floor (adding a no-cartography level) and reconcile the existing ADR-004/ADR-009 cartography artefacts and refresh hook with the merged engine. Existing cartography is reused, not re-derived.
     deps: [policy-model]
     acceptance:
       - Repo policy can require no cartography, lexical/design cartography, or structural cartography.
@@ -187,10 +215,11 @@ The architecture target is `docs/architecture.md`. Decision records are in `docs
 
 1. Hand-build schema unification and the safety-defect sweep.
 2. Build the policy spine by hand, then drain policy-adjacent runner work in dependency order.
-3. Drain the warm-session, cartography-continuity, and intake-enrichment units.
-4. Drain runner-loop absorption, conformance audit, and eval instrumentation.
-5. Run the guarded first flight manually.
-6. Cut Freeflo over manually, then retire or wrap the standalone VaultForeman runner.
+3. Hand-build the execution-shape and config-routing convergence so the kernel runs one `work_units[]` shape and one routing authority before any further runner logic is absorbed.
+4. Drain the warm-session, cartography-continuity, and intake-enrichment units.
+5. Drain runner-loop absorption, conformance audit, and eval instrumentation.
+6. Run the guarded first flight manually.
+7. Cut Freeflo over manually, then retire or wrap the standalone VaultForeman runner.
 
 ## Wave Instructions
 
@@ -205,10 +234,11 @@ The `How` value controls execution mechanics:
 | 0 | Runner-asset source map | done | Source map is in `~/Work/vault/records/radianit/projects/woof/planning/runner-asset-source-map.md`. |
 | 1 | `schema-unification`, `safety-defect-sweep` | hand-build | Start here. Preserve one canonical `work_units[]` schema, keep the VaultForeman `executor` document block valid for transitional drains, retire story-shaped runtime mirrors, and keep graph dependency validation fail-closed. |
 | 2 | `policy-model`, `dispatch-swap`, `run-lineage-immutable-attempts` | hand-build + vf-drain | Hand-build the repo-local policy schema/spine first. In `dispatch-swap`, consolidate VaultForeman's harness/model/effort registry into Woof's dispatcher before any produce/review logic is absorbed. |
-| 3 | `warm-session-seam`, `cartography-continuity`, `intake-enrichment` | vf-drain | Drain after the dispatch registry is unified, so warm producer and fresh reviewer sessions use the single adapter contract. |
-| 4 | `runner-loop-absorption`, `conformance-audit`, `eval-instrumentation` | vf-drain | Absorb Profile A/B drain, deploy-aware merge pacing, partial-merge reconciliation, semantic sibling-conflict reconciliation, review cache, and usage/run telemetry. Producer reads the runner-asset source map. |
-| 5 | `first-flight` | manual | Prove the merged engine on a throwaway or guarded low-risk backlog before Freeflo. Exercise resume, gate handling, Profile A merge-settle/deploy-spacing, and audit evidence. |
-| 6 | `freeflo-cutover`, `vaultforeman-retirement` | manual | Cut Freeflo over only after first flight. Resolve the `lane_plan.py` / `lane_launcher.py` design call here; retire standalone VaultForeman once Freeflo is stable on Woof. |
+| 3 | `execution-shape-unification`, `config-routing-ssot` | hand-build | Foundational convergence. Collapse the runtime to one `work_units[]` shape (retire the `status`/`state` dual lifecycle and the `story_id`/`work_unit_id` mirror; rename checks, gates, and playbooks off story) and make `policy.toml` the single routing/run-profile authority (retire `agents.toml` routing, single-source the registry vocab, delete dead headless builders). Hand-build because the vf-drain waves fold runner logic into this kernel; draining them first deepens the mirror. |
+| 4 | `warm-session-seam`, `cartography-continuity`, `intake-enrichment` | vf-drain | Drain after the kernel runs one shape and the dispatch registry is single-sourced, so warm producer and fresh reviewer sessions use one adapter contract and one unit shape. |
+| 5 | `runner-loop-absorption`, `conformance-audit`, `eval-instrumentation` | vf-drain | Absorb Profile A/B drain, deploy-aware merge pacing, partial-merge reconciliation, semantic sibling-conflict reconciliation, review cache, and usage/run telemetry. Producer reads the runner-asset source map. |
+| 6 | `first-flight` | manual | Prove the merged engine on a throwaway or guarded low-risk backlog before Freeflo. Exercise resume, gate handling, Profile A merge-settle/deploy-spacing, and audit evidence. |
+| 7 | `freeflo-cutover`, `vaultforeman-retirement` | manual | Cut Freeflo over only after first flight. Resolve the `lane_plan.py` / `lane_launcher.py` design call here; retire standalone VaultForeman once Freeflo is stable on Woof. |
 
 Same-day requirements are placed as follows: project-owned producer/reviewer run profiles are in `policy-model` and preserved by `runner-loop-absorption`; deploy-aware Profile A merge and partial-merge reconciliation are in `runner-loop-absorption` and exercised by `first-flight`; semantic sibling-conflict reconciliation is in `runner-loop-absorption`; the dispatch registry mismatch is an explicit `dispatch-swap` prerequisite before the warm-session and runner-loop waves.
 
@@ -217,3 +247,5 @@ Same-day requirements are placed as follows: project-owned producer/reviewer run
 Cartography is retained as a first-class capability. The policy floor decides what is required for a repo and run; it does not create a second engine path.
 
 Pre-authored `work_units[]` are already decomposed input. They skip epic decomposition but run through the same execution kernel.
+
+Single source of truth is a principal rule (architecture section 1). Each concept has one authoritative home and one bounded scope: routing and run profiles in `policy.toml`, one `work_units[]` schema for the executable unit, harness/model/effort vocabulary in the dispatch registry. `execution-shape-unification` and `config-routing-ssot` bring the runtime up to this rule; everything downstream must hold it.

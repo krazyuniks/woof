@@ -64,8 +64,7 @@ Quality gates support two postures in the target architecture. Strict mode block
 ## Documentation
 
 - [`docs/architecture.md`](docs/architecture.md) — system architecture: layers, stages, cartography, role routing, schemas, gates, transaction manifests, prerequisites.
-- [`docs/backlog.md`](docs/backlog.md) — open work, prescriptive.
-- [`docs/implementation-plan.md`](docs/implementation-plan.md) — how the backlog gets executed.
+- [`docs/backlog.md`](docs/backlog.md) — open work and the wave operating order, prescriptive.
 - [`docs/adr/001-orchestration-topology.md`](docs/adr/001-orchestration-topology.md) — layered topology.
 - [`docs/adr/002-graph-led-role-routing.md`](docs/adr/002-graph-led-role-routing.md) — semantic role routing.
 - [`docs/adr/003-issue-tracker-abstraction.md`](docs/adr/003-issue-tracker-abstraction.md) — tracker protocol.

@@ -15,6 +15,7 @@ The durable boundary is the consumer repository. Woof assumes a Git worktree, `.
 - **Work units execute.** `work_units[]` are the executable units. An epic normally decomposes into work units; a supplied `work_units[]` backlog is already decomposed input.
 - **Deterministic control.** Python owns graph progression, validation, gates, checks, audit, and publish/merge decisions. LLM workers produce or review bounded artefacts; they do not choose graph successors.
 - **Policy over modes.** Repo policy declares delivery profile, producer/reviewer run profile, gate command, deterministic check floor, and cartography floor. These capabilities activate checks and context loading without creating separate engine paths.
+- **Single source of truth.** Every concept has exactly one authoritative home and one bounded scope. Routing and run profiles are declared only in `.woof/policy.toml`; the executable unit has one schema; the dispatch registry owns harness, model, and effort vocabulary. A concept is never declared in two places, and a back-compat alias never outlives the change that introduces it.
 - **Cartography remains first-class.** Cartography is a policy-enforced capability for context, impact analysis, and conformance checks. Lean runs may require less cartography; richer runs may require full structural cartography.
 - **Warm producer, fresh reviewer.** The producer stays warm across bounded fix rounds. The reviewer is independent and fresh each round.
 - **Evidence before confidence.** Reviewer blockers and deterministic findings cite resolvable evidence. Confidence-like metadata is advisory and never gate-affecting on its own.
@@ -109,7 +110,7 @@ The graph re-derives the next action from disk before each node. A run can resum
 
 Decomposition prompt rules live in `playbooks/planning/breakdown.md`; architecture owns the contract, not prompt-level sizing prose.
 
-Work-unit producer discipline remains tracer-bullet red-green-refactor: for each declared outcome, write one assertion-bearing RED test before implementation, make the smallest vertical GREEN slice pass, then refactor with tests as the harness. The horizontal-slicing anti-pattern is rejected because it tends to create the imagined-behaviour fingerprint: tests that mirror guessed structures or setup plumbing rather than proving the declared behaviour. The existing deterministic verification floor remains Checks 1-9 until the schema-unification work renames those checks around `work_units[]`.
+Work-unit producer discipline remains tracer-bullet red-green-refactor: for each declared outcome, write one assertion-bearing RED test before implementation, make the smallest vertical GREEN slice pass, then refactor with tests as the harness. The horizontal-slicing anti-pattern is rejected because it tends to create the imagined-behaviour fingerprint: tests that mirror guessed structures or setup plumbing rather than proving the declared behaviour. The deterministic verification floor is still the numbered Stage-5 story checks (Checks 1-9), and the runtime gates, dispositions, and producer/reviewer playbooks still carry story-shaped naming. Converging these onto named work-unit checks and the one `work_units[]` shape is owned by `execution-shape-unification`; `schema-unification` unified the intake/backlog shape only.
 
 ## 6. Dispatch and Sessions
 
@@ -146,7 +147,7 @@ Repo policy is stored in `.woof/policy.toml` and declares:
 - deterministic check floor;
 - cartography floor.
 
-Specialised `.woof/` files remain subordinate policy inputs: `agents.toml` supplies compatibility defaults for legacy route fields, `prerequisites.toml` supplies host/tool/cartography prerequisite details, and `quality-gates.toml` supplies named gate commands. `policy.toml` is the spine that selects the delivery, run-profile, check, and cartography floors, including producer/reviewer harness, model, and effort.
+`policy.toml` is the single authority for delivery profile, producer/reviewer run profile (harness, model, effort), check floor, and cartography floor. Routing and run profiles are declared here and nowhere else. Other `.woof/` files own only their own bounded scope and never re-declare routing: `prerequisites.toml` owns host/tool/cartography prerequisite details, and `quality-gates.toml` owns named gate commands.
 
 The cartography floor determines what preflight enforces and what context the engine loads. Cartography remains a capability of the same engine path:
 

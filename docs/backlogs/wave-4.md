@@ -39,7 +39,7 @@ work_units:
   - id: warm-session-seam
     title: Implement warm producer and fresh reviewer fix rounds
     kind: build
-    state: todo
+    state: done
     priority: high
     summary: Keep the producer attached across bounded fix rounds, use a fresh independent reviewer each round, and make resume producer-capable.
     deps: [dispatch-swap]

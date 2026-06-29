@@ -51,7 +51,7 @@ work_units:
       - Pre-decomposed work_units validate and skip decomposition.
       - Intake records run metadata without reverse-generating a missing epic.
       - Decomposition produces work_units through the existing breakdown playbook and brainstorm enrichment, not a second decomposer; the auto-decompose step this unit builds replaces the manual decompose earlier waves relied on.
-      - Pre-decomposed intake establishes the work-unit-set aggregate context and derives qualified references from it without fabricating an epic; epic-backed intake uses project_ref plus epic_id.
+      - Pre-decomposed intake establishes the work-unit-set aggregate context and derives qualified references from it without fabricating an epic; when the source has no natural identity, intake assigns and persists a stable set_id once; epic-backed intake uses project_ref plus epic_id.
       - Decomposition emits work_units in topological dependency order so the runtime aggregate validates without reordering.
   - id: dispatch-swap
     title: Replace headless dispatch with the tmux harness
@@ -75,8 +75,8 @@ work_units:
       - One canonical work-unit schema validates id, title, kind, state, and the optional contract-trace fields; the plan/runtime artefact and the backlog artefact share it, with no status-versus-state dual lifecycle.
       - The execution kernel exposes a work-unit entity and a work-unit aggregate boundary; aggregate validation owns unique local IDs, dependency closure, acyclicity, and topological order.
       - Cross-aggregate references use structured context plus the local work-unit id, rather than a second globally encoded id field; UUIDs are reserved for technical run, attempt, review, and audit records.
-      - The aggregate context is epic-backed (project_ref plus epic_id) or pre-decomposed (a stable work-unit-set identity); there is no required synthetic epic_id placeholder for pre-decomposed runs.
-      - Review-cache, instability, and lineage joins key consistently on the qualified work-unit reference (stable across runs of the same set); the per-run UUID identifies the execution, not the unit.
+      - The aggregate context is a discriminated union -- an epic context (project_ref, epic_id) or a work-unit-set context (project_ref, set_id, optional source_ref), not an optional epic_id; set_id is a stable persisted identity, never a run UUID (architecture section 4).
+      - "Review-cache, instability, and lineage joins carry the qualified work-unit reference as the unit-identity component alongside the content/version facts (diff_hash, prompt version, role): the qualified ref answers which unit, the content facts answer whether a cached review is reusable."
       - Runtime gates, checks, dispositions, and events key on work-unit id; no event carries both story_id and work_unit_id.
       - Deterministic checks and gate types are named around work units rather than numbered Stage-5 story checks, and the gate writer can emit the work-unit gate.
       - Producer and reviewer playbooks and Woof's self-cartography use work-unit terminology; no story.md playbook remains.

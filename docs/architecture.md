@@ -69,14 +69,21 @@ the ordered collection and enforces executable invariants: no duplicate work-uni
 IDs, dependencies refer to units in the same aggregate, no self-dependencies, no
 dependency cycles, and dependency order is topological.
 
-Cross-aggregate identity is a structured reference, not an encoded string. Where
-Woof needs a globally meaningful reference, it carries the aggregate context and
-the local entity ID, for example `project_ref`, `epic_id`, and `work_unit_id` for
-an epic-backed plan. Pre-decomposed intake uses its run/work-unit-set context in
-the same way until an upstream tracker epic exists. Display strings may be
-derived from those fields, but the fields remain the authority. UUIDs are for
-technical records such as runs, attempts, reviews, and audit events, not for
-authored work-unit IDs.
+Cross-aggregate identity is a structured reference, not an encoded string. The
+aggregate context is a discriminated union, not an optional epic field:
+
+```text
+EpicWorkUnitContext  = {kind: "epic",          project_ref, epic_id}
+SetWorkUnitContext   = {kind: "work_unit_set", project_ref, set_id, source_ref?}
+QualifiedWorkUnitRef = {context: EpicWorkUnitContext | SetWorkUnitContext, work_unit_id}
+```
+
+Epic-backed plans use the epic context; pre-decomposed intake uses the work-unit-set
+context until an upstream tracker epic exists. `set_id` is a stable domain or input
+identity, assigned and persisted once at intake when a pre-decomposed source has no
+natural identity; it is never a run UUID. Display strings may be derived from these
+fields, but the fields remain the authority. UUIDs are for technical records such as
+runs, attempts, reviews, and audit events, not for authored work-unit IDs.
 
 Required fields:
 

@@ -634,6 +634,30 @@ def test_reserve_audit_base_avoids_existing_prompt_collision(tmp_path: Path) -> 
     assert second.with_suffix(".prompt").read_text() == "second prompt"
 
 
+def test_executor_result_ready_signals_readiness_not_validity(tmp_path: Path) -> None:
+    mod = _import_woof_module()
+    path = tmp_path / "executor_result.json"
+
+    # Missing file is not ready: keep polling.
+    assert mod._executor_result_ready(path, 7, "S1") is False
+
+    # A present-but-malformed result is READY: the executor wrote its final artefact, so the
+    # poll loop must stop. Validity (malformed JSON -> incomplete_stage_state gate ->
+    # abandon_work_unit) is the Stage-5 verification node's job, not this poll predicate's;
+    # returning False here would strand a malformed result at wallclock timeout instead of the
+    # abandon gate (see test_malformed_stage_state_gate_can_abandon_work_unit).
+    path.write_text('{"epic_id": 7, "work_unit_id"', encoding="utf-8")
+    assert mod._executor_result_ready(path, 7, "S1") is True
+
+    # A complete result for a different unit is not this unit's result: keep polling.
+    path.write_text(json.dumps({"epic_id": 7, "work_unit_id": "S2"}), encoding="utf-8")
+    assert mod._executor_result_ready(path, 7, "S1") is False
+
+    # A complete, matching result is ready.
+    path.write_text(json.dumps({"epic_id": 7, "work_unit_id": "S1"}), encoding="utf-8")
+    assert mod._executor_result_ready(path, 7, "S1") is True
+
+
 def test_harness_registry_builds_minimal_launch_argv() -> None:
     """The consolidated harness registry produces interactive TUI launch argv."""
     mod = _import_woof_module()

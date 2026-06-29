@@ -529,6 +529,10 @@ def _executor_result_ready(path: Path, epic_id: int, work_unit_id: str) -> bool:
     except OSError:
         return False
     except json.JSONDecodeError:
+        # Readiness, not validity: a present-but-malformed result means the executor wrote
+        # its final artefact, so stop polling. Stage-5 verification (graph/nodes.py) validates
+        # the JSON and opens the incomplete_stage_state gate on corruption, so a malformed
+        # result reaches abandon_work_unit rather than stranding at a wallclock timeout.
         return True
     return payload.get("epic_id") == epic_id and payload.get("work_unit_id") == work_unit_id
 

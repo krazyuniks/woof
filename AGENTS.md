@@ -44,7 +44,7 @@ Do not introduce parallel Make, npm, tox, or ad-hoc shell entry points while a `
 - Read the relevant schema before changing artefact shape.
 - Update docs in the same change as code when behaviour, commands, or contracts move.
 - Preserve the merged topology (ADR-010). Intake varies; execution runs one engine path over `work_units[]`.
-- Preserve `work_units[]` as the executable contract (ADR-011). Do not reintroduce story/work-unit mirrors.
+- Preserve `work_units[]` as the executable contract (ADR-011). Do not reintroduce story/work-unit mirrors. Work-unit ids are local to the aggregate; cross-aggregate references are structured (aggregate context plus local id), never an encoded string, and UUIDs are reserved for technical run/attempt/review/audit records.
 - Preserve the tmux harness dispatch boundary (ADR-012). Do not add headless `claude -p`, `codex exec`, or equivalent one-shot reasoning paths.
 - Preserve policy-driven rigour and cartography (ADR-013). Cartography remains first-class, with the required floor declared by repo policy.
 - Single source of truth. Every concept has one authoritative home and one bounded scope. Routing and run profiles live only in `.woof/policy.toml`; the executable unit has one schema; the dispatch registry owns harness/model/effort vocabulary. Never declare a concept in two files, and never ship a back-compat alias without its deletion in the same change.

@@ -51,6 +51,8 @@ work_units:
       - Pre-decomposed work_units validate and skip decomposition.
       - Intake records run metadata without reverse-generating a missing epic.
       - Decomposition produces work_units through the existing breakdown playbook and brainstorm enrichment, not a second decomposer; the auto-decompose step this unit builds replaces the manual decompose earlier waves relied on.
+      - Pre-decomposed intake establishes the work-unit-set aggregate context and derives qualified references from it without fabricating an epic; epic-backed intake uses project_ref plus epic_id.
+      - Decomposition emits work_units in topological dependency order so the runtime aggregate validates without reordering.
   - id: dispatch-swap
     title: Replace headless dispatch with the tmux harness
     kind: build
@@ -73,6 +75,8 @@ work_units:
       - One canonical work-unit schema validates id, title, kind, state, and the optional contract-trace fields; the plan/runtime artefact and the backlog artefact share it, with no status-versus-state dual lifecycle.
       - The execution kernel exposes a work-unit entity and a work-unit aggregate boundary; aggregate validation owns unique local IDs, dependency closure, acyclicity, and topological order.
       - Cross-aggregate references use structured context plus the local work-unit id, rather than a second globally encoded id field; UUIDs are reserved for technical run, attempt, review, and audit records.
+      - The aggregate context is epic-backed (project_ref plus epic_id) or pre-decomposed (a stable work-unit-set identity); there is no required synthetic epic_id placeholder for pre-decomposed runs.
+      - Review-cache, instability, and lineage joins key consistently on the qualified work-unit reference (stable across runs of the same set); the per-run UUID identifies the execution, not the unit.
       - Runtime gates, checks, dispositions, and events key on work-unit id; no event carries both story_id and work_unit_id.
       - Deterministic checks and gate types are named around work units rather than numbered Stage-5 story checks, and the gate writer can emit the work-unit gate.
       - Producer and reviewer playbooks and Woof's self-cartography use work-unit terminology; no story.md playbook remains.
@@ -110,7 +114,7 @@ work_units:
     summary: Bring dependency draining, profile A/B delivery, usage telemetry, review cache, and serial merge coordination into Woof.
     deps: [schema-unification, policy-model, warm-session-seam]
     acceptance:
-      - Work units run in dependency order with blocked/downstream reporting.
+      - Work units run in dependency order with blocked/downstream reporting, consuming the aggregate's validated topological order rather than re-deriving it; cross-aggregate sequencing is out of the aggregate's scope.
       - Profile A publishes ready pull requests and serially merges the ready queue as deploy-aware transactions.
       - Profile A waits for mergeability/check recompute after main moves, spaces deploy-triggering merges until the configured terminal deploy checks settle, and treats proved Terraform state-lock contention as bounded-retryable rather than terminal.
       - Partial-merge reconciliation records already-merged units before halting on any later terminal failure.
@@ -148,6 +152,7 @@ work_units:
     deps: [schema-unification, cartography-continuity]
     acceptance:
       - Audit findings are machine-readable and cite resolvable evidence.
+      - Findings reference work units by qualified reference (aggregate context plus local id) so evidence resolves across aggregates.
       - Contract-trace checks no-op when trace fields are absent.
       - Cartography-dependent checks run only when policy requires the cartography floor.
   - id: eval-instrumentation
@@ -158,7 +163,7 @@ work_units:
     summary: Capture per-node and per-attempt evidence for prompt cost, loaded artefacts, usage, retries, checks, and review instability.
     deps: [dispatch-swap, run-lineage-immutable-attempts]
     acceptance:
-      - Eval manifests attribute cost and loaded artefacts by node and work unit.
+      - Eval manifests attribute cost and loaded artefacts by node and qualified work-unit reference, with UUID-keyed run/attempt records, consistent with the lineage identity model.
       - Prompt/output bodies are retained according to audit policy.
       - The first optimisation target is chosen from measured data.
   - id: first-flight
@@ -251,3 +256,5 @@ Cartography is retained as a first-class capability. The policy floor decides wh
 Pre-authored `work_units[]` are already decomposed input. They skip epic decomposition but run through the same execution kernel.
 
 Single source of truth is a principal rule (architecture section 1). Each concept has one authoritative home and one bounded scope: routing and run profiles in `policy.toml`, one `work_units[]` schema for the executable unit, harness/model/effort vocabulary in the dispatch registry. `execution-shape-unification` and `config-routing-ssot` bring the runtime up to this rule; everything downstream must hold it.
+
+Work-unit identity is local to its aggregate. Cross-aggregate references are structured (aggregate context plus local id), never an encoded string; UUIDs identify technical run, attempt, review, and audit records. The work-unit aggregate owns identity, dependency closure, acyclicity, and topological order, and deps are intra-aggregate. Every consumer of the canonical schema -- pm-structure, vault overlays, and vf-drain sub-backlog generators -- must hold these invariants and emit topologically-ordered units.

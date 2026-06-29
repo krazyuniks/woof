@@ -2,7 +2,7 @@
 schema_version: 1
 type: backlog
 project_ref: woof
-status: active
+status: complete
 executor:
   name: vault_foreman
   contract_version: 1
@@ -44,7 +44,7 @@ work_units:
   - id: run-lineage-immutable-attempts
     title: Add run lineage and immutable attempt artefacts
     kind: build
-    state: todo
+    state: done
     priority: high
     summary: Thread run identity through events and preserve every attempt for replay, review-cache reuse, and instability detection.
     deps: [schema-unification, policy-model]

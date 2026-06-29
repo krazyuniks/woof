@@ -1152,6 +1152,12 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
     assert meta["worker_session_id"] == "worker-session-claude"
     assert meta["worker_session_thread_id"] == "thread-1"
     assert meta["tmux_transport"] == "tmux:claude"
+    assert meta["run_id"].startswith("run-7-")
+    assert meta["work_unit_id"] == "S2"
+    assert meta["attempt_id"]
+    assert meta["prompt_hash"]
+    assert meta["prompt_version"] == f"sha256:{meta['prompt_hash']}"
+    assert meta["attempt_path"].startswith(".woof/epics/E7/attempts/")
 
     # dispatch.jsonl events validate against the shipped schema
     jsonl = woof_project / ".woof" / "epics" / "E7" / "dispatch.jsonl"
@@ -1169,6 +1175,9 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
     assert events[0]["artefacts_loaded"] == [".woof/epics/E7/EPIC.md"]
     assert events[0]["prompt_bytes"] == len(b"run the story\n")
     assert events[0]["artefact_bytes"] == len(b"contract\n")
+    assert events[0]["run_id"] == meta["run_id"]
+    assert events[0]["work_unit_id"] == "S2"
+    assert events[0]["attempt_id"] == meta["attempt_id"]
     assert events[1]["artefacts_loaded"] == [".woof/epics/E7/EPIC.md"]
     assert events[1]["prompt_transport"] == "tmux_harness_prompt_file"
     assert "runtime_policy" not in events[1]
@@ -1183,6 +1192,154 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
     assert events[1]["evidence"] == "S1"
     assert events[1]["worker_session_id"] == "worker-session-claude"
     assert events[1]["tmux_transport"] == "tmux:claude"
+    assert events[1]["run_id"] == meta["run_id"]
+    assert events[1]["work_unit_id"] == "S2"
+    assert events[1]["attempt_id"] == meta["attempt_id"]
+
+    attempt_path = woof_project / meta["attempt_path"]
+    attempt = json.loads(attempt_path.read_text())
+    assert attempt["attempt_kind"] == "dispatch"
+    assert attempt["run_id"] == meta["run_id"]
+    assert attempt["work_unit_id"] == "S2"
+
+    validate = subprocess.run([*WOOF_VALIDATE, str(jsonl)], capture_output=True, text=True)
+    assert validate.returncode == 0, validate.stdout + validate.stderr
+
+
+def test_repeated_review_uses_cached_verdict(git_woof_project: Path, tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    response = _structured_payload(verdict="pass", evidence="first pass")
+    stdin_path = tmp_path / "claude.stdin"
+    _make_stub(bin_dir, "claude", response, stdin_path=stdin_path)
+    (git_woof_project / "feature.py").write_text("print('hello')\n")
+    subprocess.run(
+        ["git", "add", "feature.py"], cwd=git_woof_project, check=True, capture_output=True
+    )
+    env = {
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "HOME": os.environ.get("HOME", str(tmp_path)),
+    }
+
+    proc1 = subprocess.run(
+        [
+            str(WOOF_BIN),
+            "dispatch",
+            "--role",
+            "reviewer",
+            "--epic",
+            "35",
+            "--story",
+            "S1",
+        ],
+        capture_output=True,
+        text=True,
+        input="review staged diff\n",
+        cwd=git_woof_project,
+        env=env,
+    )
+    assert proc1.returncode == 0, proc1.stderr
+
+    for stub in bin_dir.iterdir():
+        stub.unlink()
+    proc2 = subprocess.run(
+        [
+            str(WOOF_BIN),
+            "dispatch",
+            "--role",
+            "reviewer",
+            "--epic",
+            "35",
+            "--story",
+            "S1",
+        ],
+        capture_output=True,
+        text=True,
+        input="review staged diff\n",
+        cwd=git_woof_project,
+        env=env,
+    )
+    assert proc2.returncode == 0, proc2.stderr
+
+    jsonl = git_woof_project / ".woof" / "epics" / "E35" / "dispatch.jsonl"
+    events = [json.loads(ln) for ln in jsonl.read_text().splitlines() if ln.strip()]
+    cache_hit = next(e for e in events if e["event"] == "review_cache_hit")
+    returned = next(e for e in events if e["event"] == "subprocess_returned")
+    assert cache_hit["review_cache_hit"] is True
+    assert cache_hit["review_cache_key"] == returned["review_cache_key"]
+    assert cache_hit["diff_hash"] == returned["diff_hash"]
+    assert cache_hit["prompt_version"] == returned["prompt_version"]
+    assert cache_hit["work_unit_id"] == "S1"
+    assert cache_hit["verdict"] == "pass"
+
+    validate = subprocess.run([*WOOF_VALIDATE, str(jsonl)], capture_output=True, text=True)
+    assert validate.returncode == 0, validate.stdout + validate.stderr
+
+
+def test_conflicting_review_verdict_records_instability(
+    git_woof_project: Path, tmp_path: Path
+) -> None:
+    from woof.cli.dispatcher import _review_key, _sha256_text, _staged_diff_hash
+
+    prompt = "review staged diff\n"
+    (git_woof_project / "feature.py").write_text("print('hello')\n")
+    subprocess.run(
+        ["git", "add", "feature.py"], cwd=git_woof_project, check=True, capture_output=True
+    )
+    diff_hash = _staged_diff_hash(git_woof_project)
+    assert diff_hash is not None
+    prompt_hash = _sha256_text(prompt)
+    prompt_version = f"sha256:{prompt_hash}"
+    review_cache_key = _review_key(
+        work_unit_id="S1", diff_hash=diff_hash, prompt_version=prompt_version
+    )
+    attempts_dir = git_woof_project / ".woof" / "epics" / "E36" / "reviews" / "attempts"
+    attempts_dir.mkdir(parents=True)
+    (attempts_dir / "prior.json").write_text(
+        json.dumps(
+            {
+                "review_cache_key": review_cache_key,
+                "attempt_id": "prior",
+                "work_unit_id": "S1",
+                "verdict": "pass",
+            }
+        )
+    )
+
+    bin_dir = tmp_path / "bin"
+    response = _structured_payload(verdict="blocker", evidence="conflict")
+    _make_stub(bin_dir, "claude", response)
+    env = {
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "HOME": os.environ.get("HOME", str(tmp_path)),
+    }
+
+    proc = subprocess.run(
+        [
+            str(WOOF_BIN),
+            "dispatch",
+            "--role",
+            "reviewer",
+            "--epic",
+            "36",
+            "--story",
+            "S1",
+        ],
+        capture_output=True,
+        text=True,
+        input=prompt,
+        cwd=git_woof_project,
+        env=env,
+    )
+    assert proc.returncode == 0, proc.stderr
+
+    jsonl = git_woof_project / ".woof" / "epics" / "E36" / "dispatch.jsonl"
+    events = [json.loads(ln) for ln in jsonl.read_text().splitlines() if ln.strip()]
+    returned = next(e for e in events if e["event"] == "subprocess_returned")
+    instability_path = git_woof_project / returned["review_instability_path"]
+    record = json.loads(instability_path.read_text().splitlines()[0])
+    assert record["review_cache_key"] == review_cache_key
+    assert record["prior_verdicts"] == ["pass"]
+    assert record["new_verdict"] == "blocker"
 
     validate = subprocess.run([*WOOF_VALIDATE, str(jsonl)], capture_output=True, text=True)
     assert validate.returncode == 0, validate.stdout + validate.stderr

@@ -39,6 +39,7 @@
         "subprocess_spawned",
         "subprocess_returned",
         "subprocess_killed",
+        "review_cache_hit",
         "executor_result_recorded",
         "check_run",
         "story_committed",
@@ -64,9 +65,24 @@
       "minimum": 1,
       "description": "Epic this event belongs to (tracker-assigned epic identifier)."
     },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Durable run identity carried across dispatch events and immutable attempt artefacts."
+    },
     "story_id": {
       "type": "string",
       "pattern": "^S[1-9]\\d*$"
+    },
+    "work_unit_id": {
+      "type": "string",
+      "pattern": "^S[1-9]\\d*$",
+      "description": "Work-unit identifier. During the story-to-work-unit migration this mirrors story_id for Stage-5 dispatches."
+    },
+    "attempt_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Immutable dispatch or review-cache reuse attempt identifier."
     },
     "role": {
       "type": "string",
@@ -309,6 +325,35 @@
       "type": "integer",
       "minimum": 0,
       "description": "UTF-8 byte count of the prompt sent to the dispatch adapter."
+    },
+    "prompt_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "SHA-256 of the prompt sent to the dispatch adapter."
+    },
+    "prompt_version": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Prompt version key used for review cache reuse. The default is sha256:<prompt_hash>."
+    },
+    "diff_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "SHA-256 of the staged binary diff that the reviewer was asked to inspect."
+    },
+    "review_cache_key": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "Stable key over work_unit_id, diff_hash, and prompt_version for reviewer verdict reuse."
+    },
+    "review_cache_hit": {
+      "type": "boolean",
+      "description": "True when the reviewer verdict and critique artefact were reused from the review cache."
+    },
+    "review_instability_path": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Repo-relative path to the review-instability record for conflicting verdicts over the same review inputs."
     },
     "artefact_bytes": {
       "type": "integer",

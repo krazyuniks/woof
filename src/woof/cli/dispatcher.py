@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import tomllib
+import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -25,7 +26,7 @@ from typing import Any
 
 from woof.cli.harness_registry import build_launch_argv, canonical_harness, get_profile
 from woof.cli.policy import load_policy, policy_path
-from woof.graph.git import current_branch, head_sha
+from woof.graph.git import current_branch, git_env, head_sha
 from woof.lib.audit_config import load_audit_config
 from woof.lib.error_signature import normalise as _normalise_error_sig
 from woof.lib.rate_limit import classify as _classify_rate_limit
@@ -66,6 +67,7 @@ POLICY_ROLE_SLOTS = {
     "reviewer": "reviewer",
     "critiquer": "reviewer",
 }
+REVIEW_PROMPT_VERSION_PREFIX = "sha256:"
 
 
 @dataclass(frozen=True)
@@ -133,6 +135,18 @@ def append_jsonl(path: Path, event: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(event, separators=(",", ":")) + "\n")
+
+
+def _sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _relpath(repo_root: Path, path: Path) -> str:
+    return path.relative_to(repo_root).as_posix()
 
 
 def parse_claude_output(stdout: str) -> tuple[dict, str | None]:
@@ -978,6 +992,213 @@ def _copy_result_fields(event: dict[str, Any], result: dict[str, Any]) -> None:
         event["result_artefacts"] = [str(item) for item in artefacts]
 
 
+def ensure_run_metadata(epic_dir: Path, epic_id: int, created_at: datetime) -> str:
+    """Return the durable run id for this epic, creating run metadata once."""
+
+    path = epic_dir / "run.json"
+    if path.is_file():
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            payload = {}
+        run_id = payload.get("run_id") if isinstance(payload, dict) else None
+        if isinstance(run_id, str) and run_id:
+            return run_id
+
+    run_id = f"run-{epic_id}-{uuid.uuid4().hex[:12]}"
+    path.write_text(
+        json.dumps(
+            {"run_id": run_id, "epic_id": epic_id, "created_at": iso_utc(created_at)},
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return run_id
+
+
+def _attempt_id(run_id: str, role: str, work_unit_id: str | None, started_at: datetime) -> str:
+    parts = [
+        _safe_audit_component(run_id, fallback="run"),
+        _safe_audit_component(work_unit_id or "epic", fallback="unit"),
+        _safe_audit_component(role, fallback="role"),
+        started_at.strftime("%Y%m%dT%H%M%S%fZ"),
+        f"p{os.getpid()}",
+    ]
+    return "-".join(parts)
+
+
+def _staged_diff_hash(repo_root: Path) -> str | None:
+    try:
+        proc = subprocess.run(
+            ["git", "diff", "--cached", "--binary"],
+            cwd=repo_root,
+            env=git_env(),
+            capture_output=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    if proc.returncode != 0:
+        return None
+    return _sha256_bytes(proc.stdout)
+
+
+def _review_key(
+    *,
+    work_unit_id: str,
+    diff_hash: str,
+    prompt_version: str,
+) -> str:
+    payload = {
+        "diff_hash": diff_hash,
+        "prompt_version": prompt_version,
+        "work_unit_id": work_unit_id,
+    }
+    return _sha256_text(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+
+
+def _review_cache_path(epic_dir: Path, review_cache_key: str) -> Path:
+    return epic_dir / "reviews" / "cache" / f"{review_cache_key}.json"
+
+
+def _review_attempts_dir(epic_dir: Path) -> Path:
+    return epic_dir / "reviews" / "attempts"
+
+
+def _attempts_dir(epic_dir: Path) -> Path:
+    return epic_dir / "attempts"
+
+
+def _load_review_cache(epic_dir: Path, review_cache_key: str) -> dict[str, Any] | None:
+    path = _review_cache_path(epic_dir, review_cache_key)
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _write_json_file(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _write_attempt_file(epic_dir: Path, attempt_id: str, payload: dict[str, Any]) -> Path:
+    path = _attempts_dir(epic_dir) / f"{attempt_id}.json"
+    _write_json_file(path, payload)
+    return path
+
+
+def _write_review_attempt_file(epic_dir: Path, attempt_id: str, payload: dict[str, Any]) -> Path:
+    path = _review_attempts_dir(epic_dir) / f"{attempt_id}.json"
+    _write_json_file(path, payload)
+    return path
+
+
+def _prior_review_verdicts(epic_dir: Path, review_cache_key: str) -> set[str]:
+    verdicts: set[str] = set()
+    attempts_dir = _review_attempts_dir(epic_dir)
+    if not attempts_dir.is_dir():
+        return verdicts
+    for path in sorted(attempts_dir.glob("*.json")):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        if payload.get("review_cache_key") != review_cache_key:
+            continue
+        verdict = payload.get("verdict")
+        if isinstance(verdict, str) and verdict:
+            verdicts.add(verdict)
+    return verdicts
+
+
+def _record_review_instability(
+    epic_dir: Path,
+    *,
+    repo_root: Path,
+    run_id: str,
+    attempt_id: str,
+    work_unit_id: str,
+    review_cache_key: str,
+    diff_hash: str,
+    prompt_version: str,
+    prior_verdicts: set[str],
+    new_verdict: str,
+) -> str:
+    path = epic_dir / "reviews" / "instability" / f"{review_cache_key}.jsonl"
+    event = {
+        "run_id": run_id,
+        "attempt_id": attempt_id,
+        "work_unit_id": work_unit_id,
+        "review_cache_key": review_cache_key,
+        "diff_hash": diff_hash,
+        "prompt_version": prompt_version,
+        "prior_verdicts": sorted(prior_verdicts),
+        "new_verdict": new_verdict,
+        "at": iso_utc(datetime.now(UTC)),
+    }
+    append_jsonl(path, event)
+    return _relpath(repo_root, path)
+
+
+def _write_review_cache_entry(
+    epic_dir: Path,
+    *,
+    repo_root: Path,
+    review_cache_key: str,
+    run_id: str,
+    attempt_id: str,
+    work_unit_id: str,
+    diff_hash: str,
+    prompt_hash: str,
+    prompt_version: str,
+    verdict: str,
+    answer: str,
+    stderr: str,
+    structured: dict[str, Any],
+    exit_code: int,
+    exit_type: str,
+) -> None:
+    critique_path = epic_dir / "critique" / f"story-{work_unit_id}.md"
+    critique_text = critique_path.read_text(encoding="utf-8") if critique_path.is_file() else None
+    payload: dict[str, Any] = {
+        "review_cache_key": review_cache_key,
+        "run_id": run_id,
+        "source_attempt_id": attempt_id,
+        "work_unit_id": work_unit_id,
+        "diff_hash": diff_hash,
+        "prompt_hash": prompt_hash,
+        "prompt_version": prompt_version,
+        "verdict": verdict,
+        "answer": answer,
+        "stderr": stderr,
+        "structured_result": structured,
+        "exit_code": exit_code,
+        "exit_type": exit_type,
+        "created_at": iso_utc(datetime.now(UTC)),
+    }
+    if critique_text is not None:
+        payload["critique_path"] = _relpath(repo_root, critique_path)
+        payload["critique_text"] = critique_text
+    _write_json_file(_review_cache_path(epic_dir, review_cache_key), payload)
+
+
+def _restore_cached_critique(repo_root: Path, cached: dict[str, Any]) -> None:
+    critique_path = cached.get("critique_path")
+    critique_text = cached.get("critique_text")
+    if isinstance(critique_path, str) and isinstance(critique_text, str):
+        path = repo_root / critique_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(critique_text, encoding="utf-8")
+
+
 def cmd_dispatch(args: argparse.Namespace) -> int:
     repo_root = find_woof_root(Path.cwd().resolve())
     agents_path = repo_root / ".woof" / "agents.toml"
@@ -1057,6 +1278,19 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         return 2
 
     prompt_bytes = len(prompt.encode("utf-8"))
+    prompt_hash = _sha256_text(prompt)
+    prompt_version = f"{REVIEW_PROMPT_VERSION_PREFIX}{prompt_hash}"
+    diff_hash = _staged_diff_hash(repo_root)
+    work_unit_id = args.story
+    review_cache_key = (
+        _review_key(
+            work_unit_id=work_unit_id,
+            diff_hash=diff_hash,
+            prompt_version=prompt_version,
+        )
+        if args.role == "reviewer" and work_unit_id and diff_hash is not None
+        else None
+    )
     prompt_transport = "tmux_harness_prompt_file"
 
     if args.dry_run:
@@ -1082,6 +1316,11 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
             "artefacts_loaded": artefacts_loaded,
             "prompt_bytes": prompt_bytes,
             "artefact_bytes": artefact_bytes,
+            "prompt_hash": prompt_hash,
+            "prompt_version": prompt_version,
+            "diff_hash": diff_hash,
+            "work_unit_id": work_unit_id,
+            "review_cache_key": review_cache_key,
         }
         print(json.dumps(payload))
         return 0
@@ -1090,6 +1329,8 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     audit_dir = epic_dir / "audit"
     audit_dir.mkdir(parents=True, exist_ok=True)
     started_at = datetime.now(UTC)
+    run_id = ensure_run_metadata(epic_dir, args.epic, started_at)
+    attempt_id = _attempt_id(run_id, args.role, work_unit_id, started_at)
     base = reserve_audit_base(audit_dir, route.adapter, args.role, started_at, prompt)
     output_file = base.with_suffix(".output")
     stderr_file = base.with_suffix(".stderr")
@@ -1101,6 +1342,152 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
 
     head_before = head_sha(repo_root)
     branch_before = current_branch(repo_root)
+    lineage_fields: dict[str, Any] = {
+        "run_id": run_id,
+        "attempt_id": attempt_id,
+        "prompt_hash": prompt_hash,
+        "prompt_version": prompt_version,
+    }
+    if work_unit_id:
+        lineage_fields["work_unit_id"] = work_unit_id
+    if diff_hash is not None:
+        lineage_fields["diff_hash"] = diff_hash
+    if review_cache_key is not None:
+        lineage_fields["review_cache_key"] = review_cache_key
+
+    if review_cache_key is not None:
+        assert work_unit_id is not None
+        assert diff_hash is not None
+        cached = _load_review_cache(epic_dir, review_cache_key)
+        if cached is not None:
+            ended_at = datetime.now(UTC)
+            answer = str(cached.get("answer") or "")
+            stderr = str(cached.get("stderr") or "")
+            structured = cached.get("structured_result")
+            structured = structured if isinstance(structured, dict) else _structured_result(answer)
+            exit_code = int(cached.get("exit_code") or 0)
+            exit_type = str(cached.get("exit_type") or ("clean" if exit_code == 0 else "nonzero"))
+            _restore_cached_critique(repo_root, cached)
+            output_file.write_text(answer, encoding="utf-8")
+            stderr_file.write_text(stderr, encoding="utf-8")
+            output_bytes = len(answer.encode("utf-8"))
+            stderr_bytes = len(stderr.encode("utf-8"))
+            duration_ms = int((ended_at - started_at).total_seconds() * 1000)
+            verdict = str(cached.get("verdict") or structured.get("verdict") or "").strip().lower()
+            prior_verdicts = _prior_review_verdicts(epic_dir, review_cache_key)
+            instability_path = None
+            if verdict and any(item != verdict for item in prior_verdicts):
+                instability_path = _record_review_instability(
+                    epic_dir,
+                    repo_root=repo_root,
+                    run_id=run_id,
+                    attempt_id=attempt_id,
+                    work_unit_id=work_unit_id,
+                    review_cache_key=review_cache_key,
+                    diff_hash=diff_hash,
+                    prompt_version=prompt_version,
+                    prior_verdicts=prior_verdicts,
+                    new_verdict=verdict,
+                )
+
+            cache_event: dict[str, Any] = {
+                "event": "review_cache_hit",
+                "at": iso_utc(ended_at),
+                "epic_id": args.epic,
+                "role": args.role,
+                "harness": route.adapter,
+                "adapter": route.adapter,
+                "pid": launcher_pid,
+                "exit_type": exit_type,
+                "exit_code": exit_code,
+                "duration_ms": duration_ms,
+                "output_bytes": output_bytes,
+                "stderr_bytes": stderr_bytes,
+                "artefacts_loaded": artefacts_loaded,
+                "prompt_bytes": prompt_bytes,
+                "artefact_bytes": artefact_bytes,
+                "review_cache_hit": True,
+                **lineage_fields,
+            }
+            if args.story:
+                cache_event["story_id"] = args.story
+            if route.route_key:
+                cache_event["route_key"] = route.route_key
+            if route.config.get("model"):
+                cache_event["model"] = route.config["model"]
+            if effort:
+                cache_event["effort"] = effort
+            _copy_result_fields(cache_event, structured)
+            if instability_path:
+                cache_event["review_instability_path"] = instability_path
+            append_jsonl(dispatch_jsonl, cache_event)
+
+            audit_paths = {
+                "prompt": _relpath(repo_root, base.with_suffix(".prompt")),
+                "output": _relpath(repo_root, output_file),
+                "stderr": _relpath(repo_root, stderr_file),
+                "meta": _relpath(repo_root, meta_file),
+            }
+            attempt_payload = {
+                "attempt_kind": "review_cache_hit",
+                "audit_paths": audit_paths,
+                "cached_from_attempt_id": cached.get("source_attempt_id"),
+                "ended_at": iso_utc(ended_at),
+                "epic_id": args.epic,
+                "exit_code": exit_code,
+                "exit_type": exit_type,
+                "role": args.role,
+                "started_at": iso_utc(started_at),
+                "verdict": verdict,
+                **lineage_fields,
+            }
+            if instability_path:
+                attempt_payload["review_instability_path"] = instability_path
+            attempt_path = _write_attempt_file(epic_dir, attempt_id, attempt_payload)
+
+            meta = {
+                "harness": route.adapter,
+                "adapter": route.adapter,
+                "role": args.role,
+                "config_role": route.config_role,
+                "model_profile": route.model_profile,
+                "profile_role": route.profile_role,
+                "route_key": route.route_key,
+                "epic_id": args.epic,
+                "story_id": args.story,
+                "model": route.config.get("model"),
+                "effort": effort,
+                "mcp": mcp_names,
+                "flags": route.config.get("flags") or [],
+                "argv": event_argv,
+                "prompt_transport": prompt_transport,
+                "runtime_policy": trusted_runtime_policy(),
+                "artefacts_loaded": artefacts_loaded,
+                "pid": launcher_pid,
+                "started_at": iso_utc(started_at),
+                "ended_at": iso_utc(ended_at),
+                "duration_ms": duration_ms,
+                "exit_type": exit_type,
+                "exit_code": exit_code,
+                "timed_out": False,
+                "terminal_seen": True,
+                "timeouts": timeouts.as_payload(),
+                "prompt_bytes": prompt_bytes,
+                "artefact_bytes": artefact_bytes,
+                "output_bytes": output_bytes,
+                "stderr_bytes": stderr_bytes,
+                "tokens": _structured_usage(structured),
+                "structured_result": structured,
+                "review_cache_hit": True,
+                "attempt_path": _relpath(repo_root, attempt_path),
+                **lineage_fields,
+            }
+            if instability_path:
+                meta["review_instability_path"] = instability_path
+            _copy_result_fields(meta, structured)
+            meta_file.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+            return exit_code
+
     spawned_event: dict[str, Any] = {
         "event": "subprocess_spawned",
         "at": iso_utc(started_at),
@@ -1117,6 +1504,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         "artefacts_loaded": artefacts_loaded,
         "prompt_bytes": prompt_bytes,
         "artefact_bytes": artefact_bytes,
+        **lineage_fields,
     }
     if route.config_role != args.role:
         spawned_event["config_role"] = route.config_role
@@ -1197,6 +1585,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         "artefact_bytes": artefact_bytes,
         "output_bytes": output_bytes,
         "stderr_bytes": stderr_bytes,
+        **lineage_fields,
     }
     if route.config_role != args.role:
         returned["config_role"] = route.config_role
@@ -1230,6 +1619,26 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         returned["branch_before"] = branch_before
     if branch_after is not None:
         returned["branch_after"] = branch_after
+
+    verdict = str(structured.get("verdict") or "").strip().lower()
+    instability_path = None
+    if review_cache_key is not None and work_unit_id is not None and diff_hash is not None:
+        prior_verdicts = _prior_review_verdicts(epic_dir, review_cache_key)
+        if verdict and any(item != verdict for item in prior_verdicts):
+            instability_path = _record_review_instability(
+                epic_dir,
+                repo_root=repo_root,
+                run_id=run_id,
+                attempt_id=attempt_id,
+                work_unit_id=work_unit_id,
+                review_cache_key=review_cache_key,
+                diff_hash=diff_hash,
+                prompt_version=prompt_version,
+                prior_verdicts=prior_verdicts,
+                new_verdict=verdict,
+            )
+            returned["review_instability_path"] = instability_path
+
     append_jsonl(dispatch_jsonl, returned)
 
     meta = {
@@ -1266,9 +1675,58 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         "tokens": tokens,
         "structured_result": structured,
         "tmux_harness": tmux_meta,
+        **lineage_fields,
     }
+    if instability_path:
+        meta["review_instability_path"] = instability_path
     _copy_result_fields(meta, structured)
     meta.update(_result_session_metadata(structured, tmux_meta))
+
+    audit_paths = {
+        "prompt": _relpath(repo_root, base.with_suffix(".prompt")),
+        "output": _relpath(repo_root, output_file),
+        "stderr": _relpath(repo_root, stderr_file),
+        "meta": _relpath(repo_root, meta_file),
+    }
+    attempt_payload = {
+        "attempt_kind": "dispatch",
+        "audit_paths": audit_paths,
+        "ended_at": iso_utc(ended_at),
+        "epic_id": args.epic,
+        "exit_code": reported_exit_code,
+        "exit_type": exit_type,
+        "role": args.role,
+        "started_at": iso_utc(started_at),
+        "verdict": verdict,
+        **lineage_fields,
+    }
+    if instability_path:
+        attempt_payload["review_instability_path"] = instability_path
+    attempt_path = _write_attempt_file(epic_dir, attempt_id, attempt_payload)
+    meta["attempt_path"] = _relpath(repo_root, attempt_path)
+
+    if review_cache_key is not None and work_unit_id is not None and diff_hash is not None:
+        review_attempt_path = _write_review_attempt_file(epic_dir, attempt_id, attempt_payload)
+        meta["review_attempt_path"] = _relpath(repo_root, review_attempt_path)
+        if verdict:
+            _write_review_cache_entry(
+                epic_dir,
+                repo_root=repo_root,
+                review_cache_key=review_cache_key,
+                run_id=run_id,
+                attempt_id=attempt_id,
+                work_unit_id=work_unit_id,
+                diff_hash=diff_hash,
+                prompt_hash=prompt_hash,
+                prompt_version=prompt_version,
+                verdict=verdict,
+                answer=answer,
+                stderr=stderr,
+                structured=structured,
+                exit_code=reported_exit_code,
+                exit_type=exit_type,
+            )
+
     meta_file.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
 
     return reported_exit_code

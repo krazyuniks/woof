@@ -191,6 +191,8 @@ Woof records:
 
 Per-attempt artefacts are immutable. A repeated review over the same diff hash and prompt version reuses the prior verdict. A conflicting verdict over the same inputs is recorded as review instability.
 
+Dispatch events and attempt artefacts carry `run_id`, `work_unit_id`, and `attempt_id`. Review attempts are keyed by `work_unit_id`, staged `diff_hash`, and `prompt_version`; cache entries and instability records live under the epic's `.woof/epics/E<N>/reviews/` directory.
+
 ## 10. Gates and Checks
 
 The deterministic gate floor runs before LLM review. Policy and epic content decide which checks are active:

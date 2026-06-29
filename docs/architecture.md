@@ -63,6 +63,21 @@ Pre-decomposed intake does not infer a missing epic, observable outcomes, contra
 
 `work_units[]` are the single executable shape.
 
+The work unit is the execution entity. Its `id` is stable and unique inside the
+work-unit aggregate, not globally unique by itself. A work-unit aggregate owns
+the ordered collection and enforces executable invariants: no duplicate work-unit
+IDs, dependencies refer to units in the same aggregate, no self-dependencies, no
+dependency cycles, and dependency order is topological.
+
+Cross-aggregate identity is a structured reference, not an encoded string. Where
+Woof needs a globally meaningful reference, it carries the aggregate context and
+the local entity ID, for example `project_ref`, `epic_id`, and `work_unit_id` for
+an epic-backed plan. Pre-decomposed intake uses its run/work-unit-set context in
+the same way until an upstream tracker epic exists. Display strings may be
+derived from those fields, but the fields remain the authority. UUIDs are for
+technical records such as runs, attempts, reviews, and audit events, not for
+authored work-unit IDs.
+
 Required fields:
 
 - `id`

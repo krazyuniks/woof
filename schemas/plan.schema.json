@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://woof.dev/schemas/plan.schema.json",
   "title": "woof plan",
-  "description": "Stage 3 Breakdown output: ordered work units implementing an epic. Validates structural shape only; cross-artefact invariants (satisfies[] subset of EPIC.md.observable_outcomes[].id, deps[] subset of work_units[].id, every CD implemented by exactly one work unit, duplicate pathspec discipline, topological order, and status coherence) are enforced before the plan gate and again by Stage-5 Check 5.",
+  "description": "Stage 3 Breakdown output: ordered work units implementing an epic. Validates structural shape only. The runtime Plan aggregate enforces work-unit identity and dependency invariants; cross-artefact invariants (satisfies[] subset of EPIC.md.observable_outcomes[].id, every CD implemented by exactly one work unit, duplicate pathspec discipline, and status coherence) are enforced before the plan gate and again by Stage-5 Check 5.",
   "type": "object",
   "additionalProperties": false,
   "required": ["epic_id", "goal", "work_units"],

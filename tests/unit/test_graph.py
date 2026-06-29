@@ -2770,7 +2770,7 @@ def test_successor_selection_respects_dependency_closure(tmp_path: Path) -> None
     assert next_node(tmp_path, 12) == (NodeType.EXECUTOR_DISPATCH, "S2")
 
 
-def test_run_graph_opens_recoverable_gate_when_dependencies_are_unsatisfied(
+def test_run_graph_opens_recoverable_gate_when_plan_dependencies_are_malformed(
     tmp_path: Path,
 ) -> None:
     directory = _write_plan(tmp_path, 13)
@@ -2780,16 +2780,10 @@ def test_run_graph_opens_recoverable_gate_when_dependencies_are_unsatisfied(
 
     outputs = run_graph(tmp_path, 13)
 
-    assert outputs == [
-        NodeOutput(
-            node_type=NodeType.PLAN_GATE_OPEN,
-            status=NodeStatus.GATE_OPENED,
-            epic_id=13,
-            gate_path=".woof/epics/E13/gate.md",
-            triggered_by=["incomplete_stage_state"],
-            message="E13 has pending work units, but no work unit has satisfied dependencies",
-        )
-    ]
+    assert outputs[0].node_type == NodeType.PLAN_GATE_OPEN
+    assert outputs[0].status == NodeStatus.GATE_OPENED
+    assert outputs[0].triggered_by == ["incomplete_stage_state"]
+    assert "required Stage-5 artefact is malformed" in outputs[0].message
     gate_fm = _read_gate_fm(directory / "gate.md")
     assert gate_fm["type"] == "plan_gate"
     assert gate_fm["story_id"] is None

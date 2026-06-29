@@ -71,6 +71,8 @@ work_units:
     deps: [schema-unification]
     acceptance:
       - One canonical work-unit schema validates id, title, kind, state, and the optional contract-trace fields; the plan/runtime artefact and the backlog artefact share it, with no status-versus-state dual lifecycle.
+      - The execution kernel exposes a work-unit entity and a work-unit aggregate boundary; aggregate validation owns unique local IDs, dependency closure, acyclicity, and topological order.
+      - Cross-aggregate references use structured context plus the local work-unit id, rather than a second globally encoded id field; UUIDs are reserved for technical run, attempt, review, and audit records.
       - Runtime gates, checks, dispositions, and events key on work-unit id; no event carries both story_id and work_unit_id.
       - Deterministic checks and gate types are named around work units rather than numbered Stage-5 story checks, and the gate writer can emit the work-unit gate.
       - Producer and reviewer playbooks and Woof's self-cartography use work-unit terminology; no story.md playbook remains.

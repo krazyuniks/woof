@@ -16,9 +16,11 @@ Woof used stories as the execution unit. VaultForeman and pm-structure use `work
 
 The engine never reverse-generates an epic from work units. Epic data enriches decomposition and trace checks when present; work units remain the executable end entity.
 
+The work unit is the execution entity. The work-unit aggregate owns the ordered collection and enforces identity and dependency invariants. A work-unit `id` is unique inside that aggregate. Cross-aggregate references carry structured context plus the local ID, for example `project_ref`, `epic_id`, and `work_unit_id`; Woof does not encode that context into a single canonical ID string. UUIDs are reserved for technical execution records such as runs, attempts, review records, and audit events.
+
 ## Consequences
 
 - The story object retires.
 - Contract-trace fields are optional work-unit fields, not a separate story contract.
-- Schema, durable readers, checks, gates, and audit all converge on one shape.
+- Schema, durable readers, aggregate validation, checks, gates, and audit all converge on one shape.
 - pm-structure and vault overlays consume Woof's canonical schema through drift checks.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from enum import StrEnum
 from pathlib import Path
 from typing import Literal
@@ -71,6 +72,8 @@ GateDecision = Literal[
 
 
 class WorkUnitSpec(BaseModel):
+    """Work-unit entity inside the runtime plan aggregate."""
+
     id: str
     title: str
     summary: str = ""
@@ -110,6 +113,8 @@ class WorkUnitSpec(BaseModel):
 
 
 class Plan(BaseModel):
+    """Aggregate root for an ordered executable set of work units."""
+
     epic_id: int
     goal: str = ""
     work_units: list[WorkUnitSpec]
@@ -126,6 +131,71 @@ class Plan(BaseModel):
         if "work_units" not in payload and "stories" in payload:
             payload["work_units"] = payload.pop("stories")
         return payload
+
+    @model_validator(mode="after")
+    def _validate_work_unit_aggregate(self) -> Plan:
+        """Enforce identity and dependency invariants at the runtime boundary."""
+        work_unit_ids = [unit.id for unit in self.work_units]
+        duplicate_ids = [
+            item_id for item_id, count in sorted(Counter(work_unit_ids).items()) if count > 1
+        ]
+        if duplicate_ids:
+            duplicates = ", ".join(
+                f"work_unit id {item_id} appears {Counter(work_unit_ids)[item_id]} times"
+                for item_id in duplicate_ids
+            )
+            raise ValueError(duplicates)
+
+        work_unit_id_set = set(work_unit_ids)
+        deps_by_id: dict[str, list[str]] = {}
+        order = {unit_id: index for index, unit_id in enumerate(work_unit_ids)}
+        for unit in self.work_units:
+            duplicate_deps = [
+                item_id for item_id, count in sorted(Counter(unit.deps).items()) if count > 1
+            ]
+            if duplicate_deps:
+                raise ValueError(
+                    f"{unit.id}: deps contains duplicate work unit {', '.join(duplicate_deps)}"
+                )
+
+            deps_by_id[unit.id] = list(unit.deps)
+            for dep_id in unit.deps:
+                if dep_id == unit.id:
+                    raise ValueError(f"{unit.id}: deps references itself")
+                if dep_id not in work_unit_id_set:
+                    raise ValueError(f"{unit.id}: deps references unknown work unit {dep_id}")
+
+        _validate_acyclic_dependencies(deps_by_id)
+        for unit in self.work_units:
+            for dep_id in unit.deps:
+                if order[dep_id] > order[unit.id]:
+                    raise ValueError(
+                        f"{unit.id}: deps {dep_id} appears after dependent work unit; "
+                        "work_units must be topologically sorted"
+                    )
+        return self
+
+
+def _validate_acyclic_dependencies(deps_by_id: dict[str, list[str]]) -> None:
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(unit_id: str, stack: list[str]) -> None:
+        if unit_id in visited:
+            return
+        if unit_id in visiting:
+            start = stack.index(unit_id)
+            cycle = stack[start:]
+            raise ValueError(f"dependency cycle detected: {' -> '.join(cycle)}")
+
+        visiting.add(unit_id)
+        for dep_id in deps_by_id.get(unit_id, []):
+            visit(dep_id, [*stack, dep_id])
+        visiting.remove(unit_id)
+        visited.add(unit_id)
+
+    for unit_id in deps_by_id:
+        visit(unit_id, [unit_id])
 
 
 class NodeInput(BaseModel):

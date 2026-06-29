@@ -11,6 +11,9 @@ This glossary defines Woof's project-specific terms. Architecture, ADRs, and bac
 - **Brainstorm enrichment** - the interactive design step that can turn a sparse epic into an enriched epic before decomposition.
 - **Pre-decomposed intake** - a supplied `work_units[]` backlog that skips epic enrichment and decomposition because the executable work already exists.
 - **Work unit** - the executable unit Woof produces, checks, reviews, fixes, publishes, and merges. Avoid: story.
+- **Work unit ID** - the stable local identity of a work unit inside one work-unit aggregate. It is human-readable and unique within that aggregate.
+- **Qualified work-unit reference** - the structured reference Woof uses outside an aggregate boundary: aggregate context such as `project_ref` and `epic_id` or run/work-unit-set identity, plus the local `work_unit_id`.
+- **Work-unit aggregate** - the ordered executable collection that owns work-unit identity, dependency closure, dependency acyclicity, and dependency order.
 - **Contract-trace fields** - optional work-unit fields that link executable work to epic outcomes, contract decisions, path scope, and test expectations.
 - **Run metadata** - source, repo, policy, upstream issue links, run identity, and other non-executable facts needed for audit and orchestration.
 - **Producer** - the LLM worker that creates or fixes an artefact for a work unit.

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from enum import StrEnum
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -106,10 +106,34 @@ class WorkUnitSpec(BaseModel):
         return payload
 
 
+class EpicWorkUnitContext(BaseModel):
+    """Aggregate context for work units decomposed from an epic."""
+
+    kind: Literal["epic"]
+    project_ref: str
+    epic_id: int
+
+
+class WorkUnitSetContext(BaseModel):
+    """Aggregate context for pre-decomposed work-unit-set intake."""
+
+    kind: Literal["work_unit_set"]
+    project_ref: str
+    set_id: str
+    source_ref: str | None = None
+
+
+WorkUnitContext = Annotated[
+    EpicWorkUnitContext | WorkUnitSetContext,
+    Field(discriminator="kind"),
+]
+
+
 class Plan(BaseModel):
     """Aggregate root for an ordered executable set of work units."""
 
-    epic_id: int
+    epic_id: int | None = None
+    context: WorkUnitContext | None = None
     goal: str = ""
     work_units: list[WorkUnitSpec]
 
@@ -167,6 +191,16 @@ class Plan(BaseModel):
                         f"{unit.id}: deps {dep_id} appears after dependent work unit; "
                         "work_units must be topologically sorted"
                     )
+        if self.context is None and self.epic_id is None:
+            raise ValueError("plan requires either epic_id or context")
+        if isinstance(self.context, EpicWorkUnitContext):
+            if self.epic_id is not None and self.context.epic_id != self.epic_id:
+                raise ValueError(
+                    f"context epic_id {self.context.epic_id} does not match plan epic_id "
+                    f"{self.epic_id}"
+                )
+            if self.epic_id is None:
+                self.epic_id = self.context.epic_id
         return self
 
 

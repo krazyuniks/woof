@@ -33,6 +33,7 @@ from woof.graph.dispositions import (
 )
 from woof.graph.epilogue import DISPATCH_DENIAL_EPILOGUE
 from woof.graph.git import changed_paths, git, head_branch_drift_detected, staged_paths
+from woof.graph.intake import ensure_epic_plan_context, epic_work_unit_context
 from woof.graph.manifest import build_work_unit_manifest, verify_staged_manifest
 from woof.graph.pathspec import PathspecEvaluationError, filter_paths_matching
 from woof.graph.planning_contracts import (
@@ -926,6 +927,7 @@ def _breakdown_planning_payload(
     return {
         "node_type": NodeType.BREAKDOWN_PLANNING.value,
         "epic_id": epic_id,
+        "aggregate_context": epic_work_unit_context(repo_root, epic_id),
         "repo_root": str(repo_root),
         "epic_dir": _relpath(repo_root, directory),
         "inputs": inputs,
@@ -1970,6 +1972,19 @@ def breakdown_planning_node(inp: NodeInput) -> NodeOutput:
             inp,
             stage=3,
             message=f"Breakdown planning did not produce required file: {paths[0]}",
+            triggered_by=["schema_validation_failed"],
+            check_count=1,
+            failed_check_count=1,
+            paths=paths,
+        )
+
+    try:
+        ensure_epic_plan_context(inp.repo_root, inp.epic_id, plan_path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return _planning_halt(
+            inp,
+            stage=3,
+            message=str(exc),
             triggered_by=["schema_validation_failed"],
             check_count=1,
             failed_check_count=1,

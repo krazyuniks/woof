@@ -20,6 +20,7 @@ from woof.graph.dispositions import (
     work_unit_critique_path,
     work_unit_disposition_path,
 )
+from woof.graph.intake import ingest_predecomposed_work_units
 from woof.graph.lock import WorkflowLockError
 from woof.graph.runner import run_graph
 from woof.graph.state import (
@@ -128,7 +129,10 @@ def _update_work_unit(repo_root: Path, epic_id: int, work_unit_id: str, **update
             work_units.append(work_unit)
     if not found:
         raise StageStateError(f"work unit {work_unit_id} not found in E{epic_id} plan")
-    write_plan(repo_root, Plan(epic_id=plan.epic_id, goal=plan.goal, work_units=work_units))
+    write_plan(
+        repo_root,
+        Plan(epic_id=plan.epic_id, context=plan.context, goal=plan.goal, work_units=work_units),
+    )
 
 
 def _abandon_epic(repo_root: Path, epic_id: int, tracker: Tracker) -> list[str]:
@@ -630,8 +634,53 @@ def cmd_wf(args: argparse.Namespace) -> int:
             )
         return 0
 
+    if args.action == "intake":
+        if args.epic is not None:
+            sys.stderr.write("woof wf intake: --epic is not used for pre-decomposed intake\n")
+            return 2
+        if args.source is None:
+            sys.stderr.write("woof wf intake: --source is required\n")
+            return 2
+        try:
+            result = ingest_predecomposed_work_units(
+                repo_root,
+                args.source,
+                project_ref=args.project_ref,
+                set_id=args.set_id,
+                source_ref=args.source_ref,
+            )
+        except (OSError, ValueError, json.JSONDecodeError, yaml.YAMLError) as exc:
+            sys.stderr.write(f"woof wf intake: {exc}\n")
+            return 2
+        paths = [
+            _display_path(repo_root, result.plan_path),
+            _display_path(repo_root, result.plan_markdown_path),
+            _display_path(repo_root, result.metadata_path),
+        ]
+        if args.format == "json":
+            payload = {
+                "status": "intaked",
+                "context": result.context,
+                "work_unit_count": result.work_unit_count,
+                "directory": _display_path(repo_root, result.directory),
+                "paths": paths,
+            }
+            sys.stdout.write(json.dumps(payload, sort_keys=True) + "\n")
+        else:
+            sys.stdout.write(
+                "woof wf intake: intaked "
+                f"{result.work_unit_count} work unit(s) into "
+                f"{_display_path(repo_root, result.directory)}\n"
+            )
+            for path in paths:
+                sys.stdout.write(f"  wrote {path}\n")
+        return 0
+
     if args.epic is None:
-        sys.stderr.write('woof wf: --epic is required unless using `woof wf new "<spark>"`\n')
+        sys.stderr.write(
+            'woof wf: --epic is required unless using `woof wf new "<spark>"` '
+            "or `woof wf intake --source PATH`\n"
+        )
         return 2
 
     if not check_runtime():
@@ -716,14 +765,19 @@ def setup_wf_parser(sub: argparse._SubParsersAction) -> None:  # type: ignore[ty
     wf.add_argument(
         "action",
         nargs="?",
-        choices=["new", "reset"],
+        choices=["new", "reset", "intake"],
         help=(
             'optional action; `new "<spark>"` creates a tracker-backed epic, '
+            "`intake --source PATH` ingests pre-decomposed work_units, "
             "`reset --epic N` returns an epic to its spark (destructive)"
         ),
     )
     wf.add_argument("spark", nargs="?", help="spark text for `woof wf new`")
     wf.add_argument("--epic", type=int, help="epic id (tracker-assigned epic identifier)")
+    wf.add_argument("--source", type=Path, help="pre-decomposed work_units source for intake")
+    wf.add_argument("--project-ref", help="project_ref for pre-decomposed intake")
+    wf.add_argument("--set-id", help="stable set_id for pre-decomposed intake")
+    wf.add_argument("--source-ref", help="natural source reference for pre-decomposed intake")
     wf.add_argument("--once", action="store_true", help="run a single graph node and stop")
     wf.add_argument(
         "--yes",

@@ -8,6 +8,7 @@ advance; you never pick the stage.
 
 ```bash
 woof wf new "<spark>"     # new epic: opens the tracker issue, writes spark.md, sets .current-epic
+woof wf intake --source PATH  # pre-decomposed work_units: validate, assign set_id, write metadata
 woof wf --epic N          # existing epic: initialises from the tracker if the local dir is absent
 ```
 

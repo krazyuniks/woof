@@ -2,15 +2,26 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://woof.dev/schemas/plan.schema.json",
   "title": "woof plan",
-  "description": "Stage 3 Breakdown output: ordered work units implementing an epic. Validates structural shape only. The runtime Plan aggregate enforces work-unit identity and dependency invariants; cross-artefact invariants (satisfies[] subset of EPIC.md.observable_outcomes[].id, every CD implemented by exactly one work unit, duplicate pathspec discipline, and state coherence) are enforced before the plan gate and again by the work-unit cross-reference check.",
+  "description": "Ordered executable work units. Epic-backed plans are Stage 3 Breakdown output; pre-decomposed intake plans are supplied work-unit-set aggregates. Validates structural shape only. The runtime Plan aggregate enforces work-unit identity and dependency invariants; cross-artefact invariants (satisfies[] subset of EPIC.md.observable_outcomes[].id, every CD implemented by exactly one work unit, duplicate pathspec discipline, and state coherence) are enforced before the plan gate and again by the work-unit cross-reference check when an epic contract exists.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["epic_id", "goal", "work_units"],
+  "required": ["goal", "work_units"],
+  "anyOf": [
+    { "required": ["epic_id"] },
+    { "required": ["context"] }
+  ],
   "properties": {
     "epic_id": {
       "type": "integer",
       "minimum": 1,
-      "description": "Tracker-assigned epic identifier. Mirrors EPIC.md.epic_id."
+      "description": "Tracker-assigned epic identifier for epic-backed plans. Mirrors EPIC.md.epic_id while the epic graph stores plan.json under .woof/epics/E<N>."
+    },
+    "context": {
+      "oneOf": [
+        { "$ref": "#/$defs/epic_context" },
+        { "$ref": "#/$defs/work_unit_set_context" }
+      ],
+      "description": "Structured aggregate identity. Epic-backed intake uses project_ref plus epic_id; pre-decomposed intake uses a stable work-unit-set id and optional source_ref."
     },
     "goal": {
       "type": "string",
@@ -25,6 +36,35 @@
     }
   },
   "$defs": {
+    "epic_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "project_ref", "epic_id"],
+      "properties": {
+        "kind": { "type": "string", "const": "epic" },
+        "project_ref": { "type": "string", "minLength": 1 },
+        "epic_id": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "work_unit_set_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "project_ref", "set_id"],
+      "properties": {
+        "kind": { "type": "string", "const": "work_unit_set" },
+        "project_ref": { "type": "string", "minLength": 1 },
+        "set_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9._-]*$",
+          "description": "Stable identity for this pre-decomposed aggregate."
+        },
+        "source_ref": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional natural source identity, such as a tracker URL or repo-relative source path."
+        }
+      }
+    },
     "work_unit": {
       "type": "object",
       "additionalProperties": false,

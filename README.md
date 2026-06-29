@@ -26,7 +26,7 @@ Run Woof against the repository you want it to manage. The `/woof` skill walks y
 woof init
 ```
 
-`woof init` scaffolds `.woof/`, including `policy.toml` for delivery profile, verification command, producer/reviewer run-profile slots, deterministic check floor, and cartography floor. You then author the target architecture and design principles, install the cartography hook (`woof hooks install`), and start your first epic with `woof wf new "<spark>"`.
+`woof init` scaffolds `.woof/`, including `policy.toml` for delivery profile, verification command, producer/reviewer run-profile slots, deterministic check floor, and cartography floor. You then author the target architecture and design principles, install the cartography hook (`woof hooks install`), and start your first epic with `woof wf new "<spark>"` or ingest a pre-decomposed `work_units[]` source with `woof wf intake --source PATH`.
 
 ## Operator workflow
 
@@ -34,7 +34,7 @@ One umbrella skill is the operator's surface, plus one interactive design specia
 
 | Skill | When to use |
 |---|---|
-| `/woof` | Drive the `woof` CLI: create and run epics, resolve gates, reset, observe, and onboard a repo. The operator's command-map. |
+| `/woof` | Drive the `woof` CLI: create and run epics, ingest pre-decomposed work units, resolve gates, reset, observe, and onboard a repo. The operator's command-map. |
 | `/woof:brainstorm` | Lead the design conversation for an epic (the two brainstorm loops), then hand off to `woof wf`. |
 
 The umbrella maps a request to the right `woof` shell command. Running an epic is `woof wf --epic N`: it reads the epic's on-disk state under `.woof/` and runs the next graph node, dispatching producer and reviewer subagents for dispatch-shaped nodes, running deterministic nodes in-process, and surfacing gates for an operator decision (`woof wf --epic N --resolve <decision>`). The on-disk state is authoritative; the skill's in-session context is reconstructed from disk on a new session. Redo a design with `woof wf reset --epic N`.

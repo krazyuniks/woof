@@ -96,3 +96,27 @@ def test_plan_rejects_unsorted_dependency_order() -> None:
     payload["work_units"] = [payload["work_units"][1], payload["work_units"][0]]
 
     assert "S2: deps S1 appears after dependent work unit" in _validation_message(payload)
+
+
+def test_plan_accepts_work_unit_set_context_without_epic() -> None:
+    payload = _plan()
+    del payload["epic_id"]
+    payload["context"] = {
+        "kind": "work_unit_set",
+        "project_ref": "woof",
+        "set_id": "wave-4",
+        "source_ref": "docs/backlog.md",
+    }
+
+    plan = Plan.model_validate(payload)
+
+    assert plan.epic_id is None
+    assert plan.context is not None
+    assert plan.context.kind == "work_unit_set"
+
+
+def test_plan_rejects_mismatched_epic_context() -> None:
+    payload = _plan()
+    payload["context"] = {"kind": "epic", "project_ref": "woof", "epic_id": 99}
+
+    assert "context epic_id 99 does not match plan epic_id 1" in _validation_message(payload)

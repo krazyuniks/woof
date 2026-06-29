@@ -180,6 +180,8 @@ def load_plan(repo_root: Path, epic_id: int) -> Plan:
 
 
 def write_plan(repo_root: Path, plan: Plan) -> None:
+    if plan.epic_id is None:
+        raise StageStateError("cannot write work-unit-set plan through epic plan writer")
     path = epic_dir(repo_root, plan.epic_id) / "plan.json"
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(plan.model_dump_json(indent=2, exclude_none=True) + "\n")
@@ -190,7 +192,7 @@ def work_unit_by_id(plan: Plan, work_unit_id: str) -> WorkUnitSpec:
     for work_unit in plan.work_units:
         if work_unit.id == work_unit_id:
             return work_unit
-    raise ValueError(f"work unit {work_unit_id} not found in E{plan.epic_id} plan")
+    raise ValueError(f"work unit {work_unit_id} not found in plan")
 
 
 def next_ready_work_unit(plan: Plan) -> WorkUnitSpec | None:
@@ -215,7 +217,10 @@ def mark_work_unit_state(repo_root: Path, epic_id: int, work_unit_id: str, state
             work_units.append(WorkUnitSpec.model_validate(data))
         else:
             work_units.append(work_unit)
-    write_plan(repo_root, Plan(epic_id=plan.epic_id, goal=plan.goal, work_units=work_units))
+    write_plan(
+        repo_root,
+        Plan(epic_id=plan.epic_id, context=plan.context, goal=plan.goal, work_units=work_units),
+    )
 
 
 def append_epic_event(repo_root: Path, epic_id: int, event: dict) -> None:

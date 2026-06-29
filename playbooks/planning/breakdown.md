@@ -24,6 +24,11 @@ Read the declared `EPIC.md` contract and produce only `plan.json` at the declare
 ```json
 {
   "epic_id": 17,
+  "context": {
+    "kind": "epic",
+    "project_ref": "project-name",
+    "epic_id": 17
+  },
   "goal": "One-sentence prose goal.",
   "work_units": [
     {
@@ -49,6 +54,7 @@ Read the declared `EPIC.md` contract and produce only `plan.json` at the declare
 Planning rules:
 
 - Treat `EPIC.md` as the locked contract for breakdown. Do not weaken, reinterpret, or broaden its outcomes and contract decisions.
+- Copy `aggregate_context` from the graph-owned input into `plan.json.context` unchanged.
 - Every work unit has an `S<n>` ID, title, summary, paths, acceptance signals, dependencies, test estimate, and `pending` status.
 - Outcome-driven granularity: each work unit realises 1-3 related outcomes. Group by shared concern or dependency. Reject zero-outcome units and catch-all units.
 - Path discipline: each work unit declares the git-pathspec glob patterns it may touch through `paths[]`. Keep work-unit scopes non-overlapping unless the overlap is unavoidable and explicit.

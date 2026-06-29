@@ -195,6 +195,24 @@ def test_validate_plan_valid(tmp_path: Path, run_woof) -> None:
     assert "valid (plan)" in proc.stdout
 
 
+def test_validate_work_unit_set_plan_without_epic_id(tmp_path: Path, run_woof) -> None:
+    payload = _minimal_plan()
+    del payload["epic_id"]
+    payload["context"] = {
+        "kind": "work_unit_set",
+        "project_ref": "woof",
+        "set_id": "manual-backlog",
+        "source_ref": "docs/backlog.md",
+    }
+    path = tmp_path / "plan.json"
+    path.write_text(json.dumps(payload))
+
+    proc = run_woof("validate", str(path))
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "valid (plan)" in proc.stdout
+
+
 def test_validate_plan_missing_goal_fails(tmp_path: Path, run_woof) -> None:
     payload = _minimal_plan()
     del payload["goal"]

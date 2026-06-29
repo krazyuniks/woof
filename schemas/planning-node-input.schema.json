@@ -23,6 +23,9 @@
       "type": "string",
       "pattern": "^\\.woof/epics/E[1-9]\\d*$"
     },
+    "aggregate_context": {
+      "$ref": "#/$defs/epic_context"
+    },
     "inputs": {
       "type": "object"
     }
@@ -133,6 +136,16 @@
       "type": "array",
       "items": { "$ref": "#/$defs/path" },
       "uniqueItems": true
+    },
+    "epic_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "project_ref", "epic_id"],
+      "properties": {
+        "kind": { "type": "string", "const": "epic" },
+        "project_ref": { "type": "string", "minLength": 1 },
+        "epic_id": { "type": "integer", "minimum": 1 }
+      }
     },
     "plan_gate_decision": {
       "type": "string",

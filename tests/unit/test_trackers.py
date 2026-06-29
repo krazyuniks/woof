@@ -841,3 +841,76 @@ def test_woof_wf_new_local_tracker_never_calls_gh(tmp_path: Path) -> None:
     epic_dir = project / ".woof" / "epics" / "E1"
     assert (epic_dir / "spark.md").read_text() == "# Portable epic\n\nRuns without GitHub.\n"
     assert (project / ".woof" / ".current-epic").read_text() == "E1\n"
+
+
+def test_woof_wf_intake_predecomposed_work_units_without_epic(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    _write_prereq(project, '[tracker]\nkind = "local"\n')
+    source = project / "backlog.md"
+    source.write_text(
+        textwrap.dedent(
+            """\
+            ---
+            schema_version: 1
+            type: backlog
+            project_ref: woof
+            status: active
+            work_units:
+              - id: foundation
+                title: Foundation
+                kind: build
+                state: todo
+                priority: high
+                summary: Build the foundation.
+                acceptance:
+                  - Foundation is testable.
+                deps: []
+              - id: follow-up
+                title: Follow up
+                kind: build
+                state: todo
+                priority: medium
+                summary: Build on the foundation.
+                deps: [foundation]
+            ---
+            # Backlog
+            """
+        )
+    )
+
+    first = subprocess.run(
+        [str(WOOF_BIN), "wf", "intake", "--source", str(source), "--format", "json"],
+        cwd=project,
+        capture_output=True,
+        text=True,
+    )
+    second = subprocess.run(
+        [str(WOOF_BIN), "wf", "intake", "--source", str(source), "--format", "json"],
+        cwd=project,
+        capture_output=True,
+        text=True,
+    )
+
+    assert first.returncode == 0, first.stderr
+    assert second.returncode == 0, second.stderr
+    first_payload = json.loads(first.stdout)
+    second_payload = json.loads(second.stdout)
+    assert first_payload["context"] == second_payload["context"]
+    assert first_payload["context"]["kind"] == "work_unit_set"
+    assert first_payload["context"]["project_ref"] == "woof"
+    assert first_payload["work_unit_count"] == 2
+    assert not (project / first_payload["directory"] / "EPIC.md").exists()
+
+    plan = json.loads((project / first_payload["paths"][0]).read_text())
+    assert "epic_id" not in plan
+    assert plan["context"] == first_payload["context"]
+    assert [unit["id"] for unit in plan["work_units"]] == ["foundation", "follow-up"]
+    assert plan["work_units"][0]["state"] == "pending"
+    assert plan["work_units"][0]["paths"] == ["**/*"]
+
+    metadata = json.loads((project / first_payload["paths"][2]).read_text())
+    assert metadata["kind"] == "pre_decomposed_work_units"
+    assert metadata["qualified_work_unit_refs"][1] == {
+        "context": first_payload["context"],
+        "work_unit_id": "follow-up",
+    }

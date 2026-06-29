@@ -48,6 +48,7 @@ one interactive part - leading the design conversation - is a separate specialis
 
 ```bash
 woof wf new "<spark>"                  # create a tracker-backed epic (+ spark.md, .current-epic)
+woof wf intake --source PATH           # ingest pre-decomposed work_units without creating an epic
 woof wf --epic N                       # run the graph forward (initialises from the tracker if cold)
 woof wf --epic N --once                # run a single node and stop
 woof wf --epic N --resolve <decision>  # resolve the currently open gate

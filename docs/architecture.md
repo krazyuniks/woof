@@ -8,6 +8,8 @@ Woof is the orchestration engine for AI-assisted software delivery. It turns an 
 
 The durable boundary is the consumer repository. Woof assumes a Git worktree, `.woof/` state, repo-local policy, repo-local verification commands, and the operator's subscription CLI harnesses. The engine owns harness adapters, launch, execution, readiness, output parsing, and validation. Repo policy owns only which harness/model/effort fills each worker slot.
 
+Woof is one of two tools a project composes; it does not own the other. It runs against whatever checkout it is pointed at and neither creates nor manages worktrees - the host-level worktree engine provisions those, orchestrated by the task runner; in Profile A the worktree is that engine's, never Woof's. External issue ingestion is upstream of Woof's intake: Woof decomposes an already-local epic or `work_units[]` backlog, it does not pull issues. The two tools never call each other; the project calls both.
+
 ## 1. Principles
 
 - **One engine.** Intake may vary, but execution does not. Once intake has produced executable `work_units[]`, every run follows the same produce/gate/review/fix/publish path.

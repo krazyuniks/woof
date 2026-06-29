@@ -126,7 +126,7 @@ def render_plan_summary(plan: Plan) -> str:
 
 def render_completion_summary(plan: Plan) -> str:
     total = len(plan.work_units)
-    done = sum(1 for unit in plan.work_units if unit.status == "done")
+    done = sum(1 for unit in plan.work_units if unit.state == "done")
     noun = "work unit" if total == 1 else "work units"
     return f"## Closing Summary\n\nEpic completed with {done}/{total} planned {noun} done.\n\n"
 

@@ -76,7 +76,7 @@ resolved_open_questions: []
     return path
 
 
-def test_packaged_small_valid_epic_keeps_consumer_story_behaviour_scoped() -> None:
+def test_packaged_small_valid_epic_keeps_consumer_work_unit_behaviour_scoped() -> None:
     text = Path("examples/efficiency/small-valid-epic/EPIC.md").read_text(encoding="utf-8")
 
     assert "helper in the consumer source reports measured status" in text
@@ -125,16 +125,16 @@ def test_manifest_aggregation_and_comparison(tmp_path: Path) -> None:
                     "uses_contract_decisions": [],
                     "deps": [],
                     "tests": {"count": 1},
-                    "status": "done",
+                    "state": "done",
                 }
             ],
         },
     )
     (epic_dir / "critique").mkdir(exist_ok=True)
-    (epic_dir / "critique" / "story-S1.md").write_text(
+    (epic_dir / "critique" / "work-unit-S1.md").write_text(
         """\
 ---
-target: story
+target: work_unit
 target_id: S1
 severity: info
 timestamp: "2026-05-26T00:00:00Z"
@@ -264,7 +264,7 @@ Looks fine.
     _assert_ok(_run(["git", "commit", "-m", "feat: add helper"], cwd=repo))
     _write_json(
         epic_dir / "check-result.json",
-        {"ok": True, "stage": 5, "story_id": "S1", "checks": []},
+        {"ok": True, "stage": 5, "work_unit_id": "S1", "checks": []},
     )
 
     started = datetime(2026, 5, 26, 0, 0, tzinfo=UTC)
@@ -295,8 +295,8 @@ Looks fine.
     assert manifest["git"]["consumer_result_sha"]
     assert manifest["route_policy"]["available"] is True
     assert manifest["route_policy"]["dispatch_routes"]["model_profile"] == "stub"
-    assert manifest["story_statuses"] == [
-        {"id": "S1", "title": "Add helper", "status": "done", "satisfies": ["O1"]}
+    assert manifest["work_unit_statuses"] == [
+        {"id": "S1", "title": "Add helper", "state": "done", "satisfies": ["O1"]}
     ]
     assert manifest["dispatch"]["returned"] == 2
     assert manifest["dispatch"]["successful"] == 2
@@ -452,7 +452,7 @@ def test_epic_abandoned_final_state_is_terminal_and_classified(tmp_path: Path) -
         final_state={
             "last_node": "human_review",
             "last_status": "completed",
-            "next": {"node": "epic_abandoned", "story_id": None},
+            "next": {"node": "epic_abandoned", "work_unit_id": None},
             "gate_open": False,
         },
         checks={},

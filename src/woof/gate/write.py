@@ -67,7 +67,7 @@ def _validate_gate(gate_md: Path, schema_path: Path) -> tuple[bool, str]:
 
 def write_gate(
     epic_dir: Path,
-    story_id: str | None,
+    work_unit_id: str | None,
     triggered_by: list[str],
     position_text: str,
     exit_code: int | None = None,
@@ -88,8 +88,8 @@ def write_gate(
     resolved_gate_type = gate_type or _gate_type_for_triggers(triggered_by)
     front: dict = {
         "type": resolved_gate_type,
-        "stage": _stage_for_gate_type(resolved_gate_type, story_id),
-        "story_id": story_id,
+        "stage": _stage_for_gate_type(resolved_gate_type, work_unit_id),
+        "work_unit_id": work_unit_id,
         "triggered_by": triggered_by,
         "timestamp": now,
     }
@@ -100,7 +100,7 @@ def write_gate(
     body = _ensure_gate_sections(
         position_text.strip(),
         epic_dir=epic_dir,
-        story_id=story_id,
+        work_unit_id=work_unit_id,
         gate_type=resolved_gate_type,
         triggered_by=triggered_by,
     )
@@ -122,8 +122,8 @@ def write_gate(
         "gate_type": resolved_gate_type,
         "triggered_by": triggered_by,
     }
-    if story_id:
-        event["story_id"] = story_id
+    if work_unit_id:
+        event["work_unit_id"] = work_unit_id
     _append_jsonl(epic_jsonl, event)
 
     return gate_path
@@ -133,7 +133,7 @@ def write_gate_from_check_result(
     check_result_path: Path,
     position_path: Path | None,
     epic_dir: Path,
-    story_id: str | None = None,
+    work_unit_id: str | None = None,
     *,
     schema_path: Path | None = None,
 ) -> Path:
@@ -143,7 +143,7 @@ def write_gate_from_check_result(
     if not triggered_by:
         triggered_by = ["schema_validation_failed"]
 
-    sid = story_id or check_result.get("story_id")
+    sid = work_unit_id or check_result.get("work_unit_id")
 
     if position_path and position_path.is_file():
         position_text = position_path.read_text()
@@ -152,7 +152,7 @@ def write_gate_from_check_result(
 
     return write_gate(
         epic_dir=epic_dir,
-        story_id=sid,
+        work_unit_id=sid,
         triggered_by=triggered_by,
         position_text=position_text,
         schema_path=schema_path,
@@ -164,7 +164,7 @@ def write_gate_from_check_result(
 def write_gate_for_trigger(
     trigger: str,
     epic_dir: Path,
-    story_id: str | None,
+    work_unit_id: str | None,
     exit_code: int | None = None,
     position_path: Path | None = None,
     *,
@@ -178,7 +178,7 @@ def write_gate_for_trigger(
 
     return write_gate(
         epic_dir=epic_dir,
-        story_id=story_id,
+        work_unit_id=work_unit_id,
         triggered_by=[trigger],
         position_text=position_text,
         exit_code=exit_code if trigger == "subprocess_crash" else None,
@@ -198,18 +198,18 @@ def _gate_type_for_triggers(triggered_by: list[str]) -> str:
     if triggered_by in (["tracker_sync_conflict"], ["github_sync_conflict"]):
         return "plan_gate"
     if triggered_by in (["course_correction"], ["run_resilience"]):
-        return "story_gate"
-    return "story_gate"
+        return "work_unit_gate"
+    return "work_unit_gate"
 
 
-def _stage_for_gate_type(gate_type: str, story_id: str | None) -> int:
+def _stage_for_gate_type(gate_type: str, work_unit_id: str | None) -> int:
     if gate_type == "readiness_gate":
         return 2
     if gate_type == "review_gate":
-        return 5 if story_id else 6
+        return 5 if work_unit_id else 6
     if gate_type == "plan_gate":
         return 4
-    return 6
+    return 5
 
 
 def _opened_event_for_gate_type(gate_type: str) -> str:
@@ -219,14 +219,14 @@ def _opened_event_for_gate_type(gate_type: str) -> str:
         return "review_gate_opened"
     if gate_type == "plan_gate":
         return "plan_gate_opened"
-    return "story_gate_opened"
+    return "work_unit_gate_opened"
 
 
 def _ensure_gate_sections(
     text: str,
     *,
     epic_dir: Path,
-    story_id: str | None,
+    work_unit_id: str | None,
     gate_type: str,
     triggered_by: list[str],
 ) -> str:
@@ -240,12 +240,12 @@ def _ensure_gate_sections(
         return text
 
     epic = epic_dir.name if epic_dir.name.startswith("E") else "the epic"
-    story = f" story {story_id}" if story_id else ""
+    work_unit = f" work unit {work_unit_id}" if work_unit_id else ""
     trigger_text = ", ".join(triggered_by)
     body = text or "No additional position text was provided."
     return (
         "## Context\n\n"
-        f"{gate_type} opened for {epic}{story}. Triggered by: {trigger_text}.\n\n"
+        f"{gate_type} opened for {epic}{work_unit}. Triggered by: {trigger_text}.\n\n"
         "## Findings\n\n"
         f"{body}\n\n"
         "## Primary position\n\n"
@@ -282,19 +282,19 @@ def _auto_position(triggered_by: list[str], check_result: dict) -> str:
 def _auto_position_for_trigger(trigger: str, exit_code: int | None) -> str:
     context = f"Gate opened with trigger: {trigger}."
     if trigger == "subprocess_crash":
-        finding = f"Story executor subprocess crashed with exit code {exit_code}."
+        finding = f"Work-unit producer subprocess crashed with exit code {exit_code}."
         primary = "No primary result was accepted because the subprocess did not complete cleanly."
     elif trigger == "executor_aborted":
         finding = (
-            "Story executor reported aborted_with_position, but no separate position prose "
+            "Work-unit producer reported aborted_with_position, but no separate position prose "
             "was provided."
         )
         primary = "Review the executor audit output for the primary's reason."
     elif trigger == "empty_diff_review":
-        finding = "Story executor reported empty_diff."
+        finding = "Work-unit producer reported empty_diff."
         primary = (
-            "Confirm whether earlier stories already realised this outcome. Approve if "
-            "confirmed; revise story scope otherwise."
+            "Confirm whether earlier work units already realised this outcome. Approve if "
+            "confirmed; revise work-unit scope otherwise."
         )
     elif trigger in {"tracker_sync_conflict", "github_sync_conflict"}:
         finding = "Issue-tracker sync conflict detected."

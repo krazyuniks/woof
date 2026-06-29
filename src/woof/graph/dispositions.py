@@ -22,7 +22,7 @@ from woof.graph.git import git
 _FILE_LINE_RE = re.compile(r"([^\s:]+):(\d+)\b")
 
 # Typed artefact IDs
-_STORY_ID_RE = re.compile(r"\bS([1-9]\d*)\b")
+_WORK_UNIT_ID_RE = re.compile(r"\bS([1-9]\d*)\b")
 _OUTCOME_ID_RE = re.compile(r"\bO([1-9]\d*)\b")
 _CD_ID_RE = re.compile(r"\bCD([1-9]\d*)\b")
 
@@ -44,7 +44,7 @@ def resolve_evidence_reference(
 
     The six reference kinds checked in order:
     - file:line (tracked by git)
-    - story id (S<n> present in plan.work_units)
+    - work-unit id (S<n> present in plan.work_units)
     - observable outcome id (O<n> present in EPIC.md)
     - contract-decision id (CD<n> present in EPIC.md)
     - schema ref (schemas/*.schema.json exists under repo_root)
@@ -58,12 +58,12 @@ def resolve_evidence_reference(
     if _has_file_line_ref(ev, tracked):
         return True
 
-    story_ids = {
+    work_unit_ids = {
         s["id"]
         for s in plan.get("work_units", [])
         if isinstance(s, dict) and isinstance(s.get("id"), str)
     }
-    if _has_pattern_ref(ev, _STORY_ID_RE, story_ids):
+    if _has_pattern_ref(ev, _WORK_UNIT_ID_RE, work_unit_ids):
         return True
 
     outcome_ids, cd_ids = _epic_artefact_ids(epic_dir)
@@ -171,7 +171,7 @@ def check_blocker_findings_evidence(
             errors.append(
                 f"{finding_id}: blocker finding has no evidence; "
                 "blockers must cite a resolvable artefact reference "
-                "(file:line, story id, outcome id, contract-decision id, "
+                "(file:line, work-unit id, outcome id, contract-decision id, "
                 "schema ref, or quality-gate id)"
             )
             continue
@@ -212,26 +212,26 @@ class DispositionValidation:
     finding_count: int = 0
 
 
-def story_critique_path(epic_dir: Path, story_id: str) -> Path:
-    return epic_dir / "critique" / f"story-{story_id}.md"
+def work_unit_critique_path(epic_dir: Path, work_unit_id: str) -> Path:
+    return epic_dir / "critique" / f"work-unit-{work_unit_id}.md"
 
 
-def story_disposition_path(epic_dir: Path, story_id: str) -> Path:
-    return epic_dir / "dispositions" / f"story-{story_id}.md"
+def work_unit_disposition_path(epic_dir: Path, work_unit_id: str) -> Path:
+    return epic_dir / "dispositions" / f"work-unit-{work_unit_id}.md"
 
 
-def story_critique_relpath(epic_id: int, story_id: str) -> str:
-    return f".woof/epics/E{epic_id}/critique/story-{story_id}.md"
+def work_unit_critique_relpath(epic_id: int, work_unit_id: str) -> str:
+    return f".woof/epics/E{epic_id}/critique/work-unit-{work_unit_id}.md"
 
 
-def story_disposition_relpath(epic_id: int, story_id: str) -> str:
-    return f".woof/epics/E{epic_id}/dispositions/story-{story_id}.md"
+def work_unit_disposition_relpath(epic_id: int, work_unit_id: str) -> str:
+    return f".woof/epics/E{epic_id}/dispositions/work-unit-{work_unit_id}.md"
 
 
-def render_deterministic_story_disposition(
+def render_deterministic_work_unit_disposition(
     *,
     epic_id: int,
-    story_id: str,
+    work_unit_id: str,
     critique: MarkdownFrontMatter,
     timestamp: str,
 ) -> str:
@@ -258,9 +258,9 @@ def render_deterministic_story_disposition(
         for finding in findings
     ]
     front = {
-        "target": "story",
-        "target_id": story_id,
-        "critique_path": story_critique_relpath(epic_id, story_id),
+        "target": "work_unit",
+        "target_id": work_unit_id,
+        "critique_path": work_unit_critique_relpath(epic_id, work_unit_id),
         "severity": severity,
         "timestamp": timestamp,
         "harness": "woof-deterministic-disposition",
@@ -274,21 +274,21 @@ def render_deterministic_story_disposition(
     return "---\n" + yaml.safe_dump(front, sort_keys=False) + "---\n" + body
 
 
-def write_deterministic_story_disposition(
+def write_deterministic_work_unit_disposition(
     *,
     epic_dir: Path,
     epic_id: int,
-    story_id: str,
+    work_unit_id: str,
     critique: MarkdownFrontMatter,
     timestamp: str,
 ) -> Path:
-    path = story_disposition_path(epic_dir, story_id)
+    path = work_unit_disposition_path(epic_dir, work_unit_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(
-        render_deterministic_story_disposition(
+        render_deterministic_work_unit_disposition(
             epic_id=epic_id,
-            story_id=story_id,
+            work_unit_id=work_unit_id,
             critique=critique,
             timestamp=timestamp,
         ),
@@ -382,11 +382,11 @@ def validate_critique_invariants(
     return errors
 
 
-def validate_story_disposition(
-    epic_dir: Path, epic_id: int, story_id: str
+def validate_work_unit_disposition(
+    epic_dir: Path, epic_id: int, work_unit_id: str
 ) -> DispositionValidation:
-    critique_path = story_critique_path(epic_dir, story_id)
-    disposition_path = story_disposition_path(epic_dir, story_id)
+    critique_path = work_unit_critique_path(epic_dir, work_unit_id)
+    disposition_path = work_unit_disposition_path(epic_dir, work_unit_id)
     try:
         critique = read_markdown_front_matter(critique_path).front
     except (FileNotFoundError, FrontMatterError) as exc:
@@ -410,7 +410,9 @@ def validate_story_disposition(
     if not disposition_path.exists():
         return DispositionValidation(
             ok=False,
-            errors=[f"disposition file missing: {story_disposition_relpath(epic_id, story_id)}"],
+            errors=[
+                f"disposition file missing: {work_unit_disposition_relpath(epic_id, work_unit_id)}"
+            ],
             severity=severity,
             finding_count=len(critique_findings(critique)),
         )
@@ -429,7 +431,7 @@ def validate_story_disposition(
         disposition,
         critique,
         epic_id=epic_id,
-        story_id=story_id,
+        work_unit_id=work_unit_id,
     )
     return DispositionValidation(
         ok=not errors,
@@ -444,16 +446,16 @@ def validate_disposition_front_matter(
     critique: dict[str, Any],
     *,
     epic_id: int,
-    story_id: str,
+    work_unit_id: str,
 ) -> list[str]:
     errors: list[str] = []
-    expected_critique_path = story_critique_relpath(epic_id, story_id)
+    expected_critique_path = work_unit_critique_relpath(epic_id, work_unit_id)
     severity = critique_severity(critique)
 
-    if disposition.get("target") != "story":
-        errors.append("disposition target must be 'story'")
-    if disposition.get("target_id") != story_id:
-        errors.append(f"disposition target_id must be {story_id}")
+    if disposition.get("target") != "work_unit":
+        errors.append("disposition target must be 'work_unit'")
+    if disposition.get("target_id") != work_unit_id:
+        errors.append(f"disposition target_id must be {work_unit_id}")
     if disposition.get("critique_path") != expected_critique_path:
         errors.append(f"disposition critique_path must be {expected_critique_path}")
     if disposition.get("severity") != severity:
@@ -505,7 +507,7 @@ def validate_disposition_front_matter(
 def reviewer_blocker_gate_body(
     *,
     epic_id: int,
-    story_id: str,
+    work_unit_id: str,
     critique: MarkdownFrontMatter,
 ) -> str:
     findings = [
@@ -527,14 +529,14 @@ def reviewer_blocker_gate_body(
     if not finding_lines:
         finding_lines.append("- Reviewer marked the critique as blocker.")
 
-    critique_rel = story_critique_relpath(epic_id, story_id)
+    critique_rel = work_unit_critique_relpath(epic_id, work_unit_id)
     body = critique.body.strip() or "Reviewer body was empty."
     return (
         "## Context\n\n"
-        f"Reviewer critique `{critique_rel}` marked story {story_id} as blocker. "
+        f"Reviewer critique `{critique_rel}` marked work unit {work_unit_id} as blocker. "
         "Woof does not start a model-to-model debate loop for blocker findings.\n\n"
         "## Findings\n\n" + "\n".join(finding_lines) + "\n\n## Primary position\n\n"
-        "The primary story output remains staged for operator inspection. "
+        "The primary work-unit output remains staged for operator inspection. "
         "No primary disposition was requested because blocker findings require a human gate.\n\n"
         "## Reviewer position\n\n"
         f"Source: `{critique_rel}`\n\n"

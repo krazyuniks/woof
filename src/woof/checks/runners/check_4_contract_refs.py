@@ -1,6 +1,6 @@
 """check_4_contract_refs - Stage-5 Check 4.
 
-Validates the contract-decision artefacts owned by the active story. The
+Validates the contract-decision artefacts owned by the active work unit. The
 underlying reference checks are shared with ``woof check-cd`` so the E146
 regression fixture and the Stage-5 runner exercise the same contract boundary:
 native reference resolution plus bounded conformance checks where the artefact
@@ -22,24 +22,26 @@ CHECK_ID = "check_4_contract_refs"
 
 
 def check_4_contract_refs_runner(ctx: CheckContext) -> CheckOutcome:
-    story = _story_for_context(ctx)
-    if story is None:
+    work_unit = _work_unit_for_context(ctx)
+    if work_unit is None:
         return CheckOutcome(
             id=CHECK_ID,
             ok=False,
             severity="blocker",
-            summary=f"story {ctx.story_id} not found in plan.json",
+            summary=f"work unit {ctx.work_unit_id} not found in plan.json",
             paths=[_display_path(ctx.epic_dir / "plan.json", ctx.repo_root)],
         )
 
-    owned_cd_ids = _owned_contract_ids(story)
+    owned_cd_ids = _owned_contract_ids(work_unit)
     if owned_cd_ids is None:
         return CheckOutcome(
             id=CHECK_ID,
             ok=False,
             severity="blocker",
-            summary=f"story {ctx.story_id} has malformed implements_contract_decisions[]",
-            evidence=f"implements_contract_decisions={story.get('implements_contract_decisions')!r}",
+            summary=f"work unit {ctx.work_unit_id} has malformed implements_contract_decisions[]",
+            evidence=(
+                f"implements_contract_decisions={work_unit.get('implements_contract_decisions')!r}"
+            ),
             paths=[_display_path(ctx.epic_dir / "plan.json", ctx.repo_root)],
         )
 
@@ -49,7 +51,7 @@ def check_4_contract_refs_runner(ctx: CheckContext) -> CheckOutcome:
             id=CHECK_ID,
             ok=True,
             severity="info",
-            summary=f"story {ctx.story_id} owns no contract decision refs to verify",
+            summary=f"work unit {ctx.work_unit_id} owns no contract decision refs to verify",
             paths=[_display_path(epic_md, ctx.repo_root)],
         )
 
@@ -104,18 +106,18 @@ def check_4_contract_refs_runner(ctx: CheckContext) -> CheckOutcome:
     )
 
 
-def _story_for_context(ctx: CheckContext) -> dict[str, Any] | None:
+def _work_unit_for_context(ctx: CheckContext) -> dict[str, Any] | None:
     work_units = ctx.plan.get("work_units", [])
     if not isinstance(work_units, list):
         return None
-    for story in work_units:
-        if isinstance(story, dict) and story.get("id") == ctx.story_id:
-            return story
+    for work_unit in work_units:
+        if isinstance(work_unit, dict) and work_unit.get("id") == ctx.work_unit_id:
+            return work_unit
     return None
 
 
-def _owned_contract_ids(story: dict[str, Any]) -> set[str] | None:
-    raw = story.get("implements_contract_decisions", [])
+def _owned_contract_ids(work_unit: dict[str, Any]) -> set[str] | None:
+    raw = work_unit.get("implements_contract_decisions", [])
     if not isinstance(raw, list) or not all(isinstance(item, str) for item in raw):
         return None
     return set(raw)

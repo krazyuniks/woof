@@ -15,7 +15,7 @@ class CheckContext:
     """Execution context passed to every check runner."""
 
     epic_id: int
-    story_id: str
+    work_unit_id: str
     repo_root: Path
     epic_dir: Path
     plan: dict

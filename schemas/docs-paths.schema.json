@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://woof.dev/schemas/docs-paths.schema.json",
   "title": "woof docs-paths mapping",
-  "description": "Project-side declaration at .woof/docs-paths.toml. Tells Stage 5 Check 8 (docs drift) which doc paths are required when given code paths are touched. Each mapping says: 'if a story modifies any file matching code_pattern, the same diff must include a change to a file matching doc_pattern'. Stage 5 Check 8 is a no-op when this file is absent.",
+  "description": "Project-side declaration at .woof/docs-paths.toml. Tells Stage 5 Check 8 (docs drift) which doc paths are required when given code paths are touched. Each mapping says: 'if a work unit modifies any file matching code_pattern, the same diff must include a change to a file matching doc_pattern'. Stage 5 Check 8 is a no-op when this file is absent.",
   "type": "object",
   "additionalProperties": false,
   "required": ["mappings"],

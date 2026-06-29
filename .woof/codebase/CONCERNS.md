@@ -14,7 +14,7 @@ The commit node does not record `head_before`/`head_after` or detect when anothe
 
 ## Blocker evidence is advisory, not enforced
 
-Stage-5 Check 6 (`check_6_critique_blocker`) verifies that blocker findings exist but does not require them to carry resolvable evidence references (file:line, story id, outcome id, schema ref). A reviewer can produce an unsubstantiated blocker that cannot be verified. Tracked in `docs/backlog.md` E2.
+Stage-5 Check 6 (`check_6_critique_blocker`) verifies that blocker findings exist but does not require them to carry resolvable evidence references (file:line, work-unit id, outcome id, schema ref). A reviewer can produce an unsubstantiated blocker that cannot be verified. Tracked in `docs/backlog.md` E2.
 
 ## Readiness recycle escalation not yet shipped
 

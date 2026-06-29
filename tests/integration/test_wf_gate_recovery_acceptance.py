@@ -39,11 +39,11 @@ def _run_epic_json(consumer: Path, env: dict[str, str]) -> list[dict[str, Any]]:
     return json_stdout(proc)
 
 
-def _repair_story_critique_to_info(consumer: Path) -> None:
-    (epic_dir(consumer) / "critique" / "story-S1.md").write_text(
+def _repair_work_unit_critique_to_info(consumer: Path) -> None:
+    (epic_dir(consumer) / "critique" / "work-unit-S1.md").write_text(
         """\
 ---
-target: story
+target: work_unit
 target_id: S1
 severity: info
 timestamp: "2026-05-23T00:00:00Z"
@@ -57,7 +57,7 @@ Operator repaired the blocker and requested verification.
     )
 
 
-def test_executor_subprocess_crash_gate_can_abandon_story(tmp_path: Path) -> None:
+def test_executor_subprocess_crash_gate_can_abandon_work_unit(tmp_path: Path) -> None:
     consumer, env = create_stage5_consumer(tmp_path, scenario="subprocess_crash")
 
     outputs = _run_epic_json(consumer, env)
@@ -65,20 +65,18 @@ def test_executor_subprocess_crash_gate_can_abandon_story(tmp_path: Path) -> Non
     assert outputs[-1]["node_type"] == "executor_dispatch"
     assert outputs[-1]["status"] == "gate_opened"
     assert outputs[-1]["triggered_by"] == ["subprocess_crash"]
-    assert_gate(consumer, gate_type="story_gate", triggered_by=["subprocess_crash"])
+    assert_gate(consumer, gate_type="work_unit_gate", triggered_by=["subprocess_crash"])
     assert (epic_dir(consumer) / "gate.md").read_text(encoding="utf-8").find("exit_code: 1") >= 0
 
-    _resolve(consumer, env, "abandon_story")
+    _resolve(consumer, env, "abandon_work_unit")
     completed = _run_epic_json(consumer, env)
 
     assert completed[-1]["status"] == "epic_complete"
     plan = json.loads((epic_dir(consumer) / "plan.json").read_text(encoding="utf-8"))
-    # E17 P4 / D-AB: abandon_story is honest - the story is terminal-abandoned,
-    # not done, and the epic completes on its (here, only) remaining work.
-    assert plan["work_units"][0]["status"] == "abandoned"
+    assert plan["work_units"][0]["state"] == "abandoned"
     epic_events = jsonl(epic_dir(consumer) / "epic.jsonl")
-    assert any(event.get("event") == "story_abandoned" for event in epic_events)
-    assert not any(event.get("event") == "story_completed" for event in epic_events)
+    assert any(event.get("event") == "work_unit_abandoned" for event in epic_events)
+    assert not any(event.get("event") == "work_unit_completed" for event in epic_events)
     assert not (epic_dir(consumer) / "gate.md").exists()
 
 
@@ -90,16 +88,16 @@ def test_reviewer_blocker_gate_resumes_after_critique_repair(tmp_path: Path) -> 
     assert outputs[-1]["node_type"] == "review_disposition"
     assert outputs[-1]["status"] == "gate_opened"
     assert outputs[-1]["triggered_by"] == ["check_6_critique_blocker"]
-    assert_gate(consumer, gate_type="story_gate", triggered_by=["check_6_critique_blocker"])
-    assert not (epic_dir(consumer) / "dispositions" / "story-S1.md").exists()
+    assert_gate(consumer, gate_type="work_unit_gate", triggered_by=["check_6_critique_blocker"])
+    assert not (epic_dir(consumer) / "dispositions" / "work-unit-S1.md").exists()
 
-    _repair_story_critique_to_info(consumer)
+    _repair_work_unit_critique_to_info(consumer)
     _resolve(consumer, env, "approve")
     completed = _run_epic_json(consumer, env)
 
     assert completed[-1]["status"] == "epic_complete"
     assert latest_commit_subject(consumer, env) == "feat: add gate acceptance artefact"
-    assert (epic_dir(consumer) / "dispositions" / "story-S1.md").is_file()
+    assert (epic_dir(consumer) / "dispositions" / "work-unit-S1.md").is_file()
 
 
 def test_failed_check_gate_reruns_and_commits_after_resolution(tmp_path: Path) -> None:
@@ -118,7 +116,7 @@ def test_failed_check_gate_reruns_and_commits_after_resolution(tmp_path: Path) -
     assert outputs[-1]["node_type"] == "verification"
     assert outputs[-1]["status"] == "gate_opened"
     assert outputs[-1]["triggered_by"] == ["check_1_quality_gates"]
-    assert_gate(consumer, gate_type="story_gate", triggered_by=["check_1_quality_gates"])
+    assert_gate(consumer, gate_type="work_unit_gate", triggered_by=["check_1_quality_gates"])
     check_result = json.loads((epic_dir(consumer) / "check-result.json").read_text())
     assert check_result["ok"] is False
 
@@ -133,7 +131,7 @@ def test_failed_check_gate_reruns_and_commits_after_resolution(tmp_path: Path) -
     assert any(event.get("event") == "transaction_manifest_verified" for event in epic_events)
 
 
-def test_empty_diff_gate_approval_marks_story_complete_without_commit(tmp_path: Path) -> None:
+def test_empty_diff_gate_approval_marks_work_unit_complete_without_commit(tmp_path: Path) -> None:
     consumer, env = create_stage5_consumer(tmp_path, scenario="empty_diff")
     before = latest_commit_subject(consumer, env)
 
@@ -142,7 +140,7 @@ def test_empty_diff_gate_approval_marks_story_complete_without_commit(tmp_path: 
     assert outputs[-1]["node_type"] == "gate_open"
     assert outputs[-1]["status"] == "gate_opened"
     assert outputs[-1]["triggered_by"] == ["empty_diff_review"]
-    assert_gate(consumer, gate_type="story_gate", triggered_by=["empty_diff_review"])
+    assert_gate(consumer, gate_type="work_unit_gate", triggered_by=["empty_diff_review"])
 
     _resolve(consumer, env, "approve")
     completed = _run_epic_json(consumer, env)
@@ -150,12 +148,12 @@ def test_empty_diff_gate_approval_marks_story_complete_without_commit(tmp_path: 
     assert completed[-1]["status"] == "epic_complete"
     assert latest_commit_subject(consumer, env) == before
     plan = json.loads((epic_dir(consumer) / "plan.json").read_text(encoding="utf-8"))
-    assert plan["work_units"][0]["status"] == "done"
+    assert plan["work_units"][0]["state"] == "done"
     assert plan["work_units"][0]["empty_diff"] is True
     assert not (epic_dir(consumer) / "executor_result.json").exists()
 
 
-def test_malformed_stage_state_gate_can_abandon_story(tmp_path: Path) -> None:
+def test_malformed_stage_state_gate_can_abandon_work_unit(tmp_path: Path) -> None:
     consumer, env = create_stage5_consumer(tmp_path, scenario="malformed_state")
 
     outputs = _run_epic_json(consumer, env)
@@ -163,10 +161,10 @@ def test_malformed_stage_state_gate_can_abandon_story(tmp_path: Path) -> None:
     assert outputs[-1]["node_type"] == "gate_open"
     assert outputs[-1]["status"] == "gate_opened"
     assert outputs[-1]["triggered_by"] == ["incomplete_stage_state"]
-    assert_gate(consumer, gate_type="story_gate", triggered_by=["incomplete_stage_state"])
+    assert_gate(consumer, gate_type="work_unit_gate", triggered_by=["incomplete_stage_state"])
     assert "malformed JSON" in outputs[-1]["message"]
 
-    _resolve(consumer, env, "abandon_story")
+    _resolve(consumer, env, "abandon_work_unit")
     completed = _run_epic_json(consumer, env)
 
     assert completed[-1]["status"] == "epic_complete"
@@ -194,16 +192,16 @@ def test_interrupted_commit_resume_commits_existing_transaction(tmp_path: Path) 
 
     plan_path = epic_dir(consumer) / "plan.json"
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
-    plan["work_units"][0]["status"] = "done"
+    plan["work_units"][0]["state"] = "done"
     plan_path.write_text(json.dumps(plan, indent=2) + "\n", encoding="utf-8")
     with (epic_dir(consumer) / "epic.jsonl").open("a", encoding="utf-8") as handle:
         handle.write(
             json.dumps(
                 {
-                    "event": "story_completed",
+                    "event": "work_unit_completed",
                     "at": "2026-05-23T00:00:00Z",
                     "epic_id": 1,
-                    "story_id": "S1",
+                    "work_unit_id": "S1",
                 }
             )
             + "\n"
@@ -223,7 +221,7 @@ def test_interrupted_commit_resume_commits_existing_transaction(tmp_path: Path) 
     assert resumed[-1]["status"] == "epic_complete"
     assert latest_commit_subject(consumer, env) == "feat: add gate acceptance artefact"
     epic_events = jsonl(epic_dir(consumer) / "epic.jsonl")
-    assert [event.get("event") for event in epic_events].count("story_completed") == 1
+    assert [event.get("event") for event in epic_events].count("work_unit_completed") == 1
     assert [event.get("event") for event in epic_events].count("transaction_manifest_verified") == 1
     assert not (epic_dir(consumer) / "executor_result.json").exists()
     assert not (epic_dir(consumer) / "check-result.json").exists()

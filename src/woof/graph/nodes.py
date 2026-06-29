@@ -24,16 +24,16 @@ from woof.graph.dispositions import (
     critique_severity,
     read_markdown_front_matter,
     reviewer_blocker_gate_body,
-    story_critique_path,
-    story_disposition_path,
-    story_disposition_relpath,
     validate_critique_invariants,
-    validate_story_disposition,
-    write_deterministic_story_disposition,
+    validate_work_unit_disposition,
+    work_unit_critique_path,
+    work_unit_disposition_path,
+    work_unit_disposition_relpath,
+    write_deterministic_work_unit_disposition,
 )
 from woof.graph.epilogue import DISPATCH_DENIAL_EPILOGUE
 from woof.graph.git import changed_paths, git, head_branch_drift_detected, staged_paths
-from woof.graph.manifest import build_story_manifest, verify_staged_manifest
+from woof.graph.manifest import build_work_unit_manifest, verify_staged_manifest
 from woof.graph.pathspec import PathspecEvaluationError, filter_paths_matching
 from woof.graph.planning_contracts import (
     validate_definition_open_questions,
@@ -42,7 +42,7 @@ from woof.graph.planning_contracts import (
 )
 from woof.graph.readiness import ReadinessResult, evaluate_readiness
 from woof.graph.state import (
-    TERMINAL_STORY_STATUSES,
+    TERMINAL_WORK_UNIT_STATES,
     NodeInput,
     NodeOutput,
     NodeStatus,
@@ -67,10 +67,10 @@ from woof.graph.transitions import (
     epic_event_exists,
     failed_readiness_cycles,
     load_plan,
-    mark_story_status,
+    mark_work_unit_state,
     plan_critique_path,
     plan_markdown_path,
-    story_by_id,
+    work_unit_by_id,
 )
 from woof.graph.transitions import (
     gate_path as graph_gate_path,
@@ -279,7 +279,7 @@ def _tree_blob(repo_root: Path, tree: str, path: str) -> str | None:
 
 
 def _plan_matches_completed_resume_delta(
-    repo_root: Path, epic_id: int, story_id: str, verified_tree: str
+    repo_root: Path, epic_id: int, work_unit_id: str, verified_tree: str
 ) -> bool:
     plan_path = f".woof/epics/E{epic_id}/plan.json"
     base_text = _tree_blob(repo_root, verified_tree, plan_path)
@@ -295,8 +295,8 @@ def _plan_matches_completed_resume_delta(
     found = False
     for unit in base_plan.work_units:
         data = unit.model_dump(exclude_none=True)
-        if unit.id == story_id:
-            data["status"] = "done"
+        if unit.id == work_unit_id:
+            data["state"] = "done"
             found = True
         expected_units.append(WorkUnitSpec.model_validate(data))
     if not found:
@@ -310,7 +310,7 @@ def _plan_matches_completed_resume_delta(
 
 
 def _epic_events_match_completed_resume_delta(
-    repo_root: Path, epic_id: int, story_id: str, verified_tree: str
+    repo_root: Path, epic_id: int, work_unit_id: str, verified_tree: str
 ) -> bool:
     event_path = f".woof/epics/E{epic_id}/epic.jsonl"
     base_text = _tree_blob(repo_root, verified_tree, event_path)
@@ -338,8 +338,8 @@ def _epic_events_match_completed_resume_delta(
         if not isinstance(event, dict):
             return False
         event_name = event.get("event")
-        if event_name == "story_completed" or event_name == "transaction_manifest_verified":
-            if event.get("story_id") != story_id:
+        if event_name == "work_unit_completed" or event_name == "transaction_manifest_verified":
+            if event.get("work_unit_id") != work_unit_id:
                 return False
         elif event_name == "epic_completed":
             if event.get("epic_id") != epic_id:
@@ -350,7 +350,7 @@ def _epic_events_match_completed_resume_delta(
 
 
 def _completed_resume_delta_is_graph_owned(
-    repo_root: Path, epic_id: int, story_id: str, check_result: dict
+    repo_root: Path, epic_id: int, work_unit_id: str, check_result: dict
 ) -> bool:
     verified_tree = check_result.get("verified_tree")
     if not isinstance(verified_tree, str):
@@ -370,18 +370,22 @@ def _completed_resume_delta_is_graph_owned(
     if not epic_event_exists(
         repo_root,
         epic_id,
-        event="story_completed",
-        story_id=story_id,
+        event="work_unit_completed",
+        work_unit_id=work_unit_id,
     ):
         return False
     if (
         f".woof/epics/E{epic_id}/plan.json" in delta_paths
-        and not _plan_matches_completed_resume_delta(repo_root, epic_id, story_id, verified_tree)
+        and not _plan_matches_completed_resume_delta(
+            repo_root, epic_id, work_unit_id, verified_tree
+        )
     ):
         return False
     return (
         f".woof/epics/E{epic_id}/epic.jsonl" not in delta_paths
-        or _epic_events_match_completed_resume_delta(repo_root, epic_id, story_id, verified_tree)
+        or _epic_events_match_completed_resume_delta(
+            repo_root, epic_id, work_unit_id, verified_tree
+        )
     )
 
 
@@ -422,10 +426,10 @@ def _read_appended_dispatch_events(path: Path, offset: int) -> list[dict]:
     return events
 
 
-def _event_story_matches(event: dict, story_id: str | None) -> bool:
-    if story_id is None:
-        return "story_id" not in event or event.get("story_id") is None
-    return event.get("story_id") == story_id
+def _event_work_unit_matches(event: dict, work_unit_id: str | None) -> bool:
+    if work_unit_id is None:
+        return "work_unit_id" not in event or event.get("work_unit_id") is None
+    return event.get("work_unit_id") == work_unit_id
 
 
 def _dispatch_outcome_from_events(
@@ -433,7 +437,7 @@ def _dispatch_outcome_from_events(
     *,
     role: str,
     epic_id: int,
-    story_id: str | None,
+    work_unit_id: str | None,
 ) -> tuple[DispatchExitType | None, int | None]:
     spawned_pids = {
         event.get("pid")
@@ -441,7 +445,7 @@ def _dispatch_outcome_from_events(
         if event.get("event") == "subprocess_spawned"
         and event.get("epic_id") == epic_id
         and event.get("role") == role
-        and _event_story_matches(event, story_id)
+        and _event_work_unit_matches(event, work_unit_id)
     }
     spawned_pids.discard(None)
 
@@ -453,7 +457,7 @@ def _dispatch_outcome_from_events(
         if spawned_pids and event.get("pid") not in spawned_pids:
             continue
         if event.get("event") == "subprocess_returned" and (
-            event.get("role") != role or not _event_story_matches(event, story_id)
+            event.get("role") != role or not _event_work_unit_matches(event, work_unit_id)
         ):
             continue
         exit_type = event.get("exit_type")
@@ -630,7 +634,7 @@ def _require_cartography_docs(
     doc_names: list[str],
     gate_type: str,
     *,
-    story_id: str | None = None,
+    work_unit_id: str | None = None,
 ) -> list[str]:
     """Return repo-relative paths for each named codebase doc.
 
@@ -649,16 +653,16 @@ def _require_cartography_docs(
             " then re-run `woof wf --epic <N>`.",
             operator_recoverable=True,
             gate_type=gate_type,
-            story_id=story_id,
+            work_unit_id=work_unit_id,
         )
     return refs
 
 
-def _executor_files_txt_slice(repo_root: Path, story: WorkUnitSpec) -> list[str]:
-    """Return the story-scoped subset of .woof/codebase/files.txt lines.
+def _work_unit_files_txt_slice(repo_root: Path, work_unit: WorkUnitSpec) -> list[str]:
+    """Return the work-unit-scoped subset of .woof/codebase/files.txt lines.
 
-    Raises StageStateError(story_gate) if files.txt is missing or the pathspec
-    evaluation fails. Decision D1 (E19): filter through story.paths[] at build
+    Raises StageStateError(work_unit_gate) if files.txt is missing or the pathspec
+    evaluation fails. Decision D1 (E19): filter through work_unit.paths[] at build
     time so the executor receives only its slice.
     """
     files_txt_path = repo_root / ".woof" / "codebase" / "files.txt"
@@ -667,22 +671,22 @@ def _executor_files_txt_slice(repo_root: Path, story: WorkUnitSpec) -> list[str]
             "Missing mechanical cartography file: .woof/codebase/files.txt. "
             "Run `scripts/refresh-cartography` to generate it.",
             operator_recoverable=True,
-            gate_type="story_gate",
-            story_id=story.id,
+            gate_type="work_unit_gate",
+            work_unit_id=work_unit.id,
         )
     candidates = [
         line for line in files_txt_path.read_text(encoding="utf-8").splitlines() if line.strip()
     ]
-    if not candidates or not story.paths:
+    if not candidates or not work_unit.paths:
         return candidates
     try:
-        return filter_paths_matching(repo_root, candidates, list(story.paths))
+        return filter_paths_matching(repo_root, candidates, list(work_unit.paths))
     except PathspecEvaluationError as exc:
         raise StageStateError(
             f"files.txt pathspec slice evaluation failed: {exc}",
             operator_recoverable=True,
-            gate_type="story_gate",
-            story_id=story.id,
+            gate_type="work_unit_gate",
+            work_unit_id=work_unit.id,
         ) from exc
 
 
@@ -948,29 +952,29 @@ def _plan_critique_artefacts(repo_root: Path, epic_id: int) -> list[str]:
     )
 
 
-def _story_critique_payload(
+def _work_unit_critique_payload(
     repo_root: Path,
     epic_id: int,
-    story_id: str,
+    work_unit_id: str,
     cartography_refs: list[str] | None = None,
 ) -> dict:
     directory = epic_dir(repo_root, epic_id)
     plan = load_plan(repo_root, epic_id)
-    story = story_by_id(plan, story_id)
+    work_unit = work_unit_by_id(plan, work_unit_id)
     inputs: dict[str, object] = {
         "epic_path": _relpath(repo_root, directory / "EPIC.md"),
         "plan_path": _relpath(repo_root, directory / "plan.json"),
-        "critique_path": _relpath(repo_root, story_critique_path(directory, story_id)),
+        "critique_path": _relpath(repo_root, work_unit_critique_path(directory, work_unit_id)),
         "staged_diff_command": "git diff --staged",
         "staged_paths_command": "git diff --staged --name-only",
-        "story": story.model_dump(),
+        "work_unit": work_unit.model_dump(),
     }
     if cartography_refs:
         inputs["cartography_paths"] = cartography_refs
     return {
         "node_type": NodeType.CRITIQUE_DISPATCH.value,
         "epic_id": epic_id,
-        "story_id": story_id,
+        "work_unit_id": work_unit_id,
         "repo_root": str(repo_root),
         "epic_dir": _relpath(repo_root, directory),
         "inputs": inputs,
@@ -1063,16 +1067,16 @@ def _plan_critique_prompt(
     ) + DISPATCH_DENIAL_EPILOGUE
 
 
-def _story_critique_prompt(
+def _work_unit_critique_prompt(
     repo_root: Path,
     epic_id: int,
-    story_id: str,
+    work_unit_id: str,
     cartography_refs: list[str] | None = None,
 ) -> str:
-    payload = _story_critique_payload(
-        repo_root, epic_id, story_id, cartography_refs=cartography_refs
+    payload = _work_unit_critique_payload(
+        repo_root, epic_id, work_unit_id, cartography_refs=cartography_refs
     )
-    template = (tool_root() / "playbooks" / "critique" / "story.md").read_text(encoding="utf-8")
+    template = (tool_root() / "playbooks" / "critique" / "work-unit.md").read_text(encoding="utf-8")
     return (
         "Graph-owned input:\n\n"
         "```json\n"
@@ -1085,7 +1089,7 @@ def _story_critique_prompt(
 def _executor_dispatch_prompt(
     repo_root: Path,
     epic_id: int,
-    story_id: str,
+    work_unit_id: str,
     cartography_refs: list[str],
     files_txt_slice: list[str],
 ) -> str:
@@ -1093,13 +1097,13 @@ def _executor_dispatch_prompt(
     payload = {
         "node_type": NodeType.EXECUTOR_DISPATCH.value,
         "epic_id": epic_id,
-        "story_id": story_id,
+        "work_unit_id": work_unit_id,
         "inputs": {
             "cartography_paths": cartography_refs,
             "files_txt_slice": files_txt_slice,
         },
     }
-    base = _story_prompt(epic_id, story_id)
+    base = _work_unit_prompt(epic_id, work_unit_id)
     return (
         "Graph-owned cartography input:\n\n"
         "```json\n"
@@ -1210,39 +1214,39 @@ def _render_plan_markdown(plan: Plan) -> str:
         f"# Plan E{plan.epic_id}\n\n",
         f"{plan.goal}\n\n",
         "## Work Units\n\n",
-        "| ID | Title | Status | Satisfies | Implements CDs | Uses CDs | Depends On | Paths | Tests |\n",
+        "| ID | Title | State | Satisfies | Implements CDs | Uses CDs | Depends On | Paths | Tests |\n",
         "|---|---|---|---|---|---|---|---|---|\n",
     ]
-    for story in plan.work_units:
-        tests = story.tests if isinstance(story.tests, dict) else {}
+    for work_unit in plan.work_units:
+        tests = work_unit.tests if isinstance(work_unit.tests, dict) else {}
         test_types = tests.get("types", [])
         if not isinstance(test_types, list):
             test_types = []
         test_count = tests.get("count", 0)
         out.append(
             "| "
-            f"{_table_cell(story.id)} | "
-            f"{_table_cell(story.title)} | "
-            f"{_table_cell(story.status)} | "
-            f"{_table_cell(_csv(story.satisfies))} | "
-            f"{_table_cell(_csv(story.implements_contract_decisions))} | "
-            f"{_table_cell(_csv(story.uses_contract_decisions))} | "
-            f"{_table_cell(_csv(story.deps))} | "
-            f"{_table_cell(_csv(story.paths))} | "
+            f"{_table_cell(work_unit.id)} | "
+            f"{_table_cell(work_unit.title)} | "
+            f"{_table_cell(work_unit.state)} | "
+            f"{_table_cell(_csv(work_unit.satisfies))} | "
+            f"{_table_cell(_csv(work_unit.implements_contract_decisions))} | "
+            f"{_table_cell(_csv(work_unit.uses_contract_decisions))} | "
+            f"{_table_cell(_csv(work_unit.deps))} | "
+            f"{_table_cell(_csv(work_unit.paths))} | "
             f"{_table_cell(str(test_count) + ' ' + _csv([str(item) for item in test_types]))} |\n"
         )
     out.append("\n")
     return "".join(out)
 
 
-def _story_prompt(epic_id: int, story_id: str) -> str:
+def _work_unit_prompt(epic_id: int, work_unit_id: str) -> str:
     return _prompt_template(
-        tool_root() / "playbooks" / "execution" / "story.md",
-        {"epic_id": str(epic_id), "story_id": story_id},
+        tool_root() / "playbooks" / "execution" / "work-unit.md",
+        {"epic_id": str(epic_id), "work_unit_id": work_unit_id},
     )
 
 
-def _story_context_artefacts(repo_root: Path, epic_id: int) -> list[str]:
+def _work_unit_context_artefacts(repo_root: Path, epic_id: int) -> list[str]:
     directory = epic_dir(repo_root, epic_id)
     return _existing_prompt_artefacts(
         repo_root,
@@ -1256,28 +1260,28 @@ def _story_context_artefacts(repo_root: Path, epic_id: int) -> list[str]:
     )
 
 
-def _disposition_artefacts(repo_root: Path, epic_id: int, story_id: str) -> list[str]:
+def _disposition_artefacts(repo_root: Path, epic_id: int, work_unit_id: str) -> list[str]:
     directory = epic_dir(repo_root, epic_id)
     return _existing_prompt_artefacts(
         repo_root,
         [
             directory / "EPIC.md",
             directory / "plan.json",
-            story_critique_path(directory, story_id),
+            work_unit_critique_path(directory, work_unit_id),
         ],
     )
 
 
-def _disposition_prompt(epic_id: int, story_id: str) -> str:
-    template = (tool_root() / "playbooks" / "disposition" / "story.md").read_text()
-    return template.format(epic_id=epic_id, story_id=story_id)
+def _disposition_prompt(epic_id: int, work_unit_id: str) -> str:
+    template = (tool_root() / "playbooks" / "disposition" / "work-unit.md").read_text()
+    return template.format(epic_id=epic_id, work_unit_id=work_unit_id)
 
 
 def _run_dispatch(
     repo_root: Path,
     role: str,
     epic_id: int,
-    story_id: str | None,
+    work_unit_id: str | None,
     prompt: str,
     artefacts_loaded: list[str] | None = None,
     route_key: str | None = None,
@@ -1296,8 +1300,8 @@ def _run_dispatch(
             "--prompt-file",
             str(prompt_file),
         ]
-        if story_id:
-            args.extend(["--story", story_id])
+        if work_unit_id:
+            args.extend(["--work-unit", work_unit_id])
         if route_key:
             args.extend(["--route-key", route_key])
         for artefact in artefacts_loaded or []:
@@ -1313,7 +1317,7 @@ def _run_dispatch(
             _read_appended_dispatch_events(dispatch_jsonl, dispatch_offset),
             role=role,
             epic_id=epic_id,
-            story_id=story_id,
+            work_unit_id=work_unit_id,
         )
         return DispatchRunResult(
             process=proc,
@@ -1327,8 +1331,8 @@ def _run_dispatch(
 def _discovery_bucket_node(inp: NodeInput, bucket: str) -> NodeOutput:
     """Run a Stage-1 producer bucket node (research, thinking, ideate)."""
 
-    if inp.story_id:
-        raise ValueError(f"discovery_{bucket} does not accept story_id")
+    if inp.work_unit_id:
+        raise ValueError(f"discovery_{bucket} does not accept work_unit_id")
     directory = epic_dir(inp.repo_root, inp.epic_id)
     spark_path = directory / "spark.md"
     if not spark_path.is_file() or not spark_path.read_text(encoding="utf-8").strip():
@@ -1356,7 +1360,7 @@ def _discovery_bucket_node(inp: NodeInput, bucket: str) -> NodeOutput:
             inp.repo_root,
             role="primary",
             epic_id=inp.epic_id,
-            story_id=None,
+            work_unit_id=None,
             prompt=_discovery_bucket_prompt(
                 inp.repo_root, inp.epic_id, bucket, cartography_refs=carto_refs
             ),
@@ -1434,8 +1438,8 @@ def discovery_ideate_node(inp: NodeInput) -> NodeOutput:
 
 
 def discovery_synthesis_node(inp: NodeInput) -> NodeOutput:
-    if inp.story_id:
-        raise ValueError("discovery_synthesis does not accept story_id")
+    if inp.work_unit_id:
+        raise ValueError("discovery_synthesis does not accept work_unit_id")
     directory = epic_dir(inp.repo_root, inp.epic_id)
     spark_path = directory / "spark.md"
     if not spark_path.is_file() or not spark_path.read_text(encoding="utf-8").strip():
@@ -1460,7 +1464,7 @@ def discovery_synthesis_node(inp: NodeInput) -> NodeOutput:
             inp.repo_root,
             role="primary",
             epic_id=inp.epic_id,
-            story_id=None,
+            work_unit_id=None,
             prompt=_discovery_synthesis_prompt(
                 inp.repo_root, inp.epic_id, cartography_refs=carto_refs
             ),
@@ -1533,8 +1537,8 @@ def discovery_synthesis_node(inp: NodeInput) -> NodeOutput:
 
 
 def epic_definition_node(inp: NodeInput) -> NodeOutput:
-    if inp.story_id:
-        raise ValueError("epic_definition does not accept story_id")
+    if inp.work_unit_id:
+        raise ValueError("epic_definition does not accept work_unit_id")
     directory = epic_dir(inp.repo_root, inp.epic_id)
     epic_path = directory / "EPIC.md"
     epic_relpath = _relpath(inp.repo_root, epic_path)
@@ -1575,7 +1579,7 @@ def epic_definition_node(inp: NodeInput) -> NodeOutput:
             inp.repo_root,
             role="primary",
             epic_id=inp.epic_id,
-            story_id=None,
+            work_unit_id=None,
             prompt=_epic_definition_prompt(inp.repo_root, inp.epic_id, cartography_refs=carto_refs),
             artefacts_loaded=[
                 *_epic_definition_artefacts(inp.repo_root, inp.epic_id),
@@ -1702,8 +1706,8 @@ def _readiness_gate_body(epic_id: int, epic_relpath: str, result: ReadinessResul
 
 
 def contract_readiness_node(inp: NodeInput) -> NodeOutput:
-    if inp.story_id:
-        raise ValueError("contract_readiness does not accept story_id")
+    if inp.work_unit_id:
+        raise ValueError("contract_readiness does not accept work_unit_id")
     directory = epic_dir(inp.repo_root, inp.epic_id)
     epic_path = directory / "EPIC.md"
     epic_relpath = _relpath(inp.repo_root, epic_path)
@@ -1780,7 +1784,7 @@ def contract_readiness_node(inp: NodeInput) -> NodeOutput:
     if not gate.exists():
         write_gate(
             epic_dir=directory,
-            story_id=None,
+            work_unit_id=None,
             triggered_by=[trigger],
             position_text=_readiness_gate_body(inp.epic_id, epic_relpath, result),
             schema_path=schema_dir() / "gate.schema.json",
@@ -1807,8 +1811,8 @@ def contract_readiness_node(inp: NodeInput) -> NodeOutput:
 
 
 def breakdown_planning_node(inp: NodeInput) -> NodeOutput:
-    if inp.story_id:
-        raise ValueError("breakdown_planning does not accept story_id")
+    if inp.work_unit_id:
+        raise ValueError("breakdown_planning does not accept work_unit_id")
     directory = epic_dir(inp.repo_root, inp.epic_id)
     epic_path = directory / "EPIC.md"
     plan_path = directory / "plan.json"
@@ -1846,7 +1850,7 @@ def breakdown_planning_node(inp: NodeInput) -> NodeOutput:
             inp.repo_root,
             role="primary",
             epic_id=inp.epic_id,
-            story_id=None,
+            work_unit_id=None,
             prompt=_breakdown_planning_prompt(
                 inp.repo_root, inp.epic_id, cartography_refs=carto_refs
             ),
@@ -1932,8 +1936,8 @@ def breakdown_planning_node(inp: NodeInput) -> NodeOutput:
 
 
 def plan_critique_node(inp: NodeInput) -> NodeOutput:
-    if inp.story_id:
-        raise ValueError("plan_critique does not accept story_id")
+    if inp.work_unit_id:
+        raise ValueError("plan_critique does not accept work_unit_id")
     directory = epic_dir(inp.repo_root, inp.epic_id)
     plan_path = directory / "plan.json"
     plan_md_path = plan_markdown_path(inp.repo_root, inp.epic_id)
@@ -1988,7 +1992,7 @@ def plan_critique_node(inp: NodeInput) -> NodeOutput:
             inp.repo_root,
             role="reviewer",
             epic_id=inp.epic_id,
-            story_id=None,
+            work_unit_id=None,
             prompt=_plan_critique_prompt(inp.repo_root, inp.epic_id, cartography_refs=carto_refs),
             artefacts_loaded=[
                 *_plan_critique_artefacts(inp.repo_root, inp.epic_id),
@@ -2091,7 +2095,7 @@ def _plan_gate_body(
         "## Context\n\n"
         f"Stage 4 plan gate for E{epic_id}. "
         f"`{plan_relpath}` and `{critique_relpath}` are present and valid. "
-        "Woof always opens this gate before story execution.\n\n"
+        "Woof always opens this gate before work-unit execution.\n\n"
         "## Findings\n\n" + "\n".join(finding_lines) + "\n\n## Primary position\n\n"
         f"Source: `{plan_relpath}`\n\n"
         "The primary plan is ready for human review before Stage 5 starts.\n\n"
@@ -2102,8 +2106,8 @@ def _plan_gate_body(
 
 
 def plan_gate_open_node(inp: NodeInput) -> NodeOutput:
-    if inp.story_id:
-        raise ValueError("plan_gate_open does not accept story_id")
+    if inp.work_unit_id:
+        raise ValueError("plan_gate_open does not accept work_unit_id")
     directory = epic_dir(inp.repo_root, inp.epic_id)
     plan_path = directory / "plan.json"
     plan_md_path = plan_markdown_path(inp.repo_root, inp.epic_id)
@@ -2176,7 +2180,7 @@ def plan_gate_open_node(inp: NodeInput) -> NodeOutput:
         critique = read_markdown_front_matter(critique_path)
         write_gate(
             epic_dir=directory,
-            story_id=None,
+            work_unit_id=None,
             triggered_by=["plan_review"],
             position_text=_plan_gate_body(
                 epic_id=inp.epic_id,
@@ -2208,29 +2212,29 @@ def plan_gate_open_node(inp: NodeInput) -> NodeOutput:
 
 
 def executor_dispatch_node(inp: NodeInput) -> NodeOutput:
-    if not inp.story_id:
-        raise ValueError("executor_dispatch requires story_id")
+    if not inp.work_unit_id:
+        raise ValueError("executor_dispatch requires work_unit_id")
     carto_refs = _require_cartography_docs(
-        inp.repo_root, _EXECUTOR_CARTOGRAPHY_DOCS, "story_gate", story_id=inp.story_id
+        inp.repo_root, _EXECUTOR_CARTOGRAPHY_DOCS, "work_unit_gate", work_unit_id=inp.work_unit_id
     )
     plan = load_plan(inp.repo_root, inp.epic_id)
-    story = story_by_id(plan, inp.story_id)
-    files_txt_slice = _executor_files_txt_slice(inp.repo_root, story)
-    mark_story_status(inp.repo_root, inp.epic_id, inp.story_id, "in_progress")
+    work_unit = work_unit_by_id(plan, inp.work_unit_id)
+    files_txt_slice = _work_unit_files_txt_slice(inp.repo_root, work_unit)
+    mark_work_unit_state(inp.repo_root, inp.epic_id, inp.work_unit_id, "in_progress")
     proc = _run_dispatch(
         inp.repo_root,
         role="primary",
         epic_id=inp.epic_id,
-        story_id=inp.story_id,
+        work_unit_id=inp.work_unit_id,
         prompt=_executor_dispatch_prompt(
             inp.repo_root,
             inp.epic_id,
-            inp.story_id,
+            inp.work_unit_id,
             cartography_refs=carto_refs,
             files_txt_slice=files_txt_slice,
         ),
         artefacts_loaded=[
-            *_story_context_artefacts(inp.repo_root, inp.epic_id),
+            *_work_unit_context_artefacts(inp.repo_root, inp.epic_id),
             *carto_refs,
             _codebase_doc_relpath("files.txt"),
         ],
@@ -2241,7 +2245,7 @@ def executor_dispatch_node(inp: NodeInput) -> NodeOutput:
         write_gate_for_trigger(
             trigger="subprocess_crash",
             epic_dir=epic_dir(inp.repo_root, inp.epic_id),
-            story_id=inp.story_id,
+            work_unit_id=inp.work_unit_id,
             exit_code=dispatch.gate_exit_code,
             schema_path=schema_dir() / "gate.schema.json",
         )
@@ -2249,7 +2253,7 @@ def executor_dispatch_node(inp: NodeInput) -> NodeOutput:
             node_type=inp.node_type,
             status=NodeStatus.GATE_OPENED,
             epic_id=inp.epic_id,
-            story_id=inp.story_id,
+            work_unit_id=inp.work_unit_id,
             gate_path=_gate_path(inp.epic_id),
             triggered_by=["subprocess_crash"],
             message=dispatch.message,
@@ -2258,36 +2262,39 @@ def executor_dispatch_node(inp: NodeInput) -> NodeOutput:
         node_type=inp.node_type,
         status=NodeStatus.COMPLETED,
         epic_id=inp.epic_id,
-        story_id=inp.story_id,
+        work_unit_id=inp.work_unit_id,
         next_node=NodeType.CRITIQUE_DISPATCH,
     )
 
 
 def critique_dispatch_node(inp: NodeInput) -> NodeOutput:
-    if not inp.story_id:
-        raise ValueError("critique_dispatch requires story_id")
+    if not inp.work_unit_id:
+        raise ValueError("critique_dispatch requires work_unit_id")
     carto_refs = _require_cartography_docs(
-        inp.repo_root, _CRITIQUE_DISPATCH_CARTOGRAPHY_DOCS, "story_gate", story_id=inp.story_id
+        inp.repo_root,
+        _CRITIQUE_DISPATCH_CARTOGRAPHY_DOCS,
+        "work_unit_gate",
+        work_unit_id=inp.work_unit_id,
     )
     try:
-        _stage_changed_story_paths(inp.repo_root, inp.epic_id, inp.story_id)
+        _stage_changed_work_unit_paths(inp.repo_root, inp.epic_id, inp.work_unit_id)
     except (subprocess.CalledProcessError, StageStateError, ValueError) as exc:
         return _write_position_gate(
             inp,
             trigger="incomplete_stage_state",
-            position=f"Story paths could not be staged before reviewer critique: {exc}",
+            position=f"Work-unit paths could not be staged before reviewer critique: {exc}",
         )
-    prompt = _story_critique_prompt(
-        inp.repo_root, inp.epic_id, inp.story_id, cartography_refs=carto_refs
+    prompt = _work_unit_critique_prompt(
+        inp.repo_root, inp.epic_id, inp.work_unit_id, cartography_refs=carto_refs
     )
     proc = _run_dispatch(
         inp.repo_root,
         role="reviewer",
         epic_id=inp.epic_id,
-        story_id=inp.story_id,
+        work_unit_id=inp.work_unit_id,
         prompt=prompt,
         artefacts_loaded=[
-            *_story_context_artefacts(inp.repo_root, inp.epic_id),
+            *_work_unit_context_artefacts(inp.repo_root, inp.epic_id),
             *carto_refs,
         ],
         route_key="execution",
@@ -2297,7 +2304,7 @@ def critique_dispatch_node(inp: NodeInput) -> NodeOutput:
         write_gate_for_trigger(
             trigger="reviewer_unreachable",
             epic_dir=epic_dir(inp.repo_root, inp.epic_id),
-            story_id=inp.story_id,
+            work_unit_id=inp.work_unit_id,
             exit_code=None,
             schema_path=schema_dir() / "gate.schema.json",
         )
@@ -2305,7 +2312,7 @@ def critique_dispatch_node(inp: NodeInput) -> NodeOutput:
             node_type=inp.node_type,
             status=NodeStatus.GATE_OPENED,
             epic_id=inp.epic_id,
-            story_id=inp.story_id,
+            work_unit_id=inp.work_unit_id,
             gate_path=_gate_path(inp.epic_id),
             triggered_by=["reviewer_unreachable"],
             message=dispatch.message,
@@ -2314,7 +2321,7 @@ def critique_dispatch_node(inp: NodeInput) -> NodeOutput:
         node_type=inp.node_type,
         status=NodeStatus.COMPLETED,
         epic_id=inp.epic_id,
-        story_id=inp.story_id,
+        work_unit_id=inp.work_unit_id,
         next_node=NodeType.REVIEW_DISPOSITION,
     )
 
@@ -2326,7 +2333,7 @@ def _write_position_gate(inp: NodeInput, *, trigger: str, position: str) -> Node
         write_gate_for_trigger(
             trigger=trigger,
             epic_dir=epic_dir(inp.repo_root, inp.epic_id),
-            story_id=inp.story_id,
+            work_unit_id=inp.work_unit_id,
             position_path=position_path,
             schema_path=schema_dir() / "gate.schema.json",
         )
@@ -2336,7 +2343,7 @@ def _write_position_gate(inp: NodeInput, *, trigger: str, position: str) -> Node
         node_type=inp.node_type,
         status=NodeStatus.GATE_OPENED,
         epic_id=inp.epic_id,
-        story_id=inp.story_id,
+        work_unit_id=inp.work_unit_id,
         gate_path=_gate_path(inp.epic_id),
         triggered_by=[trigger],
         message=position,
@@ -2356,10 +2363,10 @@ def _write_disposition_incomplete_gate(inp: NodeInput, message: str) -> NodeOutp
 
 
 def review_disposition_node(inp: NodeInput) -> NodeOutput:
-    if not inp.story_id:
-        raise ValueError("review_disposition requires story_id")
+    if not inp.work_unit_id:
+        raise ValueError("review_disposition requires work_unit_id")
     directory = epic_dir(inp.repo_root, inp.epic_id)
-    critique_path = story_critique_path(directory, inp.story_id)
+    critique_path = work_unit_critique_path(directory, inp.work_unit_id)
 
     try:
         critique = read_markdown_front_matter(critique_path)
@@ -2390,7 +2397,7 @@ def review_disposition_node(inp: NodeInput) -> NodeOutput:
     if severity == "blocker":
         body = reviewer_blocker_gate_body(
             epic_id=inp.epic_id,
-            story_id=inp.story_id,
+            work_unit_id=inp.work_unit_id,
             critique=critique,
         )
         return _write_position_gate(
@@ -2399,26 +2406,26 @@ def review_disposition_node(inp: NodeInput) -> NodeOutput:
             position=body,
         )
 
-    disposition_path = story_disposition_path(directory, inp.story_id)
+    disposition_path = work_unit_disposition_path(directory, inp.work_unit_id)
     if not disposition_path.exists():
-        write_deterministic_story_disposition(
+        write_deterministic_work_unit_disposition(
             epic_dir=directory,
             epic_id=inp.epic_id,
-            story_id=inp.story_id,
+            work_unit_id=inp.work_unit_id,
             critique=critique,
             timestamp=_now(),
         )
 
-    validation = validate_story_disposition(directory, inp.epic_id, inp.story_id)
+    validation = validate_work_unit_disposition(directory, inp.epic_id, inp.work_unit_id)
     if not validation.ok:
-        write_deterministic_story_disposition(
+        write_deterministic_work_unit_disposition(
             epic_dir=directory,
             epic_id=inp.epic_id,
-            story_id=inp.story_id,
+            work_unit_id=inp.work_unit_id,
             critique=critique,
             timestamp=_now(),
         )
-        validation = validate_story_disposition(directory, inp.epic_id, inp.story_id)
+        validation = validate_work_unit_disposition(directory, inp.epic_id, inp.work_unit_id)
         if not validation.ok:
             return _write_disposition_incomplete_gate(
                 inp,
@@ -2429,60 +2436,62 @@ def review_disposition_node(inp: NodeInput) -> NodeOutput:
         node_type=inp.node_type,
         status=NodeStatus.COMPLETED,
         epic_id=inp.epic_id,
-        story_id=inp.story_id,
+        work_unit_id=inp.work_unit_id,
         next_node=NodeType.VERIFICATION,
-        paths=[story_disposition_relpath(inp.epic_id, inp.story_id)],
+        paths=[work_unit_disposition_relpath(inp.epic_id, inp.work_unit_id)],
     )
 
 
-def _stage_changed_story_paths(repo_root: Path, epic_id: int, story_id: str) -> list[str]:
-    """Stage changed files that belong to the active story pathscope."""
+def _stage_changed_work_unit_paths(repo_root: Path, epic_id: int, work_unit_id: str) -> list[str]:
+    """Stage changed files that belong to the active work-unit path scope."""
 
     plan = load_plan(repo_root, epic_id)
-    story = story_by_id(plan, story_id)
+    work_unit = work_unit_by_id(plan, work_unit_id)
     candidate_paths = [path for path in changed_paths(repo_root) if not path.startswith(".woof/")]
     try:
-        story_paths = filter_paths_matching(repo_root, candidate_paths, list(story.paths))
+        work_unit_paths = filter_paths_matching(repo_root, candidate_paths, list(work_unit.paths))
     except PathspecEvaluationError as exc:
-        raise StageStateError(f"story pathspec evaluation failed: {exc}") from exc
-    if story_paths:
-        git(repo_root, "add", "--", *story_paths)
-    return story_paths
+        raise StageStateError(f"work-unit pathspec evaluation failed: {exc}") from exc
+    if work_unit_paths:
+        git(repo_root, "add", "--", *work_unit_paths)
+    return work_unit_paths
 
 
-def _stage_story_transaction_paths(repo_root: Path, epic_id: int, story_id: str) -> list[str]:
-    """Stage story and graph-owned files before Stage-5 commit-readiness checks.
+def _stage_work_unit_transaction_paths(
+    repo_root: Path, epic_id: int, work_unit_id: str
+) -> list[str]:
+    """Stage work-unit and graph-owned files before Stage-5 commit-readiness checks.
 
-    The producer owns story content. The graph owns the transaction boundary:
-    changed files within `story.paths[]`, durable `.woof` state, dispatch audit
+    The producer owns work-unit content. The graph owns the transaction boundary:
+    changed files within `work_unit.paths[]`, durable `.woof` state, dispatch audit
     files, critiques, dispositions, and JSONL events must be staged together so
     deterministic checks and reviewer critique inspect the same candidate diff.
     """
 
     plan = load_plan(repo_root, epic_id)
-    story = story_by_id(plan, story_id)
-    story_paths = _stage_changed_story_paths(repo_root, epic_id, story_id)
-    manifest = build_story_manifest(repo_root, epic_id, story)
+    work_unit = work_unit_by_id(plan, work_unit_id)
+    work_unit_paths = _stage_changed_work_unit_paths(repo_root, epic_id, work_unit_id)
+    manifest = build_work_unit_manifest(repo_root, epic_id, work_unit)
     graph_paths = [path for path in manifest.expected_paths if path.startswith(".woof/")]
     if graph_paths:
         git(repo_root, "add", "--", *graph_paths)
-    return sorted(set(story_paths + graph_paths))
+    return sorted(set(work_unit_paths + graph_paths))
 
 
 def verification_node(inp: NodeInput) -> NodeOutput:
-    if not inp.story_id:
-        raise ValueError("verification requires story_id")
+    if not inp.work_unit_id:
+        raise ValueError("verification requires work_unit_id")
     directory = epic_dir(inp.repo_root, inp.epic_id)
     result_path = epic_dir(inp.repo_root, inp.epic_id) / "check-result.json"
     try:
-        _stage_story_transaction_paths(inp.repo_root, inp.epic_id, inp.story_id)
+        _stage_work_unit_transaction_paths(inp.repo_root, inp.epic_id, inp.work_unit_id)
         prepare_commit_audit(inp.repo_root, directory)
-        _stage_story_transaction_paths(inp.repo_root, inp.epic_id, inp.story_id)
+        _stage_work_unit_transaction_paths(inp.repo_root, inp.epic_id, inp.work_unit_id)
     except (subprocess.CalledProcessError, StageStateError, ValueError) as exc:
         return _write_position_gate(
             inp,
             trigger="incomplete_stage_state",
-            position=f"Story transaction artefacts could not be staged: {exc}",
+            position=f"Work-unit transaction artefacts could not be staged: {exc}",
         )
     proc = subprocess.run(
         [
@@ -2491,8 +2500,8 @@ def verification_node(inp: NodeInput) -> NodeOutput:
             "stage-5",
             "--epic",
             str(inp.epic_id),
-            "--story",
-            inp.story_id,
+            "--work-unit",
+            inp.work_unit_id,
             "--format",
             "json",
         ],
@@ -2510,21 +2519,21 @@ def verification_node(inp: NodeInput) -> NodeOutput:
                 check_result_path=result_path,
                 position_path=None,
                 epic_dir=epic_dir(inp.repo_root, inp.epic_id),
-                story_id=inp.story_id,
+                work_unit_id=inp.work_unit_id,
                 schema_path=schema_dir() / "gate.schema.json",
             )
         else:
             write_gate_for_trigger(
                 trigger="schema_validation_failed",
                 epic_dir=epic_dir(inp.repo_root, inp.epic_id),
-                story_id=inp.story_id,
+                work_unit_id=inp.work_unit_id,
                 schema_path=schema_dir() / "gate.schema.json",
             )
         return NodeOutput(
             node_type=inp.node_type,
             status=NodeStatus.GATE_OPENED,
             epic_id=inp.epic_id,
-            story_id=inp.story_id,
+            work_unit_id=inp.work_unit_id,
             gate_path=_gate_path(inp.epic_id),
             validation_summary=validation_summary,
             triggered_by=validation_summary.triggered_by if validation_summary else [],
@@ -2542,7 +2551,7 @@ def verification_node(inp: NodeInput) -> NodeOutput:
         node_type=inp.node_type,
         status=NodeStatus.COMPLETED,
         epic_id=inp.epic_id,
-        story_id=inp.story_id,
+        work_unit_id=inp.work_unit_id,
         next_node=NodeType.COMMIT,
         validation_summary=validation_summary,
         paths=[str(result_path.relative_to(inp.repo_root))],
@@ -2555,18 +2564,18 @@ def _executor_result(repo_root: Path, epic_id: int) -> dict:
 
 
 def _commit_message(
-    epic_id: int, story_title: str, story_id: str, executor_result: dict | None = None
+    epic_id: int, work_unit_title: str, work_unit_id: str, executor_result: dict | None = None
 ) -> str:
     if executor_result:
         subject = str(executor_result.get("commit_subject") or "").strip()
         if subject:
             return " ".join(subject.splitlines())
-    return f"feat: E{epic_id} {story_id} - {story_title}"
+    return f"feat: E{epic_id} {work_unit_id} - {work_unit_title}"
 
 
 def commit_node(inp: NodeInput) -> NodeOutput:
-    if not inp.story_id:
-        raise ValueError("commit requires story_id")
+    if not inp.work_unit_id:
+        raise ValueError("commit requires work_unit_id")
 
     # Drift check: verify HEAD/branch haven't moved since the last dispatch.
     # subprocess_returned events live in dispatch.jsonl, not epic.jsonl.
@@ -2576,7 +2585,7 @@ def commit_node(inp: NodeInput) -> NodeOutput:
         (
             e
             for e in reversed(dispatch_events)
-            if e.get("event") == "subprocess_returned" and e.get("story_id") == inp.story_id
+            if e.get("event") == "subprocess_returned" and e.get("work_unit_id") == inp.work_unit_id
         ),
         None,
     )
@@ -2592,21 +2601,21 @@ def commit_node(inp: NodeInput) -> NodeOutput:
             write_gate_for_trigger(
                 trigger="head_branch_drift",
                 epic_dir=epic_dir(inp.repo_root, inp.epic_id),
-                story_id=inp.story_id,
+                work_unit_id=inp.work_unit_id,
                 schema_path=schema_dir() / "gate.schema.json",
             )
             return NodeOutput(
                 node_type=inp.node_type,
                 status=NodeStatus.GATE_OPENED,
                 epic_id=inp.epic_id,
-                story_id=inp.story_id,
+                work_unit_id=inp.work_unit_id,
                 gate_path=_gate_path(inp.epic_id),
                 triggered_by=["head_branch_drift"],
                 message=drift_desc,
             )
 
     plan = load_plan(inp.repo_root, inp.epic_id)
-    story = story_by_id(plan, inp.story_id)
+    work_unit = work_unit_by_id(plan, inp.work_unit_id)
     result = _executor_result(inp.repo_root, inp.epic_id)
     directory = epic_dir(inp.repo_root, inp.epic_id)
 
@@ -2619,7 +2628,7 @@ def commit_node(inp: NodeInput) -> NodeOutput:
         write_gate_for_trigger(
             trigger="audit_redaction",
             epic_dir=directory,
-            story_id=inp.story_id,
+            work_unit_id=inp.work_unit_id,
             position_path=pos_path,
             schema_path=schema_dir() / "gate.schema.json",
         )
@@ -2628,7 +2637,7 @@ def commit_node(inp: NodeInput) -> NodeOutput:
             node_type=inp.node_type,
             status=NodeStatus.GATE_OPENED,
             epic_id=inp.epic_id,
-            story_id=inp.story_id,
+            work_unit_id=inp.work_unit_id,
             gate_path=_gate_path(inp.epic_id),
             triggered_by=["audit_redaction"],
             message=position,
@@ -2649,7 +2658,7 @@ def commit_node(inp: NodeInput) -> NodeOutput:
         if pin_error is not None and _completed_resume_delta_is_graph_owned(
             inp.repo_root,
             inp.epic_id,
-            inp.story_id,
+            inp.work_unit_id,
             check_result,
         ):
             pin_error = None
@@ -2660,7 +2669,7 @@ def commit_node(inp: NodeInput) -> NodeOutput:
         write_gate_for_trigger(
             trigger="check_7_commit_transaction",
             epic_dir=epic_dir(inp.repo_root, inp.epic_id),
-            story_id=inp.story_id,
+            work_unit_id=inp.work_unit_id,
             position_path=pos_path,
             schema_path=schema_dir() / "gate.schema.json",
         )
@@ -2669,25 +2678,25 @@ def commit_node(inp: NodeInput) -> NodeOutput:
             node_type=inp.node_type,
             status=NodeStatus.GATE_OPENED,
             epic_id=inp.epic_id,
-            story_id=inp.story_id,
+            work_unit_id=inp.work_unit_id,
             gate_path=_gate_path(inp.epic_id),
             triggered_by=["check_7_commit_transaction"],
             message=position,
         )
 
-    manifest = build_story_manifest(inp.repo_root, inp.epic_id, story)
+    manifest = build_work_unit_manifest(inp.repo_root, inp.epic_id, work_unit)
     if not manifest.audit_paths:
         write_gate_for_trigger(
             trigger="check_7_commit_transaction",
             epic_dir=epic_dir(inp.repo_root, inp.epic_id),
-            story_id=inp.story_id,
+            work_unit_id=inp.work_unit_id,
             schema_path=schema_dir() / "gate.schema.json",
         )
         return NodeOutput(
             node_type=inp.node_type,
             status=NodeStatus.GATE_OPENED,
             epic_id=inp.epic_id,
-            story_id=inp.story_id,
+            work_unit_id=inp.work_unit_id,
             gate_path=_gate_path(inp.epic_id),
             triggered_by=["check_7_commit_transaction"],
             message="transaction manifest has no audit files",
@@ -2703,7 +2712,7 @@ def commit_node(inp: NodeInput) -> NodeOutput:
         write_gate_for_trigger(
             trigger="check_7_commit_transaction",
             epic_dir=epic_dir(inp.repo_root, inp.epic_id),
-            story_id=inp.story_id,
+            work_unit_id=inp.work_unit_id,
             position_path=pos_path,
             schema_path=schema_dir() / "gate.schema.json",
         )
@@ -2712,24 +2721,24 @@ def commit_node(inp: NodeInput) -> NodeOutput:
             node_type=inp.node_type,
             status=NodeStatus.GATE_OPENED,
             epic_id=inp.epic_id,
-            story_id=inp.story_id,
+            work_unit_id=inp.work_unit_id,
             gate_path=_gate_path(inp.epic_id),
             triggered_by=["check_7_commit_transaction"],
             message=position,
         )
 
-    mark_story_status(inp.repo_root, inp.epic_id, inp.story_id, "done")
+    mark_work_unit_state(inp.repo_root, inp.epic_id, inp.work_unit_id, "done")
     append_epic_event_once(
         inp.repo_root,
         inp.epic_id,
         {
-            "event": "story_completed",
+            "event": "work_unit_completed",
             "at": _now(),
             "epic_id": inp.epic_id,
-            "story_id": inp.story_id,
+            "work_unit_id": inp.work_unit_id,
         },
-        event="story_completed",
-        story_id=inp.story_id,
+        event="work_unit_completed",
+        work_unit_id=inp.work_unit_id,
     )
 
     git(inp.repo_root, "add", "--", *manifest.expected_paths)
@@ -2745,7 +2754,7 @@ def commit_node(inp: NodeInput) -> NodeOutput:
         write_gate_for_trigger(
             trigger="check_7_commit_transaction",
             epic_dir=epic_dir(inp.repo_root, inp.epic_id),
-            story_id=inp.story_id,
+            work_unit_id=inp.work_unit_id,
             position_path=pos_path,
             schema_path=schema_dir() / "gate.schema.json",
         )
@@ -2754,7 +2763,7 @@ def commit_node(inp: NodeInput) -> NodeOutput:
             node_type=inp.node_type,
             status=NodeStatus.GATE_OPENED,
             epic_id=inp.epic_id,
-            story_id=inp.story_id,
+            work_unit_id=inp.work_unit_id,
             gate_path=_gate_path(inp.epic_id),
             triggered_by=["check_7_commit_transaction"],
             message=position,
@@ -2767,14 +2776,14 @@ def commit_node(inp: NodeInput) -> NodeOutput:
             "event": "transaction_manifest_verified",
             "at": _now(),
             "epic_id": inp.epic_id,
-            "story_id": inp.story_id,
+            "work_unit_id": inp.work_unit_id,
             "manifest": manifest.model_dump(),
         },
         event="transaction_manifest_verified",
-        story_id=inp.story_id,
+        work_unit_id=inp.work_unit_id,
     )
     completed_plan = load_plan(inp.repo_root, inp.epic_id)
-    if all(candidate.status in TERMINAL_STORY_STATUSES for candidate in completed_plan.work_units):
+    if all(candidate.state in TERMINAL_WORK_UNIT_STATES for candidate in completed_plan.work_units):
         append_epic_event_once(
             inp.repo_root,
             inp.epic_id,
@@ -2787,7 +2796,7 @@ def commit_node(inp: NodeInput) -> NodeOutput:
         )
     git(inp.repo_root, "add", "--", f".woof/epics/E{inp.epic_id}/epic.jsonl")
 
-    message = _commit_message(inp.epic_id, story.title, inp.story_id, result)
+    message = _commit_message(inp.epic_id, work_unit.title, inp.work_unit_id, result)
     body = result.get("commit_body")
     args = ["commit", "-m", message]
     if body:
@@ -2799,17 +2808,17 @@ def commit_node(inp: NodeInput) -> NodeOutput:
         node_type=inp.node_type,
         status=NodeStatus.COMPLETED,
         epic_id=inp.epic_id,
-        story_id=inp.story_id,
+        work_unit_id=inp.work_unit_id,
         paths=manifest.expected_paths,
     )
 
 
 def gate_open_node(inp: NodeInput) -> NodeOutput:
-    if not inp.story_id:
+    if not inp.work_unit_id:
         write_gate_for_trigger(
             trigger=inp.reason or "manual",
             epic_dir=epic_dir(inp.repo_root, inp.epic_id),
-            story_id=None,
+            work_unit_id=None,
             schema_path=schema_dir() / "gate.schema.json",
         )
         return NodeOutput(
@@ -2859,14 +2868,14 @@ def gate_open_node(inp: NodeInput) -> NodeOutput:
                 check_result_path=check_result_path,
                 position_path=None,
                 epic_dir=directory,
-                story_id=inp.story_id,
+                work_unit_id=inp.work_unit_id,
                 schema_path=schema_dir() / "gate.schema.json",
             )
             return NodeOutput(
                 node_type=inp.node_type,
                 status=NodeStatus.GATE_OPENED,
                 epic_id=inp.epic_id,
-                story_id=inp.story_id,
+                work_unit_id=inp.work_unit_id,
                 gate_path=_gate_path(inp.epic_id),
                 validation_summary=_validation_summary(check_result),
                 triggered_by=check_result.get("triggered_by") or ["schema_validation_failed"],
@@ -2885,7 +2894,7 @@ def gate_open_node(inp: NodeInput) -> NodeOutput:
     write_gate_for_trigger(
         trigger=trigger,
         epic_dir=directory,
-        story_id=inp.story_id,
+        work_unit_id=inp.work_unit_id,
         position_path=position_path,
         schema_path=schema_dir() / "gate.schema.json",
     )
@@ -2895,7 +2904,7 @@ def gate_open_node(inp: NodeInput) -> NodeOutput:
         node_type=inp.node_type,
         status=NodeStatus.GATE_OPENED,
         epic_id=inp.epic_id,
-        story_id=inp.story_id,
+        work_unit_id=inp.work_unit_id,
         gate_path=_gate_path(inp.epic_id),
         triggered_by=[trigger],
     )
@@ -2906,14 +2915,14 @@ def _write_incomplete_stage_gate(inp: NodeInput, position: str) -> NodeOutput:
     position_path.write_text(
         f"{position}\n\n"
         "The graph cannot safely infer or recreate this state. "
-        "Resolve the gate by restoring the required artefact, revising the story state, "
-        "or explicitly abandoning the story."
+        "Resolve the gate by restoring the required artefact, revising the work-unit state, "
+        "or explicitly abandoning the work unit."
     )
     try:
         write_gate_for_trigger(
             trigger="incomplete_stage_state",
             epic_dir=epic_dir(inp.repo_root, inp.epic_id),
-            story_id=inp.story_id,
+            work_unit_id=inp.work_unit_id,
             position_path=position_path,
             schema_path=schema_dir() / "gate.schema.json",
         )
@@ -2923,7 +2932,7 @@ def _write_incomplete_stage_gate(inp: NodeInput, position: str) -> NodeOutput:
         node_type=inp.node_type,
         status=NodeStatus.GATE_OPENED,
         epic_id=inp.epic_id,
-        story_id=inp.story_id,
+        work_unit_id=inp.work_unit_id,
         gate_path=_gate_path(inp.epic_id),
         triggered_by=["incomplete_stage_state"],
         message=position,
@@ -2935,7 +2944,7 @@ def human_review_node(inp: NodeInput) -> NodeOutput:
         node_type=inp.node_type,
         status=NodeStatus.HALTED,
         epic_id=inp.epic_id,
-        story_id=inp.story_id,
+        work_unit_id=inp.work_unit_id,
         gate_path=_gate_path(inp.epic_id),
         message=_gate_operator_message(inp.repo_root, inp.epic_id),
     )

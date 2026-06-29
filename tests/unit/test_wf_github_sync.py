@@ -247,7 +247,7 @@ def test_wf_runtime_check_fails_before_gate_mutation(tmp_path: Path) -> None:
     project = _project(tmp_path)
     epic_dir = project / ".woof" / "epics" / "E3"
     epic_dir.mkdir(parents=True)
-    (epic_dir / "gate.md").write_text("---\ntype: story_gate\n---\n")
+    (epic_dir / "gate.md").write_text("---\ntype: work_unit_gate\n---\n")
     (epic_dir / "epic.jsonl").write_text("")
     bin_dir = tmp_path / "bin"
     _make_gh_stub(bin_dir, fail_rate_limit=True)
@@ -265,7 +265,7 @@ def test_wf_runtime_check_rejects_exhausted_core_quota(tmp_path: Path) -> None:
     project = _project(tmp_path)
     epic_dir = project / ".woof" / "epics" / "E4"
     epic_dir.mkdir(parents=True)
-    (epic_dir / "gate.md").write_text("---\ntype: story_gate\n---\n")
+    (epic_dir / "gate.md").write_text("---\ntype: work_unit_gate\n---\n")
     bin_dir = tmp_path / "bin"
     _make_gh_stub(bin_dir, rate_remaining=100)
 

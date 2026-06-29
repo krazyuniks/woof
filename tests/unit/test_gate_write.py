@@ -70,7 +70,7 @@ def test_gate_write_from_check_result_validates(tmp_path: Path) -> None:
         "ok": False,
         "stage": 5,
         "epic_id": 181,
-        "story_id": "S2",
+        "work_unit_id": "S2",
         "triggered_by": ["check_6_critique_blocker"],
         "checks": [
             {
@@ -95,7 +95,7 @@ def test_gate_write_from_check_result_validates(tmp_path: Path) -> None:
         check_result_path=cr_file,
         position_path=position_file,
         epic_dir=epic_dir,
-        story_id="S2",
+        work_unit_id="S2",
         schema_path=GATE_SCHEMA,
     )
 
@@ -110,8 +110,8 @@ def test_gate_write_from_check_result_validates(tmp_path: Path) -> None:
     text = gate_path.read_text()
     fm = yaml.safe_load(text[4 : text.find("\n---\n", 4)])
     assert "check_6_critique_blocker" in fm["triggered_by"]
-    assert fm["type"] == "story_gate"
-    assert fm["story_id"] == "S2"
+    assert fm["type"] == "work_unit_gate"
+    assert fm["work_unit_id"] == "S2"
 
     # Position body is preserved inside the structured operator sections.
     assert "Critique returned blocker" in text
@@ -128,7 +128,7 @@ def test_gate_write_for_subprocess_crash(tmp_path: Path) -> None:
     gate_write.write_gate_for_trigger(
         trigger="subprocess_crash",
         epic_dir=epic_dir,
-        story_id="S1",
+        work_unit_id="S1",
         exit_code=1,
         schema_path=GATE_SCHEMA,
     )
@@ -153,7 +153,7 @@ def test_gate_write_for_tracker_sync_conflict_is_epic_level_gate(tmp_path: Path)
     gate_write.write_gate_for_trigger(
         trigger="tracker_sync_conflict",
         epic_dir=epic_dir,
-        story_id=None,
+        work_unit_id=None,
         schema_path=GATE_SCHEMA,
     )
 
@@ -162,7 +162,7 @@ def test_gate_write_for_tracker_sync_conflict_is_epic_level_gate(tmp_path: Path)
     assert ok, f"gate.md front-matter invalid: {msg}"
     fm = yaml.safe_load(gate_path.read_text()[4 : gate_path.read_text().find("\n---\n", 4)])
     assert fm["type"] == "plan_gate"
-    assert fm["story_id"] is None
+    assert fm["work_unit_id"] is None
     assert fm["triggered_by"] == ["tracker_sync_conflict"]
     gate_text = gate_path.read_text()
     assert "## Context" in gate_text
@@ -170,20 +170,20 @@ def test_gate_write_for_tracker_sync_conflict_is_epic_level_gate(tmp_path: Path)
 
 
 def test_gate_write_appends_epic_jsonl(tmp_path: Path) -> None:
-    """gate write appends story_gate_opened event to epic.jsonl."""
+    """gate write appends work_unit_gate_opened event to epic.jsonl."""
     epic_dir = _setup_epic_dir(tmp_path, 183)
 
     gate_write.write_gate_for_trigger(
         trigger="executor_aborted",
         epic_dir=epic_dir,
-        story_id="S1",
+        work_unit_id="S1",
         schema_path=GATE_SCHEMA,
     )
 
     jsonl = epic_dir / "epic.jsonl"
     lines = [json.loads(line) for line in jsonl.read_text().splitlines() if line.strip()]
-    assert any(e["event"] == "story_gate_opened" for e in lines), (
-        f"story_gate_opened not in epic.jsonl: {lines}"
+    assert any(e["event"] == "work_unit_gate_opened" for e in lines), (
+        f"work_unit_gate_opened not in epic.jsonl: {lines}"
     )
 
 
@@ -199,7 +199,7 @@ def test_gate_write_schema_failure_is_loud_and_rolls_back(
     with pytest.raises(ValueError, match=r"gate\.md front-matter failed schema validation"):
         gate_write.write_gate(
             epic_dir=epic_dir,
-            story_id="S1",
+            work_unit_id="S1",
             triggered_by=["manual"],
             position_text="Manual gate.",
             schema_path=schema_path,

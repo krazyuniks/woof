@@ -42,28 +42,26 @@ class NodeStatus(StrEnum):
     EPIC_ABANDONED = "epic_abandoned"
 
 
-# Story statuses that are terminal: the story will never be dispatched again.
-# "done" delivered the story; "abandoned" skipped it at a gate (E17 P4 / D-AB).
+# Work-unit states that are terminal: the unit will never be dispatched again.
+# "done" delivered the unit; "abandoned" skipped it at a gate.
 # Both let the epic reach a terminal outcome; neither is re-run. Dependency
-# satisfaction still keys on "done" alone - depending on an abandoned story
+# satisfaction still keys on "done" alone - depending on an abandoned unit
 # leaves the dependent unschedulable, which is the honest result of skipping it.
-TERMINAL_STORY_STATUSES = ("done", "abandoned")
+TERMINAL_WORK_UNIT_STATES = ("done", "abandoned")
 
 
 # The legal verb set is canonical in woof.graph.decisions.GATE_DECISIONS; this
 # literal is the union of that table and is conformance-checked against it in
 # tests/unit/test_gate_decisions.py (it is asserted-equal rather than derived to
-# avoid a state -> decisions -> transitions -> state import cycle). split_story
-# was dropped in E17 P1 (D-SS); approve_with_reason was added for readiness gates
-# in E17 P2 (D-RA); retry_story was added for crashed/aborted executors in E17 P3 (S3).
+# avoid a state -> decisions -> transitions -> state import cycle).
 GateDecision = Literal[
     "approve",
     "approve_with_reason",
-    "retry_story",
+    "retry_work_unit",
     "revise_epic_contract",
     "revise_plan",
-    "revise_story_scope",
-    "abandon_story",
+    "revise_work_unit_scope",
+    "abandon_work_unit",
     "abandon_epic",
     "keep_local",
     "accept_remote",
@@ -85,7 +83,7 @@ class WorkUnitSpec(BaseModel):
     implements_contract_decisions: list[str] = Field(default_factory=list)
     uses_contract_decisions: list[str] = Field(default_factory=list)
     tests: dict = Field(default_factory=dict)
-    status: Literal["pending", "in_progress", "done", "abandoned"]
+    state: Literal["pending", "in_progress", "done", "abandoned"]
     empty_diff: bool = False
 
     @model_validator(mode="before")
@@ -95,6 +93,10 @@ class WorkUnitSpec(BaseModel):
         if not isinstance(data, dict):
             return data
         payload = dict(data)
+        if "state" in payload and "status" in payload:
+            raise ValueError("work unit cannot carry both state and legacy status")
+        if "state" not in payload and "status" in payload:
+            payload["state"] = payload.pop("status")
         if "summary" not in payload and "intent" in payload:
             payload["summary"] = payload.pop("intent")
         if "deps" in payload and "depends_on" in payload:
@@ -102,14 +104,6 @@ class WorkUnitSpec(BaseModel):
         if "deps" not in payload and "depends_on" in payload:
             payload["deps"] = payload.pop("depends_on")
         return payload
-
-    @property
-    def intent(self) -> str:
-        return self.summary
-
-    @property
-    def depends_on(self) -> list[str]:
-        return self.deps
 
 
 class Plan(BaseModel):
@@ -201,7 +195,7 @@ def _validate_acyclic_dependencies(deps_by_id: dict[str, list[str]]) -> None:
 class NodeInput(BaseModel):
     node_type: NodeType
     epic_id: int
-    story_id: str | None = None
+    work_unit_id: str | None = None
     repo_root: Path
     reason: str | None = None
     decision: GateDecision | None = None
@@ -221,7 +215,7 @@ class NodeOutput(BaseModel):
     node_type: NodeType
     status: NodeStatus
     epic_id: int
-    story_id: str | None = None
+    work_unit_id: str | None = None
     next_node: NodeType | None = None
     gate_path: str | None = None
     validation_summary: ValidationSummary | None = None
@@ -232,9 +226,9 @@ class NodeOutput(BaseModel):
 
 class TransactionManifest(BaseModel):
     epic_id: int
-    story_id: str
+    work_unit_id: str
     expected_paths: list[str]
-    story_paths: list[str]
+    work_unit_paths: list[str]
     required_paths: list[str]
     audit_paths: list[str]
 

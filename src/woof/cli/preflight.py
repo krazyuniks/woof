@@ -25,16 +25,10 @@ import yaml
 
 from woof.cli.commands.observe import build_operator_state_summary
 from woof.cli.dispatcher import (
-    NODE_GROUPS,
     TRUSTED_RUNTIME_MODE,
     TRUSTED_RUNTIME_NOTE,
-    DispatchConfigError,
-    _claude_mcp_config,
-    _mcp_names,
-    _role_effort,
-    build_argv,
-    resolve_agent_route,
 )
+from woof.cli.harness_registry import HarnessError, build_launch_argv, get_profile
 from woof.cli.init import AGENTS_TEMPLATE, POLICY_TEMPLATE
 from woof.cli.main import (
     SCHEMAS,
@@ -44,10 +38,7 @@ from woof.cli.main import (
 from woof.cli.policy import (
     CARTOGRAPHY_FLOORS,
     CHECK_FLOOR_IDS,
-    CODEX_EFFORTS,
     DELIVERY_PROFILES,
-    EFFORTS,
-    HARNESS_TO_ADAPTER,
     POLICY_RELPATH,
     RUN_PROFILE_ROLES,
     cartography_floor,
@@ -486,216 +477,111 @@ def _check_config_schemas(repo_root: Path) -> list[PreflightFinding]:
 
 
 def _check_role_routes(repo_root: Path) -> list[PreflightFinding]:
-    agents_path = repo_root / ".woof" / "agents.toml"
-    if not agents_path.is_file():
+    policy = load_policy(repo_root)
+    if not isinstance(policy, dict):
         return [
             PreflightFinding(
-                id="agents.config",
-                label="agents.toml",
+                id="policy.run_profile.dispatch",
+                label="policy dispatch routes",
                 ok=False,
-                detail=f"{agents_path} not found; cannot verify primary/reviewer routes",
-                install=_agents_template(),
+                detail=policy,
+                install=_policy_template(),
             )
         ]
 
-    loaded = _load_toml(agents_path)
-    if not isinstance(loaded, dict):
+    selected_name = policy.get("default_run_profile")
+    profiles = policy.get("run_profiles") or {}
+    if not isinstance(selected_name, str) or not isinstance(profiles, dict):
         return [
             PreflightFinding(
-                id="agents.config",
-                label="agents.toml",
+                id="policy.run_profile.dispatch",
+                label="policy dispatch routes",
                 ok=False,
-                detail=loaded,
+                detail="default_run_profile and run_profiles must be declared",
+                required="default run profile with producer and reviewer slots",
+            )
+        ]
+    selected = profiles.get(selected_name)
+    if not isinstance(selected, dict):
+        return [
+            PreflightFinding(
+                id="policy.run_profile.dispatch",
+                label="policy dispatch routes",
+                ok=False,
+                detail=f"default_run_profile {selected_name!r} is not declared",
+                required="default run profile with producer and reviewer slots",
             )
         ]
 
-    findings: list[PreflightFinding] = []
-    mcp_servers = loaded.get("mcp_servers") or {}
-    for role_name in ("primary", "reviewer"):
-        findings.extend(_check_dispatch_role_route(role_name, loaded, mcp_servers, repo_root))
-    for group in sorted(NODE_GROUPS):
-        for role_name in ("primary", "reviewer"):
-            findings.extend(
-                _check_dispatch_group_route(group, role_name, loaded, mcp_servers, repo_root)
-            )
-    return findings
+    return [
+        _check_dispatch_profile_slot(selected_name, "producer", selected.get("producer")),
+        _check_dispatch_profile_slot(selected_name, "reviewer", selected.get("reviewer")),
+    ]
 
 
-def _check_dispatch_role_route(
+def _check_dispatch_profile_slot(
+    profile_name: str,
     role_name: str,
-    agents: dict[str, Any],
-    mcp_servers: dict[str, Any],
-    repo_root: Path,
-) -> list[PreflightFinding]:
-    label = f"{role_name} route"
-    try:
-        route = resolve_agent_route(agents, role_name)
-    except DispatchConfigError as exc:
-        return [
-            PreflightFinding(
-                id=f"agents.{role_name}.route",
-                label=label,
-                ok=False,
-                detail=str(exc),
-            )
-        ]
-
+    slot: object,
+) -> PreflightFinding:
+    label = f"{role_name} dispatch route"
     errors: list[str] = []
-    if route.adapter == "in-session":
-        errors.append("dispatchable role resolves to in-session")
-    elif shutil.which(route.adapter) is None:
-        errors.append(f"{route.adapter} not found on PATH")
+    slot_data: dict[str, Any]
+    if isinstance(slot, dict):
+        slot_data = slot
+    else:
+        slot_data = {}
+        errors.append(f"run_profiles.{profile_name}.{role_name} must be a table")
 
-    model = route.config.get("model")
-    if not model:
+    harness = slot_data.get("harness")
+    profile = None
+    if not isinstance(harness, str) or not harness.strip():
+        errors.append("harness is not declared")
+    else:
+        try:
+            profile = get_profile(harness)
+        except HarnessError as exc:
+            errors.append(str(exc))
+
+    model = slot_data.get("model")
+    if not isinstance(model, str) or not model.strip():
         errors.append("model is not declared")
 
-    try:
-        effort = _role_effort(route.adapter, route.config)
-    except DispatchConfigError as exc:
-        effort = None
-        errors.append(str(exc))
-    if effort is None:
+    effort = slot_data.get("effort")
+    if not isinstance(effort, str) or not effort.strip():
         errors.append("effort is not declared")
-
-    try:
-        build_argv(route.adapter, route.config, "preflight route probe", mcp_servers=mcp_servers)
-    except DispatchConfigError as exc:
-        errors.append(str(exc))
-
-    findings = [
-        PreflightFinding(
-            id=f"agents.{role_name}.route",
-            label=label,
-            ok=not errors,
-            detail=(
-                f"[roles.{route.config_role}] resolves adapter={route.adapter}, "
-                f"model={model}, effort={effort}, "
-                f"profile={route.model_profile or '-'}, runtime={TRUSTED_RUNTIME_MODE}"
-                if not errors
-                else "; ".join(errors)
-            ),
-            required="explicit adapter, model, effort, and runtime-mode disclosure",
-            notes=[TRUSTED_RUNTIME_NOTE] if not errors else [],
+    elif profile is not None and profile.effort_levels and effort not in profile.effort_levels:
+        errors.append(
+            f"{profile.name} effort {effort!r} is not supported; expected one of "
+            f"{sorted(profile.effort_levels)}"
         )
-    ]
 
-    if route.adapter == "claude":
-        findings.extend(_check_claude_mcp_config(role_name, route.config, mcp_servers, repo_root))
-    return findings
-
-
-def _check_dispatch_group_route(
-    group: str,
-    role_name: str,
-    agents: dict[str, Any],
-    mcp_servers: dict[str, Any],
-    repo_root: Path,
-) -> list[PreflightFinding]:
-    label = f"{group}/{role_name} route"
-    try:
-        route = resolve_agent_route(agents, role_name, route_key=group)
-    except DispatchConfigError as exc:
-        return [
-            PreflightFinding(
-                id=f"agents.{group}.{role_name}.route",
-                label=label,
-                ok=False,
-                detail=str(exc),
+    if profile is not None:
+        command = profile.base[0] if profile.base else profile.name
+        if shutil.which(command) is None:
+            errors.append(f"{command} not found on PATH")
+        try:
+            build_launch_argv(
+                profile.name,
+                model=model if isinstance(model, str) else None,
+                effort=effort if isinstance(effort, str) else None,
             )
-        ]
+        except HarnessError as exc:
+            errors.append(str(exc))
 
-    errors: list[str] = []
-    if route.adapter == "in-session":
-        errors.append("dispatchable role resolves to in-session")
-    elif shutil.which(route.adapter) is None:
-        errors.append(f"{route.adapter} not found on PATH")
-
-    model = route.config.get("model")
-    if not model:
-        errors.append("model is not declared")
-
-    try:
-        effort = _role_effort(route.adapter, route.config)
-    except DispatchConfigError as exc:
-        effort = None
-        errors.append(str(exc))
-    if effort is None:
-        errors.append("effort is not declared")
-
-    try:
-        build_argv(route.adapter, route.config, "preflight route probe", mcp_servers=mcp_servers)
-    except DispatchConfigError as exc:
-        errors.append(str(exc))
-
-    findings = [
-        PreflightFinding(
-            id=f"agents.{group}.{role_name}.route",
-            label=label,
-            ok=not errors,
-            detail=(
-                f"[{group}.{route.config_role}] resolves adapter={route.adapter}, "
-                f"model={model}, effort={effort}, "
-                f"profile={route.model_profile or '-'}, runtime={TRUSTED_RUNTIME_MODE}"
-                if not errors
-                else "; ".join(errors)
-            ),
-            required="explicit adapter, model, effort, and runtime-mode disclosure",
-            notes=[TRUSTED_RUNTIME_NOTE] if not errors else [],
-        )
-    ]
-    if route.adapter == "claude" and not errors:
-        findings.extend(
-            _check_claude_mcp_config(
-                role_name,
-                route.config,
-                mcp_servers,
-                repo_root,
-                id_prefix=f"agents.{group}.{role_name}",
-            )
-        )
-    return findings
-
-
-def _check_claude_mcp_config(
-    role_name: str,
-    role: dict[str, Any],
-    mcp_servers: dict[str, Any],
-    repo_root: Path,
-    *,
-    id_prefix: str | None = None,
-) -> list[PreflightFinding]:
-    prefix = id_prefix if id_prefix is not None else f"agents.{role_name}"
-    try:
-        mcp_config = _claude_mcp_config(role, mcp_servers)
-        parsed = json.loads(mcp_config)
-    except (DispatchConfigError, json.JSONDecodeError) as exc:
-        return [
-            PreflightFinding(
-                id=f"{prefix}.mcp_config",
-                label=f"{role_name} Claude MCP config",
-                ok=False,
-                detail=str(exc),
-            )
-        ]
-
-    findings = [
-        PreflightFinding(
-            id=f"{prefix}.mcp_config",
-            label=f"{role_name} Claude MCP config",
-            ok=isinstance(parsed.get("mcpServers"), dict),
-            detail=mcp_config
-            if isinstance(parsed.get("mcpServers"), dict)
-            else "generated MCP config is missing mcpServers object",
-        )
-    ]
-    for name in _mcp_names(role):
-        server = (mcp_servers or {}).get(name)
-        if isinstance(server, dict):
-            findings.append(
-                _check_mcp_server_command(role_name, name, server, repo_root, id_prefix=prefix)
-            )
-    return findings
+    return PreflightFinding(
+        id=f"policy.run_profile.{role_name}.route",
+        label=label,
+        ok=not errors,
+        detail=(
+            f"[run_profiles.{profile_name}.{role_name}] resolves harness={profile.name}, "
+            f"model={model}, effort={effort}, runtime={TRUSTED_RUNTIME_MODE}"
+            if not errors and profile is not None
+            else "; ".join(errors)
+        ),
+        required="explicit harness, model, effort, and runtime-mode disclosure",
+        notes=[TRUSTED_RUNTIME_NOTE] if not errors else [],
+    )
 
 
 def _check_mcp_server_command(
@@ -884,26 +770,34 @@ def _check_policy_run_profile_slot(profile_name: str, role: str, slot: object) -
         slot = {}
 
     harness = slot.get("harness")
-    adapter = HARNESS_TO_ADAPTER.get(str(harness)) if harness is not None else None
-    if adapter is None:
-        errors.append(f"run_profiles.{profile_name}.{role}.harness must be claude or codex")
+    profile = None
+    if not isinstance(harness, str) or not harness.strip():
+        errors.append(f"run_profiles.{profile_name}.{role}.harness must be declared")
+    else:
+        try:
+            profile = get_profile(harness)
+        except HarnessError as exc:
+            errors.append(str(exc))
 
     model = slot.get("model")
     if not isinstance(model, str) or not model.strip():
         errors.append(f"run_profiles.{profile_name}.{role}.model must be declared")
 
     effort = slot.get("effort")
-    if effort not in EFFORTS:
-        errors.append(f"run_profiles.{profile_name}.{role}.effort is not supported")
-    elif adapter == "codex" and effort not in CODEX_EFFORTS:
-        errors.append("codex run-profile effort must be low, medium, high, or xhigh")
+    if not isinstance(effort, str) or not effort.strip():
+        errors.append(f"run_profiles.{profile_name}.{role}.effort must be declared")
+    elif profile is not None and profile.effort_levels and effort not in profile.effort_levels:
+        errors.append(
+            f"{profile.name} run-profile effort must be one of {', '.join(profile.effort_levels)}"
+        )
 
     return PreflightFinding(
         id=f"policy.run_profile.{role}",
         label=f"repo policy {role} slot",
         ok=not errors,
         detail=(
-            f"profile={profile_name}, harness={harness}, model={model}, effort={effort}"
+            f"profile={profile_name}, harness={profile.name if profile else harness}, "
+            f"model={model}, effort={effort}"
             if not errors
             else "; ".join(errors)
         ),
@@ -1157,63 +1051,43 @@ def _check_github_rate_limit() -> PreflightFinding:
 
 
 def _check_adapter_auth_markers(repo_root: Path) -> list[PreflightFinding]:
-    """Probe Claude/Codex credential markers for each configured dispatchable role.
+    """Probe credential markers for auth-sensitive harnesses in the default profile."""
 
-    The marker check is intentionally conservative: it confirms either an API-key
-    environment variable is set or the adapter has been logged in once (its
-    credential file exists). Live API auth state and model availability are only
-    validated at first dispatch - runtime token expiry, revoked credentials, or
-    a model the underlying API has retired surface as a fail-loud dispatch
-    error rather than a preflight finding.
-
-    Covers both base roles and any adapter introduced exclusively via a node-group
-    route overlay, so an execution-group Claude route is auth-checked even when
-    the base roles use only Codex.
-    """
-
-    agents_path = repo_root / ".woof" / "agents.toml"
-    if not agents_path.is_file():
+    policy = load_policy(repo_root)
+    if not isinstance(policy, dict):
         return []
-    loaded = _load_toml(agents_path)
-    if not isinstance(loaded, dict):
+    default_name = policy.get("default_run_profile")
+    run_profiles = policy.get("run_profiles") or {}
+    if not isinstance(default_name, str) or not isinstance(run_profiles, dict):
         return []
+    selected = run_profiles.get(default_name)
+    if not isinstance(selected, dict):
+        return []
+
     findings: list[PreflightFinding] = []
-    seen_keys: set[tuple[str, str]] = set()  # (role_name, adapter) already checked
-    seen_adapters: set[str] = set()  # adapters auth-checked via base roles
-
-    for role_name in ("primary", "reviewer"):
+    checked: set[str] = set()
+    for role_name in RUN_PROFILE_ROLES:
+        slot = selected.get(role_name)
+        if not isinstance(slot, dict):
+            continue
+        harness = slot.get("harness")
+        if not isinstance(harness, str) or not harness.strip():
+            continue
         try:
-            route = resolve_agent_route(loaded, role_name)
-        except DispatchConfigError:
+            profile = get_profile(harness)
+        except HarnessError:
             continue
-        if route.adapter not in ADAPTER_AUTH_MARKERS:
+        adapter = profile.name
+        if adapter not in ADAPTER_AUTH_MARKERS or adapter in checked:
             continue
-        key = (role_name, route.adapter)
-        if key in seen_keys:
-            continue
-        seen_keys.add(key)
-        seen_adapters.add(route.adapter)
-        findings.append(_check_adapter_auth(role_name, route.adapter))
-
-    for group in sorted(NODE_GROUPS):
-        for role_name in ("primary", "reviewer"):
-            try:
-                route = resolve_agent_route(loaded, role_name, route_key=group)
-            except DispatchConfigError:
-                continue
-            if route.adapter not in ADAPTER_AUTH_MARKERS:
-                continue
-            if route.adapter in seen_adapters:
-                continue
-            seen_adapters.add(route.adapter)
-            findings.append(
-                _check_adapter_auth(
-                    role_name,
-                    route.adapter,
-                    id_prefix=f"agents.{group}.{role_name}",
-                )
+        checked.add(adapter)
+        findings.append(
+            _check_adapter_auth(
+                role_name,
+                adapter,
+                id_prefix=f"policy.run_profile.{role_name}",
             )
-
+        )
     return findings
 
 
@@ -1242,9 +1116,9 @@ def _check_adapter_auth(
     id_prefix: str | None = None,
 ) -> PreflightFinding:
     spec = ADAPTER_AUTH_MARKERS[adapter]
-    prefix = id_prefix if id_prefix is not None else f"agents.{role_name}"
+    prefix = id_prefix if id_prefix is not None else f"policy.run_profile.{role_name}"
     finding_id = f"{prefix}.auth"
-    label_role = prefix.removeprefix("agents.")
+    label_role = prefix.removeprefix("policy.run_profile.")
     label = f"{label_role} adapter auth ({adapter})"
     env_key = spec["env_key"]
     if os.environ.get(env_key):
@@ -2212,7 +2086,7 @@ def _print_operator_state(operator_state: dict[str, Any]) -> None:
     next_action = epic.get("next_action") or {}
     print(
         f"  next: {next_step.get('node') or '-'} "
-        f"story={next_step.get('story_id') or '-'} "
+        f"work_unit={next_step.get('work_unit_id') or '-'} "
         f"reason={next_step.get('reason') or '-'}"
     )
     print(
@@ -2223,7 +2097,8 @@ def _print_operator_state(operator_state: dict[str, Any]) -> None:
     gate = epic.get("gate") or {}
     if gate.get("open"):
         print(
-            f"  gate: open type={gate.get('type')} story={gate.get('story_id') or '-'} "
+            f"  gate: open type={gate.get('type')} "
+            f"work_unit={gate.get('work_unit_id') or '-'} "
             f"cause={gate.get('cause') or '-'}"
         )
     else:
@@ -2253,7 +2128,7 @@ def _print_operator_routes(routes: dict[str, Any]) -> None:
     if routes.get("model_profile"):
         print(f"  model_profile: {routes.get('model_profile')}")
     roles = routes.get("roles") or {}
-    for role_name in ("primary", "reviewer"):
+    for role_name in ("producer", "reviewer"):
         route = roles.get(role_name) or {}
         if route.get("ok"):
             mcp = ",".join(route.get("mcp") or []) or "-"
@@ -2267,14 +2142,3 @@ def _print_operator_routes(routes: dict[str, Any]) -> None:
         else:
             errors = "; ".join(str(error) for error in route.get("errors") or [])
             print(f"    {role_name}: unavailable {errors}")
-    for group, group_routes in sorted((routes.get("routes") or {}).items()):
-        for role_name in ("primary", "reviewer"):
-            route = (group_routes or {}).get(role_name) or {}
-            if route.get("ok"):
-                print(
-                    f"    {group}/{role_name}: adapter={route.get('adapter')} "
-                    f"model={route.get('model')} effort={route.get('effort')}"
-                )
-            else:
-                errors = "; ".join(str(error) for error in route.get("errors") or [])
-                print(f"    {group}/{role_name}: unavailable {errors}")

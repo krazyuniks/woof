@@ -13,16 +13,16 @@ from woof.checks.runners.check_9_review_valve import (
 from woof.gate.write import write_gate_from_check_result
 
 
-def _story(story_id: str, status: str) -> dict:
-    return {"id": story_id, "status": status}
+def _work_unit(work_unit_id: str, state: str) -> dict:
+    return {"id": work_unit_id, "state": state}
 
 
-def _ctx(repo_root: Path, stories: list[dict], story_id: str = "S2") -> CheckContext:
+def _ctx(repo_root: Path, stories: list[dict], work_unit_id: str = "S2") -> CheckContext:
     epic_dir = repo_root / ".woof" / "epics" / "E1"
     epic_dir.mkdir(parents=True, exist_ok=True)
     return CheckContext(
         epic_id=1,
-        story_id=story_id,
+        work_unit_id=work_unit_id,
         repo_root=repo_root,
         epic_dir=epic_dir,
         plan={"epic_id": 1, "goal": "test", "work_units": stories},
@@ -37,19 +37,19 @@ def _write_agents(repo_root: Path, *, every_n: int = 2, end_of_epic: bool = Fals
         "[roles]\n"
         "\n"
         "[review_valve]\n"
-        f"every_n_stories = {every_n}\n"
+        f"every_n_work_units = {every_n}\n"
         f"end_of_epic = {str(end_of_epic).lower()}\n"
     )
 
 
-def _write_critique(epic_dir: Path, story_id: str, findings: list[dict]) -> None:
+def _write_critique(epic_dir: Path, work_unit_id: str, findings: list[dict]) -> None:
     critique_dir = epic_dir / "critique"
     critique_dir.mkdir(parents=True, exist_ok=True)
     severity = "minor" if findings else "info"
-    critique_dir.joinpath(f"story-{story_id}.md").write_text(
+    critique_dir.joinpath(f"work-unit-{work_unit_id}.md").write_text(
         "---\n"
-        "target: story\n"
-        f"target_id: {story_id}\n"
+        "target: work_unit\n"
+        f"target_id: {work_unit_id}\n"
         f"severity: {severity}\n"
         "timestamp: '2026-01-01T00:00:00Z'\n"
         "harness: test\n"
@@ -60,7 +60,7 @@ def _write_critique(epic_dir: Path, story_id: str, findings: list[dict]) -> None
 
 def test_threshold_due_with_minor_findings_fails(tmp_path: Path) -> None:
     _write_agents(tmp_path, every_n=2, end_of_epic=False)
-    ctx = _ctx(tmp_path, [_story("S1", "done"), _story("S2", "in_progress")])
+    ctx = _ctx(tmp_path, [_work_unit("S1", "done"), _work_unit("S2", "in_progress")])
     _write_critique(
         ctx.epic_dir,
         "S2",
@@ -71,13 +71,13 @@ def test_threshold_due_with_minor_findings_fails(tmp_path: Path) -> None:
 
     assert not outcome.ok
     assert outcome.severity == "minor"
-    assert "every 2 stories" in outcome.summary
+    assert "every 2 work units" in outcome.summary
     assert "S2/F1: Follow-up refactor is worth review" in (outcome.evidence or "")
 
 
 def test_end_of_epic_due_with_minor_findings_fails(tmp_path: Path) -> None:
     _write_agents(tmp_path, every_n=5, end_of_epic=True)
-    ctx = _ctx(tmp_path, [_story("S1", "done"), _story("S2", "in_progress")])
+    ctx = _ctx(tmp_path, [_work_unit("S1", "done"), _work_unit("S2", "in_progress")])
     _write_critique(
         ctx.epic_dir,
         "S2",
@@ -92,14 +92,18 @@ def test_end_of_epic_due_with_minor_findings_fails(tmp_path: Path) -> None:
 
 
 def test_end_of_epic_due_when_only_later_stories_are_abandoned(tmp_path: Path) -> None:
-    # A later story that is `abandoned` is terminal and will never be worked, so
-    # the current story is still end-of-epic. The valve must fire on its minor
+    # A later work unit that is `abandoned` is terminal and will never be worked, so
+    # the current work unit is still end-of-epic. The valve must fire on its minor
     # findings rather than be suppressed by the abandoned tail. every_n is set
     # high so only the end-of-epic trigger can fire.
     _write_agents(tmp_path, every_n=5, end_of_epic=True)
     ctx = _ctx(
         tmp_path,
-        [_story("S1", "done"), _story("S2", "in_progress"), _story("S3", "abandoned")],
+        [
+            _work_unit("S1", "done"),
+            _work_unit("S2", "in_progress"),
+            _work_unit("S3", "abandoned"),
+        ],
     )
     _write_critique(
         ctx.epic_dir,
@@ -115,25 +119,25 @@ def test_end_of_epic_due_when_only_later_stories_are_abandoned(tmp_path: Path) -
 
 
 def test_is_end_of_epic_treats_abandoned_tail_as_terminal() -> None:
-    # An abandoned tail story is terminal: the current story is still end-of-epic.
+    # An abandoned tail work unit is terminal: the current unit is still end-of-epic.
     abandoned_tail = [
-        _story("S1", "done"),
-        _story("S2", "in_progress"),
-        _story("S3", "abandoned"),
+        _work_unit("S1", "done"),
+        _work_unit("S2", "in_progress"),
+        _work_unit("S3", "abandoned"),
     ]
     assert _is_end_of_epic(abandoned_tail, "S2") is True
-    # A pending tail story still needs work: not end-of-epic.
+    # A pending tail work unit still needs work: not end-of-epic.
     pending_tail = [
-        _story("S1", "done"),
-        _story("S2", "in_progress"),
-        _story("S3", "pending"),
+        _work_unit("S1", "done"),
+        _work_unit("S2", "in_progress"),
+        _work_unit("S3", "pending"),
     ]
     assert _is_end_of_epic(pending_tail, "S2") is False
 
 
 def test_due_boundary_with_no_minor_findings_passes(tmp_path: Path) -> None:
     _write_agents(tmp_path, every_n=2, end_of_epic=True)
-    ctx = _ctx(tmp_path, [_story("S1", "done"), _story("S2", "in_progress")])
+    ctx = _ctx(tmp_path, [_work_unit("S1", "done"), _work_unit("S2", "in_progress")])
     _write_critique(ctx.epic_dir, "S2", [])
 
     outcome = check_9_review_valve_runner(ctx)
@@ -145,7 +149,7 @@ def test_due_boundary_with_no_minor_findings_passes(tmp_path: Path) -> None:
 
 def test_already_review_gated_boundary_passes(tmp_path: Path) -> None:
     _write_agents(tmp_path, every_n=2, end_of_epic=False)
-    ctx = _ctx(tmp_path, [_story("S1", "done"), _story("S2", "in_progress")])
+    ctx = _ctx(tmp_path, [_work_unit("S1", "done"), _work_unit("S2", "in_progress")])
     _write_critique(
         ctx.epic_dir,
         "S2",
@@ -155,7 +159,7 @@ def test_already_review_gated_boundary_passes(tmp_path: Path) -> None:
         json.dumps(
             {
                 "event": "review_gate_opened",
-                "story_id": "S2",
+                "work_unit_id": "S2",
                 "triggered_by": ["check_9_review_valve"],
             }
         )
@@ -170,25 +174,25 @@ def test_already_review_gated_boundary_passes(tmp_path: Path) -> None:
 
 def test_retried_boundary_re_arms_valve(tmp_path: Path) -> None:
     _write_agents(tmp_path, every_n=2, end_of_epic=False)
-    ctx = _ctx(tmp_path, [_story("S1", "done"), _story("S2", "in_progress")])
+    ctx = _ctx(tmp_path, [_work_unit("S1", "done"), _work_unit("S2", "in_progress")])
     _write_critique(
         ctx.epic_dir,
         "S2",
         [{"id": "F2", "severity": "minor", "summary": "Fresh finding after retry"}],
     )
-    # The valve already fired and opened a review gate at S2, but retry_story
-    # then reset S2 and appended story_retried. The stale review_gate_opened must
-    # not suppress a new gate once the retried story produces a fresh critique.
+    # The valve already fired and opened a review gate at S2, but retry_work_unit
+    # then reset S2 and appended work_unit_retried. The stale review_gate_opened must
+    # not suppress a new gate once the retried work unit produces a fresh critique.
     ctx.epic_dir.joinpath("epic.jsonl").write_text(
         json.dumps(
             {
                 "event": "review_gate_opened",
-                "story_id": "S2",
+                "work_unit_id": "S2",
                 "triggered_by": ["check_9_review_valve"],
             }
         )
         + "\n"
-        + json.dumps({"event": "story_retried", "story_id": "S2"})
+        + json.dumps({"event": "work_unit_retried", "work_unit_id": "S2"})
         + "\n"
     )
 
@@ -201,8 +205,8 @@ def test_retried_boundary_re_arms_valve(tmp_path: Path) -> None:
 
 def test_retried_boundary_keeps_prior_sibling_gated_when_clean(tmp_path: Path) -> None:
     _write_agents(tmp_path, every_n=2, end_of_epic=False)
-    ctx = _ctx(tmp_path, [_story("S1", "done"), _story("S2", "in_progress")])
-    # The S2 review gate bundled S1's minor finding. retry_story on S2 reset S2
+    ctx = _ctx(tmp_path, [_work_unit("S1", "done"), _work_unit("S2", "in_progress")])
+    # The S2 review gate bundled S1's minor finding. retry_work_unit on S2 reset S2
     # and deleted its critique; the retried run produced a clean S2 critique. The
     # already-gated S1 finding must not re-open a gate now that S2 has nothing new.
     _write_critique(
@@ -215,12 +219,12 @@ def test_retried_boundary_keeps_prior_sibling_gated_when_clean(tmp_path: Path) -
         json.dumps(
             {
                 "event": "review_gate_opened",
-                "story_id": "S2",
+                "work_unit_id": "S2",
                 "triggered_by": ["check_9_review_valve"],
             }
         )
         + "\n"
-        + json.dumps({"event": "story_retried", "story_id": "S2"})
+        + json.dumps({"event": "work_unit_retried", "work_unit_id": "S2"})
         + "\n"
     )
 
@@ -233,7 +237,7 @@ def test_retried_boundary_keeps_prior_sibling_gated_when_clean(tmp_path: Path) -
 
 def test_retried_boundary_gates_only_fresh_finding(tmp_path: Path) -> None:
     _write_agents(tmp_path, every_n=2, end_of_epic=False)
-    ctx = _ctx(tmp_path, [_story("S1", "done"), _story("S2", "in_progress")])
+    ctx = _ctx(tmp_path, [_work_unit("S1", "done"), _work_unit("S2", "in_progress")])
     # Same setup as above, but the retried S2 critique surfaces a new minor
     # finding. The new gate must carry only that fresh finding, not the S1 finding
     # that was already bundled into the previous review gate.
@@ -251,12 +255,12 @@ def test_retried_boundary_gates_only_fresh_finding(tmp_path: Path) -> None:
         json.dumps(
             {
                 "event": "review_gate_opened",
-                "story_id": "S2",
+                "work_unit_id": "S2",
                 "triggered_by": ["check_9_review_valve"],
             }
         )
         + "\n"
-        + json.dumps({"event": "story_retried", "story_id": "S2"})
+        + json.dumps({"event": "work_unit_retried", "work_unit_id": "S2"})
         + "\n"
     )
 
@@ -279,7 +283,7 @@ def test_check_9_gate_is_written_as_review_gate(tmp_path: Path) -> None:
                 "ok": False,
                 "stage": 5,
                 "epic_id": 1,
-                "story_id": "S2",
+                "work_unit_id": "S2",
                 "triggered_by": ["check_9_review_valve"],
                 "checks": [
                     {

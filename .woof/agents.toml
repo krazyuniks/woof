@@ -1,51 +1,10 @@
-# Woof self-hosting agent role configuration.
-# Runtime model: trusted-local automation. Woof does not sandbox dispatched
-# agents, restrict writable paths, allow-list commands, block network access, or
-# add MCP restrictions; commit-safety checks and gates guard what lands.
-
-model_profile = "default"
-
-[roles.orchestrator]
-adapter = "in-session"
-
-[roles.primary]
-adapter = "codex"
-
-[roles.reviewer]
-adapter = "claude"
-mcp = []
-
-[roles.gate-resolver]
-adapter = "in-session"
-
-[routes.execution.primary]
-adapter = "claude"
-mcp = []
-
-[routes.execution.reviewer]
-adapter = "codex"
-
-[model_profiles.default.roles.primary]
-model = "gpt-5.5"
-effort = "xhigh"
-
-[model_profiles.default.roles.reviewer]
-model = "claude-opus-4-7"
-effort = "max"
-
-[model_profiles.default.routes.execution.primary]
-model = "claude-opus-4-7"
-effort = "max"
-
-[model_profiles.default.routes.execution.reviewer]
-model = "gpt-5.5"
-effort = "xhigh"
+# Woof runtime settings. Dispatch routing lives in .woof/policy.toml.
 
 [timeouts]
 default_minutes = 30
 
 [review_valve]
-every_n_stories = 5
+every_n_work_units = 5
 end_of_epic = true
 
 [audit]

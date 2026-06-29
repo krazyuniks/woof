@@ -26,10 +26,51 @@ def _write_project(tmp_path: Path, *, default_minutes: float = 0.05) -> Path:
 [timeouts]
 default_minutes = {default_minutes}
 
-[roles.primary]
-adapter = "codex"
+[review_valve]
+every_n_work_units = 5
+end_of_epic = false
+
+[audit]
+enabled = true
+max_bytes = 262144
+redact_patterns = []
+""",
+        encoding="utf-8",
+    )
+    (woof_dir / "policy.toml").write_text(
+        """\
+schema_version = 1
+default_run_profile = "integration"
+
+[delivery]
+profile = "B"
+repo_root = "."
+toolchain_root = "."
+base_branch = "main"
+
+[profiles.B]
+commit = false
+push = false
+
+[verification]
+command = "true"
+timeout_seconds = 30
+
+[run_profiles.integration.producer]
+harness = "codex"
 model = "gpt-5.5"
 effort = "low"
+
+[run_profiles.integration.reviewer]
+harness = "codex"
+model = "gpt-5.5"
+effort = "low"
+
+[checks]
+floor = ["quality-gates"]
+
+[cartography]
+floor = "none"
 """,
         encoding="utf-8",
     )

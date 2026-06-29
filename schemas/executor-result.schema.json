@@ -1,20 +1,20 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://woof.dev/schemas/executor-result.schema.json",
-  "title": "woof story producer result",
-  "description": "Written by the Stage-5 story producer before clean exit (exit 0). The graph reads this and branches on outcome. outcome=staged_for_verification means the diff is staged and ready for woof check stage-5; outcome=aborted_with_position means the producer decided to halt and has authored position prose; outcome=empty_diff means no code changes were made.",
+  "title": "woof work-unit producer result",
+  "description": "Written by the work-unit producer before clean exit (exit 0). The graph reads this and branches on outcome. outcome=staged_for_verification means the diff is staged and ready for woof check stage-5; outcome=aborted_with_position means the producer decided to halt and has authored position prose; outcome=empty_diff means no code changes were made.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["epic_id", "story_id", "outcome"],
+  "required": ["epic_id", "work_unit_id", "outcome"],
   "properties": {
     "epic_id": {
       "type": "integer",
       "minimum": 1,
       "description": "Tracker-assigned epic identifier. Same value as E<N>."
     },
-    "story_id": {
+    "work_unit_id": {
       "type": "string",
-      "pattern": "^S[1-9]\\d*$"
+      "pattern": "^[A-Za-z][A-Za-z0-9._-]*$"
     },
     "outcome": {
       "type": "string",
@@ -36,7 +36,7 @@
           "minLength": 1
         }
       ],
-      "description": "Optional one-line conventional commit subject authored by the story producer from the actual work performed. If absent, the graph falls back to a generic story-derived subject."
+      "description": "Optional one-line conventional commit subject authored by the work-unit producer from the actual work performed. If absent, the graph falls back to a generic work-unit-derived subject."
     },
     "position": {
       "oneOf": [

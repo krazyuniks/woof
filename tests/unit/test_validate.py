@@ -173,7 +173,7 @@ def _minimal_plan() -> dict:
         "work_units": [
             {
                 "id": "S1",
-                "title": "first story",
+                "title": "first work unit",
                 "summary": "do the thing",
                 "paths": ["src/**/*.py"],
                 "satisfies": ["O1"],
@@ -181,7 +181,7 @@ def _minimal_plan() -> dict:
                 "uses_contract_decisions": [],
                 "deps": [],
                 "tests": {"count": 1, "types": ["unit"]},
-                "status": "pending",
+                "state": "pending",
             }
         ],
     }
@@ -323,7 +323,7 @@ def _base_planning_output(
         "node_type": node_type,
         "status": status,
         "epic_id": 7,
-        "story_id": None,
+        "work_unit_id": None,
         "next_node": next_node,
         "gate_path": gate_path,
         "validation_summary": {
@@ -632,7 +632,7 @@ VALID_GATE = """\
 ---
 type: plan_gate
 stage: 4
-story_id: null
+work_unit_id: null
 triggered_by:
   - plan_review
 timestamp: "2026-04-26T10:00:00Z"
@@ -659,9 +659,9 @@ def test_validate_gate_valid(tmp_path: Path, run_woof) -> None:
 
 VALID_DISPOSITION = """\
 ---
-target: story
+target: work_unit
 target_id: S1
-critique_path: .woof/epics/E7/critique/story-S1.md
+critique_path: .woof/epics/E7/critique/work-unit-S1.md
 severity: minor
 timestamp: "2026-01-01T00:00:00Z"
 harness: test-primary
@@ -682,7 +682,7 @@ Disposition body.
 def test_validate_disposition_via_path(tmp_path: Path, run_woof) -> None:
     disposition_dir = tmp_path / ".woof" / "epics" / "E7" / "dispositions"
     disposition_dir.mkdir(parents=True)
-    path = disposition_dir / "story-S1.md"
+    path = disposition_dir / "work-unit-1.md"
     path.write_text(VALID_DISPOSITION)
     proc = run_woof("validate", str(path))
     assert proc.returncode == 0, proc.stdout + proc.stderr
@@ -723,7 +723,7 @@ def test_validate_critique_via_path(tmp_path: Path, run_woof) -> None:
 
 _CRITIQUE_STORY_HEADER = """\
 ---
-target: story
+target: work_unit
 target_id: S1
 severity: {top_severity}
 timestamp: "2026-06-16T00:00:00Z"
@@ -738,7 +738,7 @@ Body.
 def _write_critique_file(tmp_path: Path, top_severity: str, findings_yaml: str) -> Path:
     crit_dir = tmp_path / "critique"
     crit_dir.mkdir(parents=True, exist_ok=True)
-    path = crit_dir / "story-S1.md"
+    path = crit_dir / "work-unit-1.md"
     path.write_text(
         _CRITIQUE_STORY_HEADER.format(top_severity=top_severity, findings=findings_yaml)
     )
@@ -795,7 +795,7 @@ GATE_WITH_UNQUOTED_TIMESTAMP = """\
 ---
 type: plan_gate
 stage: 4
-story_id: null
+work_unit_id: null
 triggered_by:
   - plan_review
 timestamp: 2026-04-26T10:00:00Z
@@ -840,7 +840,7 @@ def test_validate_jsonl_per_line(tmp_path: Path, run_woof) -> None:
             "event": "transaction_manifest_verified",
             "at": "2026-04-26T12:00:00Z",
             "epic_id": 1,
-            "story_id": "S1",
+            "work_unit_id": "S1",
             "manifest": {"expected_paths": [".woof/epics/E1/plan.json"]},
         },
         {

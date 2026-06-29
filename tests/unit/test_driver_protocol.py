@@ -25,7 +25,7 @@ FIXTURE_DIR = REPO_ROOT / "tests" / "fixtures" / "woof" / "e181_s2"
 pytestmark = pytest.mark.host_only
 
 
-def _setup_epic(tmp_path: Path, epic_id: int = 181, story_id: str = "S2") -> tuple[Path, Path]:
+def _setup_epic(tmp_path: Path, epic_id: int = 181, work_unit_id: str = "S2") -> tuple[Path, Path]:
     """Create a minimal epic directory. Returns (tmp_path, epic_dir)."""
     epic_dir = tmp_path / ".woof" / "epics" / f"E{epic_id}"
     epic_dir.mkdir(parents=True)
@@ -35,7 +35,7 @@ def _setup_epic(tmp_path: Path, epic_id: int = 181, story_id: str = "S2") -> tup
         "goal": "test",
         "work_units": [
             {
-                "id": story_id,
+                "id": work_unit_id,
                 "title": "test story",
                 "status": "in_progress",
                 "paths": [],
@@ -69,7 +69,7 @@ def test_subprocess_crash_writes_gate_O8(tmp_path: Path) -> None:
     gate_write.write_gate_for_trigger(
         trigger="subprocess_crash",
         epic_dir=epic_dir,
-        story_id="S2",
+        work_unit_id="S2",
         exit_code=1,
     )
 
@@ -78,7 +78,7 @@ def test_subprocess_crash_writes_gate_O8(tmp_path: Path) -> None:
     fm = _read_gate_fm(gate)
     assert "subprocess_crash" in fm["triggered_by"]
     assert fm["exit_code"] == 1
-    assert fm["type"] == "story_gate"
+    assert fm["type"] == "work_unit_gate"
 
 
 def test_executor_aborted_writes_gate_O8(tmp_path: Path) -> None:
@@ -90,7 +90,7 @@ def test_executor_aborted_writes_gate_O8(tmp_path: Path) -> None:
     gate_write.write_gate_for_trigger(
         trigger="executor_aborted",
         epic_dir=epic_dir,
-        story_id="S2",
+        work_unit_id="S2",
         position_path=position,
     )
 
@@ -109,7 +109,7 @@ def test_empty_diff_writes_gate_O8(tmp_path: Path) -> None:
     gate_write.write_gate_for_trigger(
         trigger="empty_diff_review",
         epic_dir=epic_dir,
-        story_id="S2",
+        work_unit_id="S2",
     )
 
     gate = epic_dir / "gate.md"
@@ -141,7 +141,7 @@ def test_check_6_failure_writes_gate_not_commit_O1_O7(tmp_path: Path) -> None:
         "ok": False,
         "stage": 5,
         "epic_id": 181,
-        "story_id": "S2",
+        "work_unit_id": "S2",
         "triggered_by": ["check_6_critique_blocker"],
         "checks": [
             {
@@ -167,7 +167,7 @@ def test_check_6_failure_writes_gate_not_commit_O1_O7(tmp_path: Path) -> None:
         check_result_path=cr_file,
         position_path=pos_file,
         epic_dir=epic_dir,
-        story_id="S2",
+        work_unit_id="S2",
         schema_path=None,  # skip ajv validation in unit test
     )
 
@@ -176,7 +176,7 @@ def test_check_6_failure_writes_gate_not_commit_O1_O7(tmp_path: Path) -> None:
     assert "check_6_critique_blocker" in fm["triggered_by"], (
         f"check_6_critique_blocker not in triggered_by: {fm['triggered_by']}"
     )
-    assert fm["story_id"] == "S2"
+    assert fm["work_unit_id"] == "S2"
 
     # The gate write function does NOT call git commit — verified by absence
     # of any commit in the test's git history (we're in a tmpdir, no git repo).

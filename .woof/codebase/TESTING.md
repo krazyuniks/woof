@@ -57,4 +57,4 @@ Test fixtures live in `tests/fixtures/`. Artefacts are kept minimal: just enough
 
 ## Outcome markers
 
-Stage-5 Check 2 verifies that story tests carry `O<n>` outcome markers. Test files use the marker pattern declared in `.woof/test-markers.toml` (regex `(?<![A-Za-z0-9])O\d+(?![A-Za-z0-9])`). Tests in this repo carry `O<n>` markers where they cover outcomes declared in a Woof epic.
+Stage-5 Check 2 verifies that work-unit tests carry `O<n>` outcome markers. Test files use the marker pattern declared in `.woof/test-markers.toml` (regex `(?<![A-Za-z0-9])O\d+(?![A-Za-z0-9])`). Tests in this repo carry `O<n>` markers where they cover outcomes declared in a Woof epic.

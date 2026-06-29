@@ -2,22 +2,22 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://woof.dev/schemas/critique.schema.json",
   "title": "woof critique front-matter",
-  "description": "YAML front-matter of .woof/epics/E<N>/critique/<artefact>.md. Used at Stage 3 (critique/plan.md, critiques the breakdown) and Stage 5 (critique/story-S<k>.md, critiques a story diff). Top-level severity drives the gate-asymmetry rule: plan-gate always opens; story-gate opens when severity=blocker. Findings list is advisory and unconstrained in count.",
+  "description": "YAML front-matter of .woof/epics/E<N>/critique/<artefact>.md. Used at planning critique/plan.md and work-unit critique/work-unit-<id>.md. Top-level severity drives the gate-asymmetry rule: plan-gate always opens; work-unit gates open when severity=blocker. Findings list is advisory and unconstrained in count.",
   "type": "object",
   "additionalProperties": false,
   "required": ["target", "target_id", "severity", "timestamp", "harness"],
   "properties": {
     "target": {
       "type": "string",
-      "enum": ["plan", "story"],
-      "description": "What was critiqued. plan = critique/plan.md (Stage 3 output). story = critique/story-S<k>.md (Stage 5 output for a specific story)."
+      "enum": ["plan", "work_unit"],
+      "description": "What was critiqued. plan = critique/plan.md. work_unit = critique/work-unit-<id>.md."
     },
     "target_id": {
       "oneOf": [
-        { "type": "string", "pattern": "^S[1-9]\\d*$" },
+        { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9._-]*$" },
         { "type": "null" }
       ],
-      "description": "Story ID when target=story; null when target=plan. Coupled to target via allOf below."
+      "description": "Work-unit ID when target=work_unit; null when target=plan. Coupled to target via allOf below."
     },
     "severity": {
       "type": "string",
@@ -81,7 +81,7 @@
         },
         "evidence": {
           "type": "string",
-          "description": "Resolvable artefact evidence for the finding. Required (and non-empty) when severity=blocker; optional for non-blocker severities. Must cite at least one explicit reference: file:line (tracked path), S<n> (story id), O<n> (outcome id), CD<n> (contract-decision id), schemas/*.schema.json (schema path), or gate:<name> (quality-gate with explicit prefix). Bare prose and bare gate names do not resolve."
+          "description": "Resolvable artefact evidence for the finding. Required (and non-empty) when severity=blocker; optional for non-blocker severities. Must cite at least one explicit reference: file:line (tracked path), a work-unit id present in the plan, O<n> (outcome id), CD<n> (contract-decision id), schemas/*.schema.json (schema path), or gate:<name> (quality-gate with explicit prefix). Bare prose and bare gate names do not resolve."
         },
         "suggestion": {
           "type": "string",
@@ -114,11 +114,11 @@
     },
     {
       "if": {
-        "properties": { "target": { "const": "story" } },
+        "properties": { "target": { "const": "work_unit" } },
         "required": ["target"]
       },
       "then": {
-        "properties": { "target_id": { "type": "string", "pattern": "^S[1-9]\\d*$" } }
+        "properties": { "target_id": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9._-]*$" } }
       }
     }
   ]

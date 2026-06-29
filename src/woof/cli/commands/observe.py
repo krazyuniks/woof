@@ -13,24 +13,18 @@ from typing import Any, get_args
 import yaml
 
 from woof.cli.dispatcher import (
-    NODE_GROUPS,
-    DispatchConfigError,
-    _mcp_names,
-    _role_effort,
-    build_argv,
-    resolve_agent_route,
-    selected_model_profile,
     trusted_runtime_policy,
 )
+from woof.cli.harness_registry import HarnessError, build_launch_argv, get_profile
 from woof.cli.policy import load_policy, policy_path
 from woof.graph.dispositions import (
     critique_severity,
     read_markdown_front_matter,
-    story_critique_path,
-    story_disposition_path,
-    validate_story_disposition,
+    validate_work_unit_disposition,
+    work_unit_critique_path,
+    work_unit_disposition_path,
 )
-from woof.graph.state import TERMINAL_STORY_STATUSES, Plan, WorkUnitSpec
+from woof.graph.state import TERMINAL_WORK_UNIT_STATES, Plan, WorkUnitSpec
 from woof.graph.transitions import (
     definition_revision_requested,
     discovery_bucket_complete,
@@ -38,7 +32,7 @@ from woof.graph.transitions import (
     epic_abandoned,
     epic_event_exists,
     interactive_brainstorm_bundle_present,
-    next_ready_story,
+    next_ready_work_unit,
     plan_critique_path,
     plan_gate_resolved,
 )
@@ -64,10 +58,10 @@ TELEMETRY_FIELDS = (
 )
 SUCCESS_EXIT_TYPES = {"clean", "completed_lingering"}
 VIEWS = ("status", "timeline", "gate", "audit", "all")
-# Every legal WorkUnitSpec.status value, derived from the graph's Literal so the
+# Every legal WorkUnitSpec.state value, derived from the graph's Literal so the
 # plan summary can never KeyError on a valid status nor silently drop a future
 # one (E17 P4 added "abandoned"). Declaration order is preserved for rendering.
-STORY_STATUSES: tuple[str, ...] = get_args(WorkUnitSpec.model_fields["status"].annotation)
+WORK_UNIT_STATES: tuple[str, ...] = get_args(WorkUnitSpec.model_fields["state"].annotation)
 
 
 class ObserveError(RuntimeError):
@@ -245,7 +239,7 @@ def _status_summary(
         "gate": {
             "open": gate["open"],
             "type": gate.get("type"),
-            "story_id": gate.get("story_id"),
+            "work_unit_id": gate.get("work_unit_id"),
             "triggered_by": gate.get("triggered_by", []),
             "cause": _gate_cause(gate),
             "path": gate.get("path"),
@@ -273,9 +267,9 @@ def _derive_next_step(
     # and short-circuits before any gate or plan read, so observe agrees with the
     # graph instead of reporting a lingering gate/plan as the next step (E17 P4 / D-AB).
     if epic_abandoned(repo_root, epic_id):
-        return {"node": "epic_abandoned", "story_id": None}
+        return {"node": "epic_abandoned", "work_unit_id": None}
     if gate["open"]:
-        return {"node": "human_review", "story_id": None, "reason": "gate_open"}
+        return {"node": "human_review", "work_unit_id": None, "reason": "gate_open"}
 
     plan_path = directory / "plan.json"
     if not plan_path.exists():
@@ -283,91 +277,115 @@ def _derive_next_step(
             if epic_event_exists(
                 repo_root, epic_id, event="definition_closed"
             ) and not definition_revision_requested(repo_root, epic_id):
-                return {"node": "breakdown_planning", "story_id": None}
-            return {"node": "epic_definition", "story_id": None}
+                return {"node": "breakdown_planning", "work_unit_id": None}
+            return {"node": "epic_definition", "work_unit_id": None}
         if discovery_synthesis_complete(repo_root, epic_id):
-            return {"node": "epic_definition", "story_id": None}
+            return {"node": "epic_definition", "work_unit_id": None}
         if (directory / "spark.md").exists():
             if interactive_brainstorm_bundle_present(repo_root, epic_id):
-                return {"node": "discovery_synthesis", "story_id": None}
+                return {"node": "discovery_synthesis", "work_unit_id": None}
             for bucket in ("research", "thinking", "ideate"):
                 if not discovery_bucket_complete(repo_root, epic_id, bucket):
-                    return {"node": f"discovery_{bucket}", "story_id": None}
-            return {"node": "discovery_synthesis", "story_id": None}
+                    return {"node": f"discovery_{bucket}", "work_unit_id": None}
+            return {"node": "discovery_synthesis", "work_unit_id": None}
         return {
             "node": "incomplete_stage_state",
-            "story_id": None,
+            "work_unit_id": None,
             "reason": f"required planning artefact missing: {_display_path(repo_root, plan_path)}",
         }
 
     if plan is None:
         return {
             "node": "incomplete_stage_state",
-            "story_id": None,
+            "work_unit_id": None,
             "reason": f"required planning artefact is malformed: {_display_path(repo_root, plan_path)}",
         }
 
-    in_progress = next((unit for unit in plan.work_units if unit.status == "in_progress"), None)
-    if all(unit.status in TERMINAL_STORY_STATUSES for unit in plan.work_units):
+    in_progress = next((unit for unit in plan.work_units if unit.state == "in_progress"), None)
+    if all(unit.state in TERMINAL_WORK_UNIT_STATES for unit in plan.work_units):
         if (directory / "executor_result.json").exists() and (
             directory / "check-result.json"
         ).exists():
-            return {"node": "commit", "story_id": None, "reason": "commit_resume_candidate"}
-        return {"node": "epic_complete", "story_id": None}
+            return {"node": "commit", "work_unit_id": None, "reason": "commit_resume_candidate"}
+        return {"node": "epic_complete", "work_unit_id": None}
 
     if in_progress is None:
         critique_path = plan_critique_path(repo_root, epic_id)
         if (directory / "EPIC.md").exists() and not critique_path.exists():
-            return {"node": "plan_critique", "story_id": None}
+            return {"node": "plan_critique", "work_unit_id": None}
         if epic_event_exists(repo_root, epic_id, event="breakdown_planned"):
             if not epic_event_exists(repo_root, epic_id, event="plan_critiqued"):
-                return {"node": "plan_critique", "story_id": None}
+                return {"node": "plan_critique", "work_unit_id": None}
             if not plan_gate_resolved(repo_root, epic_id):
-                return {"node": "plan_gate_open", "story_id": None}
+                return {"node": "plan_gate_open", "work_unit_id": None}
         if critique_path.exists() and not plan_gate_resolved(repo_root, epic_id):
-            return {"node": "plan_gate_open", "story_id": None}
-        ready = next_ready_story(plan)
+            return {"node": "plan_gate_open", "work_unit_id": None}
+        ready = next_ready_work_unit(plan)
         if ready is not None:
-            return {"node": "executor_dispatch", "story_id": ready.id}
+            return {"node": "executor_dispatch", "work_unit_id": ready.id}
         return {
             "node": "incomplete_stage_state",
-            "story_id": None,
+            "work_unit_id": None,
             "reason": "pending work units exist, but no work unit has satisfied dependencies",
         }
 
-    story_id = in_progress.id
+    work_unit_id = in_progress.id
     result_path = directory / "executor_result.json"
     result = _load_json(result_path)
     if result is None:
-        return {"node": "gate_open", "story_id": story_id, "reason": "missing_executor_result"}
+        return {
+            "node": "gate_open",
+            "work_unit_id": work_unit_id,
+            "reason": "missing_executor_result",
+        }
 
     outcome = result.get("outcome")
     if outcome in {"aborted_with_position", "empty_diff"}:
-        return {"node": "gate_open", "story_id": story_id, "reason": str(outcome)}
+        return {"node": "gate_open", "work_unit_id": work_unit_id, "reason": str(outcome)}
     if outcome != "staged_for_verification":
-        return {"node": "gate_open", "story_id": story_id, "reason": "invalid_executor_result"}
+        return {
+            "node": "gate_open",
+            "work_unit_id": work_unit_id,
+            "reason": "invalid_executor_result",
+        }
 
-    critique_path = story_critique_path(directory, story_id)
+    critique_path = work_unit_critique_path(directory, work_unit_id)
     if not critique_path.exists():
-        return {"node": "critique_dispatch", "story_id": story_id}
+        return {"node": "critique_dispatch", "work_unit_id": work_unit_id}
     try:
         critique_front = read_markdown_front_matter(critique_path).front
     except (FileNotFoundError, ValueError):
-        return {"node": "review_disposition", "story_id": story_id, "reason": "malformed_critique"}
+        return {
+            "node": "review_disposition",
+            "work_unit_id": work_unit_id,
+            "reason": "malformed_critique",
+        }
     if critique_severity(critique_front) == "blocker":
-        return {"node": "review_disposition", "story_id": story_id, "reason": "reviewer_blocker"}
-    if not story_disposition_path(directory, story_id).exists():
-        return {"node": "review_disposition", "story_id": story_id, "reason": "missing_disposition"}
-    disposition = validate_story_disposition(directory, epic_id, story_id)
+        return {
+            "node": "review_disposition",
+            "work_unit_id": work_unit_id,
+            "reason": "reviewer_blocker",
+        }
+    if not work_unit_disposition_path(directory, work_unit_id).exists():
+        return {
+            "node": "review_disposition",
+            "work_unit_id": work_unit_id,
+            "reason": "missing_disposition",
+        }
+    disposition = validate_work_unit_disposition(directory, epic_id, work_unit_id)
     if not disposition.ok:
-        return {"node": "review_disposition", "story_id": story_id, "reason": "invalid_disposition"}
+        return {
+            "node": "review_disposition",
+            "work_unit_id": work_unit_id,
+            "reason": "invalid_disposition",
+        }
 
     check_result = _load_json(directory / "check-result.json")
     if check_result is None:
-        return {"node": "verification", "story_id": story_id}
+        return {"node": "verification", "work_unit_id": work_unit_id}
     if not check_result.get("ok", False):
-        return {"node": "gate_open", "story_id": story_id, "reason": "failed_verification"}
-    return {"node": "commit", "story_id": story_id}
+        return {"node": "gate_open", "work_unit_id": work_unit_id, "reason": "failed_verification"}
+    return {"node": "commit", "work_unit_id": work_unit_id}
 
 
 def _next_action(epic_id: int, next_step: dict[str, Any], gate: dict[str, Any]) -> dict[str, Any]:
@@ -433,80 +451,76 @@ def _current_epic_summary(
 
 
 def _dispatch_routes_summary(repo_root: Path) -> dict[str, Any]:
-    agents_path = repo_root / ".woof" / "agents.toml"
+    path = policy_path(repo_root)
     summary: dict[str, Any] = {
-        "path": _display_path(repo_root, agents_path),
-        "exists": agents_path.is_file(),
+        "path": _display_path(repo_root, path),
+        "exists": path.is_file(),
         "roles": {},
         "timeout_min": None,
         "model_profile": None,
     }
-    if not agents_path.is_file():
-        summary["error"] = f"{_display_path(repo_root, agents_path)} not found"
-        for role_name in ("primary", "reviewer"):
+    if not path.is_file():
+        summary["error"] = f"{_display_path(repo_root, path)} not found"
+        for role_name in ("producer", "reviewer"):
             summary["roles"][role_name] = {
                 "ok": False,
                 "role": role_name,
-                "errors": ["agents.toml not found"],
+                "errors": ["policy.toml not found"],
             }
         return summary
 
-    loaded = _load_toml(agents_path)
-    if not isinstance(loaded, dict):
-        summary["error"] = loaded
-        for role_name in ("primary", "reviewer"):
-            summary["roles"][role_name] = {"ok": False, "role": role_name, "errors": [loaded]}
+    policy = load_policy(repo_root)
+    if not isinstance(policy, dict):
+        summary["error"] = policy
+        for role_name in ("producer", "reviewer"):
+            summary["roles"][role_name] = {"ok": False, "role": role_name, "errors": [policy]}
         return summary
 
     timeout_min = 30
     timeout_error: str | None = None
+    agents_path = repo_root / ".woof" / "agents.toml"
+    loaded_agents: dict[str, Any] | str = {}
+    if agents_path.is_file():
+        loaded_agents = _load_toml(agents_path)
+    timeout_source = loaded_agents if isinstance(loaded_agents, dict) else {}
     try:
-        timeout_min = int((loaded.get("timeouts") or {}).get("default_minutes", 30))
+        timeout_min = int((timeout_source.get("timeouts") or {}).get("default_minutes", 30))
     except (TypeError, ValueError):
         timeout_error = "timeouts.default_minutes must be an integer"
     summary["timeout_min"] = timeout_min
-    summary["model_profile"] = selected_model_profile(loaded)
-    roles = loaded.get("roles") or {}
-    if not isinstance(roles, dict):
-        summary["error"] = "roles table is not an object"
-        for role_name in ("primary", "reviewer"):
+    default_profile = policy.get("default_run_profile")
+    summary["model_profile"] = default_profile if isinstance(default_profile, str) else None
+    profiles = policy.get("run_profiles") or {}
+    if not isinstance(default_profile, str) or not isinstance(profiles, dict):
+        summary["error"] = "default_run_profile and run_profiles must be declared"
+        for role_name in ("producer", "reviewer"):
             summary["roles"][role_name] = {
                 "ok": False,
                 "role": role_name,
-                "errors": ["roles table is not an object"],
+                "errors": ["default_run_profile and run_profiles must be declared"],
             }
         return summary
-    mcp_servers = loaded.get("mcp_servers") or {}
-    if not isinstance(mcp_servers, dict):
-        mcp_servers = {}
-    for role_name in ("primary", "reviewer"):
+    selected = profiles.get(default_profile)
+    if not isinstance(selected, dict):
+        summary["error"] = f"default_run_profile {default_profile!r} is not declared"
+        for role_name in ("producer", "reviewer"):
+            summary["roles"][role_name] = {
+                "ok": False,
+                "role": role_name,
+                "errors": [str(summary["error"])],
+            }
+        return summary
+    for role_name in ("producer", "reviewer"):
         route_summary = _dispatch_route_summary(
             role_name,
-            loaded,
-            mcp_servers,
+            selected.get(role_name),
+            default_profile,
             timeout_min,
         )
         if timeout_error:
             route_summary["ok"] = False
             route_summary["errors"].append(timeout_error)
         summary["roles"][role_name] = route_summary
-    routes_by_group: dict[str, Any] = {}
-    for group in sorted(NODE_GROUPS):
-        group_routes: dict[str, Any] = {}
-        for role_name in ("primary", "reviewer"):
-            route_summary = _dispatch_route_summary(
-                role_name,
-                loaded,
-                mcp_servers,
-                timeout_min,
-                route_key=group,
-            )
-            if timeout_error:
-                route_summary["ok"] = False
-                route_summary["errors"].append(timeout_error)
-            group_routes[role_name] = route_summary
-        routes_by_group[group] = group_routes
-    summary["routes"] = routes_by_group
     return summary
 
 
@@ -547,51 +561,63 @@ def _repo_policy_summary(repo_root: Path) -> dict[str, Any]:
 
 def _dispatch_route_summary(
     role_name: str,
-    agents: dict[str, Any],
-    mcp_servers: dict[str, Any],
+    slot: object,
+    profile_name: str,
     timeout_min: int,
-    *,
-    route_key: str | None = None,
 ) -> dict[str, Any]:
-    try:
-        route = resolve_agent_route(agents, role_name, route_key=route_key)
-    except DispatchConfigError as exc:
-        return {"ok": False, "role": role_name, "errors": [str(exc)]}
-
     errors: list[str] = []
-    effort: str | None = None
-    mcp_names: list[str] = []
-    if route.adapter == "in-session":
-        errors.append("dispatchable role resolves to in-session")
-    try:
-        effort = _role_effort(route.adapter, route.config)
-    except DispatchConfigError as exc:
-        errors.append(str(exc))
-    if effort is None:
-        errors.append("effort is not declared")
-    try:
-        mcp_names = _mcp_names(route.config)
-        build_argv(route.adapter, route.config, "observe route probe", mcp_servers=mcp_servers)
-    except DispatchConfigError as exc:
-        errors.append(str(exc))
+    slot_data: dict[str, Any]
+    if isinstance(slot, dict):
+        slot_data = slot
+    else:
+        slot_data = {}
+        errors.append(f"run_profiles.{profile_name}.{role_name} must be a table")
 
-    model = route.config.get("model")
-    if not model:
+    harness = slot_data.get("harness")
+    profile = None
+    if not isinstance(harness, str) or not harness.strip():
+        errors.append("harness is not declared")
+    else:
+        try:
+            profile = get_profile(harness)
+        except HarnessError as exc:
+            errors.append(str(exc))
+
+    model = slot_data.get("model")
+    if not isinstance(model, str) or not model.strip():
         errors.append("model is not declared")
+
+    effort = slot_data.get("effort")
+    if not isinstance(effort, str) or not effort.strip():
+        errors.append("effort is not declared")
+    elif profile is not None and profile.effort_levels and effort not in profile.effort_levels:
+        errors.append(
+            f"{profile.name} effort {effort!r} is not supported; expected one of "
+            f"{sorted(profile.effort_levels)}"
+        )
+    if profile is not None:
+        try:
+            build_launch_argv(
+                profile.name,
+                model=model if isinstance(model, str) else None,
+                effort=effort if isinstance(effort, str) else None,
+            )
+        except HarnessError as exc:
+            errors.append(str(exc))
 
     return {
         "ok": not errors,
         "role": role_name,
-        "config_role": route.config_role,
-        "model_profile": route.model_profile,
-        "profile_role": route.profile_role,
-        "adapter": route.adapter,
+        "config_role": role_name,
+        "model_profile": profile_name,
+        "profile_role": role_name,
+        "adapter": profile.name if profile is not None else harness,
         "model": model,
         "effort": effort,
-        "mcp": mcp_names,
-        "flags": route.config.get("flags") or [],
+        "mcp": [],
+        "flags": [],
         "timeout_min": timeout_min,
-        "prompt_transport": "stdin",
+        "prompt_transport": "tmux_harness_prompt_file",
         "runtime_policy": trusted_runtime_policy(),
         "errors": errors,
     }
@@ -625,7 +651,7 @@ def _check_summary(repo_root: Path, directory: Path) -> dict[str, Any]:
         "path": _display_path(repo_root, path),
         "ok": bool(payload.get("ok", False)),
         "stage": payload.get("stage"),
-        "story_id": payload.get("story_id"),
+        "work_unit_id": payload.get("work_unit_id"),
         "triggered_by": [str(item) for item in payload.get("triggered_by") or []],
         "total": len(checks),
         "failed": len(failed_checks),
@@ -660,15 +686,15 @@ def _plan_summary(repo_root: Path, directory: Path) -> tuple[dict[str, Any], Pla
             "path": _display_path(repo_root, path),
             "error": str(exc),
         }, None
-    counts = {status: 0 for status in STORY_STATUSES}
+    counts = {status: 0 for status in WORK_UNIT_STATES}
     work_units = []
     for unit in plan.work_units:
-        counts[unit.status] += 1
+        counts[unit.state] += 1
         work_units.append(
             {
                 "id": unit.id,
                 "title": unit.title,
-                "status": unit.status,
+                "state": unit.state,
                 "deps": unit.deps,
                 "satisfies": unit.satisfies,
             }
@@ -704,7 +730,7 @@ def _gate_summary(repo_root: Path, directory: Path) -> dict[str, Any]:
         "path": _display_path(repo_root, gate_path),
         "type": front.get("type"),
         "stage": front.get("stage"),
-        "story_id": front.get("story_id"),
+        "work_unit_id": front.get("work_unit_id"),
         "triggered_by": [str(item) for item in triggered_by],
         "cause": ", ".join(str(item) for item in triggered_by) if triggered_by else "unspecified",
         "timestamp": front.get("timestamp"),
@@ -839,7 +865,7 @@ def _timeline(records: list[JsonlRecord]) -> list[dict[str, Any]]:
         }
         for key in (
             "epic_id",
-            "story_id",
+            "work_unit_id",
             "role",
             "adapter",
             "model",
@@ -934,7 +960,7 @@ def _dispatch_return_summary(event: dict[str, Any]) -> dict[str, Any]:
         for key in (
             "at",
             "role",
-            "story_id",
+            "work_unit_id",
             "adapter",
             "model",
             "effort",
@@ -1102,9 +1128,9 @@ def _print_status(status: dict[str, Any]) -> None:
     print(f"epic_dir: {status['epic_dir']}")
     _print_current_epic(status["current_epic"])
     print(f"runtime_policy: {status['runtime_policy']['mode']}")
-    story = f" story={next_step['story_id']}" if next_step.get("story_id") else ""
+    work_unit = f" work_unit={next_step['work_unit_id']}" if next_step.get("work_unit_id") else ""
     reason = f" reason={next_step['reason']}" if next_step.get("reason") else ""
-    print(f"next: {next_step['node']}{story}{reason}")
+    print(f"next: {next_step['node']}{work_unit}{reason}")
     action = status["next_action"]
     command = action.get("command") or "-"
     print(f"next_action: {action['action']} command={command} reason={action.get('reason')}")
@@ -1112,7 +1138,7 @@ def _print_status(status: dict[str, Any]) -> None:
     if gate["open"]:
         print(
             "gate: open "
-            f"type={gate.get('type')} story={gate.get('story_id') or '-'} "
+            f"type={gate.get('type')} work_unit={gate.get('work_unit_id') or '-'} "
             f"cause={gate.get('cause')}"
         )
     else:
@@ -1140,7 +1166,8 @@ def _print_gate(gate: dict[str, Any]) -> None:
         return
     print(f"gate: open at {gate['path']}")
     print(
-        f"type: {gate.get('type')} stage: {gate.get('stage')} story: {gate.get('story_id') or '-'}"
+        f"type: {gate.get('type')} stage: {gate.get('stage')} "
+        f"work_unit: {gate.get('work_unit_id') or '-'}"
     )
     print(f"triggered_by: {', '.join(gate.get('triggered_by') or [])}")
     if gate.get("timestamp"):
@@ -1197,7 +1224,7 @@ def _print_check_summary(checks: dict[str, Any]) -> None:
     state = "OK" if checks["ok"] else "FAIL"
     print(
         "checks: "
-        f"{state} stage={checks.get('stage')} story={checks.get('story_id') or '-'} "
+        f"{state} stage={checks.get('stage')} work_unit={checks.get('work_unit_id') or '-'} "
         f"total={checks['total']} failed={checks['failed']} "
         f"triggered_by={','.join(checks.get('triggered_by') or []) or '-'}"
     )
@@ -1222,7 +1249,7 @@ def _print_dispatch_routes(routes: dict[str, Any]) -> None:
     print(f"dispatch_routes: {routes['path']}")
     if routes.get("model_profile"):
         print(f"model_profile: {routes['model_profile']}")
-    for role_name in ("primary", "reviewer"):
+    for role_name in ("producer", "reviewer"):
         route = (routes.get("roles") or {}).get(role_name) or {}
         if route.get("ok"):
             mcp = ",".join(route.get("mcp") or []) or "-"
@@ -1236,17 +1263,6 @@ def _print_dispatch_routes(routes: dict[str, Any]) -> None:
         else:
             errors = "; ".join(str(error) for error in route.get("errors") or [])
             print(f"  {role_name}: unavailable {errors}")
-    for group, group_routes in sorted((routes.get("routes") or {}).items()):
-        for role_name in ("primary", "reviewer"):
-            route = (group_routes or {}).get(role_name) or {}
-            if route.get("ok"):
-                print(
-                    f"  {group}/{role_name}: adapter={route.get('adapter')} "
-                    f"model={route.get('model')} effort={route.get('effort')}"
-                )
-            else:
-                errors = "; ".join(str(error) for error in route.get("errors") or [])
-                print(f"  {group}/{role_name}: unavailable {errors}")
 
 
 def _print_timeline(events: list[dict[str, Any]]) -> None:
@@ -1261,7 +1277,7 @@ def _print_timeline(events: list[dict[str, Any]]) -> None:
             str(event.get("event") or "-"),
         ]
         for key in (
-            "story_id",
+            "work_unit_id",
             "role",
             "adapter",
             "gate_type",

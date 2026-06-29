@@ -21,11 +21,11 @@ work_units:
     kind: build
     state: done
     priority: high
-    summary: Move the canonical executable unit schema into Woof, retire story-shaped runtime contracts, and preserve graph dependency checks.
+    summary: Move the canonical executable unit schema into Woof, retire legacy runtime contracts, and preserve graph dependency checks.
     acceptance:
       - Canonical Woof schema validates required work-unit fields and optional contract-trace fields.
       - Backlog front matter accepts the document-level executor block needed by transitional VaultForeman drains without adding custom per-unit wave fields.
-      - Durable readers and writers use work_units without transitional story mirrors.
+      - Durable readers and writers use work_units without transitional unit-shape mirrors.
       - Duplicate ids, dangling deps, self-deps, and cycles fail validation.
   - id: policy-model
     title: Move project policy into repo-local Woof config
@@ -67,9 +67,9 @@ work_units:
   - id: execution-shape-unification
     title: Converge the execution kernel on the one work_units schema
     kind: build
-    state: todo
     priority: high
-    summary: Collapse the runtime plan/story shape onto the canonical work_units shape (one lifecycle field, work-unit ids, named checks and gates), remove the story_id/work_unit_id mirror, and retire story-named playbooks and self-cartography. Realises the ADR-011 convergence that schema-unification left at the intake boundary.
+    state: done
+    summary: Collapse the runtime plan/work-unit shape onto the canonical work_units shape (one lifecycle field, work-unit ids, named checks and gates), remove legacy id mirrors, and retire legacy-named playbooks and self-cartography. Realises the ADR-011 convergence that schema-unification left at the intake boundary.
     deps: [schema-unification]
     acceptance:
       - One canonical work-unit schema validates id, title, kind, state, and the optional contract-trace fields; the plan/runtime artefact and the backlog artefact share it, with no status-versus-state dual lifecycle.
@@ -77,15 +77,15 @@ work_units:
       - Cross-aggregate references use structured context plus the local work-unit id, rather than a second globally encoded id field; UUIDs are reserved for technical run, attempt, review, and audit records.
       - The aggregate context is a discriminated union -- an epic context (project_ref, epic_id) or a work-unit-set context (project_ref, set_id, optional source_ref), not an optional epic_id; set_id is a stable persisted identity, never a run UUID (architecture section 4).
       - "Review-cache, instability, and lineage joins carry the qualified work-unit reference as the unit-identity component alongside the content/version facts (diff_hash, prompt version, role): the qualified ref answers which unit, the content facts answer whether a cached review is reusable."
-      - Runtime gates, checks, dispositions, and events key on work-unit id; no event carries both story_id and work_unit_id.
-      - Deterministic checks and gate types are named around work units rather than numbered Stage-5 story checks, and the gate writer can emit the work-unit gate.
-      - Producer and reviewer playbooks and Woof's self-cartography use work-unit terminology; no story.md playbook remains.
+      - Runtime gates, checks, dispositions, and events key on work-unit id; no event carries both a legacy id and work_unit_id.
+      - Deterministic checks and gate types are named around work units, and the gate writer can emit the work-unit gate.
+      - Producer and reviewer playbooks and Woof's self-cartography use work-unit terminology; no legacy-named playbook remains.
       - An invariant guard test covers the single inbound legacy-shape normaliser (accept legacy input, reject dual shape), and a duplicate work-unit id case is tested.
       - Dead back-compat aliases are deleted in this change.
   - id: config-routing-ssot
     title: Make policy.toml the single routing and run-profile authority
     kind: build
-    state: todo
+    state: done
     priority: high
     summary: Consolidate routing, run profiles, and harness/model/effort vocabulary to one home each; retire the agents.toml routing duplication and the dead headless dispatch builders.
     deps: [policy-model, dispatch-swap]
@@ -214,7 +214,7 @@ work_units:
 
 # Woof Backlog
 
-This is the forward work queue for the VaultForeman/Woof merge. It contains work to do. Historical stage/story epics are not retained here as a second plan; git history carries the old backlog.
+This is the forward work queue for the VaultForeman/Woof merge. It contains work to do. Historical stage epics are not retained here as a second plan; git history carries the old backlog.
 
 The architecture target is `docs/architecture.md`. Decision records are in `docs/adr/`. The glossary is `docs/CONTEXT.md`.
 
@@ -239,9 +239,9 @@ The `How` value controls execution mechanics:
 | Wave | Units | How | Instructions |
 |---|---|---|---|
 | 0 | Runner-asset source map | done | Source map is in `~/Work/vault/records/radianit/projects/woof/planning/runner-asset-source-map.md`. |
-| 1 | `schema-unification`, `safety-defect-sweep` | hand-build | Start here. Preserve one canonical `work_units[]` schema, keep the VaultForeman `executor` document block valid for transitional drains, retire story-shaped runtime mirrors, and keep graph dependency validation fail-closed. |
+| 1 | `schema-unification`, `safety-defect-sweep` | hand-build | Start here. Preserve one canonical `work_units[]` schema, keep the VaultForeman `executor` document block valid for transitional drains, retire legacy runtime mirrors, and keep graph dependency validation fail-closed. |
 | 2 | `policy-model`, `dispatch-swap`, `run-lineage-immutable-attempts` | hand-build + vf-drain | Hand-build the repo-local policy schema/spine first. In `dispatch-swap`, consolidate VaultForeman's harness/model/effort registry into Woof's dispatcher before any produce/review logic is absorbed. |
-| 3 | `execution-shape-unification`, `config-routing-ssot` | hand-build | Foundational convergence. Collapse the runtime to one `work_units[]` shape (retire the `status`/`state` dual lifecycle and the `story_id`/`work_unit_id` mirror; rename checks, gates, and playbooks off story) and make `policy.toml` the single routing/run-profile authority (retire `agents.toml` routing, single-source the registry vocab, delete dead headless builders). Hand-build because the vf-drain waves fold runner logic into this kernel; draining them first deepens the mirror. |
+| 3 | `execution-shape-unification`, `config-routing-ssot` | hand-build | Foundational convergence. Collapse the runtime to one `work_units[]` shape (retire the `status`/`state` dual lifecycle and legacy id mirrors; rename checks, gates, and playbooks onto work-unit language) and make `policy.toml` the single routing/run-profile authority (retire `agents.toml` routing, single-source the registry vocab, delete dead headless builders). Hand-build because the vf-drain waves fold runner logic into this kernel; draining them first deepens the mirror. |
 | 4 | `warm-session-seam`, `cartography-continuity`, `intake-enrichment` | vf-drain | Drain after the kernel runs one shape and the dispatch registry is single-sourced, so warm producer and fresh reviewer sessions use one adapter contract and one unit shape. |
 | 5 | `runner-loop-absorption`, `conformance-audit`, `eval-instrumentation` | vf-drain | Absorb Profile A/B drain, deploy-aware merge pacing, partial-merge reconciliation, semantic sibling-conflict reconciliation, review cache, and usage/run telemetry. Producer reads the runner-asset source map. |
 | 6 | `first-flight` | manual | Prove the merged engine on a throwaway or guarded low-risk backlog before Freeflo. Exercise resume, gate handling, Profile A merge-settle/deploy-spacing, and audit evidence. |

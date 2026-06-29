@@ -1,5 +1,5 @@
 ---
-target: story
+target: work_unit
 target_id: S2
 severity: blocker
 timestamp: "2026-04-27T05:46:49Z"
@@ -32,4 +32,4 @@ The unit tests for `apply_size_cap` use only ASCII input (`'x' * n`). A suite th
 
 ## Position
 
-Both findings are blockers. The story should not land until `apply_size_cap` correctly handles UTF-8 boundaries and the tests demonstrate this with multi-byte fixtures.
+Both findings are blockers. The work unit should not land until `apply_size_cap` correctly handles UTF-8 boundaries and the tests demonstrate this with multi-byte fixtures.

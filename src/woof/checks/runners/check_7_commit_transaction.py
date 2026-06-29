@@ -1,9 +1,9 @@
 """check_7_commit_transaction - Stage-5 Check 7.
 
-Verifies that the pending story transaction is commit-ready:
+Verifies that the pending work-unit transaction is commit-ready:
   1. Required durable .woof artefacts are staged
-  2. Non-empty stories have at least one staged in-scope story path
-  3. Staged paths contain only story paths plus allowed durable/audit .woof paths
+  2. Non-empty work units have at least one staged in-scope work-unit path
+  3. Staged paths contain only work-unit paths plus allowed durable/audit .woof paths
   4. No unstaged or untracked paths remain in the worktree
 """
 
@@ -13,7 +13,7 @@ import subprocess
 from pathlib import Path
 
 from woof.checks import CheckContext, CheckOutcome
-from woof.graph.dispositions import story_disposition_relpath
+from woof.graph.dispositions import work_unit_disposition_relpath
 from woof.graph.manifest import durable_epic_paths
 from woof.graph.pathspec import PathspecEvaluationError, staged_paths_matching
 
@@ -52,10 +52,10 @@ def _status_entries(repo_root: Path) -> list[tuple[str, str]]:
     return entries
 
 
-def _story(ctx: CheckContext) -> dict | None:
-    for story in ctx.plan.get("work_units", []):
-        if isinstance(story, dict) and story.get("id") == ctx.story_id:
-            return story
+def _work_unit(ctx: CheckContext) -> dict | None:
+    for work_unit in ctx.plan.get("work_units", []):
+        if isinstance(work_unit, dict) and work_unit.get("id") == ctx.work_unit_id:
+            return work_unit
     return None
 
 
@@ -65,8 +65,8 @@ def _required_paths(ctx: CheckContext) -> list[str]:
         f".woof/epics/{epic}/plan.json",
         f".woof/epics/{epic}/epic.jsonl",
         f".woof/epics/{epic}/dispatch.jsonl",
-        f".woof/epics/{epic}/critique/story-{ctx.story_id}.md",
-        story_disposition_relpath(ctx.epic_id, ctx.story_id),
+        f".woof/epics/{epic}/critique/work-unit-{ctx.work_unit_id}.md",
+        work_unit_disposition_relpath(ctx.epic_id, ctx.work_unit_id),
     ]
 
 
@@ -99,16 +99,16 @@ def _failure(
 
 
 def check_7_commit_transaction_runner(ctx: CheckContext) -> CheckOutcome:
-    story = _story(ctx)
-    if story is None:
+    work_unit = _work_unit(ctx)
+    if work_unit is None:
         return _failure(
-            summary=f"story {ctx.story_id!r} not found in plan.json",
-            evidence=["plan.json has no matching story entry"],
+            summary=f"work unit {ctx.work_unit_id!r} not found in plan.json",
+            evidence=["plan.json has no matching work-unit entry"],
             paths=[f".woof/epics/E{ctx.epic_id}/plan.json"],
         )
 
-    story_patterns = [str(pattern) for pattern in story.get("paths", [])]
-    empty_diff = bool(story.get("empty_diff", False))
+    work_unit_patterns = [str(pattern) for pattern in work_unit.get("paths", [])]
+    empty_diff = bool(work_unit.get("empty_diff", False))
     required = set(_required_paths(ctx))
 
     try:
@@ -122,16 +122,18 @@ def check_7_commit_transaction_runner(ctx: CheckContext) -> CheckOutcome:
         )
 
     try:
-        story_matched_staged = set(staged_paths_matching(ctx.repo_root, story_patterns))
+        work_unit_matched_staged = set(staged_paths_matching(ctx.repo_root, work_unit_patterns))
     except PathspecEvaluationError as exc:
         return _failure(
-            summary=f"git pathspec evaluation failed for story {ctx.story_id}",
+            summary=f"git pathspec evaluation failed for work unit {ctx.work_unit_id}",
             evidence=[str(exc) or exc.command_string()],
             paths=[],
         )
 
-    staged_story_paths = [
-        path for path in staged if not path.startswith(".woof/") and path in story_matched_staged
+    staged_work_unit_paths = [
+        path
+        for path in staged
+        if not path.startswith(".woof/") and path in work_unit_matched_staged
     ]
     missing_required = sorted(path for path in required if path not in staged)
     foreign_staged = sorted(
@@ -139,7 +141,7 @@ def check_7_commit_transaction_runner(ctx: CheckContext) -> CheckOutcome:
         for path in staged
         if (
             (path.startswith(".woof/") and not _is_allowed_woof_path(ctx, path, required))
-            or (not path.startswith(".woof/") and path not in story_matched_staged)
+            or (not path.startswith(".woof/") and path not in work_unit_matched_staged)
         )
     )
     unstaged = sorted(path for status, path in status_entries if _is_unstaged(status))
@@ -149,8 +151,8 @@ def check_7_commit_transaction_runner(ctx: CheckContext) -> CheckOutcome:
     if missing_required:
         evidence.append(f"missing required staged paths: {missing_required}")
         paths.extend(missing_required)
-    if not empty_diff and not staged_story_paths:
-        evidence.append("no staged story paths matched story.paths[]")
+    if not empty_diff and not staged_work_unit_paths:
+        evidence.append("no staged work-unit paths matched work_unit.paths[]")
     if foreign_staged:
         evidence.append(f"foreign staged paths: {foreign_staged}")
         paths.extend(foreign_staged)
@@ -165,12 +167,13 @@ def check_7_commit_transaction_runner(ctx: CheckContext) -> CheckOutcome:
             paths=paths,
         )
 
-    story_count = len(staged_story_paths)
+    work_unit_path_count = len(staged_work_unit_paths)
     if empty_diff:
-        summary = "empty_diff story has required durable artefacts staged and no unstaged paths"
+        summary = "empty_diff work unit has required durable artefacts staged and no unstaged paths"
     else:
         summary = (
-            f"{story_count} staged story path(s) plus required durable artefacts are commit-ready"
+            f"{work_unit_path_count} staged work-unit path(s) plus required durable "
+            "artefacts are commit-ready"
         )
     return CheckOutcome(
         id=CHECK_ID,

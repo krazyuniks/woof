@@ -31,7 +31,7 @@ def _write(path: Path, content: str = "content\n") -> None:
 def _ctx(repo_root: Path) -> CheckContext:
     return CheckContext(
         epic_id=7,
-        story_id="S1",
+        work_unit_id="S1",
         repo_root=repo_root,
         epic_dir=repo_root / ".woof" / "epics" / "E7",
         plan={"epic_id": 7, "goal": "docs drift", "work_units": []},

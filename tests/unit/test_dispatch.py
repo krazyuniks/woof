@@ -37,29 +37,67 @@ pytestmark = pytest.mark.host_only
 
 @pytest.fixture
 def woof_project(tmp_path: Path) -> Path:
-    """Skeleton woof project: ``.woof/agents.toml`` with the standard roles."""
+    """Skeleton woof project with runtime settings and a default policy run profile."""
     project = tmp_path / "proj"
     woof_dir = project / ".woof"
     woof_dir.mkdir(parents=True)
     (woof_dir / "agents.toml").write_text("""\
-[roles.primary]
-adapter = "codex"
-model = "gpt-5.5"
-effort = "xhigh"
-flags = ["--max-turns", "20"]
-
-[roles.reviewer]
-adapter = "claude"
-model = "claude-opus-4-7"
-effort = "max"
-
-[roles.gate-resolver]
-adapter = "in-session"
-
 [timeouts]
 default_minutes = 15
 """)
+    _write_policy(project)
     return project
+
+
+def _write_policy(
+    project: Path,
+    *,
+    default_run_profile: str = "default",
+    producer_harness: str = "codex",
+    producer_model: str = "gpt-5.5",
+    producer_effort: str = "xhigh",
+    reviewer_harness: str = "claude",
+    reviewer_model: str = "claude-opus-4-7",
+    reviewer_effort: str = "max",
+    extra_profiles: str = "",
+) -> None:
+    (project / ".woof" / "policy.toml").write_text(
+        f"""\
+schema_version = 1
+default_run_profile = "{default_run_profile}"
+
+[delivery]
+profile = "B"
+repo_root = "."
+toolchain_root = "."
+base_branch = "main"
+
+[profiles.B]
+commit = true
+push = true
+
+[verification]
+command = "just check"
+timeout_seconds = 600
+
+[run_profiles.default.producer]
+harness = "{producer_harness}"
+model = "{producer_model}"
+effort = "{producer_effort}"
+
+[run_profiles.default.reviewer]
+harness = "{reviewer_harness}"
+model = "{reviewer_model}"
+effort = "{reviewer_effort}"
+{extra_profiles}
+
+[checks]
+floor = ["quality-gates"]
+
+[cartography]
+floor = "none"
+"""
+    )
 
 
 def run_dispatch(
@@ -90,7 +128,7 @@ def test_dry_run_reviewer_uses_tmux_harness_profile_argv(woof_project: Path) -> 
         "reviewer",
         "--epic",
         "42",
-        "--story",
+        "--work-unit",
         "S3",
         "--dry-run",
     )
@@ -106,7 +144,7 @@ def test_dry_run_reviewer_uses_tmux_harness_profile_argv(woof_project: Path) -> 
     ]
     assert payload["prompt_transport"] == "tmux_harness_prompt_file"
     assert payload["epic"] == 42
-    assert payload["story"] == "S3"
+    assert payload["work_unit_id"] == "S3"
     assert payload["role"] == "reviewer"
     assert payload["adapter"] == "claude"
     assert payload["harness"] == "claude"
@@ -144,11 +182,9 @@ def test_dry_run_primary_uses_tmux_harness_profile_argv(woof_project: Path) -> N
         "gpt-5.5",
         "-c",
         "model_reasoning_effort=xhigh",
-        "--max-turns",
-        "20",
     ]
     assert payload["prompt_transport"] == "tmux_harness_prompt_file"
-    assert payload["story"] is None
+    assert payload["work_unit_id"] is None
     assert payload["adapter"] == "codex"
     assert payload["harness"] == "codex"
     assert payload["effort"] == "xhigh"
@@ -157,27 +193,14 @@ def test_dry_run_primary_uses_tmux_harness_profile_argv(woof_project: Path) -> N
 
 
 def test_model_profile_overrides_route_model_and_effort(woof_project: Path) -> None:
-    (woof_project / ".woof" / "agents.toml").write_text("""\
-model_profile = "smoke"
-
-[roles.primary]
-adapter = "codex"
-
-[roles.reviewer]
-adapter = "claude"
-mcp = []
-
-[model_profiles.smoke.roles.primary]
-model = "gpt-5.5-mini"
-effort = "low"
-
-[model_profiles.smoke.roles.reviewer]
-model = "claude-sonnet-4-6"
-effort = "high"
-
-[timeouts]
-default_minutes = 15
-""")
+    _write_policy(
+        woof_project,
+        default_run_profile="default",
+        producer_model="gpt-5.5-mini",
+        producer_effort="low",
+        reviewer_model="claude-sonnet-4-6",
+        reviewer_effort="high",
+    )
 
     proc = run_dispatch(
         woof_project,
@@ -190,8 +213,8 @@ default_minutes = 15
 
     assert proc.returncode == 0, proc.stderr
     payload = json.loads(proc.stdout)
-    assert payload["model_profile"] == "smoke"
-    assert payload["profile_role"] == "primary"
+    assert payload["model_profile"] == "default"
+    assert payload["profile_role"] == "producer"
     assert payload["model"] == "gpt-5.5-mini"
     assert payload["effort"] == "low"
     assert "-m" in payload["argv"]
@@ -200,35 +223,21 @@ default_minutes = 15
 
 
 def test_env_model_profile_selects_alternate_profile(woof_project: Path) -> None:
-    (woof_project / ".woof" / "agents.toml").write_text("""\
-model_profile = "default"
+    _write_policy(
+        woof_project,
+        extra_profiles="""\
 
-[roles.primary]
-adapter = "codex"
-
-[roles.reviewer]
-adapter = "claude"
-mcp = []
-
-[model_profiles.default.roles.primary]
-model = "gpt-5.5"
-effort = "xhigh"
-
-[model_profiles.default.roles.reviewer]
-model = "claude-opus-4-7"
-effort = "max"
-
-[model_profiles.cheap.roles.primary]
+[run_profiles.cheap.producer]
+harness = "codex"
 model = "gpt-5.5-mini"
 effort = "low"
 
-[model_profiles.cheap.roles.reviewer]
+[run_profiles.cheap.reviewer]
+harness = "claude"
 model = "claude-sonnet-4-6"
 effort = "low"
-
-[timeouts]
-default_minutes = 15
-""")
+""",
+    )
     env = {**os.environ, "WOOF_MODEL_PROFILE": "cheap"}
 
     proc = run_dispatch(
@@ -252,29 +261,11 @@ default_minutes = 15
 
 
 # ---------------------------------------------------------------------------
-# per-node-group route overlays (E20)
+# node route keys
 # ---------------------------------------------------------------------------
 
 
-_ROUTES_AGENTS_TOML = """\
-[roles.primary]
-adapter = "codex"
-
-[roles.reviewer]
-adapter = "claude"
-
-[routes.execution.primary]
-adapter = "claude"
-
-[timeouts]
-default_minutes = 15
-"""
-
-
-def test_route_key_group_override_flips_adapter(woof_project: Path) -> None:
-    """A declared [routes.<group>.<role>] override wins over the base [roles.*] adapter."""
-    (woof_project / ".woof" / "agents.toml").write_text(_ROUTES_AGENTS_TOML)
-
+def test_route_key_records_node_group_without_changing_policy_route(woof_project: Path) -> None:
     proc = run_dispatch(
         woof_project,
         "--role",
@@ -283,133 +274,15 @@ def test_route_key_group_override_flips_adapter(woof_project: Path) -> None:
         "1",
         "--route-key",
         "execution",
-        "--dry-run",
-    )
-
-    assert proc.returncode == 0, proc.stderr
-    payload = json.loads(proc.stdout)
-    assert payload["adapter"] == "claude"
-    assert payload["route_key"] == "execution"
-    assert payload["argv"][0] == "cld"
-
-
-def test_route_key_falls_back_to_base_role_when_group_undeclared(woof_project: Path) -> None:
-    """An undeclared group falls through to the base role, but still records route_key."""
-    (woof_project / ".woof" / "agents.toml").write_text(_ROUTES_AGENTS_TOML)
-
-    proc = run_dispatch(
-        woof_project,
-        "--role",
-        "primary",
-        "--epic",
-        "1",
-        "--route-key",
-        "discovery",
         "--dry-run",
     )
 
     assert proc.returncode == 0, proc.stderr
     payload = json.loads(proc.stdout)
     assert payload["adapter"] == "codex"
-    assert payload["route_key"] == "discovery"
+    assert payload["route_key"] == "execution"
+    assert payload["config_role"] == "producer"
     assert payload["argv"][0] == "codex"
-
-
-def test_profile_overlay_composes_with_group_route_override(woof_project: Path) -> None:
-    """A profile group entry refines model/effort on top of the resolved group adapter.
-
-    The effort ``max`` is only valid for the claude adapter; codex would raise. A
-    returncode of 0 with effort ``max`` proves the profile overlay read the
-    route-overridden adapter, not the base [roles.primary] codex adapter.
-    """
-    (woof_project / ".woof" / "agents.toml").write_text("""\
-model_profile = "default"
-
-[roles.primary]
-adapter = "codex"
-
-[roles.reviewer]
-adapter = "claude"
-
-[routes.execution.primary]
-adapter = "claude"
-
-[model_profiles.default.roles.reviewer]
-model = "claude-opus-4-7"
-
-[model_profiles.default.routes.execution.primary]
-model = "claude-opus-4-8"
-effort = "max"
-
-[timeouts]
-default_minutes = 15
-""")
-
-    proc = run_dispatch(
-        woof_project,
-        "--role",
-        "primary",
-        "--epic",
-        "1",
-        "--route-key",
-        "execution",
-        "--dry-run",
-    )
-
-    assert proc.returncode == 0, proc.stderr
-    payload = json.loads(proc.stdout)
-    assert payload["adapter"] == "claude"
-    assert payload["model"] == "claude-opus-4-8"
-    assert payload["effort"] == "max"
-    assert payload["route_key"] == "execution"
-    assert "--effort" in payload["argv"]
-    assert "max" in payload["argv"]
-
-
-def test_profile_group_entry_beats_profile_roles_entry(woof_project: Path) -> None:
-    """For a route_key dispatch, profile.routes.<group>.<role> wins over profile.roles.<role>."""
-    (woof_project / ".woof" / "agents.toml").write_text("""\
-model_profile = "foo"
-
-[roles.primary]
-adapter = "codex"
-
-[roles.reviewer]
-adapter = "claude"
-
-[routes.execution.primary]
-adapter = "claude"
-
-[model_profiles.foo.roles.primary]
-model = "from-roles"
-effort = "high"
-
-[model_profiles.foo.routes.execution.primary]
-model = "from-routes"
-effort = "max"
-
-[timeouts]
-default_minutes = 15
-""")
-
-    proc = run_dispatch(
-        woof_project,
-        "--role",
-        "primary",
-        "--epic",
-        "1",
-        "--route-key",
-        "execution",
-        "--dry-run",
-    )
-
-    assert proc.returncode == 0, proc.stderr
-    payload = json.loads(proc.stdout)
-    assert payload["adapter"] == "claude"
-    assert payload["model"] == "from-routes"
-    assert payload["effort"] == "max"
-    assert payload["profile_role"] == "primary"
-    assert payload["route_key"] == "execution"
 
 
 def test_dry_run_without_route_key_records_null(woof_project: Path) -> None:
@@ -430,16 +303,6 @@ def test_dry_run_without_route_key_records_null(woof_project: Path) -> None:
 
 def test_route_key_cli_rejects_unknown_group(woof_project: Path) -> None:
     """CLI rejects a --route-key value that is not a known node group."""
-    (woof_project / ".woof" / "agents.toml").write_text("""\
-[roles.primary]
-adapter = "codex"
-
-[roles.reviewer]
-adapter = "claude"
-
-[timeouts]
-default_minutes = 15
-""")
     proc = run_dispatch(
         woof_project,
         "--role",
@@ -452,15 +315,6 @@ default_minutes = 15
     )
     assert proc.returncode == 2
     assert "executon" in proc.stderr
-
-
-def test_resolve_role_route_rejects_unknown_route_key() -> None:
-    """resolve_role_route raises DispatchConfigError for a non-NODE_GROUPS route_key."""
-    from woof.cli.dispatcher import DispatchConfigError, resolve_role_route
-
-    roles = {"primary": {"adapter": "codex"}}
-    with pytest.raises(DispatchConfigError, match="unknown route_key"):
-        resolve_role_route(roles, "primary", route_key="executon", routes={})
 
 
 def test_dispatch_timeouts_reject_boolean_values() -> None:
@@ -578,9 +432,10 @@ def test_missing_woof_root(tmp_path: Path) -> None:
     assert "no .woof/ directory" in proc.stderr
 
 
-def test_missing_agents_toml(tmp_path: Path) -> None:
+def test_missing_policy_toml(tmp_path: Path) -> None:
     project = tmp_path / "proj"
     (project / ".woof").mkdir(parents=True)
+    (project / ".woof" / "agents.toml").write_text("[timeouts]\ndefault_minutes = 15\n")
     proc = run_dispatch(
         project,
         "--role",
@@ -590,7 +445,7 @@ def test_missing_agents_toml(tmp_path: Path) -> None:
         "--dry-run",
     )
     assert proc.returncode == 2
-    assert "agents.toml" in proc.stderr
+    assert "policy.toml" in proc.stderr
 
 
 def test_unknown_role(woof_project: Path) -> None:
@@ -603,10 +458,10 @@ def test_unknown_role(woof_project: Path) -> None:
         "--dry-run",
     )
     assert proc.returncode == 2
-    assert "role 'ghost' not declared" in proc.stderr
+    assert "dispatch role 'ghost'" in proc.stderr
 
 
-def test_in_session_role_rejected(woof_project: Path) -> None:
+def test_non_dispatch_role_rejected(woof_project: Path) -> None:
     proc = run_dispatch(
         woof_project,
         "--role",
@@ -616,7 +471,7 @@ def test_in_session_role_rejected(woof_project: Path) -> None:
         "--dry-run",
     )
     assert proc.returncode == 2
-    assert "in-session" in proc.stderr
+    assert "dispatch role 'gate-resolver'" in proc.stderr
 
 
 def test_legacy_target_mismatch(woof_project: Path) -> None:
@@ -634,19 +489,19 @@ def test_legacy_target_mismatch(woof_project: Path) -> None:
     assert "resolves adapter='codex'" in proc.stderr
 
 
-def test_invalid_story_id(woof_project: Path) -> None:
+def test_invalid_work_unit_id(woof_project: Path) -> None:
     proc = run_dispatch(
         woof_project,
         "--role",
         "primary",
         "--epic",
         "1",
-        "--story",
-        "story-1",
+        "--work-unit",
+        "1-story",
         "--dry-run",
     )
     assert proc.returncode == 2
-    assert "S<n>" in proc.stderr
+    assert "--work-unit" in proc.stderr
 
 
 def test_empty_prompt(woof_project: Path) -> None:
@@ -666,9 +521,10 @@ def test_empty_prompt(woof_project: Path) -> None:
 def test_schema_invalid_agents_toml(tmp_path: Path) -> None:
     project = tmp_path / "proj"
     (project / ".woof").mkdir(parents=True)
+    _write_policy(project)
     (project / ".woof" / "agents.toml").write_text("""\
-[roles.primary]
-adapter = "wrong-adapter"
+[review_valve]
+every_n_work_units = 0
 """)
     proc = run_dispatch(
         project,
@@ -683,7 +539,7 @@ adapter = "wrong-adapter"
 
 
 # ---------------------------------------------------------------------------
-# token parsing — exercised by importing the module
+# dispatcher helpers — exercised by importing the module
 # ---------------------------------------------------------------------------
 
 
@@ -692,147 +548,6 @@ def _import_woof_module():
     from woof.cli import dispatcher
 
     return dispatcher
-
-
-def test_parse_claude_output() -> None:
-    mod = _import_woof_module()
-    line = json.dumps(
-        {
-            "type": "result",
-            "session_id": "80e44829-ba61-4640-960c-a3445110b9c3",
-            "usage": {
-                "input_tokens": 10,
-                "output_tokens": 136,
-                "cache_read_input_tokens": 5,
-                "cache_creation_input_tokens": 45262,
-            },
-        }
-    )
-    tokens, session = mod.parse_claude_output(line + "\n")
-    assert session == "80e44829-ba61-4640-960c-a3445110b9c3"
-    assert tokens == {
-        "tokens_in": 10,
-        "tokens_out": 136,
-        "cache_read_tokens": 5,
-        "cache_write_tokens": 45262,
-    }
-
-
-def test_parse_claude_output_empty() -> None:
-    mod = _import_woof_module()
-    tokens, session = mod.parse_claude_output("")
-    assert tokens == {}
-    assert session is None
-
-
-def test_claude_terminal_and_parser_ignore_json_non_objects() -> None:
-    mod = _import_woof_module()
-
-    for line in ("42", '"ok"', "[]"):
-        assert mod.is_claude_terminal_line(line) is False
-
-    tokens, session = mod.parse_claude_output("[]\n")
-    assert tokens == {}
-    assert session is None
-
-
-def test_parse_codex_output() -> None:
-    mod = _import_woof_module()
-    stream = "\n".join(
-        [
-            json.dumps({"type": "thread.started", "thread_id": "019dc9a3-1bd8"}),
-            json.dumps({"type": "turn.started"}),
-            json.dumps(
-                {
-                    "type": "turn.completed",
-                    "usage": {
-                        "input_tokens": 100,
-                        "cached_input_tokens": 30,
-                        "output_tokens": 50,
-                        "reasoning_output_tokens": 20,
-                    },
-                }
-            ),
-            json.dumps(
-                {
-                    "type": "turn.completed",
-                    "usage": {
-                        "input_tokens": 200,
-                        "cached_input_tokens": 0,
-                        "output_tokens": 60,
-                        "reasoning_output_tokens": 0,
-                    },
-                }
-            ),
-        ]
-    )
-    tokens, thread = mod.parse_codex_output(stream)
-    assert thread == "019dc9a3-1bd8"
-    assert tokens == {
-        "tokens_in": 300,
-        "tokens_out": 130,  # 50 + 20 + 60
-        "cache_read_tokens": 30,
-    }
-
-
-def test_count_codex_command_executions_counts_completed_items_once() -> None:
-    mod = _import_woof_module()
-    stream = "\n".join(
-        [
-            json.dumps(
-                {
-                    "type": "item.started",
-                    "item": {"id": "item_1", "type": "command_execution"},
-                }
-            ),
-            json.dumps(
-                {
-                    "type": "item.completed",
-                    "item": {"id": "item_1", "type": "command_execution"},
-                }
-            ),
-            json.dumps(
-                {
-                    "type": "item.completed",
-                    "item": {"id": "item_1", "type": "command_execution"},
-                }
-            ),
-            json.dumps(
-                {"type": "item.completed", "item": {"id": "item_2", "type": "agent_message"}}
-            ),
-            "not json",
-        ]
-    )
-
-    assert mod.count_codex_command_executions(stream) == 1
-
-
-def test_codex_terminal_and_parsers_ignore_json_non_objects() -> None:
-    mod = _import_woof_module()
-
-    for line in ("42", '"ok"', "[]"):
-        assert mod.is_codex_terminal_line(line) is False
-
-    stream = "\n".join(
-        [
-            "42",
-            '"ok"',
-            "[]",
-            json.dumps({"type": "thread.started", "thread_id": "abc"}),
-        ]
-    )
-    tokens, thread = mod.parse_codex_output(stream)
-    assert tokens == {}
-    assert thread == "abc"
-    assert mod.count_codex_command_executions(stream) == 0
-
-
-def test_parse_codex_output_no_turns() -> None:
-    mod = _import_woof_module()
-    line = json.dumps({"type": "thread.started", "thread_id": "abc"})
-    tokens, thread = mod.parse_codex_output(line)
-    assert tokens == {}
-    assert thread == "abc"
 
 
 def test_audit_file_stem_is_path_safe() -> None:
@@ -880,7 +595,7 @@ def test_reserve_audit_base_avoids_existing_prompt_collision(tmp_path: Path) -> 
     assert second.with_suffix(".prompt").read_text() == "second prompt"
 
 
-def test_build_argv_minimal_role() -> None:
+def test_harness_registry_builds_minimal_launch_argv() -> None:
     """The consolidated harness registry produces interactive TUI launch argv."""
     mod = _import_woof_module()
     argv = mod.build_launch_argv("claude", model="", effort="")
@@ -894,120 +609,6 @@ def test_build_argv_minimal_role() -> None:
         "-a",
         "never",
     ]
-
-
-def test_legacy_role_config_routes_to_public_adapter(tmp_path: Path) -> None:
-    project = tmp_path / "proj"
-    woof_dir = project / ".woof"
-    woof_dir.mkdir(parents=True)
-    (woof_dir / "agents.toml").write_text("""\
-[roles.story-executor]
-harness = "cld"
-model = "claude-sonnet-4-6"
-
-[timeouts]
-default_minutes = 15
-""")
-
-    proc = run_dispatch(
-        project,
-        "--role",
-        "primary",
-        "--epic",
-        "1",
-        "--dry-run",
-    )
-
-    assert proc.returncode == 0, proc.stderr
-    payload = json.loads(proc.stdout)
-    assert payload["config_role"] == "story-executor"
-    assert payload["adapter"] == "claude"
-    assert payload["argv"][0] == "cld"
-
-
-def test_named_mcp_generates_strict_claude_config(woof_project: Path) -> None:
-    agents = woof_project / ".woof" / "agents.toml"
-    agents.write_text(
-        agents.read_text().replace(
-            'model = "claude-opus-4-7"\n',
-            'model = "claude-opus-4-7"\nmcp = ["chrome-devtools"]\n',
-        )
-        + """\
-
-[mcp_servers.chrome-devtools]
-command = "npx"
-args = ["-y", "chrome-devtools-mcp@latest"]
-"""
-    )
-
-    proc = run_dispatch(
-        woof_project,
-        "--role",
-        "reviewer",
-        "--epic",
-        "1",
-        "--dry-run",
-    )
-
-    assert proc.returncode == 0, proc.stderr
-    payload = json.loads(proc.stdout)
-    assert payload["mcp"] == ["chrome-devtools"]
-    assert payload["argv"][0] == "cld"
-    assert "--strict-mcp-config" not in payload["argv"]
-    assert "--mcp-config" not in payload["argv"]
-
-
-def test_named_mcp_requires_declared_server(woof_project: Path) -> None:
-    agents = woof_project / ".woof" / "agents.toml"
-    agents.write_text(
-        agents.read_text().replace(
-            'model = "claude-opus-4-7"\n',
-            'model = "claude-opus-4-7"\nmcp = ["chrome-devtools"]\n',
-        )
-    )
-
-    proc = run_dispatch(
-        woof_project,
-        "--role",
-        "reviewer",
-        "--epic",
-        "1",
-        "--dry-run",
-    )
-
-    assert proc.returncode == 0, proc.stderr
-    payload = json.loads(proc.stdout)
-    assert payload["mcp"] == ["chrome-devtools"]
-    assert payload["argv"][0] == "cld"
-
-
-def test_named_mcp_rejects_absolute_host_paths(woof_project: Path) -> None:
-    agents = woof_project / ".woof" / "agents.toml"
-    agents.write_text(
-        agents.read_text().replace(
-            'model = "claude-opus-4-7"\n',
-            'model = "claude-opus-4-7"\nmcp = ["local-server"]\n',
-        )
-        + """\
-
-[mcp_servers.local-server]
-command = "/usr/local/bin/local-mcp"
-"""
-    )
-
-    proc = run_dispatch(
-        woof_project,
-        "--role",
-        "reviewer",
-        "--epic",
-        "1",
-        "--dry-run",
-    )
-
-    assert proc.returncode == 0, proc.stderr
-    payload = json.loads(proc.stdout)
-    assert payload["mcp"] == ["local-server"]
-    assert payload["argv"][0] == "cld"
 
 
 # ---------------------------------------------------------------------------
@@ -1104,7 +705,7 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
             "reviewer",
             "--epic",
             "7",
-            "--story",
+            "--work-unit",
             "S2",
             "--artefact",
             ".woof/epics/E7/EPIC.md",
@@ -1131,7 +732,7 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
     assert meta["role"] == "reviewer"
     assert meta["effort"] == "max"
     assert meta["epic_id"] == 7
-    assert meta["story_id"] == "S2"
+    assert meta["work_unit_id"] == "S2"
     assert meta["artefacts_loaded"] == [".woof/epics/E7/EPIC.md"]
     assert meta["runtime_policy"] == EXPECTED_TRUSTED_RUNTIME_POLICY
     assert meta["exit_type"] == "clean"
@@ -1228,7 +829,7 @@ def test_repeated_review_uses_cached_verdict(git_woof_project: Path, tmp_path: P
             "reviewer",
             "--epic",
             "35",
-            "--story",
+            "--work-unit",
             "S1",
         ],
         capture_output=True,
@@ -1249,7 +850,7 @@ def test_repeated_review_uses_cached_verdict(git_woof_project: Path, tmp_path: P
             "reviewer",
             "--epic",
             "35",
-            "--story",
+            "--work-unit",
             "S1",
         ],
         capture_output=True,
@@ -1321,7 +922,7 @@ def test_conflicting_review_verdict_records_instability(
             "reviewer",
             "--epic",
             "36",
-            "--story",
+            "--work-unit",
             "S1",
         ],
         capture_output=True,
@@ -1612,7 +1213,7 @@ def test_existing_consumers_unaffected_by_new_optional_fields() -> None:
         [event_with_new_fields],
         role="reviewer",
         epic_id=99,
-        story_id=None,
+        work_unit_id=None,
     )
     assert exit_type == "clean"
     assert exit_code == 0
@@ -1895,9 +1496,7 @@ def test_agents_schema_cache_miss_after_content_change(woof_project: Path, tmp_p
 
     agents_path = woof_project / ".woof" / "agents.toml"
     original = agents_path.read_text()
-    agents_path.write_text(
-        original.replace('model = "claude-opus-4-7"', 'model = "claude-sonnet-4-6"')
-    )
+    agents_path.write_text(original.replace("default_minutes = 15", "default_minutes = 16"))
 
     proc2 = _dispatch(33)
     assert proc2.returncode == 0, proc2.stderr
@@ -1915,14 +1514,16 @@ def test_agents_schema_cache_key_includes_schema() -> None:
     """A schema change invalidates a pass recorded under the old schema."""
     from woof.cli.dispatcher import _agents_schema_cache_key
 
-    agents = b'[roles.primary]\nadapter = "claude"\n'
+    agents = b"[timeouts]\ndefault_minutes = 15\n"
     key_v1 = _agents_schema_cache_key(agents, b'{"schema": "v1"}')
     # Same config, different schema -> different key -> re-validation, not a stale pass.
     assert key_v1 != _agents_schema_cache_key(agents, b'{"schema": "v2"}')
     # Stable for identical inputs (a genuine cache hit).
     assert key_v1 == _agents_schema_cache_key(agents, b'{"schema": "v1"}')
     # Different config, same schema -> different key.
-    assert key_v1 != _agents_schema_cache_key(b"[roles]\n", b'{"schema": "v1"}')
+    assert key_v1 != _agents_schema_cache_key(
+        b"[timeouts]\ndefault_minutes = 16\n", b'{"schema": "v1"}'
+    )
 
 
 def test_runtime_policy_in_spawned_not_in_returned(woof_project: Path, tmp_path: Path) -> None:

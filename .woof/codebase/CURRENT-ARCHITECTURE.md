@@ -18,7 +18,7 @@ Five stages run in fixed sequence. `next_node` in `src/woof/graph/transitions.py
 - **Stage 2.5 — Contract readiness.** Deterministic. `contract_readiness` evaluates the Stage-2 contract for machine-checkable criteria, concrete decisions, resolvable refs, and decomposition sufficiency. Produces `readiness-result.json`; opens a `readiness_gate` on failure.
 - **Stage 3 — Breakdown / Plan.** `breakdown_planning` produces `plan.json`. `plan_critique` produces `critique/plan.md`.
 - **Stage 4 — Plan gate.** Deterministic. Opens `gate.md` from plan critique. Operator resolves with `approve`, `revise_epic_contract`, `revise_plan`, or `abandon_epic`.
-- **Stage 5 — Story execution.** Per story: `executor_dispatch` → `critique_dispatch` → `review_disposition` → `verification` (9 checks) → `commit`. Gate halts on blocker or check failure. The graph re-enters on `woof wf --epic N`.
+- **Stage 5 — Work-unit execution.** Per work unit: `executor_dispatch` -> `critique_dispatch` -> `review_disposition` -> `verification` (9 checks) -> `commit`. Gate halts on blocker or check failure. The graph re-enters on `woof wf --epic N`.
 
 ## Runner contract
 
@@ -30,7 +30,7 @@ Dispatch-shaped nodes spawn a public-CLI subprocess via `woof dispatch` (ADR-008
 
 ## Gate model
 
-Gates are schema-validated `gate.md` files. `gate.md` presence in an epic directory short-circuits `next_node`. The operator resolves via `woof wf --epic N --resolve <decision>`. `plan_gate` and `story_gate` are the two gate types. `incomplete_stage_state` halts (cartography-missing or malformed state) use `gate_type` matching the node's stage.
+Gates are schema-validated `gate.md` files. `gate.md` presence in an epic directory short-circuits `next_node`. The operator resolves via `woof wf --epic N --resolve <decision>`. `plan_gate`, `work_unit_gate`, `review_gate`, and `readiness_gate` are the gate types. `incomplete_stage_state` halts (cartography-missing or malformed state) use `gate_type` matching the node's stage.
 
 ## Cartography
 

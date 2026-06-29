@@ -33,20 +33,20 @@ def _stage_state_gate_body(epic_id: int, message: str) -> str:
 
 
 def _open_resilience_gate(
-    repo_root: Path, epic_id: int, story_id: str | None, trigger: str
+    repo_root: Path, epic_id: int, work_unit_id: str | None, trigger: str
 ) -> NodeOutput:
     node_type = NodeType.GATE_OPEN
     write_gate_for_trigger(
         trigger=trigger,
         epic_dir=epic_dir(repo_root, epic_id),
-        story_id=story_id,
+        work_unit_id=work_unit_id,
         schema_path=schema_dir() / "gate.schema.json",
     )
     return NodeOutput(
         node_type=node_type,
         status=NodeStatus.GATE_OPENED,
         epic_id=epic_id,
-        story_id=story_id,
+        work_unit_id=work_unit_id,
         gate_path=_gate_path(epic_id),
         triggered_by=[trigger],
     )
@@ -54,11 +54,11 @@ def _open_resilience_gate(
 
 def _open_stage_state_gate(repo_root: Path, epic_id: int, exc: StageStateError) -> NodeOutput:
     gate_type = exc.gate_type
-    story_id = exc.story_id
+    work_unit_id = exc.work_unit_id
     node_type = NodeType.PLAN_GATE_OPEN if gate_type == "plan_gate" else NodeType.GATE_OPEN
     write_gate(
         epic_dir=epic_dir(repo_root, epic_id),
-        story_id=story_id,
+        work_unit_id=work_unit_id,
         triggered_by=["incomplete_stage_state"],
         position_text=_stage_state_gate_body(epic_id, str(exc)),
         schema_path=schema_dir() / "gate.schema.json",
@@ -69,7 +69,7 @@ def _open_stage_state_gate(repo_root: Path, epic_id: int, exc: StageStateError) 
         node_type=node_type,
         status=NodeStatus.GATE_OPENED,
         epic_id=epic_id,
-        story_id=story_id,
+        work_unit_id=work_unit_id,
         gate_path=_gate_path(epic_id),
         triggered_by=["incomplete_stage_state"],
         message=str(exc),
@@ -90,7 +90,7 @@ def run_graph(
         outputs: list[NodeOutput] = []
         while True:
             try:
-                node_type, story_id = next_node(repo_root, epic_id)
+                node_type, work_unit_id = next_node(repo_root, epic_id)
             except StageStateError as exc:
                 if exc.operator_recoverable:
                     outputs.append(_open_stage_state_gate(repo_root, epic_id, exc))
@@ -125,7 +125,7 @@ def run_graph(
                     NodeInput(
                         node_type=node_type,
                         epic_id=epic_id,
-                        story_id=story_id,
+                        work_unit_id=work_unit_id,
                         repo_root=repo_root,
                     )
                 )
@@ -139,9 +139,9 @@ def run_graph(
                 node_type in {NodeType.EXECUTOR_DISPATCH, NodeType.CRITIQUE_DISPATCH}
                 and out.status == NodeStatus.COMPLETED
             ):
-                trigger = detect_resilience_gate(repo_root, epic_id, story_id)
+                trigger = detect_resilience_gate(repo_root, epic_id, work_unit_id)
                 if trigger is not None:
-                    outputs.append(_open_resilience_gate(repo_root, epic_id, story_id, trigger))
+                    outputs.append(_open_resilience_gate(repo_root, epic_id, work_unit_id, trigger))
                     return outputs
             if once or out.status in {
                 NodeStatus.GATE_OPENED,

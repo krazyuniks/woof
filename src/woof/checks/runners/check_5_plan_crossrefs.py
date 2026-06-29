@@ -38,7 +38,7 @@ def check_5_plan_crossrefs_runner(ctx: CheckContext) -> CheckOutcome:
             failures.append(f"plan.json schema invalid: {output}")
 
     if plan is not None and epic is not None:
-        failures.extend(stage5_plan_contract_failures(plan, epic, ctx.story_id))
+        failures.extend(stage5_plan_contract_failures(plan, epic, ctx.work_unit_id))
 
     if failures:
         return CheckOutcome(
@@ -145,22 +145,22 @@ def _validate_plan_schema(plan_path: Path, plan: dict[str, Any]) -> tuple[bool, 
 def stage3_plan_contract_failures(plan: dict[str, Any], epic: dict[str, Any]) -> list[str]:
     """Return plan invariant failures that must be fixed before the plan gate."""
 
-    return _crossref_failures(plan, epic, current_story_id=None, stage=3)
+    return _crossref_failures(plan, epic, current_work_unit_id=None, stage=3)
 
 
 def stage5_plan_contract_failures(
-    plan: dict[str, Any], epic: dict[str, Any], story_id: str
+    plan: dict[str, Any], epic: dict[str, Any], work_unit_id: str
 ) -> list[str]:
     """Return plan invariant failures checked during Stage 5 verification."""
 
-    return _crossref_failures(plan, epic, current_story_id=story_id, stage=5)
+    return _crossref_failures(plan, epic, current_work_unit_id=work_unit_id, stage=5)
 
 
 def _crossref_failures(
     plan: dict[str, Any],
     epic: dict[str, Any],
     *,
-    current_story_id: str | None,
+    current_work_unit_id: str | None,
     stage: int,
 ) -> list[str]:
     failures: list[str] = []
@@ -265,9 +265,9 @@ def _crossref_failures(
     if stage == 3:
         failures.extend(_stage3_status_failures(work_units))
     else:
-        if current_story_id is None:
-            raise ValueError("current_story_id is required for Stage-5 plan validation")
-        failures.extend(_stage5_status_failures(work_units, current_story_id, work_unit_id_set))
+        if current_work_unit_id is None:
+            raise ValueError("current_work_unit_id is required for Stage-5 plan validation")
+        failures.extend(_stage5_status_failures(work_units, current_work_unit_id, work_unit_id_set))
     return failures
 
 
@@ -372,50 +372,50 @@ def _stage3_status_failures(work_units: list[dict[str, Any]]) -> list[str]:
         unit_id = unit.get("id")
         if not isinstance(unit_id, str):
             continue
-        status = unit.get("status")
+        status = unit.get("state")
         if status != "pending":
             failures.append(
-                f"{unit_id}: Stage-3 plans must enter the plan gate with status=pending, got {status}"
+                f"{unit_id}: Stage-3 plans must enter the plan gate with state=pending, got {status}"
             )
     return failures
 
 
 def _stage5_status_failures(
-    work_units: list[dict[str, Any]], current_story_id: str, work_unit_id_set: set[str]
+    work_units: list[dict[str, Any]], current_work_unit_id: str, work_unit_id_set: set[str]
 ) -> list[str]:
     failures: list[str] = []
     by_id = {unit.get("id"): unit for unit in work_units if isinstance(unit.get("id"), str)}
     in_progress = [
         unit["id"]
         for unit in work_units
-        if isinstance(unit.get("id"), str) and unit.get("status") == "in_progress"
+        if isinstance(unit.get("id"), str) and unit.get("state") == "in_progress"
     ]
 
-    if current_story_id not in work_unit_id_set:
-        failures.append(f"{current_story_id}: current work unit is not present in plan")
-    elif by_id[current_story_id].get("status") == "pending":
+    if current_work_unit_id not in work_unit_id_set:
+        failures.append(f"{current_work_unit_id}: current work unit is not present in plan")
+    elif by_id[current_work_unit_id].get("state") == "pending":
         failures.append(
-            f"{current_story_id}: current work unit is still pending during Stage-5 checks"
+            f"{current_work_unit_id}: current work unit is still pending during Stage-5 checks"
         )
 
     if len(in_progress) > 1:
         failures.append(f"multiple work units are in_progress: {in_progress}")
-    if in_progress and current_story_id not in in_progress:
+    if in_progress and current_work_unit_id not in in_progress:
         failures.append(
-            f"{current_story_id}: current work unit does not match in_progress unit {in_progress[0]}"
+            f"{current_work_unit_id}: current work unit does not match in_progress unit {in_progress[0]}"
         )
 
     for unit in work_units:
         unit_id = unit.get("id")
         if not isinstance(unit_id, str):
             continue
-        status = unit.get("status")
-        if status not in {"in_progress", "done"}:
+        state = unit.get("state")
+        if state not in {"in_progress", "done"}:
             continue
         for dep_id in _string_list(unit.get("deps")):
             dep = by_id.get(dep_id)
-            if dep is not None and dep.get("status") != "done":
+            if dep is not None and dep.get("state") != "done":
                 failures.append(
-                    f"{unit_id}: status={status} but dependency {dep_id} is status={dep.get('status')}"
+                    f"{unit_id}: state={state} but dependency {dep_id} is state={dep.get('state')}"
                 )
     return failures

@@ -10,13 +10,13 @@ from woof.graph.dispositions import (
     FrontMatterError,
     critique_severity,
     read_markdown_front_matter,
-    story_critique_path,
-    story_disposition_path,
-    validate_story_disposition,
+    validate_work_unit_disposition,
+    work_unit_critique_path,
+    work_unit_disposition_path,
 )
 from woof.graph.git import changed_paths, staged_paths
-from woof.graph.manifest import build_story_manifest
-from woof.graph.state import TERMINAL_STORY_STATUSES, NodeStatus, NodeType, Plan, WorkUnitSpec
+from woof.graph.manifest import build_work_unit_manifest
+from woof.graph.state import TERMINAL_WORK_UNIT_STATES, NodeStatus, NodeType, Plan, WorkUnitSpec
 from woof.trackers.base import CONFLICT_TRIGGERS, NON_APPROVING_TRIGGERS
 
 
@@ -29,12 +29,12 @@ class StageStateError(RuntimeError):
         *,
         operator_recoverable: bool = False,
         gate_type: str = "plan_gate",
-        story_id: str | None = None,
+        work_unit_id: str | None = None,
     ) -> None:
         super().__init__(message)
         self.operator_recoverable = operator_recoverable
         self.gate_type = gate_type
-        self.story_id = story_id
+        self.work_unit_id = work_unit_id
 
 
 def epic_dir(repo_root: Path, epic_id: int) -> Path:
@@ -186,36 +186,36 @@ def write_plan(repo_root: Path, plan: Plan) -> None:
     tmp.replace(path)
 
 
-def story_by_id(plan: Plan, story_id: str) -> WorkUnitSpec:
-    for story in plan.work_units:
-        if story.id == story_id:
-            return story
-    raise ValueError(f"story {story_id} not found in E{plan.epic_id} plan")
+def work_unit_by_id(plan: Plan, work_unit_id: str) -> WorkUnitSpec:
+    for work_unit in plan.work_units:
+        if work_unit.id == work_unit_id:
+            return work_unit
+    raise ValueError(f"work unit {work_unit_id} not found in E{plan.epic_id} plan")
 
 
-def next_ready_story(plan: Plan) -> WorkUnitSpec | None:
-    done = {story.id for story in plan.work_units if story.status == "done"}
-    for story in plan.work_units:
-        if story.status != "pending":
+def next_ready_work_unit(plan: Plan) -> WorkUnitSpec | None:
+    done = {work_unit.id for work_unit in plan.work_units if work_unit.state == "done"}
+    for work_unit in plan.work_units:
+        if work_unit.state != "pending":
             continue
-        if all(dep in done for dep in story.deps):
-            return story
+        if all(dep in done for dep in work_unit.deps):
+            return work_unit
     return None
 
 
-def mark_story_status(repo_root: Path, epic_id: int, story_id: str, status: str) -> None:
+def mark_work_unit_state(repo_root: Path, epic_id: int, work_unit_id: str, state: str) -> None:
     plan = load_plan(repo_root, epic_id)
-    if all(story.id != story_id for story in plan.work_units):
-        raise StageStateError(f"story {story_id} not found in E{epic_id} plan")
-    stories = []
-    for story in plan.work_units:
-        if story.id == story_id:
-            data = story.model_dump()
-            data["status"] = status
-            stories.append(WorkUnitSpec.model_validate(data))
+    if all(work_unit.id != work_unit_id for work_unit in plan.work_units):
+        raise StageStateError(f"work unit {work_unit_id} not found in E{epic_id} plan")
+    work_units = []
+    for work_unit in plan.work_units:
+        if work_unit.id == work_unit_id:
+            data = work_unit.model_dump()
+            data["state"] = state
+            work_units.append(WorkUnitSpec.model_validate(data))
         else:
-            stories.append(story)
-    write_plan(repo_root, Plan(epic_id=plan.epic_id, goal=plan.goal, work_units=stories))
+            work_units.append(work_unit)
+    write_plan(repo_root, Plan(epic_id=plan.epic_id, goal=plan.goal, work_units=work_units))
 
 
 def append_epic_event(repo_root: Path, epic_id: int, event: dict) -> None:
@@ -411,29 +411,29 @@ def _json_loads_ok(path: Path) -> bool:
     return True
 
 
-def _has_uncommitted_commit_work(repo_root: Path, epic_id: int, story: WorkUnitSpec) -> bool:
+def _has_uncommitted_commit_work(repo_root: Path, epic_id: int, work_unit: WorkUnitSpec) -> bool:
     try:
-        manifest = build_story_manifest(repo_root, epic_id, story)
+        manifest = build_work_unit_manifest(repo_root, epic_id, work_unit)
         changed = set(changed_paths(repo_root))
         staged = set(staged_paths(repo_root))
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or exc.stdout or str(exc)).strip()
         raise StageStateError(
             "could not inspect interrupted commit state for "
-            f"E{epic_id} {story.id}; preserving executor_result.json and "
+            f"E{epic_id} {work_unit.id}; preserving executor_result.json and "
             f"check-result.json. Git failed: {detail}"
         ) from exc
     except ValueError as exc:
         raise StageStateError(
             "could not inspect interrupted commit state for "
-            f"E{epic_id} {story.id}; preserving executor_result.json and "
+            f"E{epic_id} {work_unit.id}; preserving executor_result.json and "
             f"check-result.json. {exc}"
         ) from exc
     expected = set(manifest.expected_paths)
     return bool(staged or changed & expected)
 
 
-def _resumable_commit_story(repo_root: Path, epic_id: int, plan: Plan) -> str | None:
+def _resumable_commit_work_unit(repo_root: Path, epic_id: int, plan: Plan) -> str | None:
     directory = epic_dir(repo_root, epic_id)
     result_path = directory / "executor_result.json"
     check_result_path = directory / "check-result.json"
@@ -445,27 +445,27 @@ def _resumable_commit_story(repo_root: Path, epic_id: int, plan: Plan) -> str | 
     if result.get("outcome") != "staged_for_verification" or not check_result.get("ok", False):
         return None
 
-    story_id = result.get("story_id")
-    if not isinstance(story_id, str):
+    work_unit_id = result.get("work_unit_id")
+    if not isinstance(work_unit_id, str):
         return None
     try:
-        story = story_by_id(plan, story_id)
+        work_unit = work_unit_by_id(plan, work_unit_id)
     except ValueError:
         return None
-    if story.status != "done":
+    if work_unit.state != "done":
         return None
-    critique_path = directory / "critique" / f"story-{story.id}.md"
+    critique_path = directory / "critique" / f"work-unit-{work_unit.id}.md"
     if not critique_path.exists():
         return None
-    if not _has_uncommitted_commit_work(repo_root, epic_id, story):
+    if not _has_uncommitted_commit_work(repo_root, epic_id, work_unit):
         result_path.unlink(missing_ok=True)
         check_result_path.unlink(missing_ok=True)
         return None
-    return story.id
+    return work_unit.id
 
 
 def next_node(repo_root: Path, epic_id: int) -> tuple[NodeType | NodeStatus | None, str | None]:
-    """Return the next node and story id from filesystem state.
+    """Return the next node and work-unit id from filesystem state.
 
     Terminal outcomes use the first slot for a :class:`NodeStatus` sentinel:
     ``(None, None)`` means the epic is complete, while
@@ -512,14 +512,17 @@ def next_node(repo_root: Path, epic_id: int) -> tuple[NodeType | NodeStatus | No
         )
 
     plan = load_plan(repo_root, epic_id)
-    resumable_story = _resumable_commit_story(repo_root, epic_id, plan)
-    if resumable_story is not None:
-        return NodeType.COMMIT, resumable_story
+    resumable_work_unit = _resumable_commit_work_unit(repo_root, epic_id, plan)
+    if resumable_work_unit is not None:
+        return NodeType.COMMIT, resumable_work_unit
 
-    if all(story.status in TERMINAL_STORY_STATUSES for story in plan.work_units):
+    if all(work_unit.state in TERMINAL_WORK_UNIT_STATES for work_unit in plan.work_units):
         return None, None
 
-    in_progress = next((story for story in plan.work_units if story.status == "in_progress"), None)
+    in_progress = next(
+        (work_unit for work_unit in plan.work_units if work_unit.state == "in_progress"),
+        None,
+    )
     critique_path = plan_critique_path(repo_root, epic_id)
     if in_progress is None:
         if (directory / "EPIC.md").exists() and not critique_path.exists():
@@ -535,7 +538,7 @@ def next_node(repo_root: Path, epic_id: int) -> tuple[NodeType | NodeStatus | No
             return NodeType.PLAN_GATE_OPEN, None
 
     if in_progress is None:
-        ready = next_ready_story(plan)
+        ready = next_ready_work_unit(plan)
         if ready is None:
             raise StageStateError(
                 f"E{epic_id} has pending work units, but no work unit has satisfied dependencies",
@@ -544,7 +547,7 @@ def next_node(repo_root: Path, epic_id: int) -> tuple[NodeType | NodeStatus | No
         return NodeType.EXECUTOR_DISPATCH, ready.id
 
     result_path = directory / "executor_result.json"
-    critique_path = story_critique_path(directory, in_progress.id)
+    critique_path = work_unit_critique_path(directory, in_progress.id)
     check_result_path = directory / "check-result.json"
 
     if not result_path.exists():
@@ -566,9 +569,9 @@ def next_node(repo_root: Path, epic_id: int) -> tuple[NodeType | NodeStatus | No
         return NodeType.REVIEW_DISPOSITION, in_progress.id
     if critique_severity(critique_front) == "blocker":
         return NodeType.REVIEW_DISPOSITION, in_progress.id
-    if not story_disposition_path(directory, in_progress.id).exists():
+    if not work_unit_disposition_path(directory, in_progress.id).exists():
         return NodeType.REVIEW_DISPOSITION, in_progress.id
-    disposition = validate_story_disposition(directory, epic_id, in_progress.id)
+    disposition = validate_work_unit_disposition(directory, epic_id, in_progress.id)
     if not disposition.ok:
         return NodeType.REVIEW_DISPOSITION, in_progress.id
     if not check_result_path.exists():

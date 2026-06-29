@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from woof.graph.dispositions import story_disposition_relpath
+from woof.graph.dispositions import work_unit_disposition_relpath
 from woof.graph.git import changed_paths, staged_paths
 from woof.graph.pathspec import PathspecEvaluationError, filter_paths_matching
 from woof.graph.state import ManifestVerification, TransactionManifest, WorkUnitSpec
@@ -26,7 +26,7 @@ def _audit_paths(epic_dir: Path, repo_root: Path) -> list[str]:
 
 
 def durable_epic_paths(epic_dir: Path, repo_root: Path) -> list[str]:
-    """Return durable epic-state files that belong in a story transaction."""
+    """Return durable epic-state files that belong in a work-unit transaction."""
 
     if not epic_dir.is_dir():
         return []
@@ -52,31 +52,33 @@ def durable_epic_paths(epic_dir: Path, repo_root: Path) -> list[str]:
     return durable
 
 
-def build_story_manifest(repo_root: Path, epic_id: int, story: WorkUnitSpec) -> TransactionManifest:
-    """Compute the exact file set expected for a story commit."""
+def build_work_unit_manifest(
+    repo_root: Path, epic_id: int, work_unit: WorkUnitSpec
+) -> TransactionManifest:
+    """Compute the exact file set expected for a work-unit commit."""
 
     epic_dir = repo_root / ".woof" / "epics" / f"E{epic_id}"
     required_paths = [
         f".woof/epics/E{epic_id}/plan.json",
         f".woof/epics/E{epic_id}/epic.jsonl",
         f".woof/epics/E{epic_id}/dispatch.jsonl",
-        f".woof/epics/E{epic_id}/critique/story-{story.id}.md",
-        story_disposition_relpath(epic_id, story.id),
+        f".woof/epics/E{epic_id}/critique/work-unit-{work_unit.id}.md",
+        work_unit_disposition_relpath(epic_id, work_unit.id),
     ]
     changed = set(changed_paths(repo_root))
     audit_paths = [path for path in _audit_paths(epic_dir, repo_root) if path in changed]
     durable_paths = [path for path in durable_epic_paths(epic_dir, repo_root) if path in changed]
     candidate_paths = [path for path in changed if not path.startswith(".woof/")]
     try:
-        story_paths = filter_paths_matching(repo_root, candidate_paths, list(story.paths))
+        work_unit_paths = filter_paths_matching(repo_root, candidate_paths, list(work_unit.paths))
     except PathspecEvaluationError:
-        story_paths = []
-    expected = sorted(set(required_paths + durable_paths + audit_paths + story_paths))
+        work_unit_paths = []
+    expected = sorted(set(required_paths + durable_paths + audit_paths + work_unit_paths))
     return TransactionManifest(
         epic_id=epic_id,
-        story_id=story.id,
+        work_unit_id=work_unit.id,
         expected_paths=expected,
-        story_paths=story_paths,
+        work_unit_paths=work_unit_paths,
         required_paths=required_paths,
         audit_paths=audit_paths,
     )

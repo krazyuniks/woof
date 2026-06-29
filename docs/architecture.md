@@ -134,7 +134,7 @@ The graph re-derives the next action from disk before each node. A run can resum
 
 Decomposition prompt rules live in `playbooks/planning/breakdown.md`; architecture owns the contract, not prompt-level sizing prose.
 
-Work-unit producer discipline remains tracer-bullet red-green-refactor: for each declared outcome, write one assertion-bearing RED test before implementation, make the smallest vertical GREEN slice pass, then refactor with tests as the harness. The horizontal-slicing anti-pattern is rejected because it tends to create the imagined-behaviour fingerprint: tests that mirror guessed structures or setup plumbing rather than proving the declared behaviour. The deterministic verification floor is still the numbered Stage-5 story checks (Checks 1-9), and the runtime gates, dispositions, and producer/reviewer playbooks still carry story-shaped naming. Converging these onto named work-unit checks and the one `work_units[]` shape is owned by `execution-shape-unification`; `schema-unification` unified the intake/backlog shape only.
+Work-unit producer discipline remains tracer-bullet red-green-refactor: for each declared outcome, write one assertion-bearing RED test before implementation, make the smallest vertical GREEN slice pass, then refactor with tests as the harness. The horizontal-slicing anti-pattern is rejected because it tends to create the imagined-behaviour fingerprint: tests that mirror guessed structures or setup plumbing rather than proving the declared behaviour. The deterministic verification floor is the named Stage-5 work-unit check matrix (Checks 1-9). Runtime gates, checks, dispositions, events, and producer/reviewer playbooks key on the canonical `work_units[]` shape and `work_unit_id`.
 
 ## 6. Dispatch and Sessions
 

@@ -1,7 +1,7 @@
 """check_6_critique_blocker — Stage-5 Check 6.
 
 Verifies that the reviewer critique artefact:
-  1. Exists at critique/story-S<k>.md
+  1. Exists at critique/work-unit-S<k>.md
   2. Has valid YAML front-matter with required fields
   3. Top-level severity equals max(findings[].severity)
   4. severity != "blocker"
@@ -17,7 +17,7 @@ from woof.graph.dispositions import (
     SEVERITIES,
     check_blocker_findings_evidence,
     check_critique_rollup,
-    validate_story_disposition,
+    validate_work_unit_disposition,
 )
 
 _VALID_SEVERITIES = SEVERITIES
@@ -27,14 +27,14 @@ CHECK_ID = "check_6_critique_blocker"
 
 
 def check_6_critique_blocker_runner(ctx: CheckContext) -> CheckOutcome:
-    critique_path = ctx.epic_dir / "critique" / f"story-{ctx.story_id}.md"
+    critique_path = ctx.epic_dir / "critique" / f"work-unit-{ctx.work_unit_id}.md"
 
     if not critique_path.exists():
         return CheckOutcome(
             id=CHECK_ID,
             ok=False,
             severity="blocker",
-            summary=f"critique file missing: critique/story-{ctx.story_id}.md",
+            summary=f"critique file missing: critique/work-unit-{ctx.work_unit_id}.md",
         )
 
     text = critique_path.read_text()
@@ -120,7 +120,7 @@ def check_6_critique_blocker_runner(ctx: CheckContext) -> CheckOutcome:
             evidence=_format_findings(blocker_findings),
         )
 
-    disposition = validate_story_disposition(ctx.epic_dir, ctx.epic_id, ctx.story_id)
+    disposition = validate_work_unit_disposition(ctx.epic_dir, ctx.epic_id, ctx.work_unit_id)
     if not disposition.ok:
         return CheckOutcome(
             id=CHECK_ID,

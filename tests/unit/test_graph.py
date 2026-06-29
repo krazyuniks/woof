@@ -16,14 +16,14 @@ from woof.cli.commands.wf import _resolve_gate
 from woof.graph import nodes, transitions
 from woof.graph.git import git_env
 from woof.graph.lock import LOCK_FILENAME, WorkflowLockError
-from woof.graph.manifest import build_story_manifest, verify_staged_manifest
+from woof.graph.manifest import build_work_unit_manifest, verify_staged_manifest
 from woof.graph.runner import run_graph
 from woof.graph.state import NodeInput, NodeOutput, NodeStatus, NodeType, WorkUnitSpec
 from woof.graph.transitions import (
     StageStateError,
     append_epic_event,
     epic_dir,
-    mark_story_status,
+    mark_work_unit_state,
     next_node,
     plan_gate_resolved,
     readiness_satisfied,
@@ -63,7 +63,7 @@ def _write_plan(root: Path, epic_id: int = 1) -> Path:
                 "uses_contract_decisions": [],
                 "deps": [],
                 "tests": {"count": 1, "types": ["unit"]},
-                "status": "pending",
+                "state": "pending",
             }
         ],
     }
@@ -80,23 +80,23 @@ def _write_tracker_prerequisites(root: Path) -> None:
     )
 
 
-def test_mark_story_status_raises_for_unknown_story(tmp_path: Path) -> None:
+def test_mark_work_unit_state_raises_for_unknown_work_unit(tmp_path: Path) -> None:
     directory = _write_plan(tmp_path, 1)
 
-    with pytest.raises(StageStateError, match="story S404 not found"):
-        mark_story_status(tmp_path, 1, "S404", "done")
+    with pytest.raises(StageStateError, match="work unit S404 not found"):
+        mark_work_unit_state(tmp_path, 1, "S404", "done")
 
     plan = json.loads((directory / "plan.json").read_text(encoding="utf-8"))
-    assert plan["work_units"][0]["status"] == "pending"
+    assert plan["work_units"][0]["state"] == "pending"
 
 
-def test_story_prompt_is_portable_playbook_prompt() -> None:
-    prompt = nodes._story_prompt(7, "S3")
+def test_work_unit_prompt_is_portable_playbook_prompt() -> None:
+    prompt = nodes._work_unit_prompt(7, "S3")
 
-    assert "/wf:execute-story" not in prompt
+    assert "/wf:execute-work-unit" not in prompt
     assert '"node_type": "executor_dispatch"' in prompt
     assert '"epic_id": 7' in prompt
-    assert '"story_id": "S3"' in prompt
+    assert '"work_unit_id": "S3"' in prompt
     assert "Tracer-bullet red-green-refactor discipline" in prompt
     assert "commit_subject" in prompt
 
@@ -109,13 +109,24 @@ def test_executor_dispatch_uses_portable_prompt_with_stub_adapter(
     (tmp_path / ".woof" / ".current-epic").write_text("E1")
     (tmp_path / ".woof" / "agents.toml").write_text(
         """\
-[roles.primary]
-adapter = "claude"
-model = "claude-opus-4-7"
-effort = "max"
-
 [timeouts]
 default_minutes = 15
+"""
+    )
+    (tmp_path / ".woof" / "policy.toml").write_text(
+        """\
+schema_version = 1
+default_run_profile = "test"
+
+[run_profiles.test.producer]
+harness = "claude"
+model = "sonnet"
+effort = "high"
+
+[run_profiles.test.reviewer]
+harness = "claude"
+model = "sonnet"
+effort = "high"
 """
     )
     (directory / "EPIC.md").write_text(
@@ -131,7 +142,7 @@ default_minutes = 15
     harness_response = json.dumps(
         {
             "verdict": "pass",
-            "evidence": "Stub story executed.",
+            "evidence": "Stub work unit executed.",
             "usage": {"tokens_in": 1, "tokens_out": 1},
             "session": {"id": "00000000-0000-0000-0000-000000000002"},
         }
@@ -165,10 +176,10 @@ for line in sys.stdin:
     (repo_root / ".woof/epics/E1/executor_result.json").write_text(
         '{{\\n'
         '  "epic_id": 1,\\n'
-        '  "story_id": "S1",\\n'
+        '  "work_unit_id": "S1",\\n'
         '  "outcome": "staged_for_verification",\\n'
-        '  "commit_subject": "feat: E1 S1 - run stub story",\\n'
-        '  "commit_body": "Stub story executed.",\\n'
+        '  "commit_subject": "feat: E1 S1 - run stub work unit",\\n'
+        '  "commit_body": "Stub work unit executed.",\\n'
         '  "position": null\\n'
         '}}\\n',
         encoding="utf-8",
@@ -186,18 +197,18 @@ for line in sys.stdin:
         NodeInput(
             node_type=NodeType.EXECUTOR_DISPATCH,
             epic_id=1,
-            story_id="S1",
+            work_unit_id="S1",
             repo_root=tmp_path,
         )
     )
 
     assert output.status == NodeStatus.COMPLETED
     prompt = stdin_capture.read_text()
-    assert "/wf:execute-story" not in prompt
+    assert "/wf:execute-work-unit" not in prompt
     assert '"node_type": "executor_dispatch"' in prompt
     assert "commit_subject" in prompt
     result = json.loads((directory / "executor_result.json").read_text())
-    assert result["commit_subject"] == "feat: E1 S1 - run stub story"
+    assert result["commit_subject"] == "feat: E1 S1 - run stub work unit"
     events = [json.loads(line) for line in (directory / "dispatch.jsonl").read_text().splitlines()]
     assert events[0]["prompt_transport"] == "tmux_harness_prompt_file"
     assert events[0]["argv"][-1] == "<prompt:tmux-file>"
@@ -213,7 +224,7 @@ def test_executor_dispatch_completed_lingering_advances(
         repo_root: Path,
         role: str,
         epic_id: int,
-        story_id: str | None,
+        work_unit_id: str | None,
         prompt: str,
         artefacts_loaded: list[str] | None = None,
         route_key: str | None = None,
@@ -221,7 +232,7 @@ def test_executor_dispatch_completed_lingering_advances(
         assert repo_root == tmp_path
         assert role == "primary"
         assert epic_id == 1
-        assert story_id == "S1"
+        assert work_unit_id == "S1"
         assert '"node_type": "executor_dispatch"' in prompt
         assert artefacts_loaded == [
             ".woof/epics/E1/plan.json",
@@ -239,7 +250,7 @@ def test_executor_dispatch_completed_lingering_advances(
         NodeInput(
             node_type=NodeType.EXECUTOR_DISPATCH,
             epic_id=1,
-            story_id="S1",
+            work_unit_id="S1",
             repo_root=tmp_path,
         )
     )
@@ -270,7 +281,7 @@ def test_executor_dispatch_failure_exit_types_open_existing_crash_gate(
         repo_root: Path,
         role: str,
         epic_id: int,
-        story_id: str | None,
+        work_unit_id: str | None,
         prompt: str,
         artefacts_loaded: list[str] | None = None,
         route_key: str | None = None,
@@ -283,7 +294,7 @@ def test_executor_dispatch_failure_exit_types_open_existing_crash_gate(
         NodeInput(
             node_type=NodeType.EXECUTOR_DISPATCH,
             epic_id=1,
-            story_id="S1",
+            work_unit_id="S1",
             repo_root=tmp_path,
         )
     )
@@ -494,7 +505,7 @@ def _write_stage3_plan(directory: Path, epic_id: int) -> None:
                 "uses_contract_decisions": [],
                 "deps": [],
                 "tests": {"count": 1, "types": ["unit"]},
-                "status": "pending",
+                "state": "pending",
             }
         ],
     }
@@ -509,13 +520,11 @@ def _write_plan_critique(directory: Path, severity: str = "minor") -> None:
     elif severity == "blocker":
         findings = (
             f"findings:\n  - id: F1\n    severity: {severity}\n"
-            "    summary: tighten story scope\n"
+            "    summary: tighten work-unit scope\n"
             "    evidence: S1 does not implement the required outcome\n"
         )
     else:
-        findings = (
-            f"findings:\n  - id: F1\n    severity: {severity}\n    summary: tighten story scope\n"
-        )
+        findings = f"findings:\n  - id: F1\n    severity: {severity}\n    summary: tighten work-unit scope\n"
     (critique_dir / "plan.md").write_text(
         "---\n"
         "target: plan\n"
@@ -543,15 +552,15 @@ def _write_last_sync(directory: Path, epic_id: int, *, body: str = "<previous>")
     )
 
 
-def _write_disposition(directory: Path, epic_id: int, story_id: str = "S1") -> Path:
+def _write_disposition(directory: Path, epic_id: int, work_unit_id: str = "S1") -> Path:
     disposition_dir = directory / "dispositions"
     disposition_dir.mkdir(exist_ok=True)
-    path = disposition_dir / f"story-{story_id}.md"
+    path = disposition_dir / f"work-unit-{work_unit_id}.md"
     path.write_text(
         f"""---
-target: story
-target_id: {story_id}
-critique_path: .woof/epics/E{epic_id}/critique/story-{story_id}.md
+target: work_unit
+target_id: {work_unit_id}
+critique_path: .woof/epics/E{epic_id}/critique/work-unit-{work_unit_id}.md
 severity: info
 timestamp: '2026-01-01T00:00:00Z'
 harness: test-primary
@@ -633,12 +642,12 @@ def _write_ready_commit_state(
 ) -> Path:
     directory = _write_plan(root, epic_id)
     plan = json.loads((directory / "plan.json").read_text())
-    plan["work_units"][0]["status"] = "done"
+    plan["work_units"][0]["state"] = "done"
     (directory / "plan.json").write_text(json.dumps(plan))
     (directory / "dispatch.jsonl").write_text("{}\n")
     executor_result = {
         "epic_id": epic_id,
-        "story_id": "S1",
+        "work_unit_id": "S1",
         "outcome": "staged_for_verification",
         "commit_body": "done",
         "position": None,
@@ -652,7 +661,7 @@ def _write_ready_commit_state(
                 "ok": True,
                 "stage": 5,
                 "epic_id": epic_id,
-                "story_id": "S1",
+                "work_unit_id": "S1",
                 "triggered_by": [],
                 "checks": [],
             }
@@ -660,8 +669,8 @@ def _write_ready_commit_state(
     )
     critique_dir = directory / "critique"
     critique_dir.mkdir()
-    (critique_dir / "story-S1.md").write_text(
-        "---\ntarget: story\ntarget_id: S1\nseverity: info\n"
+    (critique_dir / "work-unit-S1.md").write_text(
+        "---\ntarget: work_unit\ntarget_id: S1\nseverity: info\n"
         "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
         "findings: []\n---\n"
     )
@@ -681,12 +690,12 @@ def test_graph_runs_executor_then_critique_then_verification_then_commit(tmp_pat
 
     def executor(inp: NodeInput) -> NodeOutput:
         seen.append(inp.node_type)
-        mark_story_status(inp.repo_root, inp.epic_id, inp.story_id or "", "in_progress")
+        mark_work_unit_state(inp.repo_root, inp.epic_id, inp.work_unit_id or "", "in_progress")
         (epic_dir(inp.repo_root, inp.epic_id) / "executor_result.json").write_text(
             json.dumps(
                 {
                     "epic_id": inp.epic_id,
-                    "story_id": inp.story_id,
+                    "work_unit_id": inp.work_unit_id,
                     "outcome": "staged_for_verification",
                     "commit_body": "done",
                     "position": None,
@@ -694,26 +703,37 @@ def test_graph_runs_executor_then_critique_then_verification_then_commit(tmp_pat
             )
         )
         return NodeOutput(
-            node_type=inp.node_type, status=NodeStatus.COMPLETED, epic_id=1, story_id=inp.story_id
+            node_type=inp.node_type,
+            status=NodeStatus.COMPLETED,
+            epic_id=1,
+            work_unit_id=inp.work_unit_id,
         )
 
     def critique(inp: NodeInput) -> NodeOutput:
         seen.append(inp.node_type)
         critique_dir = epic_dir(inp.repo_root, inp.epic_id) / "critique"
         critique_dir.mkdir()
-        (critique_dir / f"story-{inp.story_id}.md").write_text(
-            "---\ntarget: story\ntarget_id: S1\nseverity: info\n"
+        (critique_dir / f"work-unit-{inp.work_unit_id}.md").write_text(
+            "---\ntarget: work_unit\ntarget_id: S1\nseverity: info\n"
             "timestamp: '2026-01-01T00:00:00Z'\nharness: test\nfindings: []\n---\n"
         )
         return NodeOutput(
-            node_type=inp.node_type, status=NodeStatus.COMPLETED, epic_id=1, story_id=inp.story_id
+            node_type=inp.node_type,
+            status=NodeStatus.COMPLETED,
+            epic_id=1,
+            work_unit_id=inp.work_unit_id,
         )
 
     def disposition(inp: NodeInput) -> NodeOutput:
         seen.append(inp.node_type)
-        _write_disposition(epic_dir(inp.repo_root, inp.epic_id), inp.epic_id, inp.story_id or "")
+        _write_disposition(
+            epic_dir(inp.repo_root, inp.epic_id), inp.epic_id, inp.work_unit_id or ""
+        )
         return NodeOutput(
-            node_type=inp.node_type, status=NodeStatus.COMPLETED, epic_id=1, story_id=inp.story_id
+            node_type=inp.node_type,
+            status=NodeStatus.COMPLETED,
+            epic_id=1,
+            work_unit_id=inp.work_unit_id,
         )
 
     def verify(inp: NodeInput) -> NodeOutput:
@@ -724,24 +744,30 @@ def test_graph_runs_executor_then_critique_then_verification_then_commit(tmp_pat
                     "ok": True,
                     "stage": 5,
                     "epic_id": 1,
-                    "story_id": "S1",
+                    "work_unit_id": "S1",
                     "triggered_by": [],
                     "checks": [],
                 }
             )
         )
         return NodeOutput(
-            node_type=inp.node_type, status=NodeStatus.COMPLETED, epic_id=1, story_id=inp.story_id
+            node_type=inp.node_type,
+            status=NodeStatus.COMPLETED,
+            epic_id=1,
+            work_unit_id=inp.work_unit_id,
         )
 
     def commit(inp: NodeInput) -> NodeOutput:
         seen.append(inp.node_type)
-        mark_story_status(inp.repo_root, inp.epic_id, inp.story_id or "", "done")
+        mark_work_unit_state(inp.repo_root, inp.epic_id, inp.work_unit_id or "", "done")
         directory = epic_dir(inp.repo_root, inp.epic_id)
         (directory / "executor_result.json").unlink(missing_ok=True)
         (directory / "check-result.json").unlink(missing_ok=True)
         return NodeOutput(
-            node_type=inp.node_type, status=NodeStatus.COMPLETED, epic_id=1, story_id=inp.story_id
+            node_type=inp.node_type,
+            status=NodeStatus.COMPLETED,
+            epic_id=1,
+            work_unit_id=inp.work_unit_id,
         )
 
     outputs = run_graph(
@@ -812,7 +838,7 @@ def test_run_graph_removes_stale_workflow_lock_and_records_event(tmp_path: Path)
             node_type=inp.node_type,
             status=NodeStatus.HALTED,
             epic_id=inp.epic_id,
-            story_id=inp.story_id,
+            work_unit_id=inp.work_unit_id,
         )
 
     outputs = run_graph(
@@ -887,7 +913,7 @@ def test_dispatch_helper_uses_role_route_without_provider_target(
                     "event": "subprocess_returned",
                     "epic_id": 1,
                     "role": "primary",
-                    "story_id": "S1",
+                    "work_unit_id": "S1",
                     "pid": 1234,
                     "exit_type": "completed_lingering",
                     "exit_code": 0,
@@ -903,7 +929,7 @@ def test_dispatch_helper_uses_role_route_without_provider_target(
         tmp_path,
         role="primary",
         epic_id=1,
-        story_id="S1",
+        work_unit_id="S1",
         prompt="do work",
         artefacts_loaded=[".woof/epics/E1/plan.json"],
     )
@@ -946,7 +972,7 @@ def test_run_dispatch_appends_route_key_to_argv(
                     "event": "subprocess_returned",
                     "epic_id": 1,
                     "role": "primary",
-                    "story_id": "S1",
+                    "work_unit_id": "S1",
                     "pid": 1234,
                     "exit_type": "completed_lingering",
                     "exit_code": 0,
@@ -962,7 +988,7 @@ def test_run_dispatch_appends_route_key_to_argv(
         tmp_path,
         role="primary",
         epic_id=1,
-        story_id="S1",
+        work_unit_id="S1",
         prompt="do work",
         route_key="execution",
     )
@@ -995,7 +1021,7 @@ def test_run_dispatch_omits_route_key_from_argv_when_none(
                     "event": "subprocess_returned",
                     "epic_id": 1,
                     "role": "primary",
-                    "story_id": "S1",
+                    "work_unit_id": "S1",
                     "pid": 1234,
                     "exit_type": "completed_lingering",
                     "exit_code": 0,
@@ -1011,7 +1037,7 @@ def test_run_dispatch_omits_route_key_from_argv_when_none(
         tmp_path,
         role="primary",
         epic_id=1,
-        story_id="S1",
+        work_unit_id="S1",
         prompt="do work",
     )
 
@@ -1139,7 +1165,7 @@ def test_pre_plan_transition_does_not_skip_on_unaccepted_brainstorm_bucket(
 def test_brainstorm_bundle_is_a_synthesis_source(tmp_path: Path) -> None:
     # Synthesis reads all of discovery/ (bar its own outputs), so the interactive
     # brainstorm bundle is part of the input synthesis decomposes from. Woof ingests
-    # the bundle as discovery prose; it re-derives stories via the LLM synthesis ->
+    # the bundle as discovery prose; it re-derives work units via the LLM synthesis ->
     # definition -> breakdown chain rather than mechanically carrying work_units[].
     from woof.graph.nodes import _discovery_source_paths
 
@@ -1160,7 +1186,7 @@ def test_discovery_research_node_dispatches_primary_and_bundles_playbooks(
         repo_root: Path,
         role: str,
         epic_id: int,
-        story_id: str | None,
+        work_unit_id: str | None,
         prompt: str,
         artefacts_loaded: list[str] | None = None,
         route_key: str | None = None,
@@ -1213,7 +1239,7 @@ def test_discovery_dispatch_completed_lingering_advances(
         repo_root: Path,
         role: str,
         epic_id: int,
-        story_id: str | None,
+        work_unit_id: str | None,
         prompt: str,
         artefacts_loaded: list[str] | None = None,
         route_key: str | None = None,
@@ -1221,7 +1247,7 @@ def test_discovery_dispatch_completed_lingering_advances(
         assert repo_root == tmp_path
         assert role == "primary"
         assert epic_id == 225
-        assert story_id is None
+        assert work_unit_id is None
         assert '"node_type": "discovery_research"' in prompt
         assert artefacts_loaded == [
             ".woof/epics/E225/spark.md",
@@ -1253,7 +1279,7 @@ def test_discovery_thinking_node_passes_prior_bucket_artefacts(tmp_path: Path, m
         repo_root: Path,
         role: str,
         epic_id: int,
-        story_id: str | None,
+        work_unit_id: str | None,
         prompt: str,
         artefacts_loaded: list[str] | None = None,
         route_key: str | None = None,
@@ -1325,7 +1351,7 @@ def test_discovery_ideate_node_bundles_no_building_blocks(tmp_path: Path, monkey
         repo_root: Path,
         role: str,
         epic_id: int,
-        story_id: str | None,
+        work_unit_id: str | None,
         prompt: str,
         artefacts_loaded: list[str] | None = None,
         route_key: str | None = None,
@@ -1357,7 +1383,7 @@ def test_discovery_synthesis_node_dispatches_primary_and_validates_outputs(
         repo_root: Path,
         role: str,
         epic_id: int,
-        story_id: str | None,
+        work_unit_id: str | None,
         prompt: str,
         artefacts_loaded: list[str] | None = None,
         route_key: str | None = None,
@@ -1365,7 +1391,7 @@ def test_discovery_synthesis_node_dispatches_primary_and_validates_outputs(
         captured["repo_root"] = repo_root
         captured["role"] = role
         captured["epic_id"] = epic_id
-        captured["story_id"] = story_id
+        captured["work_unit_id"] = work_unit_id
         captured["prompt"] = prompt
         captured["artefacts_loaded"] = artefacts_loaded
         _write_discovery_synthesis(directory)
@@ -1384,7 +1410,7 @@ def test_discovery_synthesis_node_dispatches_primary_and_validates_outputs(
     assert captured["repo_root"] == tmp_path
     assert captured["role"] == "primary"
     assert captured["epic_id"] == 22
-    assert captured["story_id"] is None
+    assert captured["work_unit_id"] is None
     assert '"node_type": "discovery_synthesis"' in captured["prompt"]
     assert captured["artefacts_loaded"] == [
         ".woof/epics/E22/spark.md",
@@ -1497,7 +1523,7 @@ def test_epic_definition_node_dispatches_primary_validates_epic_and_continues(
         repo_root: Path,
         role: str,
         epic_id: int,
-        story_id: str | None,
+        work_unit_id: str | None,
         prompt: str,
         artefacts_loaded: list[str] | None = None,
         route_key: str | None = None,
@@ -1505,7 +1531,7 @@ def test_epic_definition_node_dispatches_primary_validates_epic_and_continues(
         captured["repo_root"] = repo_root
         captured["role"] = role
         captured["epic_id"] = epic_id
-        captured["story_id"] = story_id
+        captured["work_unit_id"] = work_unit_id
         captured["prompt"] = prompt
         captured["artefacts_loaded"] = artefacts_loaded
         _write_minimal_epic(directory, epic_id)
@@ -1524,7 +1550,7 @@ def test_epic_definition_node_dispatches_primary_validates_epic_and_continues(
     assert captured["repo_root"] == tmp_path
     assert captured["role"] == "primary"
     assert captured["epic_id"] == 24
-    assert captured["story_id"] is None
+    assert captured["work_unit_id"] is None
     assert '"node_type": "epic_definition"' in captured["prompt"]
     assert captured["artefacts_loaded"] == [
         ".woof/epics/E24/discovery/synthesis/CONCEPT.md",
@@ -1635,7 +1661,7 @@ def test_breakdown_planning_node_dispatches_primary_validates_plan_and_renders_m
         repo_root: Path,
         role: str,
         epic_id: int,
-        story_id: str | None,
+        work_unit_id: str | None,
         prompt: str,
         artefacts_loaded: list[str] | None = None,
         route_key: str | None = None,
@@ -1643,7 +1669,7 @@ def test_breakdown_planning_node_dispatches_primary_validates_plan_and_renders_m
         captured["repo_root"] = repo_root
         captured["role"] = role
         captured["epic_id"] = epic_id
-        captured["story_id"] = story_id
+        captured["work_unit_id"] = work_unit_id
         captured["prompt"] = prompt
         captured["artefacts_loaded"] = artefacts_loaded
         _write_stage3_plan(directory, epic_id)
@@ -1662,7 +1688,7 @@ def test_breakdown_planning_node_dispatches_primary_validates_plan_and_renders_m
     assert captured["repo_root"] == tmp_path
     assert captured["role"] == "primary"
     assert captured["epic_id"] == 26
-    assert captured["story_id"] is None
+    assert captured["work_unit_id"] is None
     assert '"node_type": "breakdown_planning"' in captured["prompt"]
     assert captured["artefacts_loaded"] == [
         ".woof/epics/E26/EPIC.md",
@@ -1700,7 +1726,7 @@ def test_breakdown_planning_node_rejects_crossref_invalid_plan_before_critique(
         repo_root: Path,
         role: str,
         epic_id: int,
-        story_id: str | None,
+        work_unit_id: str | None,
         prompt: str,
         artefacts_loaded: list[str] | None = None,
         route_key: str | None = None,
@@ -1743,7 +1769,7 @@ def test_plan_critique_node_dispatches_reviewer_validates_critique_and_halts(
         repo_root: Path,
         role: str,
         epic_id: int,
-        story_id: str | None,
+        work_unit_id: str | None,
         prompt: str,
         artefacts_loaded: list[str] | None = None,
         route_key: str | None = None,
@@ -1751,7 +1777,7 @@ def test_plan_critique_node_dispatches_reviewer_validates_critique_and_halts(
         captured["repo_root"] = repo_root
         captured["role"] = role
         captured["epic_id"] = epic_id
-        captured["story_id"] = story_id
+        captured["work_unit_id"] = work_unit_id
         captured["prompt"] = prompt
         captured["artefacts_loaded"] = artefacts_loaded
         _write_plan_critique(directory)
@@ -1770,7 +1796,7 @@ def test_plan_critique_node_dispatches_reviewer_validates_critique_and_halts(
     assert captured["repo_root"] == tmp_path
     assert captured["role"] == "reviewer"
     assert captured["epic_id"] == 27
-    assert captured["story_id"] is None
+    assert captured["work_unit_id"] is None
     assert '"node_type": "plan_critique"' in captured["prompt"]
     assert captured["artefacts_loaded"] == [
         ".woof/epics/E27/EPIC.md",
@@ -1806,14 +1832,14 @@ def test_graph_runs_discovery_definition_breakdown_and_opens_plan_gate(
         repo_root: Path,
         role: str,
         epic_id: int,
-        story_id: str | None,
+        work_unit_id: str | None,
         prompt: str,
         artefacts_loaded: list[str] | None = None,
         route_key: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         assert repo_root == tmp_path
         assert epic_id == 28
-        assert story_id is None
+        assert work_unit_id is None
         assert artefacts_loaded
         if '"node_type": "discovery_research"' in prompt:
             assert role == "primary"
@@ -1861,7 +1887,7 @@ def test_graph_runs_discovery_definition_breakdown_and_opens_plan_gate(
     gate_fm = _read_gate_fm(gate)
     assert gate_fm["type"] == "plan_gate"
     assert gate_fm["stage"] == 4
-    assert gate_fm["story_id"] is None
+    assert gate_fm["work_unit_id"] is None
     assert gate_fm["triggered_by"] == ["plan_review"]
     gate_text = gate.read_text()
     assert "## Context" in gate_text
@@ -1903,15 +1929,15 @@ def test_plan_gate_open_node_reconstitutes_missing_gate_after_valid_critique(
     gate_fm = _read_gate_fm(gate)
     assert gate_fm["type"] == "plan_gate"
     assert gate_fm["stage"] == 4
-    assert gate_fm["story_id"] is None
+    assert gate_fm["work_unit_id"] is None
     assert gate_fm["triggered_by"] == ["plan_review"]
     gate_text = gate.read_text()
-    assert "F1 [blocker]: tighten story scope" in gate_text
+    assert "F1 [blocker]: tighten work-unit scope" in gate_text
     assert "Plan critique body." in gate_text
     assert next_node(tmp_path, 29) == (NodeType.HUMAN_REVIEW, None)
 
 
-def test_plan_gate_resolution_unblocks_stage_5_story_execution(tmp_path: Path) -> None:
+def test_plan_gate_resolution_unblocks_stage_5_work_unit_execution(tmp_path: Path) -> None:
     directory = _write_spark(tmp_path, 30)
     _write_minimal_epic(directory, 30)
     _write_stage3_plan(directory, 30)
@@ -1943,7 +1969,7 @@ def test_critique_dispatch_failure_opens_reviewer_gate(tmp_path: Path, monkeypat
         repo_root: Path,
         role: str,
         epic_id: int,
-        story_id: str | None,
+        work_unit_id: str | None,
         prompt: str,
         artefacts_loaded: list[str] | None = None,
         route_key: str | None = None,
@@ -1951,10 +1977,10 @@ def test_critique_dispatch_failure_opens_reviewer_gate(tmp_path: Path, monkeypat
         assert repo_root == tmp_path
         assert role == "reviewer"
         assert epic_id == 1
-        assert story_id == "S1"
+        assert work_unit_id == "S1"
         assert "Graph-owned input:" in prompt
         assert '"node_type": "critique_dispatch"' in prompt
-        assert '"story_id": "S1"' in prompt
+        assert '"work_unit_id": "S1"' in prompt
         assert '"staged_diff_command": "git diff --staged"' in prompt
         assert artefacts_loaded == [
             ".woof/epics/E1/plan.json",
@@ -1971,7 +1997,7 @@ def test_critique_dispatch_failure_opens_reviewer_gate(tmp_path: Path, monkeypat
         NodeInput(
             node_type=NodeType.CRITIQUE_DISPATCH,
             epic_id=1,
-            story_id="S1",
+            work_unit_id="S1",
             repo_root=tmp_path,
         )
     )
@@ -1982,7 +2008,7 @@ def test_critique_dispatch_failure_opens_reviewer_gate(tmp_path: Path, monkeypat
     assert gate_fm["triggered_by"] == ["reviewer_unreachable"]
 
 
-def test_critique_dispatch_stages_changed_story_paths_before_review(
+def test_critique_dispatch_stages_changed_work_unit_paths_before_review(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _init_git_repo(tmp_path)
@@ -1992,13 +2018,13 @@ def test_critique_dispatch_stages_changed_story_paths_before_review(
     src = tmp_path / "src"
     src.mkdir()
     (src / "app.py").write_text("print('O1')\n")
-    (tmp_path / "scratch.txt").write_text("outside story scope\n")
+    (tmp_path / "scratch.txt").write_text("outside work-unit scope\n")
 
     def fake_dispatch(
         repo_root: Path,
         role: str,
         epic_id: int,
-        story_id: str | None,
+        work_unit_id: str | None,
         prompt: str,
         artefacts_loaded: list[str] | None = None,
         route_key: str | None = None,
@@ -2013,7 +2039,7 @@ def test_critique_dispatch_stages_changed_story_paths_before_review(
             text=True,
         ).stdout.splitlines()
         assert role == "reviewer"
-        assert story_id == "S1"
+        assert work_unit_id == "S1"
         assert staged == ["src/app.py"]
         assert "scratch.txt" not in staged
         assert '"staged_diff_command": "git diff --staged"' in prompt
@@ -2025,7 +2051,7 @@ def test_critique_dispatch_stages_changed_story_paths_before_review(
         NodeInput(
             node_type=NodeType.CRITIQUE_DISPATCH,
             epic_id=1,
-            story_id="S1",
+            work_unit_id="S1",
             repo_root=tmp_path,
         )
     )
@@ -2034,7 +2060,7 @@ def test_critique_dispatch_stages_changed_story_paths_before_review(
     assert output.next_node == NodeType.REVIEW_DISPOSITION
 
 
-def test_verification_stages_changed_story_paths_before_stage5_checks(tmp_path: Path) -> None:
+def test_verification_stages_changed_work_unit_paths_before_stage5_checks(tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     woof_dir = tmp_path / ".woof"
     woof_dir.mkdir(exist_ok=True)
@@ -2072,7 +2098,7 @@ def test_verification_stages_changed_story_paths_before_stage5_checks(tmp_path: 
     directory = _write_plan(tmp_path, 1)
     plan = json.loads((directory / "plan.json").read_text())
     plan["work_units"][0]["paths"] = ["src/*.py", "tests/*.py"]
-    plan["work_units"][0]["status"] = "in_progress"
+    plan["work_units"][0]["state"] = "in_progress"
     (directory / "plan.json").write_text(json.dumps(plan))
     _write_minimal_epic(directory, 1)
     (directory / "dispatch.jsonl").write_text("{}\n")
@@ -2080,7 +2106,7 @@ def test_verification_stages_changed_story_paths_before_stage5_checks(tmp_path: 
         json.dumps(
             {
                 "epic_id": 1,
-                "story_id": "S1",
+                "work_unit_id": "S1",
                 "outcome": "staged_for_verification",
                 "commit_body": "done",
                 "position": None,
@@ -2089,8 +2115,8 @@ def test_verification_stages_changed_story_paths_before_stage5_checks(tmp_path: 
     )
     critique_dir = directory / "critique"
     critique_dir.mkdir()
-    (critique_dir / "story-S1.md").write_text(
-        "---\ntarget: story\ntarget_id: S1\nseverity: info\n"
+    (critique_dir / "work-unit-S1.md").write_text(
+        "---\ntarget: work_unit\ntarget_id: S1\nseverity: info\n"
         "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
         "findings: []\n---\n"
     )
@@ -2108,7 +2134,7 @@ def test_verification_stages_changed_story_paths_before_stage5_checks(tmp_path: 
         NodeInput(
             node_type=NodeType.VERIFICATION,
             epic_id=1,
-            story_id="S1",
+            work_unit_id="S1",
             repo_root=tmp_path,
         )
     )
@@ -2134,12 +2160,12 @@ def test_review_disposition_writes_deterministic_non_blocking_disposition(
 ) -> None:
     directory = _write_plan(tmp_path, 1)
     (directory / "EPIC.md").write_text("---\nepic_id: 1\n---\n")
-    mark_story_status(tmp_path, 1, "S1", "in_progress")
+    mark_work_unit_state(tmp_path, 1, "S1", "in_progress")
     (directory / "executor_result.json").write_text(
         json.dumps(
             {
                 "epic_id": 1,
-                "story_id": "S1",
+                "work_unit_id": "S1",
                 "outcome": "staged_for_verification",
                 "commit_body": "done",
                 "position": None,
@@ -2148,8 +2174,8 @@ def test_review_disposition_writes_deterministic_non_blocking_disposition(
     )
     critique_dir = directory / "critique"
     critique_dir.mkdir()
-    (critique_dir / "story-S1.md").write_text(
-        "---\ntarget: story\ntarget_id: S1\nseverity: minor\n"
+    (critique_dir / "work-unit-S1.md").write_text(
+        "---\ntarget: work_unit\ntarget_id: S1\nseverity: minor\n"
         "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
         "findings:\n  - id: F1\n    severity: minor\n    summary: needs note\n---\n"
     )
@@ -2164,15 +2190,15 @@ def test_review_disposition_writes_deterministic_non_blocking_disposition(
         NodeInput(
             node_type=NodeType.REVIEW_DISPOSITION,
             epic_id=1,
-            story_id="S1",
+            work_unit_id="S1",
             repo_root=tmp_path,
         )
     )
 
     assert output.status == NodeStatus.COMPLETED
     assert output.next_node == NodeType.VERIFICATION
-    assert output.paths == [".woof/epics/E1/dispositions/story-S1.md"]
-    disposition = _read_yaml_front_matter(directory / "dispositions" / "story-S1.md")
+    assert output.paths == [".woof/epics/E1/dispositions/work-unit-S1.md"]
+    disposition = _read_yaml_front_matter(directory / "dispositions" / "work-unit-S1.md")
     assert disposition["timestamp"]
     assert disposition["harness"] == "woof-deterministic-disposition"
     assert disposition["severity"] == "minor"
@@ -2192,12 +2218,12 @@ def test_review_disposition_repairs_invalid_non_blocking_timestamp(
     tmp_path: Path, monkeypatch
 ) -> None:
     directory = _write_plan(tmp_path, 1)
-    mark_story_status(tmp_path, 1, "S1", "in_progress")
+    mark_work_unit_state(tmp_path, 1, "S1", "in_progress")
     (directory / "executor_result.json").write_text(
         json.dumps(
             {
                 "epic_id": 1,
-                "story_id": "S1",
+                "work_unit_id": "S1",
                 "outcome": "staged_for_verification",
                 "commit_body": "done",
                 "position": None,
@@ -2206,15 +2232,15 @@ def test_review_disposition_repairs_invalid_non_blocking_timestamp(
     )
     critique_dir = directory / "critique"
     critique_dir.mkdir()
-    (critique_dir / "story-S1.md").write_text(
-        "---\ntarget: story\ntarget_id: S1\nseverity: info\n"
+    (critique_dir / "work-unit-S1.md").write_text(
+        "---\ntarget: work_unit\ntarget_id: S1\nseverity: info\n"
         "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\nfindings: []\n---\n"
     )
     disposition_dir = directory / "dispositions"
     disposition_dir.mkdir()
-    (disposition_dir / "story-S1.md").write_text(
-        "---\ntarget: story\ntarget_id: S1\n"
-        "critique_path: .woof/epics/E1/critique/story-S1.md\n"
+    (disposition_dir / "work-unit-S1.md").write_text(
+        "---\ntarget: work_unit\ntarget_id: S1\n"
+        "critique_path: .woof/epics/E1/critique/work-unit-S1.md\n"
         "severity: info\n"
         "timestamp: ''\n"
         "harness: test-primary\n"
@@ -2232,26 +2258,26 @@ def test_review_disposition_repairs_invalid_non_blocking_timestamp(
         NodeInput(
             node_type=NodeType.REVIEW_DISPOSITION,
             epic_id=1,
-            story_id="S1",
+            work_unit_id="S1",
             repo_root=tmp_path,
         )
     )
 
     assert output.status == NodeStatus.COMPLETED
     assert output.next_node == NodeType.VERIFICATION
-    disposition = _read_yaml_front_matter(disposition_dir / "story-S1.md")
+    disposition = _read_yaml_front_matter(disposition_dir / "work-unit-S1.md")
     assert disposition["timestamp"]
     assert disposition["harness"] == "woof-deterministic-disposition"
 
 
 def test_reviewer_blocker_opens_gate_without_primary_debate(tmp_path: Path, monkeypatch) -> None:
     directory = _write_plan(tmp_path, 1)
-    mark_story_status(tmp_path, 1, "S1", "in_progress")
+    mark_work_unit_state(tmp_path, 1, "S1", "in_progress")
     (directory / "executor_result.json").write_text(
         json.dumps(
             {
                 "epic_id": 1,
-                "story_id": "S1",
+                "work_unit_id": "S1",
                 "outcome": "staged_for_verification",
                 "commit_body": "done",
                 "position": None,
@@ -2260,8 +2286,8 @@ def test_reviewer_blocker_opens_gate_without_primary_debate(tmp_path: Path, monk
     )
     critique_dir = directory / "critique"
     critique_dir.mkdir()
-    (critique_dir / "story-S1.md").write_text(
-        "---\ntarget: story\ntarget_id: S1\nseverity: blocker\n"
+    (critique_dir / "work-unit-S1.md").write_text(
+        "---\ntarget: work_unit\ntarget_id: S1\nseverity: blocker\n"
         "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
         "findings:\n  - id: F1\n    severity: blocker\n    summary: missing assertion\n"
         "    evidence: 'S1 does not assert the required outcome'\n"
@@ -2278,7 +2304,7 @@ def test_reviewer_blocker_opens_gate_without_primary_debate(tmp_path: Path, monk
         NodeInput(
             node_type=NodeType.REVIEW_DISPOSITION,
             epic_id=1,
-            story_id="S1",
+            work_unit_id="S1",
             repo_root=tmp_path,
         )
     )
@@ -2296,12 +2322,12 @@ def test_reviewer_blocker_opens_gate_without_primary_debate(tmp_path: Path, monk
 def test_reviewer_blocker_without_evidence_opens_incomplete_gate(tmp_path: Path) -> None:
     """P1 regression: blocker finding with no evidence opens incomplete gate, not reviewer-blocker gate."""
     directory = _write_plan(tmp_path, 1)
-    mark_story_status(tmp_path, 1, "S1", "in_progress")
+    mark_work_unit_state(tmp_path, 1, "S1", "in_progress")
     (directory / "executor_result.json").write_text(
         json.dumps(
             {
                 "epic_id": 1,
-                "story_id": "S1",
+                "work_unit_id": "S1",
                 "outcome": "staged_for_verification",
                 "commit_body": "done",
                 "position": None,
@@ -2310,8 +2336,8 @@ def test_reviewer_blocker_without_evidence_opens_incomplete_gate(tmp_path: Path)
     )
     critique_dir = directory / "critique"
     critique_dir.mkdir()
-    (critique_dir / "story-S1.md").write_text(
-        "---\ntarget: story\ntarget_id: S1\nseverity: blocker\n"
+    (critique_dir / "work-unit-S1.md").write_text(
+        "---\ntarget: work_unit\ntarget_id: S1\nseverity: blocker\n"
         "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
         "findings:\n  - id: F1\n    severity: blocker\n    summary: missing assertion\n"
         "---\nNo evidence supplied.\n"
@@ -2321,7 +2347,7 @@ def test_reviewer_blocker_without_evidence_opens_incomplete_gate(tmp_path: Path)
         NodeInput(
             node_type=NodeType.REVIEW_DISPOSITION,
             epic_id=1,
-            story_id="S1",
+            work_unit_id="S1",
             repo_root=tmp_path,
         )
     )
@@ -2335,12 +2361,12 @@ def test_reviewer_blocker_without_evidence_opens_incomplete_gate(tmp_path: Path)
 def test_reviewer_blocker_with_unresolvable_evidence_opens_incomplete_gate(tmp_path: Path) -> None:
     """P1 regression: blocker finding with prose-only evidence (no resolvable ref) opens incomplete gate."""
     directory = _write_plan(tmp_path, 1)
-    mark_story_status(tmp_path, 1, "S1", "in_progress")
+    mark_work_unit_state(tmp_path, 1, "S1", "in_progress")
     (directory / "executor_result.json").write_text(
         json.dumps(
             {
                 "epic_id": 1,
-                "story_id": "S1",
+                "work_unit_id": "S1",
                 "outcome": "staged_for_verification",
                 "commit_body": "done",
                 "position": None,
@@ -2349,8 +2375,8 @@ def test_reviewer_blocker_with_unresolvable_evidence_opens_incomplete_gate(tmp_p
     )
     critique_dir = directory / "critique"
     critique_dir.mkdir()
-    (critique_dir / "story-S1.md").write_text(
-        "---\ntarget: story\ntarget_id: S1\nseverity: blocker\n"
+    (critique_dir / "work-unit-S1.md").write_text(
+        "---\ntarget: work_unit\ntarget_id: S1\nseverity: blocker\n"
         "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
         "findings:\n  - id: F1\n    severity: blocker\n    summary: bad impl\n"
         "    evidence: 'The implementation is wrong and should be fixed'\n"
@@ -2361,7 +2387,7 @@ def test_reviewer_blocker_with_unresolvable_evidence_opens_incomplete_gate(tmp_p
         NodeInput(
             node_type=NodeType.REVIEW_DISPOSITION,
             epic_id=1,
-            story_id="S1",
+            work_unit_id="S1",
             repo_root=tmp_path,
         )
     )
@@ -2375,7 +2401,7 @@ def test_graph_resumes_interrupted_commit_transaction(tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     directory = _write_ready_commit_state(tmp_path, 1)
     (directory / "epic.jsonl").write_text(
-        json.dumps({"event": "story_completed", "epic_id": 1, "story_id": "S1"}) + "\n"
+        json.dumps({"event": "work_unit_completed", "epic_id": 1, "work_unit_id": "S1"}) + "\n"
     )
 
     assert next_node(tmp_path, 1) == (NodeType.COMMIT, "S1")
@@ -2385,7 +2411,7 @@ def test_graph_resumes_interrupted_commit_transaction(tmp_path: Path) -> None:
     assert outputs[0].node_type == NodeType.COMMIT
     assert outputs[-1].status == NodeStatus.EPIC_COMPLETE
     events = [json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines()]
-    assert [event["event"] for event in events].count("story_completed") == 1
+    assert [event["event"] for event in events].count("work_unit_completed") == 1
     assert [event["event"] for event in events].count("transaction_manifest_verified") == 1
     assert not (directory / "executor_result.json").exists()
     assert not (directory / "check-result.json").exists()
@@ -2413,8 +2439,8 @@ def test_graph_resumes_interrupted_commit_transaction(tmp_path: Path) -> None:
 def test_commit_gates_when_verified_staged_tree_changes(tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     directory = _write_ready_commit_state(tmp_path, 1)
-    story = transitions.load_plan(tmp_path, 1).work_units[0]
-    manifest = build_story_manifest(tmp_path, 1, story)
+    work_unit = transitions.load_plan(tmp_path, 1).work_units[0]
+    manifest = build_work_unit_manifest(tmp_path, 1, work_unit)
     _git(tmp_path, "add", "--", *manifest.expected_paths, check=True)
     verified_tree = _git(
         tmp_path,
@@ -2451,16 +2477,16 @@ def test_commit_gates_when_verified_staged_tree_changes(tmp_path: Path) -> None:
 def test_commit_writes_epic_completed_into_commit_for_mixed_done_abandoned_epic(
     tmp_path: Path,
 ) -> None:
-    # Completing the final story of an epic whose other stories are `abandoned`
-    # still completes the epic: every story is terminal. commit_node must stage
+    # Completing the final work unit of an epic whose other work units are `abandoned`
+    # still completes the epic: every work unit is terminal. commit_node must stage
     # `epic_completed` INTO the final commit (the in-commit gate now uses the
     # terminal-status set, not done-only), leaving no dangling/uncommitted marker.
     _init_git_repo(tmp_path)
     directory = _write_ready_commit_state(tmp_path, 1)
     plan = json.loads((directory / "plan.json").read_text())
     plan["work_units"] = [
-        {**plan["work_units"][0], "id": "S1", "status": "done"},
-        {**plan["work_units"][0], "id": "S2", "title": "second", "status": "abandoned"},
+        {**plan["work_units"][0], "id": "S1", "state": "done"},
+        {**plan["work_units"][0], "id": "S2", "title": "second", "state": "abandoned"},
     ]
     (directory / "plan.json").write_text(json.dumps(plan))
 
@@ -2517,7 +2543,7 @@ def test_commit_resume_git_failure_preserves_resume_artefacts(
             stderr="fatal: not a git repository",
         )
 
-    monkeypatch.setattr(transitions, "build_story_manifest", fail_manifest)
+    monkeypatch.setattr(transitions, "build_work_unit_manifest", fail_manifest)
 
     with pytest.raises(StageStateError) as exc:
         next_node(tmp_path, 1)
@@ -2556,12 +2582,6 @@ def test_commit_redacts_audit_before_staging_transaction(tmp_path: Path) -> None
     directory = _write_ready_commit_state(tmp_path, 1)
     (tmp_path / ".woof" / "agents.toml").write_text(
         """\
-[roles.story-executor]
-harness = "cld"
-
-[roles.critiquer]
-harness = "cod"
-
 [audit]
 max_bytes = 4096
 """
@@ -2597,8 +2617,8 @@ def test_complete_epic_cleans_stale_transient_files(tmp_path: Path) -> None:
         ".woof/epics/E1/plan.json",
         ".woof/epics/E1/epic.jsonl",
         ".woof/epics/E1/dispatch.jsonl",
-        ".woof/epics/E1/critique/story-S1.md",
-        ".woof/epics/E1/dispositions/story-S1.md",
+        ".woof/epics/E1/critique/work-unit-S1.md",
+        ".woof/epics/E1/dispositions/work-unit-S1.md",
         ".woof/epics/E1/audit/cod-critiquer-1.prompt",
         check=True,
     )
@@ -2611,11 +2631,11 @@ def test_complete_epic_cleans_stale_transient_files(tmp_path: Path) -> None:
     assert not (directory / "check-result.json").exists()
 
 
-def test_in_progress_story_missing_executor_result_opens_incomplete_state_gate(
+def test_in_progress_work_unit_missing_executor_result_opens_incomplete_state_gate(
     tmp_path: Path,
 ) -> None:
     directory = _write_plan(tmp_path, 1)
-    mark_story_status(tmp_path, 1, "S1", "in_progress")
+    mark_work_unit_state(tmp_path, 1, "S1", "in_progress")
 
     assert next_node(tmp_path, 1) == (NodeType.GATE_OPEN, "S1")
 
@@ -2626,7 +2646,7 @@ def test_in_progress_story_missing_executor_result_opens_incomplete_state_gate(
             node_type=NodeType.GATE_OPEN,
             status=NodeStatus.GATE_OPENED,
             epic_id=1,
-            story_id="S1",
+            work_unit_id="S1",
             gate_path=".woof/epics/E1/gate.md",
             triggered_by=["incomplete_stage_state"],
             message="Required Stage-5 artefact missing: .woof/epics/E1/executor_result.json",
@@ -2636,11 +2656,11 @@ def test_in_progress_story_missing_executor_result_opens_incomplete_state_gate(
     assert gate_fm["triggered_by"] == ["incomplete_stage_state"]
 
 
-def test_in_progress_story_malformed_executor_result_opens_incomplete_state_gate(
+def test_in_progress_work_unit_malformed_executor_result_opens_incomplete_state_gate(
     tmp_path: Path,
 ) -> None:
     directory = _write_plan(tmp_path, 1)
-    mark_story_status(tmp_path, 1, "S1", "in_progress")
+    mark_work_unit_state(tmp_path, 1, "S1", "in_progress")
     (directory / "executor_result.json").write_text("{")
 
     assert next_node(tmp_path, 1) == (NodeType.GATE_OPEN, "S1")
@@ -2656,12 +2676,12 @@ def test_in_progress_story_malformed_executor_result_opens_incomplete_state_gate
 
 def test_malformed_check_result_opens_incomplete_state_gate(tmp_path: Path) -> None:
     directory = _write_plan(tmp_path, 1)
-    mark_story_status(tmp_path, 1, "S1", "in_progress")
+    mark_work_unit_state(tmp_path, 1, "S1", "in_progress")
     (directory / "executor_result.json").write_text(
         json.dumps(
             {
                 "epic_id": 1,
-                "story_id": "S1",
+                "work_unit_id": "S1",
                 "outcome": "staged_for_verification",
                 "commit_body": "done",
                 "position": None,
@@ -2670,8 +2690,8 @@ def test_malformed_check_result_opens_incomplete_state_gate(tmp_path: Path) -> N
     )
     critique_dir = directory / "critique"
     critique_dir.mkdir()
-    (critique_dir / "story-S1.md").write_text(
-        "---\ntarget: story\ntarget_id: S1\nseverity: info\n"
+    (critique_dir / "work-unit-S1.md").write_text(
+        "---\ntarget: work_unit\ntarget_id: S1\nseverity: info\n"
         "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
         "findings: []\n---\n"
     )
@@ -2691,12 +2711,12 @@ def test_malformed_check_result_opens_incomplete_state_gate(tmp_path: Path) -> N
 
 def test_failed_check_result_reopens_structured_gate_on_reentry(tmp_path: Path) -> None:
     directory = _write_plan(tmp_path, 1)
-    mark_story_status(tmp_path, 1, "S1", "in_progress")
+    mark_work_unit_state(tmp_path, 1, "S1", "in_progress")
     (directory / "executor_result.json").write_text(
         json.dumps(
             {
                 "epic_id": 1,
-                "story_id": "S1",
+                "work_unit_id": "S1",
                 "outcome": "staged_for_verification",
                 "commit_body": "done",
                 "position": None,
@@ -2705,8 +2725,8 @@ def test_failed_check_result_reopens_structured_gate_on_reentry(tmp_path: Path) 
     )
     critique_dir = directory / "critique"
     critique_dir.mkdir()
-    (critique_dir / "story-S1.md").write_text(
-        "---\ntarget: story\ntarget_id: S1\nseverity: blocker\n"
+    (critique_dir / "work-unit-S1.md").write_text(
+        "---\ntarget: work_unit\ntarget_id: S1\nseverity: blocker\n"
         "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
         "findings:\n  - id: F1\n    severity: blocker\n    summary: test\n"
         "    evidence: 'S1 does not implement the required contract'\n---\n"
@@ -2717,7 +2737,7 @@ def test_failed_check_result_reopens_structured_gate_on_reentry(tmp_path: Path) 
                 "ok": False,
                 "stage": 5,
                 "epic_id": 1,
-                "story_id": "S1",
+                "work_unit_id": "S1",
                 "triggered_by": ["check_6_critique_blocker"],
                 "checks": [
                     {
@@ -2754,14 +2774,14 @@ def test_successor_selection_respects_dependency_closure(tmp_path: Path) -> None
             **plan["work_units"][0],
             "id": "S1",
             "title": "first",
-            "status": "done",
+            "state": "done",
             "deps": [],
         },
         {
             **plan["work_units"][0],
             "id": "S2",
             "title": "second",
-            "status": "pending",
+            "state": "pending",
             "deps": ["S1"],
         },
     ]
@@ -2786,7 +2806,7 @@ def test_run_graph_opens_recoverable_gate_when_plan_dependencies_are_malformed(
     assert "required Stage-5 artefact is malformed" in outputs[0].message
     gate_fm = _read_gate_fm(directory / "gate.md")
     assert gate_fm["type"] == "plan_gate"
-    assert gate_fm["story_id"] is None
+    assert gate_fm["work_unit_id"] is None
     assert gate_fm["triggered_by"] == ["incomplete_stage_state"]
 
 
@@ -2802,13 +2822,13 @@ def test_run_graph_opens_recoverable_gate_for_malformed_plan_json(tmp_path: Path
     assert "required Stage-5 artefact is malformed" in outputs[0].message
     gate_fm = _read_gate_fm(directory / "gate.md")
     assert gate_fm["type"] == "plan_gate"
-    assert gate_fm["story_id"] is None
+    assert gate_fm["work_unit_id"] is None
     assert gate_fm["triggered_by"] == ["incomplete_stage_state"]
 
 
 def test_gate_reentry_halts_at_human_review_with_gate_path(tmp_path: Path) -> None:
     directory = _write_plan(tmp_path, 14)
-    (directory / "gate.md").write_text("---\ntype: story_gate\n---\n")
+    (directory / "gate.md").write_text("---\ntype: work_unit_gate\n---\n")
 
     assert next_node(tmp_path, 14) == (NodeType.HUMAN_REVIEW, None)
 
@@ -2827,12 +2847,12 @@ def test_gate_reentry_halts_at_human_review_with_gate_path(tmp_path: Path) -> No
 
 def test_empty_diff_executor_result_opens_review_gate(tmp_path: Path) -> None:
     directory = _write_plan(tmp_path, 15)
-    mark_story_status(tmp_path, 15, "S1", "in_progress")
+    mark_work_unit_state(tmp_path, 15, "S1", "in_progress")
     (directory / "executor_result.json").write_text(
         json.dumps(
             {
                 "epic_id": 15,
-                "story_id": "S1",
+                "work_unit_id": "S1",
                 "outcome": "empty_diff",
                 "commit_body": None,
                 "position": "No diff was needed.",
@@ -2858,7 +2878,7 @@ def test_wf_epic_reports_complete_epic_as_json(tmp_path: Path) -> None:
     )
     directory = _write_plan(tmp_path, 7)
     plan = json.loads((directory / "plan.json").read_text())
-    plan["work_units"][0]["status"] = "done"
+    plan["work_units"][0]["state"] = "done"
     (directory / "plan.json").write_text(json.dumps(plan))
     _write_minimal_epic(directory, 7)
     remote_body = "Remote intent.\n\n## Observable Outcomes\n\n- stale\n"
@@ -2874,7 +2894,7 @@ def test_wf_epic_reports_complete_epic_as_json(tmp_path: Path) -> None:
             "node_type": "human_review",
             "status": "epic_complete",
             "epic_id": 7,
-            "story_id": None,
+            "work_unit_id": None,
             "next_node": None,
             "gate_path": None,
             "validation_summary": None,
@@ -2902,7 +2922,7 @@ def test_wf_opens_gate_for_recoverable_missing_plan_state(tmp_path: Path) -> Non
     assert "spark.md" in proc.stdout
     gate_fm = _read_gate_fm(directory / "gate.md")
     assert gate_fm["type"] == "plan_gate"
-    assert gate_fm["story_id"] is None
+    assert gate_fm["work_unit_id"] is None
     assert gate_fm["triggered_by"] == ["incomplete_stage_state"]
 
 
@@ -2910,7 +2930,7 @@ def test_wf_epic_halts_when_gate_is_open(tmp_path: Path) -> None:
     _write_tracker_prerequisites(tmp_path)
     directory = _write_plan(tmp_path, 8)
     _write_last_sync(directory, 8)
-    (directory / "gate.md").write_text("---\ntype: story_gate\n---\n")
+    (directory / "gate.md").write_text("---\ntype: work_unit_gate\n---\n")
     env = _make_gh_rate_limit_stub(tmp_path / "bin")
 
     proc = _run_woof(tmp_path, "wf", "--epic", "8", env=env)
@@ -2922,12 +2942,12 @@ def test_wf_epic_halts_when_gate_is_open(tmp_path: Path) -> None:
 def test_wf_gate_case_reports_stable_json_contract(tmp_path: Path) -> None:
     _write_tracker_prerequisites(tmp_path)
     directory = _write_plan(tmp_path, 11)
-    mark_story_status(tmp_path, 11, "S1", "in_progress")
+    mark_work_unit_state(tmp_path, 11, "S1", "in_progress")
     (directory / "executor_result.json").write_text(
         json.dumps(
             {
                 "epic_id": 11,
-                "story_id": "S1",
+                "work_unit_id": "S1",
                 "outcome": "staged_for_verification",
                 "commit_body": "done",
                 "position": None,
@@ -2936,8 +2956,8 @@ def test_wf_gate_case_reports_stable_json_contract(tmp_path: Path) -> None:
     )
     critique_dir = directory / "critique"
     critique_dir.mkdir()
-    (critique_dir / "story-S1.md").write_text(
-        "---\ntarget: story\ntarget_id: S1\nseverity: blocker\n"
+    (critique_dir / "work-unit-S1.md").write_text(
+        "---\ntarget: work_unit\ntarget_id: S1\nseverity: blocker\n"
         "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
         "findings:\n  - id: F1\n    severity: blocker\n    summary: test\n"
         "    evidence: 'S1 does not implement the required contract'\n---\n"
@@ -2948,7 +2968,7 @@ def test_wf_gate_case_reports_stable_json_contract(tmp_path: Path) -> None:
                 "ok": False,
                 "stage": 5,
                 "epic_id": 11,
-                "story_id": "S1",
+                "work_unit_id": "S1",
                 "triggered_by": ["check_6_critique_blocker"],
                 "checks": [
                     {
@@ -2977,23 +2997,23 @@ def test_wf_gate_case_reports_stable_json_contract(tmp_path: Path) -> None:
             "node_type": "review_disposition",
             "status": "gate_opened",
             "epic_id": 11,
-            "story_id": "S1",
+            "work_unit_id": "S1",
             "next_node": None,
             "gate_path": ".woof/epics/E11/gate.md",
             "validation_summary": None,
             "triggered_by": ["check_6_critique_blocker"],
             "message": (
                 "## Context\n\n"
-                "Reviewer critique `.woof/epics/E11/critique/story-S1.md` marked story S1 as blocker. "
+                "Reviewer critique `.woof/epics/E11/critique/work-unit-S1.md` marked work unit S1 as blocker. "
                 "Woof does not start a model-to-model debate loop for blocker findings.\n\n"
                 "## Findings\n\n"
                 "- F1: test\n"
                 "  Evidence: S1 does not implement the required contract\n\n"
                 "## Primary position\n\n"
-                "The primary story output remains staged for operator inspection. "
+                "The primary work-unit output remains staged for operator inspection. "
                 "No primary disposition was requested because blocker findings require a human gate.\n\n"
                 "## Reviewer position\n\n"
-                "Source: `.woof/epics/E11/critique/story-S1.md`\n\n"
+                "Source: `.woof/epics/E11/critique/work-unit-S1.md`\n\n"
                 "Reviewer body was empty.\n"
             ),
             "paths": [],
@@ -3007,7 +3027,7 @@ def test_wf_resolve_records_gate_decision_and_removes_gate(tmp_path: Path) -> No
     directory = _write_plan(tmp_path, 9)
     _write_last_sync(directory, 9)
     gate = directory / "gate.md"
-    gate.write_text("---\ntype: story_gate\n---\n")
+    gate.write_text("---\ntype: work_unit_gate\n---\n")
     env = _make_gh_rate_limit_stub(tmp_path / "bin")
 
     proc = _run_woof(tmp_path, "wf", "--epic", "9", "--resolve", "approve", env=env)
@@ -3018,7 +3038,7 @@ def test_wf_resolve_records_gate_decision_and_removes_gate(tmp_path: Path) -> No
     events = [json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines()]
     assert events[-1]["event"] == "gate_resolved"
     assert events[-1]["epic_id"] == 9
-    assert events[-1]["gate_type"] == "story_gate"
+    assert events[-1]["gate_type"] == "work_unit_gate"
     assert events[-1]["decision"] == "approve"
 
 
@@ -3026,12 +3046,12 @@ def test_wf_resolve_reviewer_blocker_approval_requeues_critique(tmp_path: Path) 
     (tmp_path / ".woof").mkdir(parents=True, exist_ok=True)
     (tmp_path / ".woof" / "prerequisites.toml").write_text('[tracker]\nkind = "local"\n')
     directory = _write_plan(tmp_path, 33)
-    mark_story_status(tmp_path, 33, "S1", "in_progress")
+    mark_work_unit_state(tmp_path, 33, "S1", "in_progress")
     (directory / "executor_result.json").write_text(
         json.dumps(
             {
                 "epic_id": 33,
-                "story_id": "S1",
+                "work_unit_id": "S1",
                 "outcome": "staged_for_verification",
                 "commit_subject": "feat: test",
                 "commit_body": "body",
@@ -3045,17 +3065,17 @@ def test_wf_resolve_reviewer_blocker_approval_requeues_critique(tmp_path: Path) 
                 "ok": False,
                 "stage": 5,
                 "epic_id": 33,
-                "story_id": "S1",
+                "work_unit_id": "S1",
                 "triggered_by": ["check_6_critique_blocker"],
                 "checks": [],
             }
         )
     )
-    critique_path = directory / "critique" / "story-S1.md"
+    critique_path = directory / "critique" / "work-unit-S1.md"
     critique_path.parent.mkdir()
     critique_path.write_text(
         "---\n"
-        "target: story\n"
+        "target: work_unit\n"
         "target_id: S1\n"
         "severity: blocker\n"
         "timestamp: '2026-01-01T00:00:00Z'\n"
@@ -3070,8 +3090,8 @@ def test_wf_resolve_reviewer_blocker_approval_requeues_critique(tmp_path: Path) 
     gate = directory / "gate.md"
     gate.write_text(
         "---\n"
-        "type: story_gate\n"
-        "story_id: S1\n"
+        "type: work_unit_gate\n"
+        "work_unit_id: S1\n"
         "triggered_by:\n"
         "  - check_6_critique_blocker\n"
         "---\n"
@@ -3089,12 +3109,12 @@ def test_wf_resolve_reviewer_blocker_approval_requeues_critique(tmp_path: Path) 
     assert (directory / "executor_result.json").exists()
     assert next_node(tmp_path, 33) == (NodeType.CRITIQUE_DISPATCH, "S1")
     events = [json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines()]
-    story_event = next(event for event in events if event["event"] == "story_gate_resolved")
-    assert story_event["decision"] == "approve"
-    assert story_event["triggered_by"] == ["check_6_critique_blocker"]
-    assert ".woof/epics/E33/check-result.json" in story_event["paths"]
-    assert ".woof/epics/E33/critique/story-S1.md" in story_event["paths"]
-    assert ".woof/epics/E33/dispositions/story-S1.md" in story_event["paths"]
+    work_unit_event = next(event for event in events if event["event"] == "work_unit_gate_resolved")
+    assert work_unit_event["decision"] == "approve"
+    assert work_unit_event["triggered_by"] == ["check_6_critique_blocker"]
+    assert ".woof/epics/E33/check-result.json" in work_unit_event["paths"]
+    assert ".woof/epics/E33/critique/work-unit-S1.md" in work_unit_event["paths"]
+    assert ".woof/epics/E33/dispositions/work-unit-S1.md" in work_unit_event["paths"]
 
 
 def test_wf_resolve_commit_transaction_gate_preserves_ok_check_result(
@@ -3104,12 +3124,12 @@ def test_wf_resolve_commit_transaction_gate_preserves_ok_check_result(
     (tmp_path / ".woof").mkdir(parents=True, exist_ok=True)
     (tmp_path / ".woof" / "prerequisites.toml").write_text('[tracker]\nkind = "local"\n')
     directory = _write_plan(tmp_path, 34)
-    mark_story_status(tmp_path, 34, "S1", "done")
+    mark_work_unit_state(tmp_path, 34, "S1", "done")
     (directory / "executor_result.json").write_text(
         json.dumps(
             {
                 "epic_id": 34,
-                "story_id": "S1",
+                "work_unit_id": "S1",
                 "outcome": "staged_for_verification",
                 "commit_subject": "feat: test",
                 "commit_body": "body",
@@ -3123,17 +3143,17 @@ def test_wf_resolve_commit_transaction_gate_preserves_ok_check_result(
                 "ok": True,
                 "stage": 5,
                 "epic_id": 34,
-                "story_id": "S1",
+                "work_unit_id": "S1",
                 "triggered_by": [],
                 "checks": [],
             }
         )
     )
-    critique_path = directory / "critique" / "story-S1.md"
+    critique_path = directory / "critique" / "work-unit-S1.md"
     critique_path.parent.mkdir()
     critique_path.write_text(
         "---\n"
-        "target: story\n"
+        "target: work_unit\n"
         "target_id: S1\n"
         "severity: info\n"
         "timestamp: '2026-01-01T00:00:00Z'\n"
@@ -3148,8 +3168,8 @@ def test_wf_resolve_commit_transaction_gate_preserves_ok_check_result(
     gate = directory / "gate.md"
     gate.write_text(
         "---\n"
-        "type: story_gate\n"
-        "story_id: S1\n"
+        "type: work_unit_gate\n"
+        "work_unit_id: S1\n"
         "triggered_by:\n"
         "  - check_7_commit_transaction\n"
         "---\n"
@@ -3213,7 +3233,7 @@ def test_wf_resolve_revise_plan_reenters_breakdown(tmp_path: Path) -> None:
         "---\n"
         "type: plan_gate\n"
         "stage: 4\n"
-        "story_id: null\n"
+        "work_unit_id: null\n"
         "triggered_by: [plan_review]\n"
         "timestamp: '2026-01-01T00:00:03Z'\n"
         "---\n"
@@ -3238,12 +3258,12 @@ def test_wf_resolve_approve_clears_stale_failed_check_result(tmp_path: Path) -> 
     _write_tracker_prerequisites(tmp_path)
     directory = _write_plan(tmp_path, 32)
     _write_last_sync(directory, 32)
-    mark_story_status(tmp_path, 32, "S1", "in_progress")
+    mark_work_unit_state(tmp_path, 32, "S1", "in_progress")
     (directory / "executor_result.json").write_text(
         json.dumps(
             {
                 "epic_id": 32,
-                "story_id": "S1",
+                "work_unit_id": "S1",
                 "outcome": "staged_for_verification",
                 "commit_body": "done",
                 "position": None,
@@ -3252,8 +3272,8 @@ def test_wf_resolve_approve_clears_stale_failed_check_result(tmp_path: Path) -> 
     )
     critique_dir = directory / "critique"
     critique_dir.mkdir()
-    (critique_dir / "story-S1.md").write_text(
-        "---\ntarget: story\ntarget_id: S1\nseverity: info\n"
+    (critique_dir / "work-unit-S1.md").write_text(
+        "---\ntarget: work_unit\ntarget_id: S1\nseverity: info\n"
         "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
         "findings: []\n---\n"
     )
@@ -3264,7 +3284,7 @@ def test_wf_resolve_approve_clears_stale_failed_check_result(tmp_path: Path) -> 
                 "ok": False,
                 "stage": 5,
                 "epic_id": 32,
-                "story_id": "S1",
+                "work_unit_id": "S1",
                 "triggered_by": ["check_1_quality_gates"],
                 "checks": [
                     {
@@ -3279,9 +3299,9 @@ def test_wf_resolve_approve_clears_stale_failed_check_result(tmp_path: Path) -> 
     )
     (directory / "gate.md").write_text(
         "---\n"
-        "type: story_gate\n"
-        "stage: 6\n"
-        "story_id: S1\n"
+        "type: work_unit_gate\n"
+        "stage: 5\n"
+        "work_unit_id: S1\n"
         "triggered_by: [check_1_quality_gates]\n"
         "timestamp: '2026-01-01T00:00:00Z'\n"
         "---\n"
@@ -3299,16 +3319,16 @@ def test_wf_resolve_approve_clears_stale_failed_check_result(tmp_path: Path) -> 
     assert next_node(tmp_path, 32) == (NodeType.VERIFICATION, "S1")
 
 
-def test_wf_resolve_revise_story_scope_clears_stale_failed_check_result(tmp_path: Path) -> None:
+def test_wf_resolve_revise_work_unit_scope_clears_stale_failed_check_result(tmp_path: Path) -> None:
     _write_tracker_prerequisites(tmp_path)
     directory = _write_plan(tmp_path, 33)
     _write_last_sync(directory, 33)
-    mark_story_status(tmp_path, 33, "S1", "in_progress")
+    mark_work_unit_state(tmp_path, 33, "S1", "in_progress")
     (directory / "executor_result.json").write_text(
         json.dumps(
             {
                 "epic_id": 33,
-                "story_id": "S1",
+                "work_unit_id": "S1",
                 "outcome": "staged_for_verification",
                 "commit_body": "done",
                 "position": None,
@@ -3321,7 +3341,7 @@ def test_wf_resolve_revise_story_scope_clears_stale_failed_check_result(tmp_path
                 "ok": False,
                 "stage": 5,
                 "epic_id": 33,
-                "story_id": "S1",
+                "work_unit_id": "S1",
                 "triggered_by": ["check_3_scope"],
                 "checks": [],
             }
@@ -3329,40 +3349,40 @@ def test_wf_resolve_revise_story_scope_clears_stale_failed_check_result(tmp_path
     )
     (directory / "gate.md").write_text(
         "---\n"
-        "type: story_gate\n"
-        "stage: 6\n"
-        "story_id: S1\n"
+        "type: work_unit_gate\n"
+        "stage: 5\n"
+        "work_unit_id: S1\n"
         "triggered_by: [check_3_scope]\n"
         "timestamp: '2026-01-01T00:00:00Z'\n"
         "---\n"
         "## Context\n\nScope gate.\n\n"
         "## Findings\n\n- split\n\n"
-        "## Primary position\n\nSplit story.\n\n"
+        "## Primary position\n\nSplit work unit.\n\n"
         "## Reviewer position\n\nRerun checks.\n"
     )
     env = _make_gh_rate_limit_stub(tmp_path / "bin")
 
-    proc = _run_woof(tmp_path, "wf", "--epic", "33", "--resolve", "revise_story_scope", env=env)
+    proc = _run_woof(tmp_path, "wf", "--epic", "33", "--resolve", "revise_work_unit_scope", env=env)
 
     assert proc.returncode == 0, proc.stderr
     assert not (directory / "check-result.json").exists()
 
 
-def test_wf_resolve_abandon_story_skips_to_next_ready_story(tmp_path: Path) -> None:
+def test_wf_resolve_abandon_work_unit_skips_to_next_ready_work_unit(tmp_path: Path) -> None:
     _write_tracker_prerequisites(tmp_path)
     directory = _write_plan(tmp_path, 34)
     _write_last_sync(directory, 34)
     plan = json.loads((directory / "plan.json").read_text())
     plan["work_units"] = [
-        {**plan["work_units"][0], "id": "S1", "status": "in_progress"},
-        {**plan["work_units"][0], "id": "S2", "title": "second", "status": "pending"},
+        {**plan["work_units"][0], "id": "S1", "state": "in_progress"},
+        {**plan["work_units"][0], "id": "S2", "title": "second", "state": "pending"},
     ]
     (directory / "plan.json").write_text(json.dumps(plan))
     (directory / "executor_result.json").write_text(
         json.dumps(
             {
                 "epic_id": 34,
-                "story_id": "S1",
+                "work_unit_id": "S1",
                 "outcome": "aborted_with_position",
                 "position": "Cannot continue.",
             }
@@ -3370,37 +3390,37 @@ def test_wf_resolve_abandon_story_skips_to_next_ready_story(tmp_path: Path) -> N
     )
     (directory / "gate.md").write_text(
         "---\n"
-        "type: story_gate\n"
-        "stage: 6\n"
-        "story_id: S1\n"
+        "type: work_unit_gate\n"
+        "stage: 5\n"
+        "work_unit_id: S1\n"
         "triggered_by: [executor_aborted]\n"
         "timestamp: '2026-01-01T00:00:00Z'\n"
         "---\n"
         "## Context\n\nAbort gate.\n\n"
         "## Findings\n\n- abandon\n\n"
-        "## Primary position\n\nAbandon story.\n\n"
+        "## Primary position\n\nAbandon work unit.\n\n"
         "## Reviewer position\n\nContinue.\n"
     )
     env = _make_gh_rate_limit_stub(tmp_path / "bin")
 
-    proc = _run_woof(tmp_path, "wf", "--epic", "34", "--resolve", "abandon_story", env=env)
+    proc = _run_woof(tmp_path, "wf", "--epic", "34", "--resolve", "abandon_work_unit", env=env)
 
     assert proc.returncode == 0, proc.stderr
     plan_after = json.loads((directory / "plan.json").read_text())
-    # abandon_story is now honest: the story is terminal-abandoned, not done.
-    assert plan_after["work_units"][0]["status"] == "abandoned"
+    # abandon_work_unit is now honest: the work unit is terminal-abandoned, not done.
+    assert plan_after["work_units"][0]["state"] == "abandoned"
     events = [
         json.loads(line)
         for line in (directory / "epic.jsonl").read_text().splitlines()
         if line.strip()
     ]
-    assert any(e["event"] == "story_abandoned" and e["story_id"] == "S1" for e in events)
-    assert not any(e["event"] == "story_completed" for e in events)
-    # The abandoned story is skipped; the graph advances to the next ready story.
+    assert any(e["event"] == "work_unit_abandoned" and e["work_unit_id"] == "S1" for e in events)
+    assert not any(e["event"] == "work_unit_completed" for e in events)
+    # The abandoned work unit is skipped; the graph advances to the next ready work unit.
     assert next_node(tmp_path, 34) == (NodeType.EXECUTOR_DISPATCH, "S2")
 
 
-def test_wf_resolve_retry_story_resets_and_re_dispatches_without_redoing_siblings(
+def test_wf_resolve_retry_work_unit_resets_and_re_dispatches_without_redoing_siblings(
     tmp_path: Path,
 ) -> None:
     _write_tracker_prerequisites(tmp_path)
@@ -3408,20 +3428,20 @@ def test_wf_resolve_retry_story_resets_and_re_dispatches_without_redoing_sibling
     _write_last_sync(directory, 36)
     plan = json.loads((directory / "plan.json").read_text())
     plan["work_units"] = [
-        {**plan["work_units"][0], "id": "S1", "status": "done"},
-        {**plan["work_units"][0], "id": "S2", "title": "second", "status": "in_progress"},
+        {**plan["work_units"][0], "id": "S1", "state": "done"},
+        {**plan["work_units"][0], "id": "S2", "title": "second", "state": "in_progress"},
     ]
     (directory / "plan.json").write_text(json.dumps(plan))
     # S2 crashed mid-execution, leaving stale executor/check/critique/disposition state.
     (directory / "executor_result.json").write_text(
-        json.dumps({"epic_id": 36, "story_id": "S2", "outcome": "aborted_with_position"})
+        json.dumps({"epic_id": 36, "work_unit_id": "S2", "outcome": "aborted_with_position"})
     )
     (directory / "check-result.json").write_text(json.dumps({"ok": False}))
     critique_dir = directory / "critique"
     critique_dir.mkdir()
-    for story_id in ("S1", "S2"):
-        (critique_dir / f"story-{story_id}.md").write_text(
-            f"---\ntarget: story\ntarget_id: {story_id}\nseverity: info\n"
+    for work_unit_id in ("S1", "S2"):
+        (critique_dir / f"work-unit-{work_unit_id}.md").write_text(
+            f"---\ntarget: work_unit\ntarget_id: {work_unit_id}\nseverity: info\n"
             "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\nfindings: []\n---\n"
         )
     sibling_disposition = _write_disposition(directory, 36, "S1")
@@ -3430,29 +3450,29 @@ def test_wf_resolve_retry_story_resets_and_re_dispatches_without_redoing_sibling
         "---\n"
         "type: review_gate\n"
         "stage: 6\n"
-        "story_id: S2\n"
+        "work_unit_id: S2\n"
         "triggered_by: [executor_aborted]\n"
         "timestamp: '2026-01-01T00:00:00Z'\n"
         "---\n"
         "## Context\n\nCrash gate.\n\n"
         "## Findings\n\n- retry\n\n"
-        "## Primary position\n\nRetry story.\n\n"
+        "## Primary position\n\nRetry work unit.\n\n"
         "## Reviewer position\n\nRe-run from scratch.\n"
     )
     env = _make_gh_rate_limit_stub(tmp_path / "bin")
 
-    proc = _run_woof(tmp_path, "wf", "--epic", "36", "--resolve", "retry_story", env=env)
+    proc = _run_woof(tmp_path, "wf", "--epic", "36", "--resolve", "retry_work_unit", env=env)
 
     assert proc.returncode == 0, proc.stderr
     by_id = {s["id"]: s for s in json.loads((directory / "plan.json").read_text())["work_units"]}
-    assert by_id["S2"]["status"] == "pending"  # the crashed story is reset
-    assert by_id["S1"]["status"] == "done"  # the done sibling is untouched
-    # The crashed story's artefacts are cleared; the sibling's survive.
+    assert by_id["S2"]["state"] == "pending"  # the crashed work unit is reset
+    assert by_id["S1"]["state"] == "done"  # the done sibling is untouched
+    # The crashed work unit's artefacts are cleared; the sibling's survive.
     assert not (directory / "executor_result.json").exists()
     assert not (directory / "check-result.json").exists()
-    assert not (critique_dir / "story-S2.md").exists()
+    assert not (critique_dir / "work-unit-S2.md").exists()
     assert not target_disposition.exists()
-    assert (critique_dir / "story-S1.md").exists()
+    assert (critique_dir / "work-unit-S1.md").exists()
     assert sibling_disposition.exists()
     assert not (directory / "gate.md").exists()
     events = [
@@ -3460,8 +3480,8 @@ def test_wf_resolve_retry_story_resets_and_re_dispatches_without_redoing_sibling
         for line in (directory / "epic.jsonl").read_text().splitlines()
         if line.strip()
     ]
-    assert any(e["event"] == "story_retried" and e["story_id"] == "S2" for e in events)
-    # next_node re-dispatches the reset story, not the done sibling.
+    assert any(e["event"] == "work_unit_retried" and e["work_unit_id"] == "S2" for e in events)
+    # next_node re-dispatches the reset work unit, not the done sibling.
     assert next_node(tmp_path, 36) == (NodeType.EXECUTOR_DISPATCH, "S2")
 
 
@@ -3487,12 +3507,15 @@ class _RecordingTracker:
         )
 
 
-def _write_story_gate(directory: Path, story_id: str, *, gate_type: str = "story_gate") -> None:
+def _write_work_unit_gate(
+    directory: Path, work_unit_id: str, *, gate_type: str = "work_unit_gate"
+) -> None:
+    stage = 5 if gate_type == "work_unit_gate" else 6
     (directory / "gate.md").write_text(
         f"---\n"
         f"type: {gate_type}\n"
-        "stage: 6\n"
-        f"story_id: {story_id}\n"
+        f"stage: {stage}\n"
+        f"work_unit_id: {work_unit_id}\n"
         "triggered_by: [executor_aborted]\n"
         "timestamp: '2026-01-01T00:00:00Z'\n"
         "---\n"
@@ -3507,21 +3530,21 @@ def test_wf_resolve_abandon_epic_closes_tracker_and_is_terminal(tmp_path: Path) 
     directory = _write_plan(tmp_path, 40)
     plan = json.loads((directory / "plan.json").read_text())
     plan["work_units"] = [
-        {**plan["work_units"][0], "id": "S1", "status": "in_progress"},
-        {**plan["work_units"][0], "id": "S2", "title": "second", "status": "pending"},
+        {**plan["work_units"][0], "id": "S1", "state": "in_progress"},
+        {**plan["work_units"][0], "id": "S2", "title": "second", "state": "pending"},
     ]
     (directory / "plan.json").write_text(json.dumps(plan))
     (directory / "executor_result.json").write_text(
         json.dumps(
             {
                 "epic_id": 40,
-                "story_id": "S1",
+                "work_unit_id": "S1",
                 "outcome": "aborted_with_position",
                 "position": "Cannot continue.",
             }
         )
     )
-    _write_story_gate(directory, "S1")
+    _write_work_unit_gate(directory, "S1")
     tracker = _RecordingTracker()
 
     rc = _resolve_gate(tmp_path, 40, "abandon_epic", cast(Tracker, tracker))
@@ -3540,9 +3563,9 @@ def test_wf_resolve_abandon_epic_closes_tracker_and_is_terminal(tmp_path: Path) 
     assert any(e["event"] == "epic_abandoned" and e["epic_id"] == 40 for e in events)
     assert not any(e["event"] == "epic_completed" for e in events)
     # abandon_epic abandons the whole epic; it does not selectively complete or
-    # abandon the targeted story, which stays as it was.
+    # abandon the targeted work unit, which stays as it was.
     plan_after = json.loads((directory / "plan.json").read_text())
-    assert plan_after["work_units"][0]["status"] == "in_progress"
+    assert plan_after["work_units"][0]["state"] == "in_progress"
 
     # next_node returns the abandoned-terminal outcome, distinct from EPIC_COMPLETE.
     assert transitions.epic_abandoned(tmp_path, 40) is True
@@ -3557,9 +3580,9 @@ def test_abandon_epic_keeps_gate_when_tracker_close_fails(tmp_path: Path) -> Non
     # gate stays open and the epic is never marked abandoned.
     directory = _write_plan(tmp_path, 44)
     plan = json.loads((directory / "plan.json").read_text())
-    plan["work_units"][0]["status"] = "in_progress"
+    plan["work_units"][0]["state"] = "in_progress"
     (directory / "plan.json").write_text(json.dumps(plan))
-    _write_story_gate(directory, "S1")
+    _write_work_unit_gate(directory, "S1")
 
     class _FailingTracker:
         def close_not_delivered(self, epic_id: int) -> LifecycleSyncResult:
@@ -3581,21 +3604,21 @@ def test_abandon_epic_keeps_gate_when_tracker_close_fails(tmp_path: Path) -> Non
     assert not any(e.get("event") == "epic_abandoned" for e in events)
 
 
-def test_reconstruction_distinguishes_abandoned_story_from_done(tmp_path: Path) -> None:
+def test_reconstruction_distinguishes_abandoned_work_unit_from_done(tmp_path: Path) -> None:
     directory = _write_plan(tmp_path, 41)
     plan = json.loads((directory / "plan.json").read_text())
     plan["work_units"] = [
-        {**plan["work_units"][0], "id": "S1", "status": "done"},
-        {**plan["work_units"][0], "id": "S2", "title": "second", "status": "abandoned"},
+        {**plan["work_units"][0], "id": "S1", "state": "done"},
+        {**plan["work_units"][0], "id": "S2", "title": "second", "state": "abandoned"},
     ]
     (directory / "plan.json").write_text(json.dumps(plan))
 
     # The plan reloads with distinct statuses: abandoned is not coerced to done.
     reloaded = transitions.load_plan(tmp_path, 41)
-    assert {s.id: s.status for s in reloaded.work_units} == {"S1": "done", "S2": "abandoned"}
+    assert {s.id: s.state for s in reloaded.work_units} == {"S1": "done", "S2": "abandoned"}
 
-    # Every story is terminal (one done, one abandoned) and there is no
-    # epic_abandoned marker: the epic completes - the abandoned story neither
+    # Every work unit is terminal (one done, one abandoned) and there is no
+    # epic_abandoned marker: the epic completes - the abandoned work unit neither
     # strands it nor turns it into the abandoned-epic terminal.
     assert transitions.epic_abandoned(tmp_path, 41) is False
     assert next_node(tmp_path, 41) == (None, None)
@@ -3611,8 +3634,8 @@ def test_transaction_manifest_requires_audit_and_rejects_extra_staged_file(tmp_p
     (directory / "dispatch.jsonl").write_text("{}\n")
     critique_dir = directory / "critique"
     critique_dir.mkdir()
-    (critique_dir / "story-S1.md").write_text(
-        "---\ntarget: story\ntarget_id: S1\nseverity: info\n"
+    (critique_dir / "work-unit-S1.md").write_text(
+        "---\ntarget: work_unit\ntarget_id: S1\nseverity: info\n"
         "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
         "findings: []\n---\n"
     )
@@ -3623,20 +3646,20 @@ def test_transaction_manifest_requires_audit_and_rejects_extra_staged_file(tmp_p
     src = tmp_path / "src"
     src.mkdir()
     (src / "app.py").write_text("print('O1')\n")
-    (tmp_path / "extra.txt").write_text("not in story scope\n")
+    (tmp_path / "extra.txt").write_text("not in work-unit scope\n")
 
-    story = WorkUnitSpec(
+    work_unit = WorkUnitSpec(
         id="S1",
         title="first",
         paths=["src/*.py"],
         satisfies=["O1"],
-        status="in_progress",
+        state="in_progress",
     )
-    manifest = build_story_manifest(tmp_path, 1, story)
+    manifest = build_work_unit_manifest(tmp_path, 1, work_unit)
 
     assert ".woof/epics/E1/audit/cod-critiquer-1.prompt" in manifest.expected_paths
-    assert ".woof/epics/E1/critique/story-S1.md" in manifest.expected_paths
-    assert ".woof/epics/E1/dispositions/story-S1.md" in manifest.expected_paths
+    assert ".woof/epics/E1/critique/work-unit-S1.md" in manifest.expected_paths
+    assert ".woof/epics/E1/dispositions/work-unit-S1.md" in manifest.expected_paths
     assert "src/app.py" in manifest.expected_paths
 
     _git(tmp_path, "add", "--", *manifest.expected_paths, "extra.txt", check=True)
@@ -3652,8 +3675,8 @@ def test_transaction_manifest_reports_missing_expected_index_paths(tmp_path: Pat
     (directory / "dispatch.jsonl").write_text("{}\n")
     critique_dir = directory / "critique"
     critique_dir.mkdir()
-    (critique_dir / "story-S1.md").write_text(
-        "---\ntarget: story\ntarget_id: S1\nseverity: info\n"
+    (critique_dir / "work-unit-S1.md").write_text(
+        "---\ntarget: work_unit\ntarget_id: S1\nseverity: info\n"
         "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
         "findings: []\n---\n"
     )
@@ -3665,14 +3688,14 @@ def test_transaction_manifest_reports_missing_expected_index_paths(tmp_path: Pat
     src.mkdir()
     (src / "app.py").write_text("print('O1')\n")
 
-    story = WorkUnitSpec(
+    work_unit = WorkUnitSpec(
         id="S1",
         title="first",
         paths=["src/*.py"],
         satisfies=["O1"],
-        status="in_progress",
+        state="in_progress",
     )
-    manifest = build_story_manifest(tmp_path, 16, story)
+    manifest = build_work_unit_manifest(tmp_path, 16, work_unit)
     staged_subset = [
         path for path in manifest.expected_paths if not path.endswith("dispatch.jsonl")
     ]
@@ -3693,17 +3716,17 @@ def test_transaction_manifest_excludes_committed_prior_epic_artifacts(tmp_path: 
     (directory / "spark.md").write_text("initial spark\n")
     critique_dir = directory / "critique"
     critique_dir.mkdir()
-    (critique_dir / "story-S1.md").write_text(
-        "---\ntarget: story\ntarget_id: S1\nseverity: info\n"
+    (critique_dir / "work-unit-S1.md").write_text(
+        "---\ntarget: work_unit\ntarget_id: S1\nseverity: info\n"
         "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
         "findings: []\n---\n"
     )
     _write_disposition(directory, 17, "S1")
     audit_dir = directory / "audit"
     audit_dir.mkdir()
-    (audit_dir / "old-story.prompt").write_text("old prompt")
+    (audit_dir / "old-work-unit.prompt").write_text("old prompt")
     _git(tmp_path, "add", ".woof", check=True)
-    _git(tmp_path, "commit", "-m", "feat: first story", check=True)
+    _git(tmp_path, "commit", "-m", "feat: first work unit", check=True)
 
     (directory / "plan.json").write_text(
         json.dumps(
@@ -3721,7 +3744,7 @@ def test_transaction_manifest_excludes_committed_prior_epic_artifacts(tmp_path: 
                         "uses_contract_decisions": [],
                         "deps": [],
                         "tests": {"count": 1, "types": ["unit"]},
-                        "status": "done",
+                        "state": "done",
                     },
                     {
                         "id": "S2",
@@ -3733,37 +3756,37 @@ def test_transaction_manifest_excludes_committed_prior_epic_artifacts(tmp_path: 
                         "uses_contract_decisions": [],
                         "deps": ["S1"],
                         "tests": {"count": 0, "types": ["documentation", "manual"]},
-                        "status": "in_progress",
+                        "state": "in_progress",
                     },
                 ],
             }
         )
     )
     (directory / "epic.jsonl").write_text("{}\n{}\n")
-    (critique_dir / "story-S2.md").write_text(
-        "---\ntarget: story\ntarget_id: S2\nseverity: info\n"
+    (critique_dir / "work-unit-S2.md").write_text(
+        "---\ntarget: work_unit\ntarget_id: S2\nseverity: info\n"
         "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
         "findings: []\n---\n"
     )
     _write_disposition(directory, 17, "S2")
-    (audit_dir / "new-story.prompt").write_text("new prompt")
-    (tmp_path / "README.md").write_text("manual story docs\n")
+    (audit_dir / "new-work-unit.prompt").write_text("new prompt")
+    (tmp_path / "README.md").write_text("manual work-unit docs\n")
 
-    story = WorkUnitSpec(
+    work_unit = WorkUnitSpec(
         id="S2",
         title="docs",
         paths=["README.md"],
         satisfies=["O2"],
-        status="in_progress",
+        state="in_progress",
         tests={"count": 0, "types": ["documentation", "manual"]},
     )
-    manifest = build_story_manifest(tmp_path, 17, story)
+    manifest = build_work_unit_manifest(tmp_path, 17, work_unit)
 
-    assert ".woof/epics/E17/critique/story-S1.md" not in manifest.expected_paths
-    assert ".woof/epics/E17/audit/old-story.prompt" not in manifest.expected_paths
+    assert ".woof/epics/E17/critique/work-unit-S1.md" not in manifest.expected_paths
+    assert ".woof/epics/E17/audit/old-work-unit.prompt" not in manifest.expected_paths
     assert ".woof/epics/E17/spark.md" not in manifest.expected_paths
-    assert ".woof/epics/E17/critique/story-S2.md" in manifest.expected_paths
-    assert ".woof/epics/E17/audit/new-story.prompt" in manifest.expected_paths
+    assert ".woof/epics/E17/critique/work-unit-S2.md" in manifest.expected_paths
+    assert ".woof/epics/E17/audit/new-work-unit.prompt" in manifest.expected_paths
     assert "README.md" in manifest.expected_paths
 
 
@@ -3773,8 +3796,8 @@ def test_transaction_manifest_honours_recursive_pathspec(tmp_path: Path) -> None
     (directory / "dispatch.jsonl").write_text("{}\n")
     critique_dir = directory / "critique"
     critique_dir.mkdir()
-    (critique_dir / "story-S1.md").write_text(
-        "---\ntarget: story\ntarget_id: S1\nseverity: info\n"
+    (critique_dir / "work-unit-S1.md").write_text(
+        "---\ntarget: work_unit\ntarget_id: S1\nseverity: info\n"
         "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
         "findings: []\n---\n"
     )
@@ -3783,16 +3806,16 @@ def test_transaction_manifest_honours_recursive_pathspec(tmp_path: Path) -> None
     nested.mkdir(parents=True)
     (nested / "deep.py").write_text("print('O1')\n")
 
-    story = WorkUnitSpec(
+    work_unit = WorkUnitSpec(
         id="S1",
         title="first",
         paths=[":(glob)src/**/*.py"],
         satisfies=["O1"],
-        status="in_progress",
+        state="in_progress",
     )
-    manifest = build_story_manifest(tmp_path, 23, story)
+    manifest = build_work_unit_manifest(tmp_path, 23, work_unit)
 
-    assert "src/pkg/subpkg/deep.py" in manifest.story_paths
+    assert "src/pkg/subpkg/deep.py" in manifest.work_unit_paths
     assert "src/pkg/subpkg/deep.py" in manifest.expected_paths
 
 
@@ -3867,7 +3890,7 @@ def test_epic_definition_node_redispatches_revision_with_prior_contract_and_find
         repo_root: Path,
         role: str,
         epic_id: int,
-        story_id: str | None,
+        work_unit_id: str | None,
         prompt: str,
         artefacts_loaded: list[str] | None = None,
         route_key: str | None = None,
@@ -3923,7 +3946,7 @@ def test_epic_definition_node_redispatches_cold_start_revision_without_synthesis
         repo_root: Path,
         role: str,
         epic_id: int,
-        story_id: str | None,
+        work_unit_id: str | None,
         prompt: str,
         artefacts_loaded: list[str] | None = None,
         route_key: str | None = None,
@@ -3993,7 +4016,7 @@ def test_wf_resolve_revise_epic_contract_reenters_definition_from_plan_gate(tmp_
         "---\n"
         "type: plan_gate\n"
         "stage: 4\n"
-        "story_id: null\n"
+        "work_unit_id: null\n"
         "triggered_by: [plan_review]\n"
         "timestamp: '2026-01-01T00:00:03Z'\n"
         "---\n"
@@ -4049,8 +4072,8 @@ def test_plan_gate_resolved_false_for_stage_state_halt_approve(tmp_path: Path) -
     assert plan_gate_resolved(tmp_path, 74) is False
 
 
-def test_story_gate_stage_state_halt_approve_leaves_story_pending(tmp_path: Path) -> None:
-    """An 'approve' on a cartography halt story_gate must not mark the story done."""
+def test_work_unit_gate_stage_state_halt_approve_leaves_work_unit_pending(tmp_path: Path) -> None:
+    """An 'approve' on a cartography halt work_unit_gate must not mark the work unit done."""
     _write_plan(tmp_path, 75)
     # Simulate operator approving the cartography-halt gate with incomplete_stage_state.
     append_epic_event(
@@ -4061,14 +4084,14 @@ def test_story_gate_stage_state_halt_approve_leaves_story_pending(tmp_path: Path
             "at": "2026-01-01T00:00:00Z",
             "epic_id": 75,
             "decision": "approve",
-            "gate_type": "story_gate",
-            "story_id": "S1",
+            "gate_type": "work_unit_gate",
+            "work_unit_id": "S1",
             "triggered_by": ["incomplete_stage_state"],
         },
     )
     plan = transitions.load_plan(tmp_path, 75)
-    story = next(s for s in plan.work_units if s.id == "S1")
-    assert story.status == "pending"
+    work_unit = next(s for s in plan.work_units if s.id == "S1")
+    assert work_unit.state == "pending"
 
 
 # ---------------------------------------------------------------------------

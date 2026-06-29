@@ -1,13 +1,13 @@
 ---
 name: woof
-description: Drive the Woof delivery graph from Claude Code. The operator's map of the `woof` shell CLI - create and run epics, resolve gates, reset, validate, observe, and onboard a repo - plus the router to /woof:brainstorm for the design phase. Use when running Woof, an epic or a story, resolving a Woof gate, or onboarding a repo to Woof.
+description: Drive the Woof delivery graph from Claude Code. The operator's map of the `woof` shell CLI - create and run epics, resolve gates, reset, validate, observe, and onboard a repo - plus the router to /woof:brainstorm for the design phase. Use when running Woof, an epic or a work unit, resolving a Woof gate, or onboarding a repo to Woof.
 allowed-tools: Bash(woof:*), Bash(git:*), Task
 ---
 
 # Woof - delivery graph operator
 
 Woof is a deterministic delivery graph: from a one-line spark it drives an epic through design,
-definition, breakdown, and per-story execution, pausing at gates for a human decision. This skill
+definition, breakdown, and per-work-unit execution, pausing at gates for a human decision. This skill
 is the operator's map of the `woof` shell CLI. You run `woof` commands and surface what the graph
 decides; the graph owns the control flow.
 
@@ -26,9 +26,9 @@ one interactive part - leading the design conversation - is a separate specialis
 - Destructive verbs confirm first. `woof wf reset` deletes derived state; run it only on an explicit
   operator request and let it prompt (or pass `--yes` only when the operator already confirmed).
 - Commit through `Bash(git:*)` when the operator asks; Woof's own commit-transaction check guards
-  what a story lands.
+  what a work unit lands.
 
-## The flow (spark to stories)
+## The flow (spark to work units)
 
 1. Create an epic: `woof wf new "<spark>"`. The `github` tracker opens an issue and records it; the
    `local` tracker creates the epic on disk. Both write `spark.md` and set `.woof/.current-epic`.
@@ -36,7 +36,7 @@ one interactive part - leading the design conversation - is a separate specialis
    resolved bundle into the epic's `discovery/brainstorm/` bucket. This is the only interactive
    stage; route to it rather than driving design from here.
 3. Run the graph: `woof wf --epic N`. With a brainstorm bundle present the graph skips the headless
-   research/thinking/ideate chain, runs synthesis, then definition, breakdown, and per-story
+   research/thinking/ideate chain, runs synthesis, then definition, breakdown, and per-work-unit
    execution. Re-run `woof wf --epic N` to advance after each pause.
 4. Resolve gates: when a gate opens, surface it (`woof observe --epic N --view gate`) and resolve
    with the operator's decision (`woof wf --epic N --resolve <decision>`).
@@ -68,7 +68,7 @@ two loops and writes the bundle into `discovery/brainstorm/`; come back here to 
 
 ```bash
 woof observe --epic N [--view status|timeline|gate|audit|all] [--format json]
-woof check stage-5 --epic N --story S1     # run the Stage-5 boundary checks for a story
+woof check stage-5 --epic N --work-unit S1 # run the Stage-5 boundary checks for a work unit
 woof check-cd <path/to/EPIC.md>            # verify each contract decision's referenced artefact
 woof validate <path>... [--schema NAME]    # validate an artefact against a woof JSON Schema
 ```
@@ -87,8 +87,8 @@ woof audit-bundle E<N>               # copy referenced Claude transcripts into t
 
 - readiness gate: `approve_with_reason` | `revise_epic_contract` | `abandon_epic`
 - plan gate: `approve` | `revise_plan` | `revise_epic_contract` | `abandon_epic`
-- story / review gate: `approve` | `retry_story` | `revise_story_scope` |
-  `revise_plan` | `abandon_story` | `abandon_epic`
+- work-unit / review gate: `approve` | `retry_work_unit` | `revise_work_unit_scope` |
+  `revise_plan` | `abandon_work_unit` | `abandon_epic`
 - tracker sync conflict: `keep_local` | `accept_remote` | `hand_merge`
 
 Every accepted verb has an implemented effect that moves the graph; the canonical per-gate-type set lives in `src/woof/graph/decisions.py` and a conformance test fails if this list drifts from it. See [references/gates.md](references/gates.md) for what each verb does.

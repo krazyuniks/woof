@@ -101,7 +101,7 @@ def load_project_audit_config(repo_root: Path) -> AuditConfig:
 
 
 def prepare_commit_audit(repo_root: Path, epic_dir: Path) -> list[AuditFileSummary]:
-    """Redact and cap audit files that may be included in a story commit."""
+    """Redact and cap audit files that may be included in a work-unit commit."""
 
     config = load_project_audit_config(repo_root)
     audit_dir = epic_dir / "audit"

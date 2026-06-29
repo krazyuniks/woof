@@ -212,56 +212,16 @@ def _prerequisites_template(
 
 
 AGENTS_TEMPLATE = """\
-# Woof role routes. ADR-002: primary/reviewer are semantic routes. Model
-# choices live in model profiles so evals and local runs can switch them without
-# changing prompt text or graph orchestration.
+# Woof runtime settings. Routing and run profiles live in .woof/policy.toml.
 # Runtime model: trusted-local automation. Woof does not sandbox dispatched
 # agents, restrict writable paths, allow-list commands, block network access, or
 # add MCP restrictions; commit-safety checks and gates guard what lands.
-
-model_profile = "default"
-
-[roles.primary]
-adapter = "codex"
-
-[roles.reviewer]
-adapter = "claude"
-mcp = []
-
-[roles.orchestrator]
-adapter = "in-session"
-
-[roles.gate-resolver]
-adapter = "in-session"
-
-[routes.execution.primary]
-adapter = "claude"
-mcp = []
-
-[routes.execution.reviewer]
-adapter = "codex"
-
-[model_profiles.default.roles.primary]
-model = "gpt-5.5"
-effort = "xhigh"
-
-[model_profiles.default.roles.reviewer]
-model = "claude-opus-4-7"
-effort = "max"
-
-[model_profiles.default.routes.execution.primary]
-model = "claude-opus-4-7"
-effort = "max"
-
-[model_profiles.default.routes.execution.reviewer]
-model = "gpt-5.5"
-effort = "xhigh"
 
 [timeouts]
 default_minutes = 30
 
 [review_valve]
-every_n_stories = 5
+every_n_work_units = 5
 end_of_epic = true
 
 [audit]

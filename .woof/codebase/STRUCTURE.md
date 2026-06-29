@@ -26,8 +26,8 @@ src/woof/
 │   ├── nodes.py           # Node registry and all node handler implementations
 │   ├── transitions.py     # next_node, gate/event writes, state-query helpers
 │   ├── runner.py          # run_graph: the in-process graph loop
-│   ├── state.py           # NodeInput, NodeOutput, NodeStatus, Plan, StorySpec typedefs
-│   ├── pathspec.py        # Story-scoped path filtering (filter_paths_matching)
+│   ├── state.py           # NodeInput, NodeOutput, NodeStatus, Plan, WorkUnitSpec typedefs
+│   ├── pathspec.py        # Work-unit-scoped path filtering (filter_paths_matching)
 │   ├── manifest.py        # Transaction manifest build and verification
 │   ├── readiness.py       # Stage-2.5 contract readiness matrix
 │   ├── planning_contracts.py  # plan.json and EPIC.md contract validators
@@ -75,8 +75,8 @@ One JSON Schema file per artefact type. Key schemas: `prerequisites.schema.json`
 playbooks/
 ├── discovery/      # research.md, thinking.md, ideate.md, synthesis.md
 ├── planning/       # breakdown.md
-├── execution/      # story.md
-└── critique/       # plan.md, story.md
+├── execution/      # work-unit.md
+└── critique/       # plan.md, work-unit.md
 ```
 
 ## Languages (`languages/`)

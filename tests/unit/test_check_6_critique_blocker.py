@@ -20,12 +20,12 @@ FIXTURE_DIR = REPO_ROOT / "tests" / "fixtures" / "woof" / "e181_s2"
 pytestmark = pytest.mark.host_only
 
 
-def _make_ctx(epic_dir: Path, story_id: str = "S2") -> CheckContext:
+def _make_ctx(epic_dir: Path, work_unit_id: str = "S2") -> CheckContext:
     from woof.checks import CheckContext
 
     return CheckContext(
         epic_id=181,
-        story_id=story_id,
+        work_unit_id=work_unit_id,
         repo_root=REPO_ROOT,
         epic_dir=epic_dir,
         plan={},
@@ -33,17 +33,17 @@ def _make_ctx(epic_dir: Path, story_id: str = "S2") -> CheckContext:
     )
 
 
-def _write_critique(critique_dir: Path, story_id: str, content: str) -> Path:
+def _write_critique(critique_dir: Path, work_unit_id: str, content: str) -> Path:
     critique_dir.mkdir(parents=True, exist_ok=True)
-    p = critique_dir / f"story-{story_id}.md"
+    p = critique_dir / f"work-unit-{work_unit_id}.md"
     p.write_text(content)
     return p
 
 
-def _write_disposition(epic_dir: Path, story_id: str, *, severity: str = "info") -> Path:
+def _write_disposition(epic_dir: Path, work_unit_id: str, *, severity: str = "info") -> Path:
     disposition_dir = epic_dir / "dispositions"
     disposition_dir.mkdir(parents=True, exist_ok=True)
-    path = disposition_dir / f"story-{story_id}.md"
+    path = disposition_dir / f"work-unit-{work_unit_id}.md"
     dispositions = "[]"
     if severity == "minor":
         dispositions = (
@@ -53,9 +53,9 @@ def _write_disposition(epic_dir: Path, story_id: str, *, severity: str = "info")
         )
     path.write_text(
         f"""---
-target: story
-target_id: {story_id}
-critique_path: .woof/epics/E181/critique/story-{story_id}.md
+target: work_unit
+target_id: {work_unit_id}
+critique_path: .woof/epics/E181/critique/work-unit-{work_unit_id}.md
 severity: {severity}
 timestamp: "2026-04-27T05:47:00Z"
 harness: test-primary
@@ -69,7 +69,7 @@ Primary disposition.
 
 _BLOCKER_CRITIQUE = """\
 ---
-target: story
+target: work_unit
 target_id: S2
 severity: blocker
 timestamp: "2026-04-27T05:46:49Z"
@@ -86,7 +86,7 @@ Findings text here.
 
 _MINOR_CRITIQUE = """\
 ---
-target: story
+target: work_unit
 target_id: S2
 severity: minor
 timestamp: "2026-04-27T05:46:49Z"
@@ -101,7 +101,7 @@ Minor findings.
 
 _INFO_CRITIQUE = """\
 ---
-target: story
+target: work_unit
 target_id: S1
 severity: info
 timestamp: "2026-04-27T05:46:49Z"
@@ -147,7 +147,7 @@ def test_e181_s2_fixture_is_blocker_O7(tmp_path: Path) -> None:
     critique_dir.mkdir(parents=True)
     import shutil
 
-    shutil.copy(FIXTURE_DIR / "critique" / "story-S2.md", critique_dir / "story-S2.md")
+    shutil.copy(FIXTURE_DIR / "critique" / "work-unit-2.md", critique_dir / "work-unit-2.md")
 
     ctx = _make_ctx(epic_dir, "S2")
     outcome = check_6_critique_blocker_runner(ctx)
@@ -237,16 +237,16 @@ def test_missing_critique_file_fails(tmp_path: Path) -> None:
 
 
 def _make_ctx_with_plan(
-    epic_dir: Path, story_id: str = "S1", plan: dict | None = None
+    epic_dir: Path, work_unit_id: str = "S1", plan: dict | None = None
 ) -> CheckContext:
     from woof.checks import CheckContext
 
     return CheckContext(
         epic_id=1,
-        story_id=story_id,
+        work_unit_id=work_unit_id,
         repo_root=REPO_ROOT,
         epic_dir=epic_dir,
-        plan=plan or {"epic_id": 1, "goal": "test", "work_units": [{"id": story_id}]},
+        plan=plan or {"epic_id": 1, "goal": "test", "work_units": [{"id": work_unit_id}]},
         critique=None,
     )
 
@@ -267,9 +267,9 @@ def _write_epic_md(epic_dir: Path, outcomes: list[str], cds: list[str]) -> None:
     )
 
 
-def _blocker_critique(story_id: str, evidence: str) -> str:
+def _blocker_critique(work_unit_id: str, evidence: str) -> str:
     return (
-        f"---\ntarget: story\ntarget_id: {story_id}\nseverity: blocker\n"
+        f"---\ntarget: work_unit\ntarget_id: {work_unit_id}\nseverity: blocker\n"
         f'timestamp: "2026-01-01T00:00:00Z"\nharness: test-reviewer\n'
         f"findings:\n  - id: F1\n    severity: blocker\n    summary: test finding\n"
         f"    evidence: {evidence!r}\n---\nBody.\n"
@@ -285,7 +285,7 @@ def test_blocker_without_evidence_fails_O4(tmp_path: Path) -> None:
 
     epic_dir = tmp_path / ".woof" / "epics" / "E1"
     critique = (
-        "---\ntarget: story\ntarget_id: S1\nseverity: blocker\n"
+        "---\ntarget: work_unit\ntarget_id: S1\nseverity: blocker\n"
         'timestamp: "2026-01-01T00:00:00Z"\nharness: test\n'
         "findings:\n  - id: F1\n    severity: blocker\n    summary: missing evidence\n---\n"
     )
@@ -346,7 +346,7 @@ def test_blocker_with_file_line_evidence_passes_O4(tmp_path: Path) -> None:
     assert "critique severity is blocker" in outcome.summary
 
 
-def test_blocker_with_story_id_evidence_passes_O4(tmp_path: Path) -> None:
+def test_blocker_with_work_unit_id_evidence_passes_O4(tmp_path: Path) -> None:
     """O4 S4: blocker evidence containing a known story id (S1) resolves."""
     import sys
 
@@ -601,10 +601,10 @@ def test_blocker_with_paren_wrapped_file_line_resolves_R2(tmp_path: Path) -> Non
 # ---------------------------------------------------------------------------
 
 
-def _minor_top_blocker_finding_critique(story_id: str, evidence: str = "") -> str:
+def _minor_top_blocker_finding_critique(work_unit_id: str, evidence: str = "") -> str:
     ev_line = f"    evidence: {evidence!r}\n" if evidence else ""
     return (
-        f"---\ntarget: story\ntarget_id: {story_id}\nseverity: minor\n"
+        f"---\ntarget: work_unit\ntarget_id: {work_unit_id}\nseverity: minor\n"
         f'timestamp: "2026-01-01T00:00:00Z"\nharness: test-reviewer\n'
         f"findings:\n  - id: F1\n    severity: blocker\n    summary: dishonest roll-up\n"
         f"{ev_line}---\nBody.\n"
@@ -643,7 +643,7 @@ def test_rollup_mismatch_info_top_blocker_finding_fails_R5(tmp_path: Path) -> No
 
     epic_dir = tmp_path / ".woof" / "epics" / "E1"
     critique = (
-        "---\ntarget: story\ntarget_id: S1\nseverity: info\n"
+        "---\ntarget: work_unit\ntarget_id: S1\nseverity: info\n"
         'timestamp: "2026-01-01T00:00:00Z"\nharness: test-reviewer\n'
         "findings:\n  - id: F1\n    severity: blocker\n    summary: sneaky blocker\n---\nBody.\n"
     )
@@ -736,7 +736,7 @@ def test_blocker_with_no_findings_fails_rollup_R6(tmp_path: Path) -> None:
 
     epic_dir = tmp_path / ".woof" / "epics" / "E1"
     critique = (
-        "---\ntarget: story\ntarget_id: S1\nseverity: blocker\n"
+        "---\ntarget: work_unit\ntarget_id: S1\nseverity: blocker\n"
         'timestamp: "2026-01-01T00:00:00Z"\nharness: test\n'
         "findings: []\n---\nBody.\n"
     )

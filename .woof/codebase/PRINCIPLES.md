@@ -42,10 +42,10 @@ line-level style, this covers shape and intent.
   is never silently repaired by a prompt or a tolerant parser. Graded recovery (salvage,
   normalise, bounded retry) is deterministic and fails loud on anything it cannot prove.
 - **Commit-safety is a hard boundary.** A producer cannot land changes outside its
-  declared story scope: the transaction manifest enumerates the expected file set and the
+  declared work-unit scope: the transaction manifest enumerates the expected file set and the
   commit aborts on any divergence. Unexpected HEAD/branch movement opens a drift gate.
 - **Reviewer findings cite evidence.** A `blocker` resolves to concrete current
-  artefacts (file:line, story id, outcome id, decision id, schema ref, or gate id).
+  artefacts (file:line, work-unit id, outcome id, decision id, schema ref, or gate id).
   Confidence is advisory metadata, never part of the gate decision.
 
 ## Execution discipline

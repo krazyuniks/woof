@@ -31,7 +31,8 @@ from pathlib import Path
 import yaml
 
 from woof.checks.contract_refs import ContractRefUsageError, validate_contract_refs
-from woof.cli.dispatcher import ADAPTERS, NODE_GROUPS, cmd_dispatch, find_woof_root
+from woof.cli.dispatcher import NODE_GROUPS, cmd_dispatch, find_woof_root
+from woof.cli.harness_registry import supported_harnesses
 from woof.lib.audit_bundle import (
     AuditBundleError,
     NonPortableTranscriptError,
@@ -413,8 +414,8 @@ def main() -> int:
     dispatch.add_argument(
         "target",
         nargs="?",
-        choices=sorted(ADAPTERS),
-        help="deprecated adapter target; role routes now resolve from policy or .woof/agents.toml",
+        choices=supported_harnesses(),
+        help="deprecated harness target; role routes resolve from .woof/policy.toml",
     )
     dispatch.add_argument("--role", required=True, help="dispatch role name")
     dispatch.add_argument(
@@ -423,7 +424,7 @@ def main() -> int:
         required=True,
         help="tracker-assigned epic id",
     )
-    dispatch.add_argument("--story", help="story id (e.g. S1); optional")
+    dispatch.add_argument("--work-unit", dest="work_unit", help="work-unit id; optional")
     dispatch.add_argument(
         "--route-key",
         choices=sorted(NODE_GROUPS),

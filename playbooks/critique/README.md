@@ -5,8 +5,8 @@ Reviewer critique prompt templates are dispatched by semantic role route. The gr
 Two templates ship today:
 
 - `plan.md` - Stage 3 critique of `plan.json` (outcome coverage, decomposition, scope hygiene, dependency correctness, contract-decision implementation completeness, missed Class-2 concerns).
-- `story.md` - Stage 5 critique of a story's staged commit (outcome fidelity, CD implementation, scope hygiene, test quality, Class-2 architectural concerns, hidden coupling).
+- `work-unit.md` - Stage 5 critique of a work unit's staged commit (outcome fidelity, CD implementation, scope hygiene, test quality, Class-2 architectural concerns, hidden coupling).
 
 Both templates output a critique document conforming to `woof/schemas/critique.schema.json` with structured findings (`severity: blocker | minor | info`).
 
-The graph never auto-revises in response to a critique. Findings surface to the human via the plan gate or a Stage-5 story gate.
+The graph never auto-revises in response to a critique. Findings surface to the human via the plan gate or a Stage-5 work-unit gate.

@@ -57,7 +57,7 @@ def validate_contract_refs(
 ) -> ContractRefResult:
     """Validate contract decision references in ``epic_md``.
 
-    ``only_ids`` limits validation to the active story's owned contract IDs. An
+    ``only_ids`` limits validation to the active work unit's owned contract IDs. An
     unknown requested ID is a failed finding rather than a usage error because
     it is a Stage-5 contract violation, not a malformed command invocation.
     """
@@ -95,7 +95,7 @@ def validate_contract_refs(
                     kind="missing",
                     ref="",
                     ok=False,
-                    detail="contract decision referenced by story but not declared in EPIC.md",
+                    detail="contract decision referenced by work unit but not declared in EPIC.md",
                 )
             )
 

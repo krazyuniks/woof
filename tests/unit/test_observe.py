@@ -22,17 +22,42 @@ max_bytes = 180
 
 [timeouts]
 default_minutes = 12
+"""
+    )
+    (project / ".woof" / "policy.toml").write_text(
+        """\
+schema_version = 1
+default_run_profile = "default"
 
-[roles.primary]
-adapter = "codex"
+[delivery]
+profile = "B"
+repo_root = "."
+toolchain_root = "."
+base_branch = "main"
+
+[profiles.B]
+commit = true
+push = true
+
+[verification]
+command = "just check"
+timeout_seconds = 600
+
+[run_profiles.default.producer]
+harness = "codex"
 model = "gpt-5.5"
 effort = "xhigh"
 
-[roles.reviewer]
-adapter = "claude"
+[run_profiles.default.reviewer]
+harness = "claude"
 model = "claude-opus-4-7"
 effort = "max"
-mcp = []
+
+[checks]
+floor = ["quality-gates"]
+
+[cartography]
+floor = "none"
 """
     )
     (epic_dir / "plan.json").write_text(
@@ -51,7 +76,7 @@ mcp = []
                         "uses_contract_decisions": [],
                         "deps": [],
                         "tests": {"count": 1, "types": ["unit"]},
-                        "status": "in_progress",
+                        "state": "in_progress",
                     }
                 ],
             }
@@ -59,9 +84,9 @@ mcp = []
     )
     (epic_dir / "gate.md").write_text(
         """---
-type: story_gate
+type: work_unit_gate
 stage: 6
-story_id: S1
+work_unit_id: S1
 triggered_by:
   - check_1_quality_gates
 timestamp: '2026-05-23T10:02:00Z'
@@ -96,11 +121,11 @@ No separate reviewer position was available.
                 ),
                 json.dumps(
                     {
-                        "event": "story_gate_opened",
+                        "event": "work_unit_gate_opened",
                         "at": "2026-05-23T10:02:00Z",
                         "epic_id": 5,
-                        "story_id": "S1",
-                        "gate_type": "story_gate",
+                        "work_unit_id": "S1",
+                        "gate_type": "work_unit_gate",
                         "triggered_by": ["check_1_quality_gates"],
                     }
                 ),
@@ -112,7 +137,7 @@ No separate reviewer position was available.
         "event": "subprocess_returned",
         "at": "2026-05-23T10:01:30Z",
         "epic_id": 5,
-        "story_id": "S1",
+        "work_unit_id": "S1",
         "role": "primary",
         "adapter": "codex",
         "model": "gpt-5.5",
@@ -146,7 +171,7 @@ No separate reviewer position was available.
                         "event": "subprocess_spawned",
                         "at": "2026-05-23T10:01:00Z",
                         "epic_id": 5,
-                        "story_id": "S1",
+                        "work_unit_id": "S1",
                         "role": "primary",
                         "adapter": "codex",
                         "pid": 123,
@@ -158,7 +183,7 @@ No separate reviewer position was available.
                         "event": "subprocess_returned",
                         "at": "2026-05-23T10:01:45Z",
                         "epic_id": 5,
-                        "story_id": "S1",
+                        "work_unit_id": "S1",
                         "role": "reviewer",
                         "adapter": "claude",
                         "pid": 124,
@@ -181,7 +206,7 @@ No separate reviewer position was available.
                 "ok": False,
                 "stage": 5,
                 "epic_id": 5,
-                "story_id": "S1",
+                "work_unit_id": "S1",
                 "triggered_by": ["check_1_quality_gates"],
                 "checks": [
                     {
@@ -245,7 +270,7 @@ def test_observe_all_json_reports_status_gate_timeline_and_audit(tmp_path: Path)
     }
     assert payload["status"]["next"] == {
         "node": "human_review",
-        "story_id": None,
+        "work_unit_id": None,
         "reason": "gate_open",
     }
     assert payload["status"]["next_action"] == {
@@ -256,19 +281,19 @@ def test_observe_all_json_reports_status_gate_timeline_and_audit(tmp_path: Path)
         "description": "Inspect the gate, then resolve it with a structured decision.",
     }
     assert payload["runtime_policy"]["mode"] == "trusted-local"
-    assert payload["dispatch_routes"]["roles"]["primary"] == {
+    assert payload["dispatch_routes"]["roles"]["producer"] == {
         "ok": True,
-        "role": "primary",
-        "config_role": "primary",
-        "model_profile": None,
-        "profile_role": None,
+        "role": "producer",
+        "config_role": "producer",
+        "model_profile": "default",
+        "profile_role": "producer",
         "adapter": "codex",
         "model": "gpt-5.5",
         "effort": "xhigh",
         "mcp": [],
         "flags": [],
         "timeout_min": 12,
-        "prompt_transport": "stdin",
+        "prompt_transport": "tmux_harness_prompt_file",
         "runtime_policy": payload["runtime_policy"],
         "errors": [],
     }
@@ -293,7 +318,7 @@ def test_observe_all_json_reports_status_gate_timeline_and_audit(tmp_path: Path)
         "subprocess_spawned",
         "subprocess_returned",
         "subprocess_returned",
-        "story_gate_opened",
+        "work_unit_gate_opened",
     ]
     assert payload["audit"]["raw_overflow_file_count"] == 1
     assert payload["audit"]["redacted_file_count"] == 1
@@ -437,15 +462,15 @@ def test_observe_status_text_reports_operator_state(tmp_path: Path) -> None:
     assert "current_epic: E5 selected=true valid=true epic_dir_exists=true" in proc.stdout
     assert "runtime_policy: trusted-local" in proc.stdout
     assert "next_action: resolve_gate command=woof wf --epic 5 --resolve <decision>" in proc.stdout
-    assert "gate: open type=story_gate story=S1 cause=check_1_quality_gates" in proc.stdout
-    assert "checks: FAIL stage=5 story=S1 total=2 failed=1" in proc.stdout
+    assert "gate: open type=work_unit_gate work_unit=S1 cause=check_1_quality_gates" in proc.stdout
+    assert "checks: FAIL stage=5 work_unit=S1 total=2 failed=1" in proc.stdout
     assert "FAIL check_1_quality_gates: lint failed" in proc.stdout
     assert (
         "audit_pointers: epic_jsonl=.woof/epics/E5/epic.jsonl "
         "dispatch_jsonl=.woof/epics/E5/dispatch.jsonl "
         "audit_dir=.woof/epics/E5/audit"
     ) in proc.stdout
-    assert "primary: adapter=codex model=gpt-5.5 effort=xhigh" in proc.stdout
+    assert "producer: adapter=codex model=gpt-5.5 effort=xhigh" in proc.stdout
 
 
 def _write_plan_stories(epic_dir: Path, stories: list[tuple[str, str]]) -> None:
@@ -456,8 +481,8 @@ def _write_plan_stories(epic_dir: Path, stories: list[tuple[str, str]]) -> None:
                 "goal": "Expose workflow state.",
                 "work_units": [
                     {
-                        "id": story_id,
-                        "title": f"Story {story_id}",
+                        "id": work_unit_id,
+                        "title": f"Story {work_unit_id}",
                         "summary": "",
                         "paths": [],
                         "satisfies": [],
@@ -465,9 +490,9 @@ def _write_plan_stories(epic_dir: Path, stories: list[tuple[str, str]]) -> None:
                         "uses_contract_decisions": [],
                         "deps": [],
                         "tests": {},
-                        "status": status,
+                        "state": status,
                     }
-                    for story_id, status in stories
+                    for work_unit_id, status in stories
                 ],
             }
         )
@@ -511,7 +536,7 @@ def test_observe_next_step_is_epic_complete_when_all_stories_terminal(tmp_path: 
 
     assert proc.returncode == 0, proc.stderr
     payload = json.loads(proc.stdout)
-    assert payload["next"] == {"node": "epic_complete", "story_id": None}
+    assert payload["next"] == {"node": "epic_complete", "work_unit_id": None}
     assert payload["next_action"]["action"] == "none"
     assert payload["next_action"]["reason"] == "epic_complete"
 
@@ -528,6 +553,6 @@ def test_observe_next_step_reports_epic_abandoned_terminal(tmp_path: Path) -> No
 
     assert proc.returncode == 0, proc.stderr
     payload = json.loads(proc.stdout)
-    assert payload["next"] == {"node": "epic_abandoned", "story_id": None}
+    assert payload["next"] == {"node": "epic_abandoned", "work_unit_id": None}
     assert payload["next_action"]["action"] == "none"
     assert payload["next_action"]["reason"] == "epic_abandoned"

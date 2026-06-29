@@ -138,7 +138,7 @@ def test_stage_5_fails_closed_when_runner_not_implemented(
     monkeypatch.chdir(tmp_path)
 
     exit_code = cmd_check_stage_5(
-        argparse.Namespace(self_test=False, epic=1, story="S1", format="json")
+        argparse.Namespace(self_test=False, epic=1, work_unit="S1", format="json")
     )
     captured = capsys.readouterr()
     result = json.loads(captured.out)
@@ -171,12 +171,12 @@ def test_check_stage_5_json_output_conforms_to_schema_O4(tmp_path: Path) -> None
     critique_dir = epic_dir / "critique"
     critique_dir.mkdir(parents=True)
     (tmp_path / ".woof" / "agents.toml").write_text(
-        "[roles]\n\n[review_valve]\nevery_n_stories = 5\nend_of_epic = false\n"
+        "[review_valve]\nevery_n_work_units = 5\nend_of_epic = false\n"
     )
     plan_path = epic_dir / "plan.json"
     plan_path.write_text(json.dumps({"epic_id": 999, "goal": "test", "work_units": []}))
-    (critique_dir / "story-S1.md").write_text(
-        "---\ntarget: story\ntarget_id: S1\nseverity: blocker\n"
+    (critique_dir / "work-unit-S1.md").write_text(
+        "---\ntarget: work_unit\ntarget_id: S1\nseverity: blocker\n"
         "timestamp: '2026-01-01T00:00:00Z'\nharness: test\n"
         "findings:\n  - id: F1\n    severity: blocker\n    summary: test\n---\n"
     )
@@ -188,7 +188,17 @@ def test_check_stage_5_json_output_conforms_to_schema_O4(tmp_path: Path) -> None
     # We need plan.json at the right path relative to .woof
 
     proc = subprocess.run(
-        [str(WOOF_BIN), "check", "stage-5", "--epic", "999", "--story", "S1", "--format", "json"],
+        [
+            str(WOOF_BIN),
+            "check",
+            "stage-5",
+            "--epic",
+            "999",
+            "--work-unit",
+            "S1",
+            "--format",
+            "json",
+        ],
         capture_output=True,
         text=True,
         cwd=str(tmp_path),
@@ -245,7 +255,7 @@ def test_check_stage_5_reports_review_valve_not_due_as_info(tmp_path: Path) -> N
     critique_dir = epic_dir / "critique"
     critique_dir.mkdir(parents=True)
     (tmp_path / ".woof" / "agents.toml").write_text(
-        "[roles]\n\n[review_valve]\nevery_n_stories = 5\nend_of_epic = false\n"
+        "[review_valve]\nevery_n_work_units = 5\nend_of_epic = false\n"
     )
     plan_path = epic_dir / "plan.json"
     plan_path.write_text(
@@ -264,23 +274,23 @@ def test_check_stage_5_reports_review_valve_not_due_as_info(tmp_path: Path) -> N
                         "uses_contract_decisions": [],
                         "deps": [],
                         "tests": {"count": 1, "types": ["unit"]},
-                        "status": "in_progress",
+                        "state": "in_progress",
                     }
                 ],
             }
         )
     )
     # Critique with severity=info so check_6 does not flag this run
-    (critique_dir / "story-S1.md").write_text(
-        "---\ntarget: story\ntarget_id: S1\nseverity: info\n"
+    (critique_dir / "work-unit-S1.md").write_text(
+        "---\ntarget: work_unit\ntarget_id: S1\nseverity: info\n"
         "timestamp: '2026-01-01T00:00:00Z'\nharness: test\n"
         "findings: []\n---\n"
     )
     disposition_dir = epic_dir / "dispositions"
     disposition_dir.mkdir()
-    (disposition_dir / "story-S1.md").write_text(
-        "---\ntarget: story\ntarget_id: S1\n"
-        "critique_path: .woof/epics/E999/critique/story-S1.md\n"
+    (disposition_dir / "work-unit-S1.md").write_text(
+        "---\ntarget: work_unit\ntarget_id: S1\n"
+        "critique_path: .woof/epics/E999/critique/work-unit-S1.md\n"
         "severity: info\n"
         "timestamp: '2026-01-01T00:00:00Z'\nharness: test-primary\n"
         "dispositions: []\n---\n"
@@ -291,7 +301,7 @@ def test_check_stage_5_reports_review_valve_not_due_as_info(tmp_path: Path) -> N
         "stage-5",
         "--epic",
         "999",
-        "--story",
+        "--work-unit",
         "S1",
         "--format",
         "json",

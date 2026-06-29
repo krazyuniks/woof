@@ -6,16 +6,16 @@ resolution verbs and a per-verb effect tag. The CLI ``--resolve`` choices, the
 literal all derive from or are conformance-checked against this table; the
 schemas and operator docs are conformance-checked against it (E17 P6).
 
-Add or remove a verb here and nowhere else. ``split_story`` was dropped in
-E17 P1 (D-SS): split guidance now travels as an optional note in the
-resolution payload and re-enters planning through ``revise_plan``.
+Add or remove a verb here and nowhere else. Split guidance travels as an
+optional note in the resolution payload and re-enters planning through
+``revise_plan``.
 
 The ``tracker_sync_conflict`` row mirrors the tracker layer's
 :data:`woof.trackers.base.CONFLICT_DECISIONS`, which stays owned there.
 
 P1 was consolidation only. E17 P2 (D-RA) adds the ``readiness_gate`` row and its
-``approve_with_reason`` verb (the E3 unblocker); E17 P3 (S3) adds ``retry_story``
-to the story/review rows; E17 P4 (D-AB) deepens the ``abandon_story``/``abandon_epic``
+``approve_with_reason`` verb (the E3 unblocker); E17 P3 (S3) adds ``retry_work_unit``
+to the work-unit/review rows; E17 P4 (D-AB) deepens the ``abandon_work_unit``/``abandon_epic``
 effects to the ``abandoned`` terminal status; E17 P5 (D-RC) makes
 ``revise_epic_contract`` a real channel for the plan and readiness gates (archive the
 prior ``EPIC.md`` and re-dispatch definition with the prior epic plus findings as
@@ -45,20 +45,20 @@ GATE_DECISIONS: dict[str, dict[str, str]] = {
         "revise_epic_contract": "revise_epic_contract",
         "abandon_epic": "abandon_epic",
     },
-    "story_gate": {
+    "work_unit_gate": {
         "approve": "approve",
-        "retry_story": "retry_story",
-        "revise_story_scope": "revise_story_scope",
+        "retry_work_unit": "retry_work_unit",
+        "revise_work_unit_scope": "revise_work_unit_scope",
         "revise_plan": "revise_plan",
-        "abandon_story": "abandon_story",
+        "abandon_work_unit": "abandon_work_unit",
         "abandon_epic": "abandon_epic",
     },
     "review_gate": {
         "approve": "approve",
-        "retry_story": "retry_story",
-        "revise_story_scope": "revise_story_scope",
+        "retry_work_unit": "retry_work_unit",
+        "revise_work_unit_scope": "revise_work_unit_scope",
         "revise_plan": "revise_plan",
-        "abandon_story": "abandon_story",
+        "abandon_work_unit": "abandon_work_unit",
         "abandon_epic": "abandon_epic",
     },
     "tracker_sync_conflict": {verb: "tracker_conflict" for verb in CONFLICT_DECISIONS},

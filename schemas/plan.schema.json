@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://woof.dev/schemas/plan.schema.json",
   "title": "woof plan",
-  "description": "Stage 3 Breakdown output: ordered work units implementing an epic. Validates structural shape only. The runtime Plan aggregate enforces work-unit identity and dependency invariants; cross-artefact invariants (satisfies[] subset of EPIC.md.observable_outcomes[].id, every CD implemented by exactly one work unit, duplicate pathspec discipline, and status coherence) are enforced before the plan gate and again by Stage-5 Check 5.",
+  "description": "Stage 3 Breakdown output: ordered work units implementing an epic. Validates structural shape only. The runtime Plan aggregate enforces work-unit identity and dependency invariants; cross-artefact invariants (satisfies[] subset of EPIC.md.observable_outcomes[].id, every CD implemented by exactly one work unit, duplicate pathspec discipline, and state coherence) are enforced before the plan gate and again by the work-unit cross-reference check.",
   "type": "object",
   "additionalProperties": false,
   "required": ["epic_id", "goal", "work_units"],
@@ -35,7 +35,7 @@
         "summary",
         "deps",
         "tests",
-        "status"
+        "state"
       ],
       "properties": {
         "id": {
@@ -74,7 +74,7 @@
           "type": "array",
           "uniqueItems": true,
           "items": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9._-]*$" },
-          "description": "Work-unit IDs that must reach status=done before this unit runs. Subset relationship to work_units[].id is helper-checked."
+          "description": "Work-unit IDs that must reach state=done before this unit runs. Subset relationship to work_units[].id is helper-checked."
         },
         "satisfies": {
           "type": "array",
@@ -113,14 +113,14 @@
             }
           }
         },
-        "status": {
+        "state": {
           "type": "string",
           "enum": ["pending", "in_progress", "done", "abandoned"],
-          "description": "Lifecycle status. pending/in_progress/done are the normal path; abandoned is the terminal status set by the abandon_story gate verb (skipped, never delivered, distinct from done)."
+          "description": "Lifecycle state. pending/in_progress/done are the normal path; abandoned is the terminal state set by the abandon_work_unit gate verb (skipped, never delivered, distinct from done)."
         },
         "empty_diff": {
           "type": "boolean",
-          "description": "True iff this work unit completed without producing a diff because earlier units' changes already realised its outcomes. Only meaningful when status=done. Per current operator policy, empty-diff completions open a story_gate (triggered_by includes 'empty_diff_review') rather than auto-completing."
+          "description": "True iff this work unit completed without producing a diff because earlier units' changes already realised its outcomes. Only meaningful when state=done. Per current operator policy, empty-diff completions open a work_unit_gate (triggered_by includes 'empty_diff_review') rather than auto-completing."
         }
       },
       "allOf": [
@@ -130,8 +130,8 @@
             "properties": { "empty_diff": { "const": true } }
           },
           "then": {
-            "properties": { "status": { "const": "done" } },
-            "required": ["status"]
+            "properties": { "state": { "const": "done" } },
+            "required": ["state"]
           }
         }
       ]

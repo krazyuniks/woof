@@ -11,8 +11,8 @@ PROMPT_ROOTS = (
     REPO_ROOT / ".claude" / "commands",
 )
 PLANNING_BREAKDOWN_PROMPT = REPO_ROOT / "playbooks" / "planning" / "breakdown.md"
-EXECUTE_STORY_PROMPT = REPO_ROOT / "playbooks" / "execution" / "story.md"
-STORY_CRITIQUE_PROMPT = REPO_ROOT / "playbooks" / "critique" / "story.md"
+EXECUTE_WORK_UNIT_PROMPT = REPO_ROOT / "playbooks" / "execution" / "work-unit.md"
+WORK_UNIT_CRITIQUE_PROMPT = REPO_ROOT / "playbooks" / "critique" / "work-unit.md"
 ARCHITECTURE_DOC = REPO_ROOT / "docs" / "architecture.md"
 
 # E19 S2 drift guard: each dispatch playbook must declare the cartography docs
@@ -63,7 +63,7 @@ PLAYBOOK_CARTOGRAPHY_DOCS: dict[str, list[str]] = {
         ".woof/codebase/TARGET-ARCHITECTURE.md",
         ".woof/codebase/PRINCIPLES.md",
     ],
-    "playbooks/execution/story.md": [
+    "playbooks/execution/work-unit.md": [
         ".woof/codebase/STRUCTURE.md",
         ".woof/codebase/CONVENTIONS.md",
         ".woof/codebase/TARGET-ARCHITECTURE.md",
@@ -76,7 +76,7 @@ PLAYBOOK_CARTOGRAPHY_DOCS: dict[str, list[str]] = {
         ".woof/codebase/CONCERNS.md",
         ".woof/codebase/TARGET-ARCHITECTURE.md",
     ],
-    "playbooks/critique/story.md": [
+    "playbooks/critique/work-unit.md": [
         ".woof/codebase/CONVENTIONS.md",
         ".woof/codebase/TESTING.md",
         ".woof/codebase/CONCERNS.md",
@@ -103,9 +103,9 @@ REQUIRED_STAGE3_BREAKDOWN_PROMPT_PHRASES = (
     "Do not write `gate.md`",
     "Do not select the next node",
 )
-REQUIRED_STAGE5_EXECUTE_STORY_PROMPT_PHRASES = (
+REQUIRED_STAGE5_EXECUTE_WORK_UNIT_PROMPT_PHRASES = (
     "Tracer-bullet red-green-refactor discipline",
-    "`story.satisfies[]` outcomes",
+    "`work_unit.satisfies[]` outcomes",
     "one assertion-bearing test",
     "before implementation",
     "Run the configured quality command after each cycle",
@@ -114,7 +114,7 @@ REQUIRED_STAGE5_EXECUTE_STORY_PROMPT_PHRASES = (
     "all tests first then all implementation",
     "imagined-behaviour fingerprint",
 )
-REQUIRED_STAGE5_STORY_CRITIQUE_PROMPT_PHRASES = (
+REQUIRED_STAGE5_WORK_UNIT_CRITIQUE_PROMPT_PHRASES = (
     "Graph-owned input JSON",
     "Evidence must be concrete",
     "Test-fingerprint fidelity",
@@ -163,29 +163,29 @@ def test_stage3_breakdown_prompt_owns_plan_generation_rules() -> None:
     assert not (REPO_ROOT / "playbooks" / "discovery" / "breakdown.md").exists()
 
 
-def test_stage5_story_prompts_codify_producer_discipline() -> None:
-    execute_text = EXECUTE_STORY_PROMPT.read_text()
-    critique_text = STORY_CRITIQUE_PROMPT.read_text()
+def test_stage5_work_unit_prompts_codify_producer_discipline() -> None:
+    execute_text = EXECUTE_WORK_UNIT_PROMPT.read_text()
+    critique_text = WORK_UNIT_CRITIQUE_PROMPT.read_text()
     architecture_text = ARCHITECTURE_DOC.read_text()
 
     execute_missing = [
         phrase
-        for phrase in REQUIRED_STAGE5_EXECUTE_STORY_PROMPT_PHRASES
+        for phrase in REQUIRED_STAGE5_EXECUTE_WORK_UNIT_PROMPT_PHRASES
         if phrase not in execute_text
     ]
     critique_missing = [
         phrase
-        for phrase in REQUIRED_STAGE5_STORY_CRITIQUE_PROMPT_PHRASES
+        for phrase in REQUIRED_STAGE5_WORK_UNIT_CRITIQUE_PROMPT_PHRASES
         if phrase not in critique_text
     ]
     architecture_missing = [
         phrase for phrase in REQUIRED_STAGE5_ARCHITECTURE_PHRASES if phrase not in architecture_text
     ]
 
-    assert not execute_missing, "missing Stage 5 execute-story phrases: " + ", ".join(
+    assert not execute_missing, "missing Stage 5 execute-work-unit phrases: " + ", ".join(
         execute_missing
     )
-    assert not critique_missing, "missing Stage 5 story critique phrases: " + ", ".join(
+    assert not critique_missing, "missing Stage 5 work-unit critique phrases: " + ", ".join(
         critique_missing
     )
     assert not architecture_missing, "missing Stage 5 architecture phrases: " + ", ".join(

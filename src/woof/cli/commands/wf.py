@@ -17,13 +17,13 @@ from woof.graph.dispositions import (
     FrontMatterError,
     critique_severity,
     read_markdown_front_matter,
-    story_critique_path,
-    story_disposition_path,
+    work_unit_critique_path,
+    work_unit_disposition_path,
 )
 from woof.graph.lock import WorkflowLockError
 from woof.graph.runner import run_graph
 from woof.graph.state import (
-    TERMINAL_STORY_STATUSES,
+    TERMINAL_WORK_UNIT_STATES,
     GateDecision,
     NodeStatus,
     Plan,
@@ -39,7 +39,7 @@ from woof.graph.transitions import (
     epic_definition_dir,
     epic_dir,
     load_plan,
-    mark_story_status,
+    mark_work_unit_state,
     write_plan,
 )
 from woof.paths import find_project_root
@@ -73,8 +73,8 @@ def _gate_front(gate_path: Path) -> dict:
 def _gate_resolved_event_name(gate_type: str | None) -> str | None:
     if gate_type == "plan_gate":
         return "plan_gate_resolved"
-    if gate_type == "story_gate":
-        return "story_gate_resolved"
+    if gate_type == "work_unit_gate":
+        return "work_unit_gate_resolved"
     if gate_type == "review_gate":
         return "review_gate_resolved"
     if gate_type == "readiness_gate":
@@ -98,7 +98,7 @@ def _remove_paths(repo_root: Path, *paths: Path) -> list[str]:
     return removed
 
 
-def _story_critique_requires_requeue(critique_path: Path) -> bool:
+def _work_unit_critique_requires_requeue(critique_path: Path) -> bool:
     try:
         front = read_markdown_front_matter(critique_path).front
     except (FileNotFoundError, FrontMatterError):
@@ -114,21 +114,21 @@ def _check_result_ok(check_result_path: Path) -> bool:
     return isinstance(payload, dict) and payload.get("ok") is True
 
 
-def _update_story(repo_root: Path, epic_id: int, story_id: str, **updates: object) -> None:
+def _update_work_unit(repo_root: Path, epic_id: int, work_unit_id: str, **updates: object) -> None:
     plan = load_plan(repo_root, epic_id)
-    stories: list[WorkUnitSpec] = []
+    work_units: list[WorkUnitSpec] = []
     found = False
-    for story in plan.work_units:
-        if story.id == story_id:
-            data = story.model_dump()
+    for work_unit in plan.work_units:
+        if work_unit.id == work_unit_id:
+            data = work_unit.model_dump()
             data.update(updates)
-            stories.append(WorkUnitSpec.model_validate(data))
+            work_units.append(WorkUnitSpec.model_validate(data))
             found = True
         else:
-            stories.append(story)
+            work_units.append(work_unit)
     if not found:
-        raise StageStateError(f"story {story_id} not found in E{epic_id} plan")
-    write_plan(repo_root, Plan(epic_id=plan.epic_id, goal=plan.goal, work_units=stories))
+        raise StageStateError(f"work unit {work_unit_id} not found in E{epic_id} plan")
+    write_plan(repo_root, Plan(epic_id=plan.epic_id, goal=plan.goal, work_units=work_units))
 
 
 def _abandon_epic(repo_root: Path, epic_id: int, tracker: Tracker) -> list[str]:
@@ -139,7 +139,7 @@ def _abandon_epic(repo_root: Path, epic_id: int, tracker: Tracker) -> list[str]:
     abandoned-terminal outcome distinct from ``EPIC_COMPLETE``. The tracker close
     runs first: if it raises ``TrackerError`` the caller maps that to exit 2 and
     the gate stays open, so the epic is never marked abandoned without its issue
-    being closed. abandon_epic is valid at the readiness, plan, story, and review
+    being closed. abandon_epic is valid at the readiness, plan, work-unit, and review
     gates and routes through this one path from every one of them.
     """
 
@@ -211,7 +211,7 @@ def _apply_gate_resolution_effects(
     *,
     decision: GateDecision,
     gate_type: str | None,
-    story_id: str | None,
+    work_unit_id: str | None,
     triggered_by: list[str],
     tracker: Tracker,
 ) -> list[str]:
@@ -289,7 +289,7 @@ def _apply_gate_resolution_effects(
             return changed
         return changed
 
-    if gate_type in {"story_gate", "review_gate"}:
+    if gate_type in {"work_unit_gate", "review_gate"}:
         validate_decision(gate_type, decision)
         check_result = directory / "check-result.json"
         executor_result = directory / "executor_result.json"
@@ -299,18 +299,18 @@ def _apply_gate_resolution_effects(
             )
             if not preserve_check_result:
                 changed.extend(_remove_paths(repo_root, check_result))
-            if story_id and "check_6_critique_blocker" in triggered_by:
-                critique_path = story_critique_path(directory, story_id)
-                if _story_critique_requires_requeue(critique_path):
+            if work_unit_id and "check_6_critique_blocker" in triggered_by:
+                critique_path = work_unit_critique_path(directory, work_unit_id)
+                if _work_unit_critique_requires_requeue(critique_path):
                     changed.extend(
                         _remove_paths(
                             repo_root,
                             critique_path,
-                            story_disposition_path(directory, story_id),
+                            work_unit_disposition_path(directory, work_unit_id),
                         )
                     )
-            if story_id and "empty_diff_review" in triggered_by:
-                _update_story(repo_root, epic_id, story_id, status="done", empty_diff=True)
+            if work_unit_id and "empty_diff_review" in triggered_by:
+                _update_work_unit(repo_root, epic_id, work_unit_id, state="done", empty_diff=True)
                 changed.append(_display_path(repo_root, directory / "plan.json"))
                 changed.extend(
                     _remove_paths(
@@ -322,71 +322,71 @@ def _apply_gate_resolution_effects(
                     repo_root,
                     epic_id,
                     {
-                        "event": "story_completed",
+                        "event": "work_unit_completed",
                         "at": _now(),
                         "epic_id": epic_id,
-                        "story_id": story_id,
+                        "work_unit_id": work_unit_id,
                         "empty_diff": True,
                     },
-                    event="story_completed",
-                    story_id=story_id,
+                    event="work_unit_completed",
+                    work_unit_id=work_unit_id,
                 )
             return changed
-        if decision == "retry_story":
-            if not story_id:
-                # End-of-epic review_gates carry story_id: null. retry_story has
-                # no story to reset there, so it is a structured error rather than
+        if decision == "retry_work_unit":
+            if not work_unit_id:
+                # End-of-epic review_gates carry work_unit_id: null. retry_work_unit has
+                # no work unit to reset there, so it is a structured error rather than
                 # a silent "successful retry". Raising before any effect runs keeps
                 # the gate open (_resolve_gate maps StageStateError to exit 2 and
                 # neither records the gate resolved nor deletes gate.md).
                 raise StageStateError(
-                    "retry_story requires a targeted story, but the open "
-                    f"{gate_type} carries no story_id"
+                    "retry_work_unit requires a targeted work unit, but the open "
+                    f"{gate_type} carries no work_unit_id"
                 )
-            # retry_story recovers a crashed or aborted executor; a terminal story
+            # retry_work_unit recovers a crashed or aborted executor; a terminal work unit
             # (done or abandoned) is out of that domain (a crashed executor never
-            # reaches a terminal status). Resetting it to pending here would strand
-            # the prior story_completed/story_abandoned event in the audit log -
+            # reaches a terminal state). Resetting it to pending here would strand
+            # the prior work_unit_completed/work_unit_abandoned event in the audit log -
             # append_epic_event_once would dedupe the rerun's re-emitted terminal
-            # event - so the timeline would show the story finishing before the
+            # event - so the timeline would show the work unit finishing before the
             # retry and never for the rerun. Reject it before any mutation;
             # post-completion recovery semantics belong to E18's completion-event
             # reconciliation, not this verb.
             plan = load_plan(repo_root, epic_id)
-            target_story = next((s for s in plan.work_units if s.id == story_id), None)
-            if target_story is not None and target_story.status in TERMINAL_STORY_STATUSES:
+            target_work_unit = next((s for s in plan.work_units if s.id == work_unit_id), None)
+            if target_work_unit is not None and target_work_unit.state in TERMINAL_WORK_UNIT_STATES:
                 raise StageStateError(
-                    f"retry_story targets {story_id}, but it is already "
-                    f"{target_story.status}; retry_story resets crashed or aborted "
-                    "executors, not finished stories"
+                    f"retry_work_unit targets {work_unit_id}, but it is already "
+                    f"{target_work_unit.state}; retry_work_unit resets crashed or aborted "
+                    "executors, not finished work units"
                 )
-            # A crashed or aborted executor: reset the story to pending and clear
-            # its per-story executor/check/critique/disposition artefacts so
-            # next_node re-dispatches it cleanly. Sibling stories and their
+            # A crashed or aborted executor: reset the work unit to pending and clear
+            # its per-work-unit executor/check/critique/disposition artefacts so
+            # next_node re-dispatches it cleanly. Sibling work units and their
             # artefacts are untouched.
-            mark_story_status(repo_root, epic_id, story_id, "pending")
+            mark_work_unit_state(repo_root, epic_id, work_unit_id, "pending")
             changed.append(_display_path(repo_root, directory / "plan.json"))
             changed.extend(
                 _remove_paths(
                     repo_root,
                     check_result,
                     executor_result,
-                    story_critique_path(directory, story_id),
-                    story_disposition_path(directory, story_id),
+                    work_unit_critique_path(directory, work_unit_id),
+                    work_unit_disposition_path(directory, work_unit_id),
                 )
             )
             append_epic_event(
                 repo_root,
                 epic_id,
                 {
-                    "event": "story_retried",
+                    "event": "work_unit_retried",
                     "at": _now(),
                     "epic_id": epic_id,
-                    "story_id": story_id,
+                    "work_unit_id": work_unit_id,
                 },
             )
             return changed
-        if decision in {"revise_story_scope", "revise_plan"}:
+        if decision in {"revise_work_unit_scope", "revise_plan"}:
             changed.extend(_remove_paths(repo_root, check_result))
             if decision == "revise_plan":
                 changed.extend(
@@ -398,27 +398,27 @@ def _apply_gate_resolution_effects(
                     )
                 )
             return changed
-        if decision == "abandon_story" and story_id:
-            # Honest terminal: mark the story abandoned (not done) and record a
-            # story_abandoned event, never story_completed. next_node treats an
-            # abandoned story as terminal and skips it; the epic still completes
-            # on its remaining stories ("skip and continue"). The status is
+        if decision == "abandon_work_unit" and work_unit_id:
+            # Honest terminal: mark the work unit abandoned (not done) and record a
+            # work_unit_abandoned event, never work_unit_completed. next_node treats an
+            # abandoned work unit as terminal and skips it; the epic still completes
+            # on its remaining work units ("skip and continue"). The state is
             # distinct from done so reconstruction never conflates the two.
-            _update_story(repo_root, epic_id, story_id, status="abandoned")
+            _update_work_unit(repo_root, epic_id, work_unit_id, state="abandoned")
             changed.append(_display_path(repo_root, directory / "plan.json"))
             changed.extend(_remove_paths(repo_root, check_result, executor_result))
             append_epic_event_once(
                 repo_root,
                 epic_id,
                 {
-                    "event": "story_abandoned",
+                    "event": "work_unit_abandoned",
                     "at": _now(),
                     "epic_id": epic_id,
-                    "story_id": story_id,
-                    "decision": "abandon_story",
+                    "work_unit_id": work_unit_id,
+                    "decision": "abandon_work_unit",
                 },
-                event="story_abandoned",
-                story_id=story_id,
+                event="work_unit_abandoned",
+                work_unit_id=work_unit_id,
             )
             return changed
     return changed
@@ -431,7 +431,7 @@ def _resolve_gate(repo_root: Path, epic_id: int, decision: GateDecision, tracker
         return 2
     front = _gate_front(gate)
     gate_type = front.get("type") if isinstance(front.get("type"), str) else None
-    story_id = front.get("story_id") if isinstance(front.get("story_id"), str) else None
+    work_unit_id = front.get("work_unit_id") if isinstance(front.get("work_unit_id"), str) else None
     raw_triggered_by = front.get("triggered_by")
     triggered_by = (
         [str(item) for item in raw_triggered_by if isinstance(item, str)]
@@ -444,7 +444,7 @@ def _resolve_gate(repo_root: Path, epic_id: int, decision: GateDecision, tracker
             epic_id,
             decision=decision,
             gate_type=gate_type,
-            story_id=story_id,
+            work_unit_id=work_unit_id,
             triggered_by=triggered_by,
             tracker=tracker,
         )
@@ -459,7 +459,7 @@ def _resolve_gate(repo_root: Path, epic_id: int, decision: GateDecision, tracker
     # the generic gate_resolved below is the sole audit record for those resolutions.
     emit_specific = (
         specific_event_name
-        and not (specific_event_name == "story_gate_resolved" and not story_id)
+        and not (specific_event_name == "work_unit_gate_resolved" and not work_unit_id)
         and not any(trigger in NON_APPROVING_TRIGGERS for trigger in triggered_by)
     )
     if emit_specific:
@@ -471,8 +471,8 @@ def _resolve_gate(repo_root: Path, epic_id: int, decision: GateDecision, tracker
             "gate_type": gate_type,
             "triggered_by": triggered_by,
         }
-        if story_id:
-            specific_event["story_id"] = story_id
+        if work_unit_id:
+            specific_event["work_unit_id"] = work_unit_id
         if changed_paths:
             specific_event["paths"] = changed_paths
         append_epic_event(repo_root, epic_id, specific_event)
@@ -485,8 +485,8 @@ def _resolve_gate(repo_root: Path, epic_id: int, decision: GateDecision, tracker
     }
     if gate_type:
         event["gate_type"] = gate_type
-    if story_id:
-        event["story_id"] = story_id
+    if work_unit_id:
+        event["work_unit_id"] = work_unit_id
     if changed_paths:
         event["paths"] = changed_paths
     append_epic_event(repo_root, epic_id, event)
@@ -703,10 +703,10 @@ def cmd_wf(args: argparse.Namespace) -> int:
         if args.format == "json":
             sys.stdout.write(output.model_dump_json() + "\n")
         else:
-            story = f" {output.story_id}" if output.story_id else ""
+            work_unit = f" {output.work_unit_id}" if output.work_unit_id else ""
             msg = f": {output.message}" if output.message else ""
             sys.stdout.write(
-                f"woof wf: {output.node_type.value}{story} -> {output.status.value}{msg}\n"
+                f"woof wf: {output.node_type.value}{work_unit} -> {output.status.value}{msg}\n"
             )
     return 0
 

@@ -26,13 +26,13 @@
         "plan_gate_opened",
         "plan_gate_resolved",
         "gate_resolved",
-        "story_started",
-        "story_completed",
-        "story_retried",
-        "story_abandoned",
+        "work_unit_started",
+        "work_unit_completed",
+        "work_unit_retried",
+        "work_unit_abandoned",
         "epic_abandoned",
-        "story_gate_opened",
-        "story_gate_resolved",
+        "work_unit_gate_opened",
+        "work_unit_gate_resolved",
         "review_gate_opened",
         "review_gate_resolved",
         "epic_completed",
@@ -42,7 +42,7 @@
         "review_cache_hit",
         "executor_result_recorded",
         "check_run",
-        "story_committed",
+        "work_unit_committed",
         "transaction_manifest_verified",
         "preflight_run",
         "tracker_synced",
@@ -53,7 +53,7 @@
         "cartography_refreshed",
         "token_usage"
       ],
-      "description": "Event kind. Stage events (epic.jsonl): spark_created, current_epic_selected, discovery_*, definition_*, readiness_passed, readiness_gate_opened, readiness_gate_resolved, plan_*, breakdown_planned, story_* (including story_abandoned), *_gate_*, gate_resolved, epic_completed, epic_abandoned, executor_result_recorded, check_run, story_committed, transaction_manifest_verified. story_abandoned records a story skipped via the abandon_story gate verb; epic_abandoned is the graph-owned terminal marker the abandon_epic verb writes, consulted by next_node to return an abandoned-terminal outcome (E17 P4 / D-AB). Dispatch events (dispatch.jsonl): subprocess_*. Operational events (either): preflight_run, tracker_synced, tracker_sync_conflict, wf_lock_stale_removed, cartography_refreshed, token_usage. The github_synced and github_sync_conflict values are retained as legacy aliases so epic.jsonl logs written before the ADR-003 issue-tracker abstraction still validate."
+      "description": "Event kind. Stage events (epic.jsonl): spark_created, current_epic_selected, discovery_*, definition_*, readiness_passed, readiness_gate_opened, readiness_gate_resolved, plan_*, breakdown_planned, work_unit_*, *_gate_*, gate_resolved, epic_completed, epic_abandoned, executor_result_recorded, check_run, work_unit_committed, transaction_manifest_verified. work_unit_abandoned records a work unit skipped via the abandon_work_unit gate verb; epic_abandoned is the graph-owned terminal marker the abandon_epic verb writes, consulted by next_node to return an abandoned-terminal outcome. Dispatch events (dispatch.jsonl): subprocess_*. Operational events (either): preflight_run, tracker_synced, tracker_sync_conflict, wf_lock_stale_removed, cartography_refreshed, token_usage. The github_synced and github_sync_conflict values are retained as legacy aliases so epic.jsonl logs written before the ADR-003 issue-tracker abstraction still validate."
     },
     "at": {
       "type": "string",
@@ -70,14 +70,10 @@
       "minLength": 1,
       "description": "Durable run identity carried across dispatch events and immutable attempt artefacts."
     },
-    "story_id": {
-      "type": "string",
-      "pattern": "^S[1-9]\\d*$"
-    },
     "work_unit_id": {
       "type": "string",
-      "pattern": "^S[1-9]\\d*$",
-      "description": "Work-unit identifier. During the story-to-work-unit migration this mirrors story_id for Stage-5 dispatches."
+      "pattern": "^[A-Za-z][A-Za-z0-9._-]*$",
+      "description": "Work-unit identifier, local to the work-unit aggregate."
     },
     "attempt_id": {
       "type": "string",
@@ -91,11 +87,10 @@
         "primary",
         "reviewer",
         "planner",
-        "story-executor",
         "critiquer",
         "gate-resolver"
       ],
-      "description": "Semantic role under which a subprocess was dispatched. Legacy planner/story-executor/critiquer values are retained for old audit logs."
+      "description": "Semantic role under which a subprocess was dispatched."
     },
     "harness": {
       "type": "string",
@@ -203,17 +198,17 @@
       "enum": [
         "approve",
         "approve_with_reason",
-        "retry_story",
+        "retry_work_unit",
         "revise_epic_contract",
         "revise_plan",
-        "revise_story_scope",
-        "abandon_story",
+        "revise_work_unit_scope",
+        "abandon_work_unit",
         "abandon_epic",
         "keep_local",
         "accept_remote",
         "hand_merge"
       ],
-      "description": "Gate resolution decision. approve = proceed. approve_with_reason = record audited readiness approval so the unchanged contract advances to planning without re-running the readiness node (readiness_gate only). revise_epic_contract = re-enter Stage 2. revise_plan = re-enter Stage 3. revise_story_scope = edit current story's paths or satisfies. abandon_story = skip and continue. abandon_epic = mark incomplete + close the tracker epic with a note. keep_local, accept_remote, and hand_merge resolve tracker sync-conflict gates."
+      "description": "Gate resolution decision. approve = proceed. approve_with_reason = record audited readiness approval so the unchanged contract advances to planning without re-running the readiness node (readiness_gate only). revise_epic_contract = re-enter Stage 2. revise_plan = re-enter Stage 3. revise_work_unit_scope = edit current work unit's paths or satisfies. abandon_work_unit = skip and continue. abandon_epic = mark incomplete + close the tracker epic with a note. keep_local, accept_remote, and hand_merge resolve tracker sync-conflict gates."
     },
     "cc_session_id": {
       "type": "string",
@@ -279,7 +274,7 @@
     },
     "gate_type": {
       "type": "string",
-      "enum": ["plan_gate", "story_gate", "review_gate", "readiness_gate"]
+      "enum": ["plan_gate", "work_unit_gate", "review_gate", "readiness_gate"]
     },
     "bucket": {
       "type": "string",
@@ -484,31 +479,31 @@
     },
     {
       "if": {
-        "properties": { "event": { "const": "story_started" } },
+        "properties": { "event": { "const": "work_unit_started" } },
         "required": ["event"]
       },
-      "then": { "required": ["story_id"] }
+      "then": { "required": ["work_unit_id"] }
     },
     {
       "if": {
-        "properties": { "event": { "const": "story_completed" } },
+        "properties": { "event": { "const": "work_unit_completed" } },
         "required": ["event"]
       },
-      "then": { "required": ["story_id"] }
+      "then": { "required": ["work_unit_id"] }
     },
     {
       "if": {
-        "properties": { "event": { "const": "story_retried" } },
+        "properties": { "event": { "const": "work_unit_retried" } },
         "required": ["event"]
       },
-      "then": { "required": ["story_id"] }
+      "then": { "required": ["work_unit_id"] }
     },
     {
       "if": {
-        "properties": { "event": { "const": "story_abandoned" } },
+        "properties": { "event": { "const": "work_unit_abandoned" } },
         "required": ["event"]
       },
-      "then": { "required": ["story_id"] }
+      "then": { "required": ["work_unit_id"] }
     },
     {
       "if": {
@@ -519,17 +514,17 @@
     },
     {
       "if": {
-        "properties": { "event": { "const": "story_gate_opened" } },
+        "properties": { "event": { "const": "work_unit_gate_opened" } },
         "required": ["event"]
       },
-      "then": { "required": ["story_id", "triggered_by"] }
+      "then": { "required": ["work_unit_id", "triggered_by"] }
     },
     {
       "if": {
-        "properties": { "event": { "const": "story_gate_resolved" } },
+        "properties": { "event": { "const": "work_unit_gate_resolved" } },
         "required": ["event"]
       },
-      "then": { "required": ["story_id", "decision"] }
+      "then": { "required": ["work_unit_id", "decision"] }
     },
     {
       "if": {
@@ -592,28 +587,28 @@
         "properties": { "event": { "const": "executor_result_recorded" } },
         "required": ["event"]
       },
-      "then": { "required": ["story_id", "exit_code"] }
+      "then": { "required": ["work_unit_id", "exit_code"] }
     },
     {
       "if": {
         "properties": { "event": { "const": "check_run" } },
         "required": ["event"]
       },
-      "then": { "required": ["story_id", "triggered_by"] }
+      "then": { "required": ["work_unit_id", "triggered_by"] }
     },
     {
       "if": {
-        "properties": { "event": { "const": "story_committed" } },
+        "properties": { "event": { "const": "work_unit_committed" } },
         "required": ["event"]
       },
-      "then": { "required": ["story_id", "commit_sha"] }
+      "then": { "required": ["work_unit_id", "commit_sha"] }
     },
     {
       "if": {
         "properties": { "event": { "const": "transaction_manifest_verified" } },
         "required": ["event"]
       },
-      "then": { "required": ["story_id", "manifest"] }
+      "then": { "required": ["work_unit_id", "manifest"] }
     },
     {
       "if": {

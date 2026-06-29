@@ -25,7 +25,7 @@ def _make_ctx(repo_root: Path) -> CheckContext:
     epic_dir.mkdir(parents=True)
     return CheckContext(
         epic_id=999,
-        story_id="S1",
+        work_unit_id="S1",
         repo_root=repo_root,
         epic_dir=epic_dir,
         plan={},

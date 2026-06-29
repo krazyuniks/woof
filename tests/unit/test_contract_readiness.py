@@ -188,10 +188,10 @@ def test_next_node_routes_definition_closed_to_readiness(tmp_path: Path) -> None
     """A closed definition with no readiness_passed yet routes to contract_readiness."""
     _setup_epic(tmp_path, READY_EPIC)
 
-    node, story_id = transitions.next_node(tmp_path, 1)
+    node, work_unit_id = transitions.next_node(tmp_path, 1)
 
     assert node == NodeType.CONTRACT_READINESS
-    assert story_id is None
+    assert work_unit_id is None
 
 
 def test_ready_epic_passes_and_advances_to_breakdown(tmp_path: Path) -> None:
@@ -238,7 +238,7 @@ def test_unready_epic_opens_readiness_gate(tmp_path: Path) -> None:
     front = _gate_front_matter(gate_path)
     assert front["type"] == "readiness_gate"
     assert front["stage"] == 2
-    assert front["story_id"] is None
+    assert front["work_unit_id"] is None
     assert front["triggered_by"] == ["readiness_unready"]
 
     events = _epic_events(directory)
@@ -258,14 +258,14 @@ def test_readiness_result_conforms_to_schema(tmp_path: Path, run_woof) -> None:
     assert "valid (readiness-result)" in proc.stdout
 
 
-def test_readiness_node_rejects_story_id(tmp_path: Path) -> None:
+def test_readiness_node_rejects_work_unit_id(tmp_path: Path) -> None:
     _setup_epic(tmp_path, READY_EPIC)
-    with pytest.raises(ValueError, match="does not accept story_id"):
+    with pytest.raises(ValueError, match="does not accept work_unit_id"):
         nodes.contract_readiness_node(
             NodeInput(
                 node_type=NodeType.CONTRACT_READINESS,
                 epic_id=1,
-                story_id="S1",
+                work_unit_id="S1",
                 repo_root=tmp_path,
             )
         )
@@ -1023,7 +1023,7 @@ def test_escalation_fires_at_threshold(tmp_path: Path) -> None:
     assert front["triggered_by"] == ["readiness_escalation"]
     assert front["type"] == "readiness_gate"
     assert front["stage"] == 2
-    assert front["story_id"] is None
+    assert front["work_unit_id"] is None
 
     # The opened event is still readiness_gate_opened (same event name for the
     # same gate type): consumers reading by event type are not broken.

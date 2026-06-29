@@ -12,50 +12,31 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 STANDARD_AGENTS = """\
-[roles.primary]
-adapter = "codex"
-model = "gpt-5.5"
-effort = "xhigh"
+[timeouts]
+default_minutes = 30
 
-[roles.reviewer]
-adapter = "claude"
-model = "claude-opus-4-7"
-effort = "max"
-mcp = []
+[review_valve]
+every_n_work_units = 5
+end_of_epic = true
+
+[audit]
+enabled = true
+max_bytes = 262144
+redact_patterns = []
 """
 
 AGENTS_WITH_EXECUTION_OVERLAY = """\
-model_profile = "default"
+[timeouts]
+default_minutes = 30
 
-[roles.primary]
-adapter = "codex"
+[review_valve]
+every_n_work_units = 5
+end_of_epic = true
 
-[roles.reviewer]
-adapter = "claude"
-mcp = []
-
-[routes.execution.primary]
-adapter = "claude"
-mcp = []
-
-[routes.execution.reviewer]
-adapter = "codex"
-
-[model_profiles.default.roles.primary]
-model = "gpt-5.5"
-effort = "xhigh"
-
-[model_profiles.default.roles.reviewer]
-model = "claude-opus-4-7"
-effort = "max"
-
-[model_profiles.default.routes.execution.primary]
-model = "claude-opus-4-7"
-effort = "max"
-
-[model_profiles.default.routes.execution.reviewer]
-model = "gpt-5.5"
-effort = "xhigh"
+[audit]
+enabled = true
+max_bytes = 262144
+redact_patterns = []
 """
 
 STANDARD_POLICY = """\
@@ -262,6 +243,7 @@ exit 2
 """,
     )
     _write_exe(bin_dir / "claude", 'echo "claude stub"\n')
+    _write_exe(bin_dir / "cld", 'echo "cld stub"\n')
     _write_exe(bin_dir / "codex", 'echo "codex stub"\n')
 
 
@@ -286,7 +268,7 @@ def _write_current_epic_state(root: Path) -> None:
                         "uses_contract_decisions": [],
                         "deps": [],
                         "tests": {"count": 1, "types": ["unit"]},
-                        "status": "in_progress",
+                        "state": "in_progress",
                     }
                 ],
             }
@@ -295,9 +277,9 @@ def _write_current_epic_state(root: Path) -> None:
     )
     (epic_dir / "gate.md").write_text(
         """---
-type: story_gate
+type: work_unit_gate
 stage: 6
-story_id: S1
+work_unit_id: S1
 triggered_by:
   - check_1_quality_gates
 timestamp: '2026-05-23T10:02:00Z'
@@ -311,11 +293,11 @@ Quality failed.
     (epic_dir / "epic.jsonl").write_text(
         json.dumps(
             {
-                "event": "story_gate_opened",
+                "event": "work_unit_gate_opened",
                 "at": "2026-05-23T10:02:00Z",
                 "epic_id": 5,
-                "story_id": "S1",
-                "gate_type": "story_gate",
+                "work_unit_id": "S1",
+                "gate_type": "work_unit_gate",
                 "triggered_by": ["check_1_quality_gates"],
             }
         )
@@ -327,7 +309,7 @@ Quality failed.
                 "event": "subprocess_returned",
                 "at": "2026-05-23T10:01:00Z",
                 "epic_id": 5,
-                "story_id": "S1",
+                "work_unit_id": "S1",
                 "role": "primary",
                 "adapter": "codex",
                 "model": "gpt-5.5",
@@ -344,7 +326,7 @@ Quality failed.
                 "ok": False,
                 "stage": 5,
                 "epic_id": 5,
-                "story_id": "S1",
+                "work_unit_id": "S1",
                 "triggered_by": ["check_1_quality_gates"],
                 "checks": [
                     {
@@ -444,51 +426,37 @@ timeout_seconds = 30
         "policy.run_profile.reviewer",
         "policy.check_floor",
         "policy.cartography_floor",
-        "agents.primary.route",
-        "agents.reviewer.route",
-        "agents.reviewer.mcp_config",
-        "agents.definition.primary.route",
-        "agents.definition.reviewer.route",
-        "agents.discovery.primary.route",
-        "agents.discovery.reviewer.route",
-        "agents.execution.primary.route",
-        "agents.execution.reviewer.route",
-        "agents.planning.primary.route",
-        "agents.planning.reviewer.route",
+        "policy.run_profile.producer.route",
+        "policy.run_profile.reviewer.route",
         "github.repo",
         "lsp.python.binary",
         "tree-sitter.python",
         "quality-gates.test",
     }
-    primary_route = next(
-        finding for finding in payload["findings"] if finding["id"] == "agents.primary.route"
+    producer_route = next(
+        finding
+        for finding in payload["findings"]
+        if finding["id"] == "policy.run_profile.producer.route"
     )
-    assert "runtime=trusted-local" in primary_route["detail"]
-    assert primary_route["required"] == (
-        "explicit adapter, model, effort, and runtime-mode disclosure"
+    assert "runtime=trusted-local" in producer_route["detail"]
+    assert producer_route["required"] == (
+        "explicit harness, model, effort, and runtime-mode disclosure"
     )
-    assert primary_route["notes"] == [
+    assert producer_route["notes"] == [
         "trusted-local runtime: Woof dispatches subscription CLIs through tmux_harness; "
         "commit safety is enforced through deterministic checks, reviewer critique, human gates, "
         "transaction manifests, and commit decisions"
     ]
-    execution_primary = next(
+    reviewer_route = next(
         finding
         for finding in payload["findings"]
-        if finding["id"] == "agents.execution.primary.route"
+        if finding["id"] == "policy.run_profile.reviewer.route"
     )
-    assert execution_primary["ok"] is True
-    assert "adapter=claude" in execution_primary["detail"]
-    execution_reviewer = next(
-        finding
-        for finding in payload["findings"]
-        if finding["id"] == "agents.execution.reviewer.route"
-    )
-    assert execution_reviewer["ok"] is True
-    assert "adapter=codex" in execution_reviewer["detail"]
+    assert reviewer_route["ok"] is True
+    assert "harness=claude" in reviewer_route["detail"]
 
 
-def test_preflight_fails_for_unresolvable_node_group(tmp_path: Path, run_woof) -> None:
+def test_preflight_fails_for_missing_policy_producer_slot(tmp_path: Path, run_woof) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     _stub_core_tools(bin_dir)
@@ -513,13 +481,16 @@ ajv-formats = "any"
 kind = "github"
 repo = "example/project"
 """,
-        agents="""\
-[roles.reviewer]
-adapter = "claude"
-model = "claude-opus-4-7"
-effort = "max"
-mcp = []
+        policy=STANDARD_POLICY.replace(
+            """\
+[run_profiles.default.producer]
+harness = "codex"
+model = "gpt-5.5"
+effort = "xhigh"
+
 """,
+            "",
+        ),
     )
 
     proc = run_woof(
@@ -534,17 +505,15 @@ mcp = []
     assert proc.returncode == 1
     payload = json.loads(proc.stdout)
     finding_ids = {f["id"] for f in payload["findings"]}
-    assert "agents.primary.route" in finding_ids
-    assert "agents.execution.primary.route" in finding_ids
-    primary = next(f for f in payload["findings"] if f["id"] == "agents.primary.route")
-    assert primary["ok"] is False
-    exec_primary = next(
-        f for f in payload["findings"] if f["id"] == "agents.execution.primary.route"
-    )
-    assert exec_primary["ok"] is False
+    assert "policy.run_profile.producer" in finding_ids
+    assert "policy.run_profile.producer.route" in finding_ids
+    producer = next(f for f in payload["findings"] if f["id"] == "policy.run_profile.producer")
+    assert producer["ok"] is False
+    route = next(f for f in payload["findings"] if f["id"] == "policy.run_profile.producer.route")
+    assert route["ok"] is False
 
 
-def test_preflight_passes_with_all_node_groups_resolved(tmp_path: Path, run_woof) -> None:
+def test_preflight_passes_with_policy_run_profile_resolved(tmp_path: Path, run_woof) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     _stub_core_tools(bin_dir)
@@ -584,75 +553,14 @@ repo = "example/project"
     assert proc.returncode == 0, proc.stderr + proc.stdout
     payload = json.loads(proc.stdout)
     finding_ids = {f["id"] for f in payload["findings"]}
-    expected_group_ids = {
-        f"agents.{group}.{role}.route"
-        for group in ("discovery", "definition", "planning", "execution")
-        for role in ("primary", "reviewer")
+    expected_ids = {
+        "policy.run_profile.producer.route",
+        "policy.run_profile.reviewer.route",
     }
-    assert expected_group_ids <= finding_ids
-    for fid in expected_group_ids:
+    assert expected_ids <= finding_ids
+    for fid in expected_ids:
         finding = next(f for f in payload["findings"] if f["id"] == fid)
         assert finding["ok"] is True, f"{fid} should pass: {finding['detail']}"
-
-
-def test_preflight_validates_grouped_claude_mcp_route(tmp_path: Path, run_woof) -> None:
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    _stub_core_tools(bin_dir)
-    _write_exe(bin_dir / "npx", 'echo "npx 10.0.0"\n')
-
-    agents = (
-        AGENTS_WITH_EXECUTION_OVERLAY.replace(
-            '[routes.execution.primary]\nadapter = "claude"\nmcp = []\n',
-            '[routes.execution.primary]\nadapter = "claude"\nmcp = ["exec-mcp"]\n',
-        )
-        + """
-[mcp_servers.exec-mcp]
-command = "npx"
-args = ["-y", "exec-mcp@latest"]
-"""
-    )
-    _write_ready_project(
-        tmp_path,
-        prerequisites="""\
-[infra]
-just = "any"
-git = "any"
-gh = "any"
-
-[commands]
-claude = "any"
-codex = "any"
-
-[validators]
-ajv = "any"
-ajv-formats = "any"
-
-[tracker]
-kind = "github"
-repo = "example/project"
-""",
-        agents=agents,
-    )
-
-    proc = run_woof(
-        "preflight",
-        "--project-root",
-        str(tmp_path),
-        "--format",
-        "json",
-        env=_env_with_path(bin_dir),
-    )
-
-    assert proc.returncode == 0, proc.stderr + proc.stdout
-    payload = json.loads(proc.stdout)
-    finding_ids = {f["id"] for f in payload["findings"]}
-    assert "agents.execution.primary.mcp_config" in finding_ids
-    assert "agents.execution.primary.mcp.exec-mcp" in finding_ids
-    mcp_server = next(
-        f for f in payload["findings"] if f["id"] == "agents.execution.primary.mcp.exec-mcp"
-    )
-    assert mcp_server["ok"] is True
 
 
 def test_preflight_agents_template_matches_init_template() -> None:
@@ -662,66 +570,7 @@ def test_preflight_agents_template_matches_init_template() -> None:
     assert _agents_template() == f"Create .woof/agents.toml, for example:\n{AGENTS_TEMPLATE}"
 
 
-def test_preflight_validates_named_mcp_route(tmp_path: Path, run_woof) -> None:
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    _stub_core_tools(bin_dir)
-    _write_exe(bin_dir / "npx", 'echo "npx 10.0.0"\n')
-
-    agents = (
-        STANDARD_AGENTS.replace("mcp = []\n", 'mcp = ["chrome-devtools"]\n')
-        + """
-[mcp_servers.chrome-devtools]
-command = "npx"
-args = ["-y", "chrome-devtools-mcp@latest"]
-"""
-    )
-    _write_ready_project(
-        tmp_path,
-        prerequisites="""\
-[infra]
-just = "any"
-git = "any"
-gh = "any"
-
-[commands]
-claude = "any"
-codex = "any"
-
-[validators]
-ajv = "any"
-ajv-formats = "any"
-
-[tracker]
-kind = "github"
-repo = "example/project"
-""",
-        agents=agents,
-    )
-
-    proc = run_woof(
-        "preflight",
-        "--project-root",
-        str(tmp_path),
-        "--format",
-        "json",
-        env=_env_with_path(bin_dir),
-    )
-
-    assert proc.returncode == 0, proc.stderr + proc.stdout
-    payload = json.loads(proc.stdout)
-    assert {
-        "agents.reviewer.route",
-        "agents.reviewer.mcp_config",
-        "agents.reviewer.mcp.chrome-devtools",
-    } <= {finding["id"] for finding in payload["findings"]}
-    mcp = next(
-        finding for finding in payload["findings"] if finding["id"] == "agents.reviewer.mcp_config"
-    )
-    assert '"chrome-devtools"' in mcp["detail"]
-
-
-def test_preflight_fails_for_incomplete_role_route(tmp_path: Path, run_woof) -> None:
+def test_preflight_fails_for_incomplete_policy_run_profile(tmp_path: Path, run_woof) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     _stub_core_tools(bin_dir)
@@ -746,17 +595,7 @@ ajv-formats = "any"
 kind = "github"
 repo = "example/project"
 """,
-        agents="""\
-[roles.primary]
-adapter = "codex"
-model = "gpt-5.5"
-
-[roles.reviewer]
-adapter = "claude"
-model = "claude-opus-4-7"
-effort = "max"
-mcp = []
-""",
+        policy=STANDARD_POLICY.replace('effort = "xhigh"\n', ""),
     )
 
     proc = run_woof(
@@ -770,14 +609,16 @@ mcp = []
 
     assert proc.returncode == 1
     payload = json.loads(proc.stdout)
-    primary = next(
-        finding for finding in payload["findings"] if finding["id"] == "agents.primary.route"
+    producer = next(
+        finding
+        for finding in payload["findings"]
+        if finding["id"] == "policy.run_profile.producer.route"
     )
-    assert primary["ok"] is False
-    assert "effort is not declared" in primary["detail"]
+    assert producer["ok"] is False
+    assert "effort is not declared" in producer["detail"]
 
 
-def test_preflight_requires_agents_toml(tmp_path: Path, run_woof) -> None:
+def test_preflight_allows_missing_agents_toml(tmp_path: Path, run_woof) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     _stub_core_tools(bin_dir)
@@ -814,11 +655,10 @@ repo = "example/project"
         env=_env_with_path(bin_dir),
     )
 
-    assert proc.returncode == 1
+    assert proc.returncode == 0, proc.stderr + proc.stdout
     payload = json.loads(proc.stdout)
-    agents = next(finding for finding in payload["findings"] if finding["id"] == "agents.config")
-    assert agents["ok"] is False
-    assert "agents.toml" in agents["detail"]
+    assert payload["ok"] is True
+    assert "config.agents" not in {finding["id"] for finding in payload["findings"]}
 
 
 def test_preflight_requires_policy_toml(tmp_path: Path, run_woof) -> None:
@@ -1245,8 +1085,8 @@ repo = "example/project"
 
     assert proc.returncode == 0, proc.stderr + proc.stdout
     payload = json.loads(proc.stdout)
-    primary = next(f for f in payload["findings"] if f["id"] == "agents.primary.auth")
-    reviewer = next(f for f in payload["findings"] if f["id"] == "agents.reviewer.auth")
+    primary = next(f for f in payload["findings"] if f["id"] == "policy.run_profile.producer.auth")
+    reviewer = next(f for f in payload["findings"] if f["id"] == "policy.run_profile.reviewer.auth")
     assert primary["ok"] is True
     assert "ANTHROPIC_API_KEY" not in primary["detail"]
     assert "OPENAI_API_KEY" in primary["detail"]
@@ -1311,8 +1151,8 @@ repo = "example/project"
 
     assert proc.returncode == 0, proc.stderr + proc.stdout
     payload = json.loads(proc.stdout)
-    primary = next(f for f in payload["findings"] if f["id"] == "agents.primary.auth")
-    reviewer = next(f for f in payload["findings"] if f["id"] == "agents.reviewer.auth")
+    primary = next(f for f in payload["findings"] if f["id"] == "policy.run_profile.producer.auth")
+    reviewer = next(f for f in payload["findings"] if f["id"] == "policy.run_profile.reviewer.auth")
     assert primary["ok"] is True
     assert str(codex_home / "auth.json") in primary["detail"]
     assert reviewer["ok"] is True
@@ -1370,171 +1210,14 @@ repo = "example/project"
 
     assert proc.returncode == 1
     payload = json.loads(proc.stdout)
-    primary = next(f for f in payload["findings"] if f["id"] == "agents.primary.auth")
-    reviewer = next(f for f in payload["findings"] if f["id"] == "agents.reviewer.auth")
+    primary = next(f for f in payload["findings"] if f["id"] == "policy.run_profile.producer.auth")
+    reviewer = next(f for f in payload["findings"] if f["id"] == "policy.run_profile.reviewer.auth")
     assert primary["ok"] is False
     assert "codex dispatch will fail" in primary["detail"]
     assert primary["install"] == "codex login"
     assert reviewer["ok"] is False
     assert "claude dispatch will fail" in reviewer["detail"]
     assert reviewer["install"] == "claude /login"
-
-
-def test_preflight_fails_when_group_route_adapter_auth_missing(tmp_path: Path, run_woof) -> None:
-    """An adapter introduced only via a group route fails auth when credentials absent."""
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    _stub_core_tools(bin_dir)
-
-    empty_home = tmp_path / "empty-home"
-    empty_home.mkdir()
-
-    _write_ready_project(
-        tmp_path,
-        prerequisites="""\
-[infra]
-just = "any"
-git = "any"
-gh = "any"
-
-[commands]
-claude = "any"
-codex = "any"
-
-[validators]
-ajv = "any"
-ajv-formats = "any"
-
-[tracker]
-kind = "github"
-repo = "example/project"
-""",
-        agents="""\
-model_profile = "default"
-
-[roles.primary]
-adapter = "codex"
-
-[roles.reviewer]
-adapter = "codex"
-
-[routes.execution.primary]
-adapter = "claude"
-mcp = []
-
-[model_profiles.default.roles.primary]
-model = "gpt-5.5"
-effort = "xhigh"
-
-[model_profiles.default.roles.reviewer]
-model = "gpt-5.5"
-effort = "xhigh"
-
-[model_profiles.default.routes.execution.primary]
-model = "claude-opus-4-7"
-effort = "max"
-""",
-    )
-
-    env = _env_with_path(
-        bin_dir,
-        {
-            "CLAUDE_CONFIG_DIR": str(empty_home),
-            "CODEX_HOME": str(empty_home),
-        },
-    )
-    env.pop("ANTHROPIC_API_KEY", None)
-    env.pop("OPENAI_API_KEY", None)
-
-    proc = run_woof(
-        "preflight",
-        "--project-root",
-        str(tmp_path),
-        "--format",
-        "json",
-        env=env,
-    )
-
-    assert proc.returncode == 1
-    payload = json.loads(proc.stdout)
-    finding_ids = {f["id"] for f in payload["findings"]}
-    assert "agents.execution.primary.auth" in finding_ids
-    exec_auth = next(f for f in payload["findings"] if f["id"] == "agents.execution.primary.auth")
-    assert exec_auth["ok"] is False
-    assert "claude dispatch will fail" in exec_auth["detail"]
-    assert exec_auth["install"] == "claude /login"
-    # Codex auth (from base roles) is checked under base-role IDs
-    assert "agents.primary.auth" in finding_ids
-
-
-def test_preflight_passes_when_group_route_adapter_auth_present(tmp_path: Path, run_woof) -> None:
-    """An adapter introduced only via a group route passes auth when credentials present."""
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    _stub_core_tools(bin_dir)
-
-    _write_ready_project(
-        tmp_path,
-        prerequisites="""\
-[infra]
-just = "any"
-git = "any"
-gh = "any"
-
-[commands]
-claude = "any"
-codex = "any"
-
-[validators]
-ajv = "any"
-ajv-formats = "any"
-
-[tracker]
-kind = "github"
-repo = "example/project"
-""",
-        agents="""\
-model_profile = "default"
-
-[roles.primary]
-adapter = "codex"
-
-[roles.reviewer]
-adapter = "codex"
-
-[routes.execution.primary]
-adapter = "claude"
-mcp = []
-
-[model_profiles.default.roles.primary]
-model = "gpt-5.5"
-effort = "xhigh"
-
-[model_profiles.default.roles.reviewer]
-model = "gpt-5.5"
-effort = "xhigh"
-
-[model_profiles.default.routes.execution.primary]
-model = "claude-opus-4-7"
-effort = "max"
-""",
-    )
-
-    proc = run_woof(
-        "preflight",
-        "--project-root",
-        str(tmp_path),
-        "--format",
-        "json",
-        env=_env_with_path(bin_dir),
-    )
-
-    assert proc.returncode == 0, proc.stderr + proc.stdout
-    payload = json.loads(proc.stdout)
-    finding_ids = {f["id"] for f in payload["findings"]}
-    assert "agents.execution.primary.auth" in finding_ids
-    exec_auth = next(f for f in payload["findings"] if f["id"] == "agents.execution.primary.auth")
-    assert exec_auth["ok"] is True
 
 
 def test_preflight_flags_non_executable_cartography_script(tmp_path: Path, run_woof) -> None:
@@ -1893,10 +1576,10 @@ kind = "local"
     state = payload["operator_state"]
     assert state["current_epic"]["epic_id"] == 5
     assert state["runtime_policy"]["mode"] == "trusted-local"
-    assert state["dispatch_routes"]["roles"]["primary"]["adapter"] == "codex"
+    assert state["dispatch_routes"]["roles"]["producer"]["adapter"] == "codex"
     assert state["epic"]["next"] == {
         "node": "human_review",
-        "story_id": None,
+        "work_unit_id": None,
         "reason": "gate_open",
     }
     assert state["epic"]["next_action"]["command"] == "woof wf --epic 5 --resolve <decision>"
@@ -1946,9 +1629,9 @@ kind = "local"
     assert "Operator state:" in proc.stdout
     assert "current_epic: E5 selected=true valid=true epic_dir_exists=true" in proc.stdout
     assert "runtime_policy: trusted-local" in proc.stdout
-    assert "primary: adapter=codex model=gpt-5.5 effort=xhigh" in proc.stdout
+    assert "producer: adapter=codex model=gpt-5.5 effort=xhigh" in proc.stdout
     assert "next_action: resolve_gate command=woof wf --epic 5 --resolve <decision>" in proc.stdout
-    assert "gate: open type=story_gate story=S1 cause=check_1_quality_gates" in proc.stdout
+    assert "gate: open type=work_unit_gate work_unit=S1 cause=check_1_quality_gates" in proc.stdout
     assert "checks: FAIL total=1 failed=1 triggered_by=check_1_quality_gates" in proc.stdout
     assert "audit_pointers: epic_jsonl=.woof/epics/E5/epic.jsonl" in proc.stdout
 

@@ -211,8 +211,8 @@
       "properties": {
         "harness": {
           "type": "string",
-          "enum": ["claude", "codex", "cld", "cod"],
-          "description": "Subscription CLI harness slot. Legacy cld/cod spellings are accepted as migration input."
+          "minLength": 1,
+          "description": "Subscription CLI harness slot. The dispatch harness registry owns the accepted identifiers."
         },
         "model": {
           "type": "string",
@@ -220,7 +220,8 @@
         },
         "effort": {
           "type": "string",
-          "enum": ["low", "medium", "high", "xhigh", "max"]
+          "minLength": 1,
+          "description": "Harness-specific reasoning effort. The dispatch harness registry owns the accepted levels."
         },
         "notes": {
           "type": "string"

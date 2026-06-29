@@ -18,7 +18,6 @@ import sys
 import tempfile
 import tomllib
 import uuid
-from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -32,24 +31,11 @@ from woof.lib.error_signature import normalise as _normalise_error_sig
 from woof.lib.rate_limit import classify as _classify_rate_limit
 from woof.paths import schema_dir
 
-ADAPTERS = {"claude", "codex"}
-EFFORTS = {"low", "medium", "high", "xhigh", "max"}
-CODEX_EFFORTS = {"low", "medium", "high", "xhigh"}
 DEFAULT_TIMEOUT_MINUTES = 30
 DEFAULT_IDLE_SECONDS = 600.0
 DEFAULT_COMPLETION_GRACE_SECONDS = 60.0
 DEFAULT_COMPLETION_TAIL_CAP_SECONDS = 120.0
-LEGACY_HARNESS_TO_ADAPTER = {"cld": "claude", "cod": "codex", "in-session": "in-session"}
-LEGACY_ROLE_ALIASES = {
-    "planner": "primary",
-    "story-executor": "primary",
-    "critiquer": "reviewer",
-}
-ROLE_CONFIG_FALLBACKS = {
-    "primary": ("primary", "story-executor", "planner"),
-    "reviewer": ("reviewer", "critiquer"),
-}
-STORY_ID_RE = re.compile(r"^S[1-9]\d*$")
+WORK_UNIT_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9._-]*$")
 AUDIT_COMPONENT_RE = re.compile(r"[^A-Za-z0-9_-]+")
 AGENTS_SCHEMA_PATH = schema_dir() / "agents.schema.json"
 TRUSTED_RUNTIME_MODE = "trusted-local"
@@ -60,13 +46,7 @@ TRUSTED_RUNTIME_NOTE = (
     "commit safety is enforced through deterministic checks, reviewer critique, "
     "human gates, transaction manifests, and commit decisions"
 )
-POLICY_ROLE_SLOTS = {
-    "primary": "producer",
-    "planner": "producer",
-    "story-executor": "producer",
-    "reviewer": "reviewer",
-    "critiquer": "reviewer",
-}
+POLICY_ROLE_SLOTS = {"primary": "producer", "reviewer": "reviewer"}
 REVIEW_PROMPT_VERSION_PREFIX = "sha256:"
 
 
@@ -149,119 +129,6 @@ def _relpath(repo_root: Path, path: Path) -> str:
     return path.relative_to(repo_root).as_posix()
 
 
-def parse_claude_output(stdout: str) -> tuple[dict, str | None]:
-    """Extract token usage and session_id from ``claude -p --output-format json``."""
-    lines = [ln for ln in stdout.strip().splitlines() if ln.strip()]
-    if not lines:
-        return {}, None
-    try:
-        data = json.loads(lines[-1])
-    except json.JSONDecodeError:
-        return {}, None
-    if not isinstance(data, dict):
-        return {}, None
-    usage = data.get("usage") or {}
-    tokens = {
-        "tokens_in": int(usage.get("input_tokens", 0) or 0),
-        "tokens_out": int(usage.get("output_tokens", 0) or 0),
-        "cache_read_tokens": int(usage.get("cache_read_input_tokens", 0) or 0),
-        "cache_write_tokens": int(usage.get("cache_creation_input_tokens", 0) or 0),
-    }
-    return tokens, data.get("session_id")
-
-
-def is_claude_terminal_line(line: str) -> bool:
-    """Return true for Claude's final ``--output-format json`` result line."""
-    try:
-        data = json.loads(line.strip())
-    except json.JSONDecodeError:
-        return False
-    if not isinstance(data, dict):
-        return False
-    return data.get("type") == "result"
-
-
-def parse_codex_output(stdout: str) -> tuple[dict, str | None]:
-    """Sum token usage across ``turn.completed`` events from ``codex exec --json``."""
-    tokens_in = tokens_out = cache_read = 0
-    saw_turn = False
-    thread_id: str | None = None
-    for raw in stdout.splitlines():
-        line = raw.strip()
-        if not line:
-            continue
-        try:
-            evt = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(evt, dict):
-            continue
-        kind = evt.get("type")
-        if kind == "thread.started":
-            thread_id = evt.get("thread_id")
-        elif kind == "turn.completed":
-            saw_turn = True
-            usage = evt.get("usage") or {}
-            tokens_in += int(usage.get("input_tokens", 0) or 0)
-            tokens_out += int(usage.get("output_tokens", 0) or 0)
-            tokens_out += int(usage.get("reasoning_output_tokens", 0) or 0)
-            cache_read += int(usage.get("cached_input_tokens", 0) or 0)
-    if not saw_turn:
-        return {}, thread_id
-    return {
-        "tokens_in": tokens_in,
-        "tokens_out": tokens_out,
-        "cache_read_tokens": cache_read,
-    }, thread_id
-
-
-def is_codex_terminal_line(line: str) -> bool:
-    """Return true for Codex's terminal ``turn.completed`` JSON event."""
-    try:
-        data = json.loads(line.strip())
-    except json.JSONDecodeError:
-        return False
-    if not isinstance(data, dict):
-        return False
-    return data.get("type") == "turn.completed"
-
-
-def terminal_detector(adapter: str):
-    if adapter == "claude":
-        return is_claude_terminal_line
-    if adapter == "codex":
-        return is_codex_terminal_line
-    raise DispatchConfigError(f"cannot detect terminal marker for adapter {adapter!r}")
-
-
-def count_codex_command_executions(stdout: str) -> int:
-    """Count completed shell-command tool calls in ``codex exec --json`` output."""
-    count = 0
-    seen_ids: set[str] = set()
-    for raw in stdout.splitlines():
-        line = raw.strip()
-        if not line:
-            continue
-        try:
-            evt = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(evt, dict):
-            continue
-        if evt.get("type") != "item.completed":
-            continue
-        item = evt.get("item")
-        if not isinstance(item, dict) or item.get("type") != "command_execution":
-            continue
-        item_id = item.get("id")
-        if isinstance(item_id, str) and item_id:
-            if item_id in seen_ids:
-                continue
-            seen_ids.add(item_id)
-        count += 1
-    return count
-
-
 def artefacts_byte_count(repo_root: Path, artefacts_loaded: list[str]) -> int:
     """Return the current byte size of explicitly audited repo artefacts."""
     total = 0
@@ -270,248 +137,16 @@ def artefacts_byte_count(repo_root: Path, artefacts_loaded: list[str]) -> int:
     return total
 
 
-def _adapter_from_role_config(role_name: str, role: dict[str, Any]) -> str:
-    raw = role.get("adapter", role.get("harness"))
-    if raw is None:
-        raise DispatchConfigError(
-            f"role '{role_name}' must declare adapter='claude|codex' or a legacy harness to migrate"
-        )
-    adapter = LEGACY_HARNESS_TO_ADAPTER.get(str(raw), str(raw))
-    if adapter not in {*ADAPTERS, "in-session"}:
-        raise DispatchConfigError(
-            f"role '{role_name}' resolves unsupported adapter {raw!r}; "
-            "expected 'claude', 'codex', or 'in-session'"
-        )
-    return adapter
-
-
-def _canonical_role(requested_role: str) -> str:
-    """Return the canonical primary/reviewer name for a requested or legacy role."""
-    return LEGACY_ROLE_ALIASES.get(requested_role, requested_role)
-
-
-def resolve_role_route(
-    roles: dict[str, Any],
-    requested_role: str,
-    *,
-    route_key: str | None = None,
-    routes: dict[str, Any] | None = None,
-) -> RoleRoute:
-    """Resolve a semantic role to a configured public adapter route.
-
-    When ``route_key`` names a node group with a declared override in
-    ``routes.<group>.<role>``, that override wins over the base ``[roles.*]``
-    default. Otherwise the base fallback chain resolves the route. The
-    ``route_key`` is recorded on the returned route either way, including on
-    fallback, so dispatch audit can attribute the route to its node group.
-    Group routes use only the canonical ``primary``/``reviewer`` keys.
-    """
-    if route_key and route_key not in NODE_GROUPS:
-        raise DispatchConfigError(
-            f"unknown route_key {route_key!r}; valid groups: {sorted(NODE_GROUPS)}"
-        )
-    if route_key and route_key in NODE_GROUPS and isinstance(routes, dict):
-        group = routes.get(route_key)
-        if isinstance(group, dict):
-            canonical = _canonical_role(requested_role)
-            override = group.get(canonical)
-            if isinstance(override, dict):
-                return RoleRoute(
-                    requested_role=requested_role,
-                    config_role=canonical,
-                    adapter=_adapter_from_role_config(canonical, override),
-                    config=override,
-                    route_key=route_key,
-                )
-
-    candidates = ROLE_CONFIG_FALLBACKS.get(requested_role, (requested_role,))
-    if requested_role in LEGACY_ROLE_ALIASES:
-        candidates = (requested_role, LEGACY_ROLE_ALIASES[requested_role])
-
-    for config_role in candidates:
-        role = roles.get(config_role)
-        if isinstance(role, dict):
-            return RoleRoute(
-                requested_role=requested_role,
-                config_role=config_role,
-                adapter=_adapter_from_role_config(config_role, role),
-                config=role,
-                route_key=route_key,
-            )
-
-    if requested_role in LEGACY_ROLE_ALIASES:
-        semantic_role = LEGACY_ROLE_ALIASES[requested_role]
-        raise DispatchConfigError(
-            f"legacy role '{requested_role}' is not declared; configure "
-            f"[roles.{semantic_role}] or keep a legacy [roles.{requested_role}] entry"
-        )
-
-    if requested_role in ROLE_CONFIG_FALLBACKS:
-        fallbacks = ", ".join(f"[roles.{name}]" for name in candidates)
-        raise DispatchConfigError(
-            f"role '{requested_role}' not declared; expected one of {fallbacks}"
-        )
-
-    raise DispatchConfigError(f"role '{requested_role}' not declared")
-
-
-def selected_model_profile(
-    agents: dict[str, Any],
-    *,
-    env: Mapping[str, str] | None = None,
-) -> str | None:
-    """Return the selected model profile from env or agents.toml."""
-
-    env_map = os.environ if env is None else env
-    env_value = env_map.get(MODEL_PROFILE_ENV)
-    if env_value is not None and env_value.strip():
-        return env_value.strip()
-
-    configured = agents.get("model_profile")
-    if configured is None:
-        return None
-    configured = str(configured).strip()
-    return configured or None
-
-
-def resolve_agent_route(
-    agents: dict[str, Any],
-    requested_role: str,
-    *,
-    model_profile: str | None = None,
-    route_key: str | None = None,
-) -> RoleRoute:
-    """Resolve a role route after applying node-group overlays and the model profile.
-
-    Resolution order, most specific first:
-
-    1. ``[routes.<group>.<role>]`` adapter override for the dispatch ``route_key``.
-    2. ``[roles.<role>]`` base route default.
-
-    A selected ``[model_profiles.<profile>]`` then overlays model/effort/flags. Its
-    ``routes.<group>.<role>`` entry wins over its ``roles.<role>`` entry for the same
-    ``route_key``. The resolved adapter is read from the merged config so effort
-    validity is checked against the adapter that will actually run.
-    """
-
-    roles = agents.get("roles") or {}
-    if not isinstance(roles, dict):
-        raise DispatchConfigError("roles table is not an object")
-
-    routes = agents.get("routes") or {}
-    if not isinstance(routes, dict):
-        raise DispatchConfigError("routes table is not an object")
-
-    route = resolve_role_route(roles, requested_role, route_key=route_key, routes=routes)
-    profile_name = model_profile if model_profile is not None else selected_model_profile(agents)
-    if not profile_name:
-        return route
-
-    profiles = agents.get("model_profiles") or {}
-    if not isinstance(profiles, dict):
-        raise DispatchConfigError("model_profiles table is not an object")
-    profile = profiles.get(profile_name)
-    if not isinstance(profile, dict):
-        raise DispatchConfigError(
-            f"model profile {profile_name!r} is not declared in .woof/agents.toml"
-        )
-
-    profile_role_name, profile_role = _resolve_profile_overlay(
-        profile, route, profile_name=profile_name
-    )
-    if profile_role is None:
-        return RoleRoute(
-            requested_role=route.requested_role,
-            config_role=route.config_role,
-            adapter=route.adapter,
-            config=route.config,
-            model_profile=profile_name,
-            profile_role=None,
-            route_key=route.route_key,
-        )
-
-    config = {**route.config, **profile_role}
-    adapter = _adapter_from_role_config(route.config_role, config)
-    return RoleRoute(
-        requested_role=route.requested_role,
-        config_role=route.config_role,
-        adapter=adapter,
-        config=config,
-        model_profile=profile_name,
-        profile_role=profile_role_name,
-        route_key=route.route_key,
-    )
-
-
-def _resolve_profile_overlay(
-    profile: dict[str, Any],
-    route: RoleRoute,
-    *,
-    profile_name: str,
-) -> tuple[str | None, dict[str, Any] | None]:
-    """Select the model-profile overlay for a route, group entry first.
-
-    Checks ``profile.routes.<route_key>.<role>`` before the base
-    ``profile.roles.<role>`` table. Returns ``(name, config)`` for the most
-    specific declared overlay, or ``(None, None)`` when the profile declares no
-    entry for this route.
-    """
-    route_key = route.route_key
-    if route_key and route_key in NODE_GROUPS:
-        profile_routes = profile.get("routes") or {}
-        if not isinstance(profile_routes, dict):
-            raise DispatchConfigError(
-                f"model profile {profile_name!r} routes table is not an object"
-            )
-        group = profile_routes.get(route_key)
-        if isinstance(group, dict):
-            canonical = _canonical_role(route.requested_role)
-            override = group.get(canonical)
-            if override is not None:
-                if not isinstance(override, dict):
-                    raise DispatchConfigError(
-                        f"model profile {profile_name!r} route "
-                        f"{route_key}.{canonical} is not an object"
-                    )
-                return canonical, override
-
-    profile_roles = profile.get("roles") or {}
-    if not isinstance(profile_roles, dict):
-        raise DispatchConfigError(f"model profile {profile_name!r} roles table is not an object")
-    profile_role_name = _select_profile_role_name(profile_roles, route)
-    if profile_role_name is None:
-        return None, None
-    profile_role = profile_roles.get(profile_role_name)
-    if not isinstance(profile_role, dict):
-        raise DispatchConfigError(
-            f"model profile {profile_name!r} role {profile_role_name!r} is not an object"
-        )
-    return profile_role_name, profile_role
-
-
-def _select_profile_role_name(profile_roles: dict[str, Any], route: RoleRoute) -> str | None:
-    candidates = [route.requested_role, route.config_role]
-    alias = LEGACY_ROLE_ALIASES.get(route.requested_role)
-    if alias:
-        candidates.append(alias)
-    for candidate in candidates:
-        if candidate in profile_roles:
-            return candidate
-    return None
-
-
 def _role_effort(adapter: str, role: dict[str, Any]) -> str | None:
     effort = role.get("effort")
     if effort is None:
         return None
     effort = str(effort)
-    if effort not in EFFORTS:
+    profile = get_profile(adapter)
+    if profile.effort_levels and effort not in profile.effort_levels:
         raise DispatchConfigError(
-            f"{adapter} effort {effort!r} is not supported; expected one of {sorted(EFFORTS)}"
-        )
-    if adapter == "codex" and effort not in CODEX_EFFORTS:
-        raise DispatchConfigError(
-            f"Codex effort {effort!r} is not supported; use low, medium, high, or xhigh"
+            f"{profile.name} effort {effort!r} is not supported; "
+            f"expected one of {sorted(profile.effort_levels)}"
         )
     return effort
 
@@ -526,7 +161,7 @@ def _policy_route(repo_root: Path, requested_role: str, route_key: str | None) -
     slot_name = POLICY_ROLE_SLOTS.get(requested_role)
     if slot_name is None:
         return None
-    profile_name = policy.get("default_run_profile")
+    profile_name = os.environ.get(MODEL_PROFILE_ENV) or policy.get("default_run_profile")
     profiles = policy.get("run_profiles") or {}
     if not isinstance(profile_name, str) or not isinstance(profiles, dict):
         raise DispatchConfigError("policy default_run_profile and run_profiles must be declared")
@@ -608,139 +243,6 @@ def dispatch_timeouts(agents: dict[str, Any]) -> DispatchTimeouts:
         completion_grace_seconds=completion_grace_seconds,
         completion_tail_cap_seconds=completion_tail_cap_seconds,
     )
-
-
-def _mcp_names(role: dict[str, Any]) -> list[str]:
-    return [str(name) for name in role.get("mcp") or []]
-
-
-def _validate_portable_mcp_value(value: str, *, context: str) -> None:
-    if (
-        value.startswith("/")
-        or value.startswith("~/.dotfiles")
-        or "/.dotfiles" in value
-        or "/agent-sync" in value
-    ):
-        raise DispatchConfigError(
-            f"MCP server {context} uses host-specific path {value!r}; "
-            "use a PATH command, project-relative path, or portable home-relative path"
-        )
-
-
-def _normalise_mcp_server(name: str, server: dict[str, Any]) -> dict[str, Any]:
-    command = str(server["command"])
-    if command in {"cld", "cod", "agent-sync"}:
-        raise DispatchConfigError(
-            f"MCP server {name!r} uses private/local command {command!r}; use a public command"
-        )
-    _validate_portable_mcp_value(command, context=f"{name}.command")
-
-    rendered: dict[str, Any] = {"command": command}
-    args = [str(arg) for arg in server.get("args") or []]
-    for index, arg in enumerate(args):
-        _validate_portable_mcp_value(arg, context=f"{name}.args[{index}]")
-    if args:
-        rendered["args"] = args
-
-    env = {str(key): str(value) for key, value in (server.get("env") or {}).items()}
-    for key, value in env.items():
-        _validate_portable_mcp_value(value, context=f"{name}.env.{key}")
-    if env:
-        rendered["env"] = env
-
-    cwd = server.get("cwd")
-    if cwd is not None:
-        cwd = str(cwd)
-        _validate_portable_mcp_value(cwd, context=f"{name}.cwd")
-        rendered["cwd"] = cwd
-    return rendered
-
-
-def _claude_mcp_config(role: dict[str, Any], mcp_servers: dict[str, Any] | None = None) -> str:
-    mcp = role.get("mcp") or []
-    if mcp and mcp_servers is None:
-        raise DispatchConfigError(
-            "role declares MCP servers but no top-level mcp_servers table was loaded"
-        )
-    rendered: dict[str, Any] = {}
-    for name in _mcp_names(role):
-        raw = (mcp_servers or {}).get(name)
-        if not isinstance(raw, dict):
-            raise DispatchConfigError(
-                f"role references MCP server {name!r}, but [mcp_servers.{name}] is not declared"
-            )
-        rendered[name] = _normalise_mcp_server(name, raw)
-    return json.dumps({"mcpServers": rendered}, separators=(",", ":"), sort_keys=True)
-
-
-def build_headless_argv(
-    adapter: str,
-    role: dict[str, Any],
-    prompt: str,
-    *,
-    mcp_servers: dict[str, Any] | None = None,
-) -> list[str]:
-    """Construct the legacy public claude/codex argv from a role definition.
-
-    Runtime dispatch uses tmux harness profiles. This helper remains only for
-    compatibility with preflight and historical dry-run callers.
-    """
-    flags = [str(flag) for flag in role.get("flags") or []]
-    model = role.get("model")
-    effort = _role_effort(adapter, role)
-
-    if adapter == "claude":
-        argv = [
-            "claude",
-            "--dangerously-skip-permissions",
-            "--strict-mcp-config",
-            "--mcp-config",
-            _claude_mcp_config(role, mcp_servers),
-            "-p",
-            "--output-format",
-            "json",
-        ]
-        if model:
-            argv += ["--model", str(model)]
-        if effort:
-            argv += ["--effort", effort]
-        argv += flags
-    elif adapter == "codex":
-        if role.get("mcp"):
-            raise DispatchConfigError(
-                "Codex roles cannot declare MCP servers; MCP route config is Claude-only"
-            )
-        argv = [
-            "codex",
-            "exec",
-            "--json",
-            "--skip-git-repo-check",
-            "--dangerously-bypass-approvals-and-sandbox",
-            "-s",
-            "danger-full-access",
-        ]
-        if model:
-            argv += ["--model", str(model)]
-        if effort:
-            argv += ["-c", f'model_reasoning_effort="{effort}"']
-        argv += flags
-    else:
-        raise DispatchConfigError(f"cannot dispatch adapter {adapter!r}")
-    return argv
-
-
-def build_argv(
-    adapter: str,
-    role: dict[str, Any],
-    prompt: str,
-    *,
-    mcp_servers: dict[str, Any] | None = None,
-) -> list[str]:
-    """Backward-compatible alias for preflight/dry-run callers.
-
-    Runtime dispatch uses :func:`build_launch_argv` plus ``tmux_harness``.
-    """
-    return build_headless_argv(adapter, role, prompt, mcp_servers=mcp_servers)
 
 
 def claude_project_slug(repo_root: Path) -> str:
@@ -1166,7 +668,7 @@ def _write_review_cache_entry(
     exit_code: int,
     exit_type: str,
 ) -> None:
-    critique_path = epic_dir / "critique" / f"story-{work_unit_id}.md"
+    critique_path = epic_dir / "critique" / f"work-unit-{work_unit_id}.md"
     critique_text = critique_path.read_text(encoding="utf-8") if critique_path.is_file() else None
     payload: dict[str, Any] = {
         "review_cache_key": review_cache_key,
@@ -1225,13 +727,10 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     try:
         route = _policy_route(repo_root, args.role, args.route_key)
         if route is None:
-            if not agents_path.is_file():
-                sys.stderr.write(
-                    f"woof: neither {policy_path(repo_root)} nor {agents_path} declares a "
-                    "dispatch route\n"
-                )
-                return 2
-            route = resolve_agent_route(agents, args.role, route_key=args.route_key)
+            sys.stderr.write(
+                f"woof: {policy_path(repo_root)} does not declare dispatch role {args.role!r}\n"
+            )
+            return 2
     except DispatchConfigError as exc:
         sys.stderr.write(f"woof: {exc}\n")
         return 2
@@ -1246,8 +745,10 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         )
         return 2
 
-    if args.story is not None and not STORY_ID_RE.match(args.story):
-        sys.stderr.write(f"woof: --story {args.story!r}: must match S<n> (n>=1)\n")
+    if args.work_unit is not None and not WORK_UNIT_ID_RE.match(args.work_unit):
+        sys.stderr.write(
+            f"woof: --work-unit {args.work_unit!r}: must match ^[A-Za-z][A-Za-z0-9._-]*$\n"
+        )
         return 2
 
     prompt = Path(args.prompt_file).read_text() if args.prompt_file else sys.stdin.read()
@@ -1264,7 +765,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
 
     try:
         effort = _role_effort(route.adapter, route.config)
-        mcp_names = _mcp_names(route.config)
+        mcp_names: list[str] = []
         argv = build_launch_argv(
             route.adapter,
             model=route.config.get("model"),
@@ -1281,7 +782,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     prompt_hash = _sha256_text(prompt)
     prompt_version = f"{REVIEW_PROMPT_VERSION_PREFIX}{prompt_hash}"
     diff_hash = _staged_diff_hash(repo_root)
-    work_unit_id = args.story
+    work_unit_id = args.work_unit
     review_cache_key = (
         _review_key(
             work_unit_id=work_unit_id,
@@ -1299,7 +800,6 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
             "prompt_transport": prompt_transport,
             "runtime_policy": trusted_runtime_policy(),
             "epic": args.epic,
-            "story": args.story,
             "role": args.role,
             "config_role": route.config_role,
             "adapter": route.adapter,
@@ -1409,8 +909,8 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
                 "review_cache_hit": True,
                 **lineage_fields,
             }
-            if args.story:
-                cache_event["story_id"] = args.story
+            if args.work_unit:
+                cache_event["work_unit_id"] = args.work_unit
             if route.route_key:
                 cache_event["route_key"] = route.route_key
             if route.config.get("model"):
@@ -1454,7 +954,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
                 "profile_role": route.profile_role,
                 "route_key": route.route_key,
                 "epic_id": args.epic,
-                "story_id": args.story,
+                "work_unit_id": args.work_unit,
                 "model": route.config.get("model"),
                 "effort": effort,
                 "mcp": mcp_names,
@@ -1514,8 +1014,8 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         spawned_event["profile_role"] = route.profile_role
     if route.route_key:
         spawned_event["route_key"] = route.route_key
-    if args.story:
-        spawned_event["story_id"] = args.story
+    if args.work_unit:
+        spawned_event["work_unit_id"] = args.work_unit
     if route.config.get("model"):
         spawned_event["model"] = route.config["model"]
     if effort:
@@ -1595,8 +1095,8 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         returned["profile_role"] = route.profile_role
     if route.route_key:
         returned["route_key"] = route.route_key
-    if args.story:
-        returned["story_id"] = args.story
+    if args.work_unit:
+        returned["work_unit_id"] = args.work_unit
     if route.config.get("model"):
         returned["model"] = route.config["model"]
     if effort:
@@ -1650,7 +1150,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         "profile_role": route.profile_role,
         "route_key": route.route_key,
         "epic_id": args.epic,
-        "story_id": args.story,
+        "work_unit_id": args.work_unit,
         "model": route.config.get("model"),
         "effort": effort,
         "mcp": mcp_names,

@@ -49,14 +49,14 @@ REGISTRY: dict[str, Check] = {
         id="check_2_outcome_markers",
         stage=5,
         cost="cheap",
-        summary="For each O<n> in story.satisfies[], regex-grep the staged test diff; ≥1 hit each",
+        summary="For each O<n> in work_unit.satisfies[], regex-grep the staged test diff; ≥1 hit each",
         runner=check_2_outcome_markers_runner,
     ),
     "check_3_scope": Check(
         id="check_3_scope",
         stage=5,
         cost="cheap",
-        summary="Staged file set ⊆ story.paths[] pathspec plus allowed .woof/ files",
+        summary="Staged file set ⊆ work_unit.paths[] pathspec plus allowed .woof/ files",
         runner=check_3_scope_runner,
     ),
     "check_4_contract_refs": Check(
@@ -77,7 +77,7 @@ REGISTRY: dict[str, Check] = {
         id="check_6_critique_blocker",
         stage=5,
         cost="cheap",
-        summary="critique/story-S<k>.md exists; schema-valid; severity != blocker",
+        summary="critique/work-unit-S<k>.md exists; schema-valid; severity != blocker",
         runner=check_6_critique_blocker_runner,
     ),
     "check_7_commit_transaction": Check(
@@ -98,7 +98,7 @@ REGISTRY: dict[str, Check] = {
         id="check_9_review_valve",
         stage=5,
         cost="cheap",
-        summary="Every-N stories and end-of-epic; surfaces accumulated minor critique findings",
+        summary="Every-N work units and end-of-epic; surfaces accumulated minor critique findings",
         runner=check_9_review_valve_runner,
     ),
 }

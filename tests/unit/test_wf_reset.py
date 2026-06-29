@@ -61,7 +61,7 @@ def _seed_epic(project: Path, epic_id: int) -> Path:
     (epic_dir / "dispatch.jsonl").write_text('{"event":"dispatch_started"}\n')
     (epic_dir / ".wf.lock").write_text('{"pid":1}\n')
     (epic_dir / "dispositions").mkdir()
-    (epic_dir / "dispositions" / "story-S1.md").write_text("---\nverdict: accept\n---\n")
+    (epic_dir / "dispositions" / "work-unit-1.md").write_text("---\nverdict: accept\n---\n")
     (epic_dir / "audit" / "raw").mkdir(parents=True)
     (epic_dir / "audit" / "raw" / "transcript.txt").write_text("old transcript\n")
     (epic_dir / "discovery" / "brainstorm").mkdir(parents=True)

@@ -49,14 +49,14 @@ def _stage(root: Path, rel_path: str, content: str) -> None:
 def _make_ctx(
     root: Path,
     satisfies: list[Any],
-    story_id: str = "S1",
+    work_unit_id: str = "S1",
     tests: dict[str, Any] | None = None,
 ) -> CheckContext:
     from woof.checks import CheckContext
 
     return CheckContext(
         epic_id=1,
-        story_id=story_id,
+        work_unit_id=work_unit_id,
         repo_root=root,
         epic_dir=root / ".woof" / "epics" / "E1",
         plan={

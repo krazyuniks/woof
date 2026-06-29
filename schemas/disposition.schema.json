@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://woof.dev/schemas/disposition.schema.json",
   "title": "woof reviewer disposition front-matter",
-  "description": "YAML front-matter of .woof/epics/E<N>/dispositions/story-S<k>.md. Written by graph-owned review_disposition after a non-blocking reviewer critique. Blocker critiques open a human gate instead of producing a disposition.",
+  "description": "YAML front-matter of .woof/epics/E<N>/dispositions/work-unit-<id>.md. Written by graph-owned review_disposition after a non-blocking reviewer critique. Blocker critiques open a human gate instead of producing a disposition.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -17,17 +17,17 @@
   "properties": {
     "target": {
       "type": "string",
-      "const": "story",
-      "description": "Disposition target. ROLE-005 covers Stage-5 story critiques."
+      "const": "work_unit",
+      "description": "Disposition target for a work-unit critique."
     },
     "target_id": {
       "type": "string",
-      "pattern": "^S[1-9]\\d*$",
-      "description": "Story ID this disposition covers."
+      "pattern": "^[A-Za-z][A-Za-z0-9._-]*$",
+      "description": "Work-unit ID this disposition covers."
     },
     "critique_path": {
       "type": "string",
-      "pattern": "^\\.woof/epics/E[1-9]\\d*/critique/story-S[1-9]\\d*\\.md$",
+      "pattern": "^\\.woof/epics/E[1-9]\\d*/critique/work-unit-[A-Za-z][A-Za-z0-9._-]*\\.md$",
       "description": "Repo-relative path of the reviewer critique this disposition answers."
     },
     "severity": {
@@ -74,7 +74,7 @@
         "decision": {
           "type": "string",
           "enum": ["accepted", "rejected", "deferred"],
-          "description": "accepted = artefacts were updated or no code change was needed; rejected = primary disagrees and records why; deferred = follow-up work is needed outside this story."
+          "description": "accepted = artefacts were updated or no code change was needed; rejected = primary disagrees and records why; deferred = follow-up work is needed outside this work unit."
         },
         "rationale": {
           "type": "string",

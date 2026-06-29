@@ -46,6 +46,7 @@ echo "ajv 8.0.0"
     _write_exe(bin_dir / "just", 'echo "just 1.2.3"\n')
     _write_exe(bin_dir / "git", 'echo "git version 2.44.0"\n')
     _write_exe(bin_dir / "claude", 'echo "claude stub"\n')
+    _write_exe(bin_dir / "cld", 'echo "claude stub"\n')
     _write_exe(bin_dir / "codex", 'echo "codex stub"\n')
 
 
@@ -128,16 +129,17 @@ summary_min_chars = 40
     _write_exe(scripts / "refresh-cartography", "echo refresh\n")
     (root / ".woof" / "agents.toml").write_text(
         """\
-[roles.primary]
-adapter = "codex"
-model = "gpt-5.5"
-effort = "xhigh"
+[timeouts]
+default_minutes = 30
 
-[roles.reviewer]
-adapter = "claude"
-model = "claude-opus-4-7"
-effort = "max"
-mcp = []
+[review_valve]
+every_n_work_units = 5
+end_of_epic = true
+
+[audit]
+enabled = true
+max_bytes = 262144
+redact_patterns = []
 """
     )
     (root / ".woof" / ".current-epic").write_text("E5\n")
@@ -157,7 +159,7 @@ mcp = []
                         "uses_contract_decisions": [],
                         "deps": [],
                         "tests": {"count": 1, "types": ["unit"]},
-                        "status": "in_progress",
+                        "state": "in_progress",
                     }
                 ],
             }
@@ -166,9 +168,9 @@ mcp = []
     )
     (epic_dir / "gate.md").write_text(
         """---
-type: story_gate
+type: work_unit_gate
 stage: 6
-story_id: S1
+work_unit_id: S1
 triggered_by:
   - check_1_quality_gates
 timestamp: '2026-05-23T10:02:00Z'
@@ -182,11 +184,11 @@ Quality failed.
     (epic_dir / "epic.jsonl").write_text(
         json.dumps(
             {
-                "event": "story_gate_opened",
+                "event": "work_unit_gate_opened",
                 "at": "2026-05-23T10:02:00Z",
                 "epic_id": 5,
-                "story_id": "S1",
-                "gate_type": "story_gate",
+                "work_unit_id": "S1",
+                "gate_type": "work_unit_gate",
                 "triggered_by": ["check_1_quality_gates"],
             }
         )
@@ -198,7 +200,7 @@ Quality failed.
                 "event": "subprocess_returned",
                 "at": "2026-05-23T10:01:00Z",
                 "epic_id": 5,
-                "story_id": "S1",
+                "work_unit_id": "S1",
                 "role": "primary",
                 "adapter": "codex",
                 "model": "gpt-5.5",
@@ -215,7 +217,7 @@ Quality failed.
                 "ok": False,
                 "stage": 5,
                 "epic_id": 5,
-                "story_id": "S1",
+                "work_unit_id": "S1",
                 "triggered_by": ["check_1_quality_gates"],
                 "checks": [
                     {
@@ -251,7 +253,7 @@ def test_observe_json_and_preflight_text_expose_resume_state(tmp_path: Path) -> 
     assert status["current_epic"]["value"] == "E5"
     assert status["next_action"]["command"] == "woof wf --epic 5 --resolve <decision>"
     assert status["gate"]["cause"] == "check_1_quality_gates"
-    assert status["dispatch_routes"]["roles"]["primary"]["adapter"] == "codex"
+    assert status["dispatch_routes"]["roles"]["producer"]["adapter"] == "codex"
     assert status["runtime_policy"]["mode"] == "trusted-local"
     assert status["checks"]["failed_checks"][0]["summary"] == "quality gate failed"
     assert status["audit_pointers"]["latest_codex_audit_path"] == (
@@ -271,5 +273,8 @@ def test_observe_json_and_preflight_text_expose_resume_state(tmp_path: Path) -> 
     assert "next_action: resolve_gate command=woof wf --epic 5 --resolve <decision>" in (
         preflight.stdout
     )
-    assert "gate: open type=story_gate story=S1 cause=check_1_quality_gates" in preflight.stdout
+    assert (
+        "gate: open type=work_unit_gate work_unit=S1 cause=check_1_quality_gates"
+        in preflight.stdout
+    )
     assert "checks: FAIL total=1 failed=1 triggered_by=check_1_quality_gates" in preflight.stdout

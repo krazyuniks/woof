@@ -46,9 +46,9 @@ Each layer holds a single responsibility and an invariant that must not erode:
 
 ## Target stage pipeline
 
-Five stages plus the Stage 2.5 readiness boundary, per-story commits, and gate halts:
+Five stages plus the Stage 2.5 readiness boundary, per-work-unit commits, and gate halts:
 Discovery (locks direction) -> Definition (locks surface) -> Contract readiness
-(deterministic pre-plan boundary) -> Breakdown/Plan -> Plan gate -> Story execution.
+(deterministic pre-plan boundary) -> Breakdown/Plan -> Plan gate -> Work-unit execution.
 Stage 5 is tracer-bullet red-green-refactor per declared outcome; verification is the
 deterministic Stage-5 check matrix with no LLM in the loop. Role routing is per-stage
 (ADR-002): Codex produces and Claude reviews in Stages 1-3; Stage 5 overrides so Claude
@@ -70,6 +70,6 @@ human-driven.
 - No second graph authority: the structural index (ADR-009) is read-only query verbs, not
   an orchestration API or MCP graph.
 - No silent repair: missing, malformed, or unsafe state opens a gate or fails preflight.
-- No commit outside declared story scope: the transaction manifest is the commit-safety
+- No commit outside declared work-unit scope: the transaction manifest is the commit-safety
   boundary.
 - tmux and other supervision surfaces never own workflow state or pick transitions.

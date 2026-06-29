@@ -73,10 +73,10 @@ def _write_quality_gates(repo_root: Path, command: str) -> None:
     )
 
 
-def _story(**overrides: Any) -> dict[str, Any]:
-    story = {
+def _work_unit(**overrides: Any) -> dict[str, Any]:
+    work_unit = {
         "id": "S1",
-        "title": "Story 1",
+        "title": "Work unit 1",
         "summary": "Exercise a Stage-5 check contract.",
         "paths": ["src/"],
         "satisfies": ["O1"],
@@ -84,17 +84,17 @@ def _story(**overrides: Any) -> dict[str, Any]:
         "uses_contract_decisions": [],
         "deps": [],
         "tests": {"count": 1, "types": ["unit"]},
-        "status": "in_progress",
+        "state": "in_progress",
     }
-    story.update(overrides)
-    return story
+    work_unit.update(overrides)
+    return work_unit
 
 
-def _plan(*stories: dict[str, Any], epic_id: int = 1) -> dict[str, Any]:
+def _plan(*work_units: dict[str, Any], epic_id: int = 1) -> dict[str, Any]:
     return {
         "epic_id": epic_id,
         "goal": "Exercise Stage-5 checker contracts.",
-        "work_units": list(stories) or [_story()],
+        "work_units": list(work_units) or [_work_unit()],
     }
 
 
@@ -102,7 +102,7 @@ def _ctx(
     repo_root: Path,
     *,
     epic_id: int = 1,
-    story_id: str = "S1",
+    work_unit_id: str = "S1",
     plan: dict[str, Any] | None = None,
     epic_dir: Path | None = None,
 ) -> CheckContext:
@@ -110,7 +110,7 @@ def _ctx(
     resolved_epic_dir.mkdir(parents=True, exist_ok=True)
     return CheckContext(
         epic_id=epic_id,
-        story_id=story_id,
+        work_unit_id=work_unit_id,
         repo_root=repo_root,
         epic_dir=resolved_epic_dir,
         plan=plan or _plan(epic_id=epic_id),
@@ -164,16 +164,16 @@ def _write_plan(epic_dir: Path, plan: dict[str, Any]) -> None:
 
 def _write_critique(
     epic_dir: Path,
-    story_id: str,
+    work_unit_id: str,
     *,
     severity: str,
     findings: list[dict[str, Any]],
 ) -> None:
     _write(
-        epic_dir / "critique" / f"story-{story_id}.md",
+        epic_dir / "critique" / f"work-unit-{work_unit_id}.md",
         "---\n"
-        "target: story\n"
-        f"target_id: {story_id}\n"
+        "target: work_unit\n"
+        f"target_id: {work_unit_id}\n"
         f"severity: {severity}\n"
         "timestamp: '2026-01-01T00:00:00Z'\n"
         "harness: test-reviewer\n"
@@ -186,7 +186,7 @@ def _write_critique(
 def _write_disposition(
     epic_dir: Path,
     epic_id: int,
-    story_id: str,
+    work_unit_id: str,
     *,
     severity: str,
     finding_ids: list[str],
@@ -195,16 +195,16 @@ def _write_disposition(
         {
             "finding_id": finding_id,
             "decision": "accepted",
-            "rationale": "Handled by the staged story artefacts.",
+            "rationale": "Handled by the staged work-unit artefacts.",
         }
         for finding_id in finding_ids
     ]
     _write(
-        epic_dir / "dispositions" / f"story-{story_id}.md",
+        epic_dir / "dispositions" / f"work-unit-{work_unit_id}.md",
         "---\n"
-        "target: story\n"
-        f"target_id: {story_id}\n"
-        f"critique_path: .woof/epics/E{epic_id}/critique/story-{story_id}.md\n"
+        "target: work_unit\n"
+        f"target_id: {work_unit_id}\n"
+        f"critique_path: .woof/epics/E{epic_id}/critique/work-unit-{work_unit_id}.md\n"
         f"severity: {severity}\n"
         "timestamp: '2026-01-01T00:00:00Z'\n"
         "harness: test-primary\n"
@@ -225,8 +225,8 @@ def _write_required_durable(repo_root: Path, plan: dict[str, Any]) -> list[str]:
         ".woof/epics/E1/plan.json",
         ".woof/epics/E1/epic.jsonl",
         ".woof/epics/E1/dispatch.jsonl",
-        ".woof/epics/E1/critique/story-S1.md",
-        ".woof/epics/E1/dispositions/story-S1.md",
+        ".woof/epics/E1/critique/work-unit-S1.md",
+        ".woof/epics/E1/dispositions/work-unit-S1.md",
     ]
 
 
@@ -259,7 +259,7 @@ def _build_outcome_markers_success(repo_root: Path) -> CheckContext:
         "def test_story_realises_O1():\n    assert True\n",
     )
     _stage(repo_root, "tests/test_story.py")
-    return _ctx(repo_root, plan=_plan(_story(paths=["tests/"], satisfies=["O1"])))
+    return _ctx(repo_root, plan=_plan(_work_unit(paths=["tests/"], satisfies=["O1"])))
 
 
 def _build_outcome_markers_failure(repo_root: Path) -> CheckContext:
@@ -270,12 +270,12 @@ def _build_outcome_markers_failure(repo_root: Path) -> CheckContext:
         "def test_story_mentions_O2_only():\n    assert True\n",
     )
     _stage(repo_root, "tests/test_story.py")
-    return _ctx(repo_root, plan=_plan(_story(paths=["tests/"], satisfies=["O1"])))
+    return _ctx(repo_root, plan=_plan(_work_unit(paths=["tests/"], satisfies=["O1"])))
 
 
 def _build_scope_success(repo_root: Path) -> CheckContext:
     _init_repo(repo_root)
-    plan = _plan(_story(paths=["src/"]))
+    plan = _plan(_work_unit(paths=["src/"]))
     required = _write_required_durable(repo_root, plan)
     _write(repo_root / "src" / "app.py", "print('O1')\n")
     _stage(repo_root, "src/app.py", *required)
@@ -287,13 +287,13 @@ def _build_scope_failure(repo_root: Path) -> CheckContext:
     _write(repo_root / "src" / "app.py")
     _write(repo_root / "docs" / "notes.md")
     _stage(repo_root, "src/app.py", "docs/notes.md")
-    return _ctx(repo_root, plan=_plan(_story(paths=["src/"])))
+    return _ctx(repo_root, plan=_plan(_work_unit(paths=["src/"])))
 
 
 def _build_contract_refs_success(repo_root: Path) -> CheckContext:
     epic_dir = _copy_contract_fixture(repo_root)
     plan = _plan(
-        _story(paths=["spec/openapi.yaml"], implements_contract_decisions=["CD1"]),
+        _work_unit(paths=["spec/openapi.yaml"], implements_contract_decisions=["CD1"]),
         epic_id=146,
     )
     return _ctx(repo_root, epic_id=146, plan=plan, epic_dir=epic_dir)
@@ -309,7 +309,7 @@ def _build_contract_refs_failure(repo_root: Path) -> CheckContext:
         )
     )
     plan = _plan(
-        _story(paths=["spec/openapi.yaml"], implements_contract_decisions=["CD1"]),
+        _work_unit(paths=["spec/openapi.yaml"], implements_contract_decisions=["CD1"]),
         epic_id=146,
     )
     return _ctx(repo_root, epic_id=146, plan=plan, epic_dir=epic_dir)
@@ -317,7 +317,7 @@ def _build_contract_refs_failure(repo_root: Path) -> CheckContext:
 
 def _build_plan_crossrefs_success(repo_root: Path) -> CheckContext:
     epic_dir = repo_root / ".woof" / "epics" / "E1"
-    plan = _plan(_story(implements_contract_decisions=["CD1"]))
+    plan = _plan(_work_unit(implements_contract_decisions=["CD1"]))
     _write_epic(epic_dir, outcomes=["O1"], cds=["CD1"])
     _write_plan(epic_dir, plan)
     return _ctx(repo_root, plan=plan, epic_dir=epic_dir)
@@ -325,7 +325,7 @@ def _build_plan_crossrefs_success(repo_root: Path) -> CheckContext:
 
 def _build_plan_crossrefs_failure(repo_root: Path) -> CheckContext:
     epic_dir = repo_root / ".woof" / "epics" / "E1"
-    plan = _plan(_story(satisfies=["O404"], implements_contract_decisions=[]))
+    plan = _plan(_work_unit(satisfies=["O404"], implements_contract_decisions=[]))
     _write_epic(epic_dir, outcomes=["O1"], cds=["CD1"])
     _write_plan(epic_dir, plan)
     return _ctx(repo_root, plan=plan, epic_dir=epic_dir)
@@ -363,7 +363,7 @@ def _build_critique_failure(repo_root: Path) -> CheckContext:
 
 def _build_transaction_success(repo_root: Path) -> CheckContext:
     _init_repo(repo_root)
-    plan = _plan(_story(paths=["src/*.py"]))
+    plan = _plan(_work_unit(paths=["src/*.py"]))
     required = _write_required_durable(repo_root, plan)
     _write(repo_root / "src" / "app.py", "print('O1')\n")
     _stage(repo_root, "src/app.py", *required)
@@ -372,7 +372,7 @@ def _build_transaction_success(repo_root: Path) -> CheckContext:
 
 def _build_transaction_failure(repo_root: Path) -> CheckContext:
     _init_repo(repo_root)
-    plan = _plan(_story(paths=["src/*.py"]))
+    plan = _plan(_work_unit(paths=["src/*.py"]))
     required = [
         path
         for path in _write_required_durable(repo_root, plan)
@@ -420,21 +420,21 @@ def _build_docs_drift_failure(repo_root: Path) -> CheckContext:
 def _write_agents(repo_root: Path) -> None:
     _write(
         repo_root / ".woof" / "agents.toml",
-        "[roles]\n\n[review_valve]\nevery_n_stories = 2\nend_of_epic = false\n",
+        "[review_valve]\nevery_n_work_units = 2\nend_of_epic = false\n",
     )
 
 
 def _review_valve_plan() -> dict[str, Any]:
     return _plan(
-        _story(id="S1", status="done"),
-        _story(id="S2", status="in_progress"),
+        _work_unit(id="S1", state="done"),
+        _work_unit(id="S2", state="in_progress"),
     )
 
 
 def _build_review_valve_success(repo_root: Path) -> CheckContext:
     _write_agents(repo_root)
     plan = _review_valve_plan()
-    ctx = _ctx(repo_root, story_id="S2", plan=plan)
+    ctx = _ctx(repo_root, work_unit_id="S2", plan=plan)
     _write_critique(ctx.epic_dir, "S2", severity="info", findings=[])
     return ctx
 
@@ -442,7 +442,7 @@ def _build_review_valve_success(repo_root: Path) -> CheckContext:
 def _build_review_valve_failure(repo_root: Path) -> CheckContext:
     _write_agents(repo_root)
     plan = _review_valve_plan()
-    ctx = _ctx(repo_root, story_id="S2", plan=plan)
+    ctx = _ctx(repo_root, work_unit_id="S2", plan=plan)
     _write_critique(
         ctx.epic_dir,
         "S2",
@@ -478,7 +478,7 @@ STAGE5_CONFORMANCE_FIXTURES = [
         case_id="check_2_success",
         check_id="check_2_outcome_markers",
         kind="success",
-        contract="each story satisfies[] outcome is marked in the staged test diff",
+        contract="each work unit satisfies[] outcome is marked in the staged test diff",
         build=_build_outcome_markers_success,
         expected_ok=True,
         expected_severity="info",
@@ -501,22 +501,22 @@ STAGE5_CONFORMANCE_FIXTURES = [
         case_id="check_3_success",
         check_id="check_3_scope",
         kind="success",
-        contract="staged story paths and durable epic artefacts are within scope",
+        contract="staged work-unit paths and durable epic artefacts are within scope",
         build=_build_scope_success,
         expected_ok=True,
         expected_severity=None,
-        summary_contains="within story S1 scope",
-        path_contains=".woof/epics/E1/critique/story-S1.md",
+        summary_contains="within work unit S1 scope",
+        path_contains=".woof/epics/E1/critique/work-unit-S1.md",
     ),
     Stage5ConformanceFixture(
         case_id="check_3_failure",
         check_id="check_3_scope",
         kind="failure",
-        contract="a staged story path outside story.paths[] blocks the story",
+        contract="a staged work-unit path outside work_unit.paths[] blocks the work unit",
         build=_build_scope_failure,
         expected_ok=False,
         expected_severity="blocker",
-        summary_contains="outside story S1 scope",
+        summary_contains="outside work unit S1 scope",
         path_contains="docs/notes.md",
     ),
     Stage5ConformanceFixture(
@@ -534,7 +534,7 @@ STAGE5_CONFORMANCE_FIXTURES = [
         case_id="check_4_failure",
         check_id="check_4_contract_refs",
         kind="failure",
-        contract="a broken owned contract reference blocks the story",
+        contract="a broken owned contract reference blocks the work unit",
         build=_build_contract_refs_failure,
         expected_ok=False,
         expected_severity="blocker",
@@ -546,7 +546,7 @@ STAGE5_CONFORMANCE_FIXTURES = [
         case_id="check_5_success",
         check_id="check_5_plan_crossrefs",
         kind="success",
-        contract="plan schema, outcome refs, CD ownership, dependencies, and status are coherent",
+        contract="plan schema, outcome refs, CD ownership, dependencies, and state is coherent",
         build=_build_plan_crossrefs_success,
         expected_ok=True,
         expected_severity="info",
@@ -556,7 +556,7 @@ STAGE5_CONFORMANCE_FIXTURES = [
         case_id="check_5_failure",
         check_id="check_5_plan_crossrefs",
         kind="failure",
-        contract="plan cross-reference drift blocks the story",
+        contract="plan cross-reference drift blocks the work unit",
         build=_build_plan_crossrefs_failure,
         expected_ok=False,
         expected_severity="blocker",
@@ -588,7 +588,7 @@ STAGE5_CONFORMANCE_FIXTURES = [
         case_id="check_7_success",
         check_id="check_7_commit_transaction",
         kind="success",
-        contract="story paths plus required durable .woof artefacts are staged and clean",
+        contract="work-unit paths plus required durable .woof artefacts are staged and clean",
         build=_build_transaction_success,
         expected_ok=True,
         expected_severity="info",
@@ -622,7 +622,7 @@ STAGE5_CONFORMANCE_FIXTURES = [
         case_id="check_8_failure",
         check_id="check_8_docs_drift",
         kind="failure",
-        contract="mapped code changes without matching docs block the story",
+        contract="mapped code changes without matching docs block the work unit",
         build=_build_docs_drift_failure,
         expected_ok=False,
         expected_severity="blocker",
@@ -650,7 +650,7 @@ STAGE5_CONFORMANCE_FIXTURES = [
         expected_severity="minor",
         summary_contains="minor finding(s) require review",
         evidence_contains="S2/F1: Review cumulative risk",
-        path_contains=".woof/epics/E1/critique/story-S2.md",
+        path_contains=".woof/epics/E1/critique/work-unit-S2.md",
     ),
 ]
 

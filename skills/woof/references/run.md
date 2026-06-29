@@ -28,7 +28,7 @@ woof wf --epic N --once    # run a single node and stop (step through)
 ```
 
 Each call runs the graph from current state: synthesis, then Definition (locks the surface),
-Breakdown (the story plan), and per-story execution (dispatch, critique, disposition, verification,
+Breakdown (the work-unit plan), and per-work-unit execution (dispatch, critique, disposition, verification,
 commit). Re-run `woof wf --epic N` after each pause to continue.
 
 The graph dispatches producer and reviewer work to model CLIs via the roles in `.woof/agents.toml`.
@@ -43,7 +43,7 @@ half-finished commit. If it reports `incomplete_stage_state`, read the named art
 ## Inspect
 
 ```bash
-woof observe --epic N --view status     # current stage and story states
+woof observe --epic N --view status     # current stage and work-unit states
 woof observe --epic N --view timeline    # the full epic.jsonl history
 woof observe --epic N --view gate        # the open gate, if any
 woof observe --epic N --view all

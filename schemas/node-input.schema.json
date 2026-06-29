@@ -34,9 +34,9 @@
       "minimum": 1,
       "description": "Tracker-assigned epic identifier. Same value as E<N>."
     },
-    "story_id": {
+    "work_unit_id": {
       "oneOf": [
-        { "type": "string", "pattern": "^S[1-9]\\d*$" },
+        { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9._-]*$" },
         { "type": "null" }
       ]
     },
@@ -54,11 +54,11 @@
           "enum": [
             "approve",
             "approve_with_reason",
-            "retry_story",
+            "retry_work_unit",
             "revise_epic_contract",
             "revise_plan",
-            "revise_story_scope",
-            "abandon_story",
+            "revise_work_unit_scope",
+            "abandon_work_unit",
             "abandon_epic",
             "keep_local",
             "accept_remote",

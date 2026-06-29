@@ -14,7 +14,7 @@ from typing import Any
 
 import yaml
 
-from woof.graph.state import TERMINAL_STORY_STATUSES, Plan
+from woof.graph.state import TERMINAL_WORK_UNIT_STATES, Plan
 from woof.trackers.base import (
     CONFLICT_DECISIONS,
     ColdStartResult,
@@ -128,7 +128,7 @@ class LocalTracker:
     def complete_epic(self, epic_id: int) -> LifecycleSyncResult:
         front, prose = self._load_epic_markdown(epic_id)
         plan = self._load_plan(epic_id)
-        if any(unit.status not in TERMINAL_STORY_STATUSES for unit in plan.work_units):
+        if any(unit.state not in TERMINAL_WORK_UNIT_STATES for unit in plan.work_units):
             raise TrackerError(f"E{epic_id} cannot be closed until all plan work units are done")
         body = render_epic_issue_body(
             front,

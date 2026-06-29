@@ -1,47 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://woof.dev/schemas/agents.schema.json",
-  "title": "woof agent role configuration",
-  "description": "Project-side declaration at .woof/agents.toml. Dispatchable roles resolve to public CLI adapters (claude or codex); Woof builds the subprocess invocation itself and does not require private shell wrappers. In trusted-local mode, Woof does not add runtime sandboxing, command allow-lists, writable-path restrictions, network policy, or MCP restriction logic; broad public-CLI permission modes are intentional. Roles may declare adapter settings directly, while named model_profiles can overlay model, effort, flags, and Claude MCP server names for repeatable evals or local runs. Legacy role names and legacy harness values are accepted only as migration input and are resolved to public adapters at runtime.",
+  "title": "woof runtime settings",
+  "description": "Project-side runtime settings at .woof/agents.toml. Dispatch routing and run profiles live only in .woof/policy.toml; this file carries non-routing runtime knobs.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["roles"],
   "properties": {
-    "roles": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "orchestrator": { "$ref": "#/$defs/in_session_role" },
-        "primary": { "$ref": "#/$defs/dispatchable_role" },
-        "reviewer": { "$ref": "#/$defs/dispatchable_role" },
-        "planner": { "$ref": "#/$defs/dispatchable_role" },
-        "story-executor": { "$ref": "#/$defs/dispatchable_role" },
-        "critiquer": { "$ref": "#/$defs/dispatchable_role" },
-        "gate-resolver": { "$ref": "#/$defs/in_session_role" }
-      },
-      "description": "Semantic roles invoked by Woof. primary and reviewer are the graph-owned dispatch roles. planner/story-executor/critiquer are legacy aliases retained for migration; planner and story-executor map to primary, critiquer maps to reviewer."
-    },
-    "model_profile": {
-      "type": "string",
-      "minLength": 1,
-      "description": "Default model profile selected when WOOF_MODEL_PROFILE is not set. Profiles overlay route fields from [roles.*] without changing graph code or prompt text."
-    },
-    "model_profiles": {
-      "type": "object",
-      "additionalProperties": { "$ref": "#/$defs/model_profile" },
-      "description": "Named route overlays. Operators can run the same graph with a different model/effort profile by setting WOOF_MODEL_PROFILE or the benchmark harness --model-profile flag."
-    },
-    "routes": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "Per-node-group role overlays. Each group (discovery, definition, planning, execution) may declare primary and/or reviewer entries that override the base [roles.*] defaults for dispatches in that group. Undeclared groups fall through to base role defaults.",
-      "properties": {
-        "discovery": { "$ref": "#/$defs/node_group_routes" },
-        "definition": { "$ref": "#/$defs/node_group_routes" },
-        "planning": { "$ref": "#/$defs/node_group_routes" },
-        "execution": { "$ref": "#/$defs/node_group_routes" }
-      }
-    },
     "timeouts": {
       "type": "object",
       "additionalProperties": false,
@@ -50,258 +14,69 @@
           "type": "number",
           "exclusiveMinimum": 0,
           "default": 30,
-          "description": "Pre-terminal wall-clock ceiling, in minutes. Fractional values are valid for short eval and integration runs. Once the adapter terminal marker is seen, completion_grace_seconds and completion_tail_cap_seconds take over."
+          "description": "Pre-terminal wall-clock ceiling, in minutes."
         },
         "idle_seconds": {
           "type": "number",
           "minimum": 0,
-          "default": 600,
-          "description": "Pre-terminal idle timeout. Resets on stdout or stderr activity; firing classifies the dispatch as idle_kill."
+          "default": 600
         },
         "completion_grace_seconds": {
           "type": "number",
           "minimum": 0,
-          "default": 60,
-          "description": "Post-terminal grace timeout. Resets on stdout or stderr activity after the adapter terminal marker; firing classifies the dispatch as completed_lingering."
+          "default": 60
         },
         "completion_tail_cap_seconds": {
           "type": "number",
           "minimum": 0,
-          "default": 120,
-          "description": "Absolute post-terminal tail cap. Bounds lingering even if a child keeps emitting output; firing classifies the dispatch as completed_lingering."
+          "default": 120
         }
       }
     },
     "review_valve": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Periodic review configuration (Stage 5 Check 9). Opens a review_gate every N completed stories AND once before epic close, surfacing accumulated minor critique findings.",
       "properties": {
-        "every_n_stories": {
+        "every_n_work_units": {
           "type": "integer",
           "minimum": 1,
           "default": 5,
-          "description": "Open a review_gate after every N successful story commits."
+          "description": "Open a review gate after every N successful work-unit commits."
         },
         "end_of_epic": {
           "type": "boolean",
-          "default": true,
-          "description": "Open a review_gate after the last story completes, before epic close. Recommended on."
+          "default": true
+        }
+      }
+    },
+    "audit": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "max_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 262144
+        },
+        "redact_patterns": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true,
+          "default": []
         }
       }
     },
     "mcp_servers": {
       "type": "object",
       "additionalProperties": { "$ref": "#/$defs/mcp_server" },
-      "description": "Project-owned Claude MCP server definitions. Role mcp[] entries reference keys from this table. Woof renders these into --strict-mcp-config --mcp-config JSON; absent or empty mcp[] renders {\"mcpServers\":{}}."
-    },
-    "audit": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "Audit policy for committed artefacts written by woof dispatch. Controls conservative redaction and the per-file size cap enforced before graph-owned commits.",
-      "properties": {
-        "enabled": {
-          "type": "boolean",
-          "default": true,
-          "description": "Apply redaction and size cap before writing audit artefacts. Set to false to disable both filters (not recommended for production use)."
-        },
-        "max_bytes": {
-          "type": "integer",
-          "minimum": 1,
-          "default": 262144,
-          "description": "Per-file size cap in bytes. Audit artefacts exceeding this are truncated at commit time; the full output overflows to the gitignored audit/raw/ path. Default 262144 (256 KB)."
-        },
-        "redact_patterns": {
-          "type": "array",
-          "items": { "type": "string", "minLength": 1 },
-          "uniqueItems": true,
-          "default": [],
-          "description": "Additional project-specific regex patterns to redact. Each pattern is matched against each output line; matching text is replaced with a [REDACTED:<reason>] marker. Built-in patterns (JWT, AWS keys, bearer tokens) are always applied when enabled=true."
-        }
-      }
+      "description": "Portable MCP server definitions available to future policy/profile consumers."
     }
   },
   "$defs": {
-    "model_profile": {
-      "type": "object",
-      "additionalProperties": false,
-      "anyOf": [
-        { "required": ["roles"] },
-        { "required": ["routes"] }
-      ],
-      "properties": {
-        "roles": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "primary": { "$ref": "#/$defs/profile_role" },
-            "reviewer": { "$ref": "#/$defs/profile_role" },
-            "planner": { "$ref": "#/$defs/profile_role" },
-            "story-executor": { "$ref": "#/$defs/profile_role" },
-            "critiquer": { "$ref": "#/$defs/profile_role" }
-          },
-          "description": "Role-specific overrides applied after the base [roles.*] route resolves. Semantic primary/reviewer keys are preferred; legacy keys are accepted for migration."
-        },
-        "routes": {
-          "type": "object",
-          "additionalProperties": false,
-          "description": "Per-node-group profile role overrides. Applied on top of the resolved base route for the group.",
-          "properties": {
-            "discovery": { "$ref": "#/$defs/node_group_profile_routes" },
-            "definition": { "$ref": "#/$defs/node_group_profile_routes" },
-            "planning": { "$ref": "#/$defs/node_group_profile_routes" },
-            "execution": { "$ref": "#/$defs/node_group_profile_routes" }
-          }
-        }
-      }
-    },
-    "node_group_routes": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "Role overrides for a single node group. Each declared role overrides the corresponding [roles.*] default for dispatches carrying this route_key.",
-      "properties": {
-        "primary": { "$ref": "#/$defs/dispatchable_role" },
-        "reviewer": { "$ref": "#/$defs/dispatchable_role" }
-      }
-    },
-    "node_group_profile_routes": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "Per-node-group profile role overrides for a single node group. Each declared role refines the resolved base route model, effort, flags, and MCP for dispatches carrying this route_key.",
-      "properties": {
-        "primary": { "$ref": "#/$defs/profile_role" },
-        "reviewer": { "$ref": "#/$defs/profile_role" }
-      }
-    },
-    "profile_role": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "adapter": {
-          "type": "string",
-          "enum": ["claude", "codex", "in-session"],
-          "description": "Optional adapter override for this profile role. Most profiles should leave adapter in the base route and override only model/effort."
-        },
-        "harness": {
-          "type": "string",
-          "enum": ["claude", "codex", "cld", "cod", "in-session"],
-          "description": "Legacy adapter spelling accepted only for migration."
-        },
-        "model": {
-          "type": "string",
-          "minLength": 1
-        },
-        "effort": {
-          "type": "string",
-          "enum": ["low", "medium", "high", "xhigh", "max"],
-          "description": "Profile-specific reasoning effort."
-        },
-        "mcp": {
-          "type": "array",
-          "items": { "type": "string", "minLength": 1 },
-          "uniqueItems": true,
-          "description": "Profile-specific Claude MCP server names."
-        },
-        "flags": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "Profile-specific adapter flags."
-        },
-        "notes": { "type": "string" }
-      }
-    },
-    "in_session_role": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "adapter": {
-          "type": "string",
-          "const": "in-session",
-          "description": "orchestrator and gate-resolver must share the operator's interactive session; they cannot dispatch to a subprocess."
-        },
-        "harness": {
-          "type": "string",
-          "const": "in-session",
-          "description": "Legacy spelling for adapter='in-session'."
-        },
-        "notes": { "type": "string" }
-      },
-      "oneOf": [
-        { "required": ["adapter"] },
-        { "required": ["harness"] }
-      ]
-    },
-    "dispatchable_role": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "adapter": {
-          "type": "string",
-          "enum": ["claude", "codex", "in-session"],
-          "description": "Public CLI adapter used for this role. Use claude or codex for subprocess roles; in-session is rejected by woof dispatch. Dispatch runs in trusted-local mode and relies on commit-safety checks before changes land, not on runtime restriction by Woof."
-        },
-        "harness": {
-          "type": "string",
-          "enum": ["claude", "codex", "cld", "cod", "in-session"],
-          "description": "Legacy route spelling. cld maps to the public claude adapter; cod maps to the public codex adapter."
-        },
-        "model": {
-          "type": "string",
-          "minLength": 1
-        },
-        "think": {
-          "type": "boolean",
-          "description": "Legacy cld wrapper hint retained for schema compatibility. Public adapters use effort instead."
-        },
-        "effort": {
-          "type": "string",
-          "enum": ["low", "medium", "high", "xhigh", "max"],
-          "description": "Per-invocation reasoning effort. Claude maps this to --effort <level>; Codex maps low/medium/high/xhigh to -c model_reasoning_effort=\"<level>\"."
-        },
-        "mcp": {
-          "type": "array",
-          "items": { "type": "string", "minLength": 1 },
-          "uniqueItems": true,
-          "description": "Claude MCP server names. Empty array or omission means no MCP servers. Names must resolve through top-level mcp_servers."
-        },
-        "flags": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "Additional adapter-specific args appended after Woof's owned options."
-        }
-      },
-      "oneOf": [
-        { "required": ["adapter"] },
-        { "required": ["harness"] }
-      ],
-      "allOf": [
-        {
-          "if": {
-            "anyOf": [
-              {
-                "properties": { "adapter": { "const": "in-session" } },
-                "required": ["adapter"]
-              },
-              {
-                "properties": { "harness": { "const": "in-session" } },
-                "required": ["harness"]
-              }
-            ]
-          },
-          "then": {
-            "not": {
-              "anyOf": [
-                { "required": ["model"] },
-                { "required": ["think"] },
-                { "required": ["effort"] },
-                { "required": ["mcp"] },
-                { "required": ["flags"] }
-              ]
-            }
-          }
-        }
-      ]
-    },
     "mcp_server": {
       "type": "object",
       "additionalProperties": false,
@@ -309,8 +84,7 @@
       "properties": {
         "command": {
           "type": "string",
-          "minLength": 1,
-          "description": "Executable name for a stdio MCP server. Prefer PATH-resolved command names or portable home-relative paths."
+          "minLength": 1
         },
         "args": {
           "type": "array",
@@ -324,8 +98,7 @@
         },
         "cwd": {
           "type": "string",
-          "minLength": 1,
-          "description": "Optional working directory. Use project-relative or home-relative paths; host-specific absolute paths are rejected by dispatch."
+          "minLength": 1
         }
       }
     }

@@ -22,11 +22,11 @@ def _ctx(
     epic_dir: Path,
     repo_root: Path,
     owned: list[str],
-    story_id: str = "S1",
+    work_unit_id: str = "S1",
 ) -> CheckContext:
     return CheckContext(
         epic_id=146,
-        story_id=story_id,
+        work_unit_id=work_unit_id,
         repo_root=repo_root,
         epic_dir=epic_dir,
         plan={
@@ -34,7 +34,7 @@ def _ctx(
             "goal": "contract refs",
             "work_units": [
                 {
-                    "id": story_id,
+                    "id": work_unit_id,
                     "title": "contracts",
                     "summary": "verify contract refs",
                     "paths": [],

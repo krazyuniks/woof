@@ -19,7 +19,7 @@ from typing import Any
 import yaml
 
 from woof.gate.write import write_gate
-from woof.graph.state import TERMINAL_STORY_STATUSES, Plan
+from woof.graph.state import TERMINAL_WORK_UNIT_STATES, Plan
 from woof.paths import schema_dir
 from woof.trackers.base import (
     ColdStartResult,
@@ -255,7 +255,7 @@ class GitHubTracker:
     def complete_epic(self, epic_id: int) -> LifecycleSyncResult:
         front, prose = self._load_epic_markdown(epic_id)
         plan = self._load_plan(epic_id)
-        if any(unit.status not in TERMINAL_STORY_STATUSES for unit in plan.work_units):
+        if any(unit.state not in TERMINAL_WORK_UNIT_STATES for unit in plan.work_units):
             raise TrackerError(f"E{epic_id} cannot be closed until all plan work units are done")
         return self._sync_lifecycle_body(
             epic_id,
@@ -698,7 +698,7 @@ class GitHubTracker:
         )
         gate_path = write_gate(
             epic_dir=epic_dir,
-            story_id=None,
+            work_unit_id=None,
             triggered_by=["tracker_sync_conflict"],
             position_text=position_text,
             schema_path=schema_dir() / "gate.schema.json",

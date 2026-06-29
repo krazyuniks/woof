@@ -259,36 +259,30 @@ kind = "local"
 """,
         encoding="utf-8",
     )
-    woof_dir.joinpath("agents.toml").write_text(
+    woof_dir.joinpath("policy.toml").write_text(
         """\
-model_profile = "stub"
+schema_version = 1
+default_run_profile = "stub"
 
-[roles.primary]
-adapter = "codex"
-
-[roles.reviewer]
-adapter = "claude"
-mcp = []
-
-[roles.orchestrator]
-adapter = "in-session"
-
-[roles.gate-resolver]
-adapter = "in-session"
-
-[model_profiles.stub.roles.primary]
+[run_profiles.stub.producer]
+harness = "codex"
 model = "stub-primary"
 effort = "low"
 
-[model_profiles.stub.roles.reviewer]
+[run_profiles.stub.reviewer]
+harness = "claude"
 model = "stub-reviewer"
 effort = "low"
-
+""",
+        encoding="utf-8",
+    )
+    woof_dir.joinpath("agents.toml").write_text(
+        """\
 [timeouts]
 default_minutes = 5
 
 [review_valve]
-every_n_stories = 5
+every_n_work_units = 5
 end_of_epic = false
 
 [audit]
@@ -523,11 +517,11 @@ def collect_run_manifest(
     node_sequence = _node_sequence(command_outputs, epic_events, dispatch_events)
     route_policy = _route_policy(observe_report)
     effective_model_profile = model_profile or _route_policy_model_profile(route_policy)
-    story_statuses = _story_statuses(observe_report)
+    work_unit_statuses = _work_unit_statuses(observe_report)
     gate_summary = _gate_summary(observe_report, epic_events)
     checks = _checks_summary(observe_report)
     dispatch = _dispatch_summary(dispatch_events)
-    diff = _diff_summary(repo_root, consumer_base_sha, story_statuses)
+    diff = _diff_summary(repo_root, consumer_base_sha, work_unit_statuses)
     final_state = _final_state(observe_report, node_sequence, gate_summary)
     quality = _quality_outcome(
         final_state=final_state,
@@ -577,7 +571,7 @@ def collect_run_manifest(
         "final_state": final_state,
         "gates": gate_summary,
         "checks": checks,
-        "story_statuses": story_statuses,
+        "work_unit_statuses": work_unit_statuses,
         "dispatch": dispatch,
         "timing": {
             "run_duration_ms": run_duration_ms,
@@ -605,7 +599,7 @@ def _node_sequence(
     sequence = [
         {
             "node_type": item.get("node_type"),
-            "story_id": item.get("story_id"),
+            "work_unit_id": item.get("work_unit_id"),
             "status": item.get("status"),
         }
         for item in command_outputs
@@ -621,7 +615,7 @@ def _node_sequence(
         "plan_critiqued": "plan_critique",
         "plan_gate_opened": "plan_gate_open",
         "plan_gate_resolved": "plan_gate_resolve",
-        "story_completed": "commit",
+        "work_unit_completed": "commit",
         "transaction_manifest_verified": "commit",
         "epic_completed": "human_review",
     }
@@ -632,7 +626,7 @@ def _node_sequence(
             inferred.append(
                 {
                     "node_type": node,
-                    "story_id": event.get("story_id"),
+                    "work_unit_id": event.get("work_unit_id"),
                     "status": "completed" if node != "plan_gate_open" else "gate_opened",
                 }
             )
@@ -643,7 +637,7 @@ def _node_sequence(
         inferred.append(
             {
                 "node_type": "dispatch",
-                "story_id": event.get("story_id"),
+                "work_unit_id": event.get("work_unit_id"),
                 "status": "spawned",
                 "role": role,
             }
@@ -670,7 +664,7 @@ def _route_policy_model_profile(route_policy: Mapping[str, Any]) -> str | None:
     return None
 
 
-def _story_statuses(observe_report: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+def _work_unit_statuses(observe_report: Mapping[str, Any] | None) -> list[dict[str, Any]]:
     if not observe_report:
         return []
     work_units = observe_report.get("status", {}).get("plan", {}).get("work_units", [])
@@ -684,7 +678,7 @@ def _story_statuses(observe_report: Mapping[str, Any] | None) -> list[dict[str, 
             {
                 "id": unit.get("id"),
                 "title": unit.get("title"),
-                "status": unit.get("status"),
+                "state": unit.get("state"),
                 "satisfies": unit.get("satisfies", []),
             }
         )
@@ -700,7 +694,7 @@ def _gate_summary(
         {
             "event": event.get("event"),
             "gate_type": event.get("gate_type"),
-            "story_id": event.get("story_id"),
+            "work_unit_id": event.get("work_unit_id"),
             "decision": event.get("decision"),
             "triggered_by": event.get("triggered_by", []),
         }
@@ -778,7 +772,7 @@ def _compact_dispatch_event(event: Mapping[str, Any]) -> dict[str, Any]:
     }
     summary: dict[str, Any] = {
         "role": event.get("role"),
-        "story_id": event.get("story_id"),
+        "work_unit_id": event.get("work_unit_id"),
         "config_role": event.get("config_role"),
         "model_profile": event.get("model_profile"),
         "profile_role": event.get("profile_role"),
@@ -884,12 +878,12 @@ def _int(value: object) -> int:
 def _diff_summary(
     repo_root: Path,
     consumer_base_sha: str,
-    story_statuses: Sequence[Mapping[str, Any]],
+    work_unit_statuses: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
     committed = _diff_part(repo_root, consumer_base_sha, "HEAD")
     staged = _diff_cached_part(repo_root)
     unstaged = _diff_unstaged_part(repo_root)
-    pathscope = _pathscope_summary(committed["files"], repo_root, story_statuses)
+    pathscope = _pathscope_summary(committed["files"], repo_root, work_unit_statuses)
     return {
         "committed": committed,
         "staged": staged,
@@ -956,9 +950,9 @@ def _parse_numstat(lines: Iterable[str]) -> tuple[int, int]:
 def _pathscope_summary(
     changed_files: Sequence[str],
     repo_root: Path,
-    story_statuses: Sequence[Mapping[str, Any]],
+    work_unit_statuses: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
-    plan_paths = _plan_story_paths(repo_root)
+    plan_paths = _plan_work_unit_paths(repo_root)
     if not plan_paths:
         return {"known": False, "ok": None, "allowed_pathspecs": [], "outside_scope": []}
     user_files = [path for path in changed_files if not path.startswith(".woof/")]
@@ -970,11 +964,11 @@ def _pathscope_summary(
         "ok": not outside,
         "allowed_pathspecs": plan_paths,
         "outside_scope": outside,
-        "story_status_count": len(story_statuses),
+        "work_unit_status_count": len(work_unit_statuses),
     }
 
 
-def _plan_story_paths(repo_root: Path) -> list[str]:
+def _plan_work_unit_paths(repo_root: Path) -> list[str]:
     plan_paths = sorted((repo_root / ".woof" / "epics").glob("E*/plan.json"))
     if not plan_paths:
         return []
@@ -1060,7 +1054,7 @@ def _quality_outcome(
     pathscope = diff.get("pathscope", {}) if isinstance(diff.get("pathscope"), Mapping) else {}
     if status == "passed" and pathscope.get("ok") is False:
         status = "failed"
-        reason = "result_diff_outside_story_scope"
+        reason = "result_diff_outside_work_unit_scope"
     if status == "passed" and checks.get("exists") and checks.get("ok") is False:
         status = "failed"
         reason = "quality_checks_failed"
@@ -1088,11 +1082,11 @@ def _reviewer_severity(
     critique_dir = repo_root / ".woof" / "epics" / f"E{epic_id}" / "critique"
     work_units: dict[str, str] = {}
     if critique_dir.is_dir():
-        for path in sorted(critique_dir.glob("story-*.md")):
+        for path in sorted(critique_dir.glob("work-unit-*.md")):
             front = _markdown_front_matter(path)
             severity = front.get("severity")
             if isinstance(severity, str):
-                work_units[path.stem.removeprefix("story-")] = severity
+                work_units[path.stem.removeprefix("work-unit-")] = severity
     return {"plan": plan[-1] if plan else None, "work_units": work_units}
 
 
@@ -1547,11 +1541,11 @@ def epic_id(prompt: str) -> int:
     raise SystemExit("epic id not found in prompt")
 
 
-def story_id(prompt: str) -> str:
-    match = re.search(r'"story_id":\s*"(S\d+)"', prompt)
+def work_unit_id(prompt: str) -> str:
+    match = re.search(r'"work_unit_id":\s*"(S\d+)"', prompt)
     if match:
         return match.group(1)
-    raise SystemExit("story id not found in prompt")
+    raise SystemExit("work-unit id not found in prompt")
 
 
 def write(path: Path, text: str) -> None:
@@ -1563,7 +1557,7 @@ def write_plan(prompt: str) -> None:
     eid = epic_id(prompt)
     plan = {
         "epic_id": eid,
-        "goal": "Measure a small valid epic from deterministic Definition through one story.",
+        "goal": "Measure a small valid epic from deterministic Definition through one work unit.",
         "work_units": [
             {
                 "id": "S1",
@@ -1580,16 +1574,16 @@ def write_plan(prompt: str) -> None:
                 "uses_contract_decisions": [],
                 "deps": [],
                 "tests": {"count": 1, "types": ["unit"]},
-                "status": "pending",
+                "state": "pending",
             }
         ],
     }
     write(Path(f".woof/epics/E{eid}/plan.json"), json.dumps(plan, indent=2) + "\n")
 
 
-def execute_story(prompt: str) -> None:
+def execute_work_unit(prompt: str) -> None:
     eid = epic_id(prompt)
-    sid = story_id(prompt)
+    sid = work_unit_id(prompt)
     write(
         Path("bench_note.py"),
         'def benchmark_note() -> dict[str, str]:\n    return {"status": "measured"}\n',
@@ -1632,7 +1626,7 @@ def execute_story(prompt: str) -> None:
         json.dumps(
             {
                 "epic_id": eid,
-                "story_id": sid,
+                "work_unit_id": sid,
                 "outcome": "staged_for_verification",
                 "commit_subject": "feat: add benchmark note helper",
                 "commit_body": "Adds the small efficiency benchmark fixture output.",
@@ -1649,7 +1643,7 @@ def main() -> int:
     if '"node_type": "breakdown_planning"' in prompt:
         write_plan(prompt)
     elif '"node_type": "executor_dispatch"' in prompt:
-        execute_story(prompt)
+        execute_work_unit(prompt)
     else:
         raise SystemExit("primary efficiency stub did not recognise prompt")
     print(json.dumps({"type": "thread.started", "thread_id": "efficiency-stub-primary"}))
@@ -1701,11 +1695,11 @@ def epic_id(prompt: str) -> int:
     raise SystemExit("epic id not found in prompt")
 
 
-def story_id(prompt: str) -> str:
-    match = re.search(r'"story_id":\s*"(S\d+)"', prompt)
+def work_unit_id(prompt: str) -> str:
+    match = re.search(r'"work_unit_id":\s*"(S\d+)"', prompt)
     if match:
         return match.group(1)
-    raise SystemExit("story id not found in prompt")
+    raise SystemExit("work-unit id not found in prompt")
 
 
 def write(path: Path, text: str) -> None:
@@ -1731,13 +1725,13 @@ Plan is acceptable for the dry efficiency harness.
     )
 
 
-def write_story_critique(prompt: str) -> None:
+def write_work_unit_critique(prompt: str) -> None:
     eid = epic_id(prompt)
-    sid = story_id(prompt)
+    sid = work_unit_id(prompt)
     write(
-        Path(f".woof/epics/E{eid}/critique/story-{sid}.md"),
+        Path(f".woof/epics/E{eid}/critique/work-unit-{sid}.md"),
         f"""---
-target: story
+target: work_unit
 target_id: {sid}
 severity: info
 timestamp: "{NOW}"
@@ -1745,7 +1739,7 @@ harness: efficiency-stub-reviewer
 findings: []
 ---
 
-Story output is acceptable for the dry efficiency harness.
+Work-unit output is acceptable for the dry efficiency harness.
 """,
     )
 
@@ -1755,7 +1749,7 @@ def main() -> int:
     if '"node_type": "plan_critique"' in prompt:
         write_plan_critique(prompt)
     elif '"node_type": "critique_dispatch"' in prompt:
-        write_story_critique(prompt)
+        write_work_unit_critique(prompt)
     else:
         raise SystemExit("reviewer efficiency stub did not recognise prompt")
     print(

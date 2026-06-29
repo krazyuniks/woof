@@ -391,7 +391,7 @@ def test_wf_plan_gate_approval_syncs_plan_summary(epic_project: Path, tmp_path: 
     epic_dir = epic_project / ".woof" / "epics" / "E42"
     (epic_dir / "plan.json").write_text(_plan_json())
     (epic_dir / "gate.md").write_text(
-        "---\ntype: plan_gate\nstage: 4\nstory_id: null\ntriggered_by: [plan_review]\n---\n"
+        "---\ntype: plan_gate\nstage: 4\nwork_unit_id: null\ntriggered_by: [plan_review]\n---\n"
     )
     remote_body = "Remote intent.\n\n## Observable Outcomes\n\n- stale\n"
     _write_last_sync(epic_project, body=remote_body)
@@ -496,7 +496,7 @@ def test_sync_conflict_detected(epic_project: Path, tmp_path: Path) -> None:
     gate_text = gate.read_text()
     gate_front = yaml.safe_load(gate_text[4 : gate_text.find("\n---\n", 4)])
     assert gate_front["type"] == "plan_gate"
-    assert gate_front["story_id"] is None
+    assert gate_front["work_unit_id"] is None
     assert gate_front["triggered_by"] == ["tracker_sync_conflict"]
     assert "### Diff: last-pushed -> current remote" in gate_text
     assert "-<old>" in gate_text
@@ -541,7 +541,7 @@ def test_wf_plan_gate_approval_opens_sync_conflict_gate(epic_project: Path, tmp_
     epic_dir = epic_project / ".woof" / "epics" / "E42"
     (epic_dir / "plan.json").write_text(_plan_json())
     (epic_dir / "gate.md").write_text(
-        "---\ntype: plan_gate\nstage: 4\nstory_id: null\ntriggered_by: [plan_review]\n---\n"
+        "---\ntype: plan_gate\nstage: 4\nwork_unit_id: null\ntriggered_by: [plan_review]\n---\n"
     )
     _write_last_sync(epic_project, updated_at="2025-12-01T00:00:00Z", body="<old>")
 
@@ -575,7 +575,7 @@ def test_wf_resolve_sync_conflict_keep_local_updates_last_sync_baseline(
         "---\n"
         "type: plan_gate\n"
         "stage: 4\n"
-        "story_id: null\n"
+        "work_unit_id: null\n"
         "triggered_by: [tracker_sync_conflict]\n"
         "timestamp: '2026-01-01T00:00:00Z'\n"
         "---\n"
@@ -625,7 +625,7 @@ def test_wf_resolve_sync_conflict_accept_remote_updates_epic_md(
         "---\n"
         "type: plan_gate\n"
         "stage: 4\n"
-        "story_id: null\n"
+        "work_unit_id: null\n"
         "triggered_by: [tracker_sync_conflict]\n"
         "timestamp: '2026-01-01T00:00:00Z'\n"
         "---\n"

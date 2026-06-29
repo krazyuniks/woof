@@ -1,6 +1,6 @@
 """check_2_outcome_markers — Stage-5 Check 2.
 
-Verifies that every outcome ID in the active story's ``satisfies[]`` list is
+Verifies that every outcome ID in the active work unit's ``satisfies[]`` list is
 present in the staged test diff. Marker discovery is intentionally textual and
 configuration-driven via ``.woof/test-markers.toml``.
 """
@@ -48,31 +48,31 @@ class _LanguageMarkers:
 
 
 def check_2_outcome_markers_runner(ctx: CheckContext) -> CheckOutcome:
-    story = _story_for_id(ctx.plan, ctx.story_id)
-    if story is None:
+    work_unit = _work_unit_for_id(ctx.plan, ctx.work_unit_id)
+    if work_unit is None:
         return CheckOutcome(
             id=CHECK_ID,
             ok=False,
             severity="blocker",
-            summary=f"story {ctx.story_id!r} not found in plan.json",
+            summary=f"work unit {ctx.work_unit_id!r} not found in plan.json",
         )
 
-    satisfies = story.get("satisfies")
+    satisfies = work_unit.get("satisfies")
     if not isinstance(satisfies, list) or not all(isinstance(item, str) for item in satisfies):
         return CheckOutcome(
             id=CHECK_ID,
             ok=False,
             severity="blocker",
-            summary=f"story {ctx.story_id} has malformed satisfies[]",
+            summary=f"work unit {ctx.work_unit_id} has malformed satisfies[]",
         )
 
-    if not _requires_automated_test_markers(story):
+    if not _requires_automated_test_markers(work_unit):
         return CheckOutcome(
             id=CHECK_ID,
             ok=True,
             severity="info",
             summary=(
-                f"story {ctx.story_id} declares no automated test work; "
+                f"work unit {ctx.work_unit_id} declares no automated test work; "
                 "outcome marker check skipped"
             ),
         )
@@ -83,7 +83,7 @@ def check_2_outcome_markers_runner(ctx: CheckContext) -> CheckOutcome:
             id=CHECK_ID,
             ok=True,
             severity="info",
-            summary=f"story {ctx.story_id} declares no outcome markers to verify",
+            summary=f"work unit {ctx.work_unit_id} declares no outcome markers to verify",
         )
 
     config_result = _load_marker_config(ctx.repo_root)
@@ -140,18 +140,18 @@ def check_2_outcome_markers_runner(ctx: CheckContext) -> CheckOutcome:
     )
 
 
-def _story_for_id(plan: dict[str, Any], story_id: str) -> dict[str, Any] | None:
+def _work_unit_for_id(plan: dict[str, Any], work_unit_id: str) -> dict[str, Any] | None:
     work_units = plan.get("work_units", [])
     if not isinstance(work_units, list):
         return None
-    for story in work_units:
-        if isinstance(story, dict) and story.get("id") == story_id:
-            return story
+    for work_unit in work_units:
+        if isinstance(work_unit, dict) and work_unit.get("id") == work_unit_id:
+            return work_unit
     return None
 
 
-def _requires_automated_test_markers(story: dict[str, Any]) -> bool:
-    tests = story.get("tests")
+def _requires_automated_test_markers(work_unit: dict[str, Any]) -> bool:
+    tests = work_unit.get("tests")
     if not isinstance(tests, dict):
         return True
 

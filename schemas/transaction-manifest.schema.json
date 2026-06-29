@@ -6,9 +6,9 @@
   "additionalProperties": false,
   "required": [
     "epic_id",
-    "story_id",
+    "work_unit_id",
     "expected_paths",
-    "story_paths",
+    "work_unit_paths",
     "required_paths",
     "audit_paths"
   ],
@@ -18,13 +18,13 @@
       "minimum": 1,
       "description": "Tracker-assigned epic identifier. Same value as E<N>."
     },
-    "story_id": { "type": "string", "pattern": "^S[1-9]\\d*$" },
+    "work_unit_id": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9._-]*$" },
     "expected_paths": {
       "type": "array",
       "items": { "type": "string", "minLength": 1 },
       "uniqueItems": true
     },
-    "story_paths": {
+    "work_unit_paths": {
       "type": "array",
       "items": { "type": "string", "minLength": 1 },
       "uniqueItems": true

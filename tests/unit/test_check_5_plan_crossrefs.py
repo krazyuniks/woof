@@ -39,21 +39,21 @@ def _epic_front_matter() -> dict[str, Any]:
     }
 
 
-def _story(story_id: str, **overrides: Any) -> dict[str, Any]:
-    story = {
-        "id": story_id,
-        "title": f"Story {story_id}",
-        "summary": f"Produce {story_id}",
-        "paths": [f"src/{story_id}.py"],
+def _work_unit(work_unit_id: str, **overrides: Any) -> dict[str, Any]:
+    work_unit = {
+        "id": work_unit_id,
+        "title": f"Work unit {work_unit_id}",
+        "summary": f"Produce {work_unit_id}",
+        "paths": [f"src/{work_unit_id}.py"],
         "satisfies": ["O1"],
         "implements_contract_decisions": [],
         "uses_contract_decisions": [],
         "deps": [],
         "tests": {"count": 1, "types": ["unit"]},
-        "status": "pending",
+        "state": "pending",
     }
-    story.update(overrides)
-    return story
+    work_unit.update(overrides)
+    return work_unit
 
 
 def _valid_plan() -> dict[str, Any]:
@@ -61,18 +61,18 @@ def _valid_plan() -> dict[str, Any]:
         "epic_id": 42,
         "goal": "Validate plan cross references.",
         "work_units": [
-            _story(
+            _work_unit(
                 "S1",
                 satisfies=["O1"],
                 implements_contract_decisions=["CD1"],
-                status="done",
+                state="done",
             ),
-            _story(
+            _work_unit(
                 "S2",
                 satisfies=["O2"],
                 uses_contract_decisions=["CD1"],
                 deps=["S1"],
-                status="in_progress",
+                state="in_progress",
             ),
         ],
     }
@@ -90,13 +90,13 @@ def _write_plan(epic_dir: Path, plan: dict[str, Any]) -> None:
     (epic_dir / "plan.json").write_text(json.dumps(plan))
 
 
-def _ctx(tmp_path: Path, plan: dict[str, Any], story_id: str = "S2") -> CheckContext:
+def _ctx(tmp_path: Path, plan: dict[str, Any], work_unit_id: str = "S2") -> CheckContext:
     epic_dir = tmp_path / ".woof" / "epics" / "E42"
     _write_epic(epic_dir, _epic_front_matter())
     _write_plan(epic_dir, plan)
     return CheckContext(
         epic_id=42,
-        story_id=story_id,
+        work_unit_id=work_unit_id,
         repo_root=tmp_path,
         epic_dir=epic_dir,
         plan=plan,
@@ -104,14 +104,14 @@ def _ctx(tmp_path: Path, plan: dict[str, Any], story_id: str = "S2") -> CheckCon
     )
 
 
-def _run(tmp_path: Path, plan: dict[str, Any], story_id: str = "S2"):
+def _run(tmp_path: Path, plan: dict[str, Any], work_unit_id: str = "S2"):
     if shutil.which("ajv") is None:
         pytest.skip("ajv not on PATH")
-    return check_5_plan_crossrefs_runner(_ctx(tmp_path, plan, story_id))
+    return check_5_plan_crossrefs_runner(_ctx(tmp_path, plan, work_unit_id))
 
 
-def _failing_evidence(tmp_path: Path, plan: dict[str, Any], story_id: str = "S2") -> str:
-    outcome = _run(tmp_path, plan, story_id)
+def _failing_evidence(tmp_path: Path, plan: dict[str, Any], work_unit_id: str = "S2") -> str:
+    outcome = _run(tmp_path, plan, work_unit_id)
     assert not outcome.ok
     assert outcome.severity == "blocker"
     assert outcome.evidence
@@ -206,7 +206,7 @@ def test_dependency_cycle_fails(tmp_path: Path) -> None:
     assert "dependency cycle detected: S1 -> S2 -> S1" in evidence
 
 
-def test_duplicate_story_pathspec_fails(tmp_path: Path) -> None:
+def test_duplicate_work_unit_pathspec_fails(tmp_path: Path) -> None:
     plan = deepcopy(_valid_plan())
     plan["work_units"][1]["paths"] = ["src/S1.py"]
 
@@ -215,19 +215,19 @@ def test_duplicate_story_pathspec_fails(tmp_path: Path) -> None:
     assert "pathspec 'src/S1.py' appears in multiple work units: ['S1', 'S2']" in evidence
 
 
-def test_status_coherence_fails(tmp_path: Path) -> None:
+def test_state_coherence_fails(tmp_path: Path) -> None:
     plan = deepcopy(_valid_plan())
-    plan["work_units"][0]["status"] = "in_progress"
+    plan["work_units"][0]["state"] = "in_progress"
 
     evidence = _failing_evidence(tmp_path, plan)
 
     assert "multiple work units are in_progress: ['S1', 'S2']" in evidence
-    assert "S2: status=in_progress but dependency S1 is status=in_progress" in evidence
+    assert "S2: state=in_progress but dependency S1 is state=in_progress" in evidence
 
 
-def test_current_story_pending_fails(tmp_path: Path) -> None:
+def test_current_work_unit_pending_fails(tmp_path: Path) -> None:
     plan = deepcopy(_valid_plan())
-    plan["work_units"][1]["status"] = "pending"
+    plan["work_units"][1]["state"] = "pending"
 
     evidence = _failing_evidence(tmp_path, plan)
 
@@ -239,8 +239,7 @@ def test_stage3_plan_contract_requires_pending_statuses() -> None:
 
     failures = stage3_plan_contract_failures(plan, _epic_front_matter())
 
-    assert "S1: Stage-3 plans must enter the plan gate with status=pending, got done" in failures
+    assert "S1: Stage-3 plans must enter the plan gate with state=pending, got done" in failures
     assert (
-        "S2: Stage-3 plans must enter the plan gate with status=pending, got in_progress"
-        in failures
+        "S2: Stage-3 plans must enter the plan gate with state=pending, got in_progress" in failures
     )

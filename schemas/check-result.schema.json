@@ -5,7 +5,7 @@
   "description": "Structured output of 'woof check stage-5'. Top-level ok is true iff triggered_by is empty. The checks array contains one entry per registry slot in declaration order.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["ok", "stage", "epic_id", "story_id", "triggered_by", "checks"],
+  "required": ["ok", "stage", "epic_id", "work_unit_id", "triggered_by", "checks"],
   "properties": {
     "ok": {
       "type": "boolean",
@@ -20,9 +20,9 @@
       "minimum": 1,
       "description": "Tracker-assigned epic identifier. Same value as E<N>."
     },
-    "story_id": {
+    "work_unit_id": {
       "type": "string",
-      "pattern": "^S[1-9]\\d*$"
+      "pattern": "^[A-Za-z][A-Za-z0-9._-]*$"
     },
     "triggered_by": {
       "type": "array",

@@ -1,7 +1,7 @@
 """woof check stage-5 - deterministic Stage-5 boundary check runner.
 
 Iterates the registry for stage=5, runs each runner against the current
-epic/story context, and emits a check-result conforming to
+epic/work-unit context, and emits a check-result conforming to
 woof/schemas/check-result.schema.json.
 
 Exit codes:
@@ -25,8 +25,8 @@ def _load_plan(plan_path: Path) -> dict:
     return Plan.model_validate_json(plan_path.read_text()).model_dump(exclude_none=True)
 
 
-def _load_critique_fm(epic_dir: Path, story_id: str) -> dict | None:
-    p = epic_dir / "critique" / f"story-{story_id}.md"
+def _load_critique_fm(epic_dir: Path, work_unit_id: str) -> dict | None:
+    p = epic_dir / "critique" / f"work-unit-{work_unit_id}.md"
     if not p.exists():
         return None
     import yaml
@@ -98,8 +98,8 @@ def cmd_check_stage_5(args: argparse.Namespace) -> int:
     if not args.epic:
         sys.stderr.write("woof check stage-5: --epic required (unless --self-test)\n")
         return 2
-    if not args.story:
-        sys.stderr.write("woof check stage-5: --story required (unless --self-test)\n")
+    if not args.work_unit:
+        sys.stderr.write("woof check stage-5: --work-unit required (unless --self-test)\n")
         return 2
 
     repo_root = _find_repo_root()
@@ -113,10 +113,11 @@ def cmd_check_stage_5(args: argparse.Namespace) -> int:
     from woof.checks import CheckContext
 
     plan = _load_plan(plan_path)
-    critique = _load_critique_fm(epic_dir, args.story)
+    work_unit_id = args.work_unit
+    critique = _load_critique_fm(epic_dir, work_unit_id)
     ctx = CheckContext(
         epic_id=args.epic,
-        story_id=args.story,
+        work_unit_id=work_unit_id,
         repo_root=repo_root,
         epic_dir=epic_dir,
         plan=plan,
@@ -143,7 +144,7 @@ def cmd_check_stage_5(args: argparse.Namespace) -> int:
         "ok": len(triggered_by) == 0,
         "stage": 5,
         "epic_id": args.epic,
-        "story_id": args.story,
+        "work_unit_id": work_unit_id,
         "triggered_by": triggered_by,
         "checks": outcomes,
     }
@@ -175,9 +176,9 @@ def setup_check_parser(sub: argparse._SubParsersAction) -> None:  # type: ignore
     check_p = sub.add_parser("check", help="run stage boundary checks")
     check_sub = check_p.add_subparsers(dest="check_stage", required=True)
 
-    stage5 = check_sub.add_parser("stage-5", help="run Stage-5 checks for a story")
+    stage5 = check_sub.add_parser("stage-5", help="run Stage-5 checks for a work unit")
     stage5.add_argument("--epic", type=int, help="tracker-assigned epic id")
-    stage5.add_argument("--story", help="story id (e.g. S1)")
+    stage5.add_argument("--work-unit", dest="work_unit", help="work-unit id (e.g. S1)")
     stage5.add_argument(
         "--format",
         choices=["text", "json"],

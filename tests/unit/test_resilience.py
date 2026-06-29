@@ -75,11 +75,16 @@ def _write_plan(root: Path, epic_id: int = 1, story_paths: list[str] | None = No
 def _append_subprocess_returned(
     root: Path,
     epic_id: int = 1,
-    story_id: str = "S1",
+    work_unit_id: str = "S1",
     **fields: object,
 ) -> None:
     d = _epic_dir(root, epic_id)
-    event = {"event": "subprocess_returned", "epic_id": epic_id, "story_id": story_id, **fields}
+    event = {
+        "event": "subprocess_returned",
+        "epic_id": epic_id,
+        "work_unit_id": work_unit_id,
+        **fields,
+    }
     with (d / "dispatch.jsonl").open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(event) + "\n")
 

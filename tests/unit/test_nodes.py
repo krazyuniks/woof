@@ -69,7 +69,7 @@ def _write_plan(root: Path, epic_id: int = 1) -> Path:
                 "uses_contract_decisions": [],
                 "deps": [],
                 "tests": {"count": 1, "types": ["unit"]},
-                "status": "pending",
+                "state": "pending",
             }
         ],
     }
@@ -122,7 +122,7 @@ def _write_stage3_plan(directory: Path, epic_id: int) -> None:
                 "uses_contract_decisions": [],
                 "deps": [],
                 "tests": {"count": 1, "types": ["unit"]},
-                "status": "pending",
+                "state": "pending",
             }
         ],
     }
@@ -145,7 +145,7 @@ def test_discovery_research_missing_cartography_raises_stage_state_error(tmp_pat
     exc = exc_info.value
     assert exc.operator_recoverable
     assert exc.gate_type == "plan_gate"
-    assert exc.story_id is None
+    assert exc.work_unit_id is None
     assert "STACK.md" in str(exc)
 
 
@@ -162,7 +162,7 @@ def test_discovery_thinking_missing_cartography_raises_stage_state_error(tmp_pat
     exc = exc_info.value
     assert exc.operator_recoverable
     assert exc.gate_type == "plan_gate"
-    assert exc.story_id is None
+    assert exc.work_unit_id is None
 
 
 def test_discovery_synthesis_missing_cartography_raises_stage_state_error(tmp_path: Path) -> None:
@@ -176,7 +176,7 @@ def test_discovery_synthesis_missing_cartography_raises_stage_state_error(tmp_pa
     exc = exc_info.value
     assert exc.operator_recoverable
     assert exc.gate_type == "plan_gate"
-    assert exc.story_id is None
+    assert exc.work_unit_id is None
 
 
 def test_epic_definition_missing_cartography_raises_stage_state_error(tmp_path: Path) -> None:
@@ -191,7 +191,7 @@ def test_epic_definition_missing_cartography_raises_stage_state_error(tmp_path: 
     exc = exc_info.value
     assert exc.operator_recoverable
     assert exc.gate_type == "plan_gate"
-    assert exc.story_id is None
+    assert exc.work_unit_id is None
 
 
 def test_breakdown_planning_missing_cartography_raises_stage_state_error(tmp_path: Path) -> None:
@@ -206,7 +206,7 @@ def test_breakdown_planning_missing_cartography_raises_stage_state_error(tmp_pat
     exc = exc_info.value
     assert exc.operator_recoverable
     assert exc.gate_type == "plan_gate"
-    assert exc.story_id is None
+    assert exc.work_unit_id is None
 
 
 def test_plan_critique_missing_cartography_raises_stage_state_error(tmp_path: Path) -> None:
@@ -224,7 +224,7 @@ def test_plan_critique_missing_cartography_raises_stage_state_error(tmp_path: Pa
     exc = exc_info.value
     assert exc.operator_recoverable
     assert exc.gate_type == "plan_gate"
-    assert exc.story_id is None
+    assert exc.work_unit_id is None
 
 
 def test_executor_dispatch_missing_cartography_raises_stage_state_error(tmp_path: Path) -> None:
@@ -233,14 +233,17 @@ def test_executor_dispatch_missing_cartography_raises_stage_state_error(tmp_path
     with pytest.raises(StageStateError) as exc_info:
         nodes.executor_dispatch_node(
             NodeInput(
-                node_type=NodeType.EXECUTOR_DISPATCH, epic_id=7, story_id="S1", repo_root=tmp_path
+                node_type=NodeType.EXECUTOR_DISPATCH,
+                epic_id=7,
+                work_unit_id="S1",
+                repo_root=tmp_path,
             )
         )
 
     exc = exc_info.value
     assert exc.operator_recoverable
-    assert exc.gate_type == "story_gate"
-    assert exc.story_id == "S1"
+    assert exc.gate_type == "work_unit_gate"
+    assert exc.work_unit_id == "S1"
 
 
 def test_critique_dispatch_missing_cartography_raises_stage_state_error(tmp_path: Path) -> None:
@@ -251,14 +254,17 @@ def test_critique_dispatch_missing_cartography_raises_stage_state_error(tmp_path
     with pytest.raises(StageStateError) as exc_info:
         nodes.critique_dispatch_node(
             NodeInput(
-                node_type=NodeType.CRITIQUE_DISPATCH, epic_id=8, story_id="S1", repo_root=tmp_path
+                node_type=NodeType.CRITIQUE_DISPATCH,
+                epic_id=8,
+                work_unit_id="S1",
+                repo_root=tmp_path,
             )
         )
 
     exc = exc_info.value
     assert exc.operator_recoverable
-    assert exc.gate_type == "story_gate"
-    assert exc.story_id == "S1"
+    assert exc.gate_type == "work_unit_gate"
+    assert exc.work_unit_id == "S1"
 
 
 # ---------------------------------------------------------------------------
@@ -277,7 +283,7 @@ def test_research_node_artefacts_include_mapped_carto_refs(
         repo_root: Path,
         role: str,
         epic_id: int,
-        story_id: str | None,
+        work_unit_id: str | None,
         prompt: str,
         artefacts_loaded: list[str] | None = None,
         route_key: str | None = None,
@@ -312,7 +318,7 @@ def test_executor_dispatch_artefacts_include_mapped_carto_refs_and_files_txt(
         repo_root: Path,
         role: str,
         epic_id: int,
-        story_id: str | None,
+        work_unit_id: str | None,
         prompt: str,
         artefacts_loaded: list[str] | None = None,
         route_key: str | None = None,
@@ -328,7 +334,7 @@ def test_executor_dispatch_artefacts_include_mapped_carto_refs_and_files_txt(
 
     nodes.executor_dispatch_node(
         NodeInput(
-            node_type=NodeType.EXECUTOR_DISPATCH, epic_id=10, story_id="S1", repo_root=tmp_path
+            node_type=NodeType.EXECUTOR_DISPATCH, epic_id=10, work_unit_id="S1", repo_root=tmp_path
         )
     )
 
@@ -346,7 +352,7 @@ def test_executor_dispatch_artefacts_include_mapped_carto_refs_and_files_txt(
 # ---------------------------------------------------------------------------
 
 
-def test_executor_dispatch_files_txt_slice_filtered_by_story_paths(
+def test_executor_dispatch_files_txt_slice_filtered_by_work_unit_paths(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _init_git_repo(tmp_path)
@@ -366,7 +372,7 @@ def test_executor_dispatch_files_txt_slice_filtered_by_story_paths(
         repo_root: Path,
         role: str,
         epic_id: int,
-        story_id: str | None,
+        work_unit_id: str | None,
         prompt: str,
         artefacts_loaded: list[str] | None = None,
         route_key: str | None = None,
@@ -381,7 +387,7 @@ def test_executor_dispatch_files_txt_slice_filtered_by_story_paths(
 
     nodes.executor_dispatch_node(
         NodeInput(
-            node_type=NodeType.EXECUTOR_DISPATCH, epic_id=11, story_id="S1", repo_root=tmp_path
+            node_type=NodeType.EXECUTOR_DISPATCH, epic_id=11, work_unit_id="S1", repo_root=tmp_path
         )
     )
 
@@ -411,7 +417,7 @@ def _write_plan_critique_blocker(directory: Path, evidence: str) -> None:
         "findings:\n"
         "  - id: F1\n"
         "    severity: blocker\n"
-        "    summary: tighten story scope\n"
+        "    summary: tighten work-unit scope\n"
         f"    evidence: {evidence}\n"
         "---\n"
         "Plan critique body.\n"
@@ -436,7 +442,7 @@ def test_plan_critique_node_rejects_blocker_with_unresolvable_evidence(
     assert "F1" in output.message
 
 
-def test_plan_critique_node_accepts_blocker_with_resolvable_story_evidence(
+def test_plan_critique_node_accepts_blocker_with_resolvable_work_unit_evidence(
     tmp_path: Path,
 ) -> None:
     directory = _write_spark(tmp_path, 51)
@@ -722,11 +728,11 @@ def test_plan_critique_prompt_ends_with_canonical_epilogue(tmp_path: Path) -> No
     assert prompt.count(_epilogue_text()) == 1
 
 
-def test_story_critique_prompt_ends_with_canonical_epilogue(tmp_path: Path) -> None:
+def test_work_unit_critique_prompt_ends_with_canonical_epilogue(tmp_path: Path) -> None:
     directory = _write_spark(tmp_path, 77)
     _write_minimal_epic(directory, 77)
     _write_stage3_plan(directory, 77)
-    prompt = nodes._story_critique_prompt(tmp_path, 77, "S1")
+    prompt = nodes._work_unit_critique_prompt(tmp_path, 77, "S1")
     assert prompt.rstrip("\n").endswith(_epilogue_text())
     assert prompt.count(_epilogue_text()) == 1
 
@@ -735,7 +741,7 @@ def test_executor_dispatch_prompt_ends_with_canonical_epilogue() -> None:
     prompt = nodes._executor_dispatch_prompt(
         repo_root=Path("/fake"),
         epic_id=78,
-        story_id="S1",
+        work_unit_id="S1",
         cartography_refs=[],
         files_txt_slice=[],
     )

@@ -9,7 +9,7 @@
     "node_type",
     "status",
     "epic_id",
-    "story_id",
+    "work_unit_id",
     "next_node",
     "gate_path",
     "validation_summary",
@@ -28,7 +28,7 @@
       "minimum": 1,
       "description": "Tracker-assigned epic identifier. Same value as E<N>."
     },
-    "story_id": {
+    "work_unit_id": {
       "type": "null"
     },
     "next_node": {

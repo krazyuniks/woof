@@ -62,20 +62,20 @@ SKILL_MD = REPO_ROOT / "skills" / "woof" / "SKILL.md"
 
 FORWARD_PROGRESS: dict[str, tuple[tuple[str, str], ...]] = {
     "approve": (
-        ("test_graph", "test_plan_gate_resolution_unblocks_stage_5_story_execution"),
+        ("test_graph", "test_plan_gate_resolution_unblocks_stage_5_work_unit_execution"),
         ("test_graph", "test_wf_resolve_approve_clears_stale_failed_check_result"),
     ),
     "approve_with_reason": (
         ("test_contract_readiness", "test_approve_with_reason_advances_unready_epic_to_planning"),
     ),
-    "retry_story": (
+    "retry_work_unit": (
         (
             "test_graph",
-            "test_wf_resolve_retry_story_resets_and_re_dispatches_without_redoing_siblings",
+            "test_wf_resolve_retry_work_unit_resets_and_re_dispatches_without_redoing_siblings",
         ),
     ),
-    "revise_story_scope": (
-        ("test_graph", "test_wf_resolve_revise_story_scope_clears_stale_failed_check_result"),
+    "revise_work_unit_scope": (
+        ("test_graph", "test_wf_resolve_revise_work_unit_scope_clears_stale_failed_check_result"),
     ),
     "revise_plan": (("test_graph", "test_wf_resolve_revise_plan_reenters_breakdown"),),
     "revise_epic_contract": (
@@ -85,7 +85,9 @@ FORWARD_PROGRESS: dict[str, tuple[tuple[str, str], ...]] = {
             "test_readiness_revise_epic_contract_archives_and_reenters_definition",
         ),
     ),
-    "abandon_story": (("test_graph", "test_wf_resolve_abandon_story_skips_to_next_ready_story"),),
+    "abandon_work_unit": (
+        ("test_graph", "test_wf_resolve_abandon_work_unit_skips_to_next_ready_work_unit"),
+    ),
     "abandon_epic": (
         ("test_graph", "test_wf_resolve_abandon_epic_closes_tracker_and_is_terminal"),
         ("test_contract_readiness", "test_readiness_abandon_epic_closes_tracker_and_is_terminal"),
@@ -126,13 +128,13 @@ def _jsonl_decision_enum() -> list[str]:
     return schema["properties"]["decision"]["enum"]
 
 
-# Map a doc bullet label to the gate type(s) it advertises. "story / review gate"
-# (SKILL.md) and "story gate / review gate" (gates.md) both feed one verb list to
+# Map a doc bullet label to the gate type(s) it advertises. "work-unit / review gate"
+# (SKILL.md) and "work-unit gate / review gate" (gates.md) both feed one verb list to
 # two gate types, which the canonical table holds as identical rows.
 def _label_gate_types(label: str) -> tuple[str, ...]:
     normalised = label.lower()
-    if "story" in normalised and "review" in normalised:
-        return ("story_gate", "review_gate")
+    if "work-unit" in normalised and "review" in normalised:
+        return ("work_unit_gate", "review_gate")
     if "readiness" in normalised:
         return ("readiness_gate",)
     if "plan gate" in normalised:
@@ -270,7 +272,7 @@ def test_no_implemented_effect_for_an_unadvertised_verb(tmp_path: Path, gate_typ
                 1,
                 decision=cast(GateDecision, verb),
                 gate_type=gate_type,
-                story_id="S1",
+                work_unit_id="S1",
                 triggered_by=triggered_by,
                 tracker=cast(Tracker, _StubTracker()),
             )
@@ -283,7 +285,7 @@ def test_canonical_table_covers_every_gate_type_and_conflict_verbs_match_tracker
     assert set(GATE_DECISIONS) == {
         "readiness_gate",
         "plan_gate",
-        "story_gate",
+        "work_unit_gate",
         "review_gate",
         "tracker_sync_conflict",
     }

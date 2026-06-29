@@ -23,14 +23,6 @@ CHECK_FLOOR_IDS = {
     "review-valve",
 }
 RUN_PROFILE_ROLES = ("producer", "reviewer")
-HARNESS_TO_ADAPTER = {
-    "claude": "claude",
-    "cld": "claude",
-    "codex": "codex",
-    "cod": "codex",
-}
-EFFORTS = {"low", "medium", "high", "xhigh", "max"}
-CODEX_EFFORTS = {"low", "medium", "high", "xhigh"}
 
 
 def policy_path(repo_root: Path) -> Path:

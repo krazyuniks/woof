@@ -54,7 +54,7 @@ def test_staged_for_verification_valid() -> None:
     ok, msg = _validate(
         {
             "epic_id": 182,
-            "story_id": "S1",
+            "work_unit_id": "S1",
             "outcome": "staged_for_verification",
             "commit_subject": "feat: E182 S1 - bootstrap executor result",
             "commit_body": "Bootstrap: registry + check_6 + driver protocol",
@@ -69,7 +69,7 @@ def test_aborted_with_position_valid() -> None:
     ok, msg = _validate(
         {
             "epic_id": 181,
-            "story_id": "S2",
+            "work_unit_id": "S2",
             "outcome": "aborted_with_position",
             "commit_body": None,
             "position": "Critique returned blocker; halting.",
@@ -83,7 +83,7 @@ def test_empty_diff_valid() -> None:
     ok, msg = _validate(
         {
             "epic_id": 182,
-            "story_id": "S3",
+            "work_unit_id": "S3",
             "outcome": "empty_diff",
             "commit_body": None,
             "position": "No changes — outcome already realised by S1.",
@@ -97,7 +97,7 @@ def test_staged_for_verification_missing_commit_body_invalid() -> None:
     ok, _ = _validate(
         {
             "epic_id": 182,
-            "story_id": "S1",
+            "work_unit_id": "S1",
             "outcome": "staged_for_verification",
         }
     )
@@ -109,7 +109,7 @@ def test_unknown_outcome_invalid() -> None:
     ok, _ = _validate(
         {
             "epic_id": 182,
-            "story_id": "S1",
+            "work_unit_id": "S1",
             "outcome": "committed",
             "commit_body": None,
         }

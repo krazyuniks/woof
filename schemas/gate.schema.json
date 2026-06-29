@@ -5,24 +5,24 @@
   "description": "YAML front-matter of .woof/epics/E<N>/gate.md. Validates the structured header only; prose sections are unconstrained markdown. The gate.md represents an OPEN gate; resolution is recorded as a jsonl event with a decision drawn from the taxonomy in jsonl-events.schema.json (gate_resolved.decision). triggered_by[] enum values are registry-derived check IDs plus graph-level triggers; the enum is snapshot-tested against the registry in tests/unit/test_check_stage_5_subcommand.py.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["type", "stage", "story_id", "triggered_by", "timestamp"],
+  "required": ["type", "stage", "work_unit_id", "triggered_by", "timestamp"],
   "properties": {
     "type": {
       "type": "string",
-      "enum": ["plan_gate", "story_gate", "review_gate", "readiness_gate"],
-      "description": "plan_gate (Stage 4, always opens). story_gate (Stage 5 halt, conditional on check failure or executor halt). review_gate (periodic; opens every-N stories or before epic close to surface accumulated minor critique findings). readiness_gate (Stage 2.5; opens when the deterministic contract-readiness node finds EPIC.md not concrete enough for planning)."
+      "enum": ["plan_gate", "work_unit_gate", "review_gate", "readiness_gate"],
+      "description": "plan_gate (Stage 4, always opens). work_unit_gate (Stage 5 halt, conditional on check failure or executor halt). review_gate (periodic; opens every N completed work units or before epic close to surface accumulated minor critique findings). readiness_gate (Stage 2.5; opens when the deterministic contract-readiness node finds EPIC.md not concrete enough for planning)."
     },
     "stage": {
       "type": "integer",
       "enum": [2, 4, 5, 6],
-      "description": "Stage that wrote the gate. Target shape: readiness_gate=2 (the post-definition Stage-2.5 readiness boundary; integers cannot express 2.5, so the gate carries the stage of the contract it validates), plan_gate=4, story_gate=5, review_gate=5. Legacy stage=6 artefacts remain read-tolerated for migration."
+      "description": "Stage that wrote the gate. Target shape: readiness_gate=2 (the post-definition Stage-2.5 readiness boundary; integers cannot express 2.5, so the gate carries the stage of the contract it validates), plan_gate=4, work_unit_gate=5, review_gate=5."
     },
-    "story_id": {
+    "work_unit_id": {
       "oneOf": [
-        { "type": "string", "pattern": "^S[1-9]\\d*$" },
+        { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9._-]*$" },
         { "type": "null" }
       ],
-      "description": "Story this gate is for. Required (non-null) when type=story_gate; null for plan_gate. For review_gate, may be null (end-of-epic) or the boundary story (every-N rollup)."
+      "description": "Work unit this gate is for. Required (non-null) when type=work_unit_gate; null for plan_gate. For review_gate, may be null (end-of-epic) or the boundary work unit."
     },
     "triggered_by": {
       "type": "array",
@@ -61,7 +61,7 @@
           "manual"
         ]
       },
-      "description": "Reasons the gate opened. plan_review fires automatically at Stage 4. readiness_unready opens the Stage-2.5 readiness gate when the deterministic contract-readiness node finds EPIC.md not ready for planning. readiness_escalation is the same gate type but signals that the configured escalation threshold of failed readiness cycles has been reached; it resolves through the same verbs as readiness_unready (approve_with_reason, revise_epic_contract, abandon_epic). check_1_quality_gates..check_9_review_valve map to Stage-5 registry check IDs (canonical names; these replace the legacy check_1_quality_gate etc.). empty_diff_review opens when a story finishes with no diff. Graph-level: subprocess_crash (producer process exited non-zero), subprocess_aborted (SIGTERM/timeout), executor_aborted (producer wrote outcome=aborted_with_position), reviewer_unreachable (reviewer route exited before producing critique), incomplete_stage_state (required Stage-5 handoff artefact is missing or malformed). schema_validation_failed when Stage 3 self-validation exhausts the 2-attempt cap. tracker_sync_conflict when an issue-tracker push detects remote changes (github_sync_conflict retained as a legacy alias). manual for human-opened gates."
+      "description": "Reasons the gate opened. plan_review fires automatically at Stage 4. readiness_unready opens the Stage-2.5 readiness gate when the deterministic contract-readiness node finds EPIC.md not ready for planning. readiness_escalation is the same gate type but signals that the configured escalation threshold of failed readiness cycles has been reached; it resolves through the same verbs as readiness_unready (approve_with_reason, revise_epic_contract, abandon_epic). check_1_quality_gates..check_9_review_valve map to the work-unit check registry. empty_diff_review opens when a work unit finishes with no diff. Graph-level: subprocess_crash (producer process exited non-zero), subprocess_aborted (SIGTERM/timeout), executor_aborted (producer wrote outcome=aborted_with_position), reviewer_unreachable (reviewer route exited before producing critique), incomplete_stage_state (required Stage-5 handoff artefact is missing or malformed). schema_validation_failed when planning self-validation exhausts the 2-attempt cap. tracker_sync_conflict when an issue-tracker push detects remote changes (github_sync_conflict retained as a legacy alias). manual for human-opened gates."
     },
     "timestamp": {
       "type": "string",
@@ -86,19 +86,19 @@
       "then": {
         "properties": {
           "stage": { "const": 4 },
-          "story_id": { "type": "null" }
+          "work_unit_id": { "type": "null" }
         }
       }
     },
     {
       "if": {
-        "properties": { "type": { "const": "story_gate" } },
+        "properties": { "type": { "const": "work_unit_gate" } },
         "required": ["type"]
       },
       "then": {
         "properties": {
-          "stage": { "const": 6 },
-          "story_id": { "type": "string", "pattern": "^S[1-9]\\d*$" }
+          "stage": { "const": 5 },
+          "work_unit_id": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9._-]*$" }
         }
       }
     },
@@ -110,7 +110,7 @@
       "then": {
         "properties": {
           "stage": { "const": 2 },
-          "story_id": { "type": "null" }
+          "work_unit_id": { "type": "null" }
         }
       }
     },

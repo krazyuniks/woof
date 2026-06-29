@@ -90,7 +90,7 @@ def _write_executor_result(root: Path, epic_id: int = 1) -> None:
         json.dumps(
             {
                 "epic_id": epic_id,
-                "story_id": "S1",
+                "work_unit_id": "S1",
                 "outcome": "staged_for_verification",
                 "commit_body": "done",
                 "position": None,
@@ -106,12 +106,12 @@ def _append_subprocess_returned(root: Path, epic_id: int = 1, **fields: object) 
         fh.write(json.dumps(event) + "\n")
 
 
-def _node_input(root: Path, epic_id: int = 1, story_id: str = "S1") -> NodeInput:
+def _node_input(root: Path, epic_id: int = 1, work_unit_id: str = "S1") -> NodeInput:
     return NodeInput(
         node_type=NodeType.COMMIT,
         repo_root=root,
         epic_id=epic_id,
-        story_id=story_id,
+        work_unit_id=work_unit_id,
     )
 
 
@@ -188,7 +188,7 @@ def test_head_and_branch_match_no_drift(tmp_path: Path) -> None:
     branch = _branch_name(tmp_path)
 
     _epic_dir(tmp_path)
-    _append_subprocess_returned(tmp_path, story_id="S1", head_after=sha, branch_after=branch)
+    _append_subprocess_returned(tmp_path, work_unit_id="S1", head_after=sha, branch_after=branch)
     _write_plan(tmp_path)
     _write_executor_result(tmp_path)
 
@@ -210,7 +210,7 @@ def test_head_moved_opens_drift_gate(tmp_path: Path) -> None:
 
     _epic_dir(tmp_path)
     _append_subprocess_returned(
-        tmp_path, story_id="S1", head_after=sha_at_dispatch, branch_after=branch
+        tmp_path, work_unit_id="S1", head_after=sha_at_dispatch, branch_after=branch
     )
 
     # Advance HEAD by making a new commit after the dispatch event was recorded.
@@ -237,7 +237,7 @@ def test_branch_switched_opens_drift_gate(tmp_path: Path) -> None:
 
     _epic_dir(tmp_path)
     _append_subprocess_returned(
-        tmp_path, story_id="S1", head_after=sha, branch_after=original_branch
+        tmp_path, work_unit_id="S1", head_after=sha, branch_after=original_branch
     )
 
     # Switch to a new branch after the dispatch event was recorded.
@@ -267,7 +267,7 @@ def test_prior_story_dispatch_event_does_not_trigger_drift(tmp_path: Path) -> No
 
     _epic_dir(tmp_path)
     # Write a subprocess_returned for S1 (the prior story).
-    _append_subprocess_returned(tmp_path, story_id="S1", head_after=sha_s1, branch_after=branch)
+    _append_subprocess_returned(tmp_path, work_unit_id="S1", head_after=sha_s1, branch_after=branch)
 
     # Simulate S1's graph-owned commit advancing HEAD.
     (tmp_path / "s1_file.txt").write_text("s1 work\n")
@@ -314,7 +314,7 @@ def test_prior_story_dispatch_event_does_not_trigger_drift(tmp_path: Path) -> No
         json.dumps(
             {
                 "epic_id": 1,
-                "story_id": "S2",
+                "work_unit_id": "S2",
                 "outcome": "staged_for_verification",
                 "commit_body": "done",
                 "position": None,
@@ -326,7 +326,7 @@ def test_prior_story_dispatch_event_does_not_trigger_drift(tmp_path: Path) -> No
             node_type=NodeType.COMMIT,
             repo_root=tmp_path,
             epic_id=1,
-            story_id="S2",
+            work_unit_id="S2",
         )
     )
     # S2 has no prior dispatch — drift gate must NOT open regardless of S1's head_after.

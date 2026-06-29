@@ -42,14 +42,14 @@ def epic_id(prompt: str) -> int:
     raise SystemExit("epic id not found in prompt")
 
 
-def story_id(prompt: str) -> str:
-    match = re.search(r'"story_id":\s*"(S\d+)"', prompt)
+def work_unit_id(prompt: str) -> str:
+    match = re.search(r'"work_unit_id":\s*"(S\d+)"', prompt)
     if match:
         return match.group(1)
-    match = re.search(r"story-(S\d+)\.md", prompt)
+    match = re.search(r"work-unit-(S\d+)\.md", prompt)
     if match:
         return match.group(1)
-    raise SystemExit("story id not found in prompt")
+    raise SystemExit("work unit id not found in prompt")
 
 
 def write(path: Path, text: str) -> None:
@@ -116,7 +116,7 @@ def write_synthesis(prompt: str) -> None:
     base = Path(f".woof/epics/E{eid}/discovery/synthesis")
     write(base / "CONCEPT.md", "# Concept\n\n## Problem Framing\n\nProve the CLI loop.\n")
     write(base / "PRINCIPLES.md", "# Principles\n\n- Keep the graph deterministic.\n")
-    write(base / "ARCHITECTURE.md", "# Architecture\n\nA single story lands the artefact.\n")
+    write(base / "ARCHITECTURE.md", "# Architecture\n\nA single work unit lands the artefact.\n")
     write(base / "OPEN_QUESTIONS.md", "# Open Questions\n\nNo open questions.\n")
 
 
@@ -130,16 +130,16 @@ title: CLI workflow acceptance
 intent: Prove Woof can drive a complete local-tracker software delivery loop.
 observable_outcomes:
   - id: O1
-    statement: The acceptance artefact is produced by the story executor.
+    statement: The acceptance artefact is produced by the work-unit producer.
     verification: automated
 contract_decisions:
   - id: CD1
     related_outcomes: [O1]
     title: Acceptance artefact schema
     json_schema_ref: schemas/acceptance.schema.json
-    notes: Realised by `schemas/acceptance.schema.json` (forward-created) during story S1.
+    notes: Realised by `schemas/acceptance.schema.json` (forward-created) during work unit S1.
 acceptance_criteria:
-  - The story commit contains application code, a test marker, and the schema contract.
+  - The work-unit commit contains application code, a test marker, and the schema contract.
 open_questions: []
 resolved_open_questions: []
 ---
@@ -165,16 +165,16 @@ def write_plan(prompt: str) -> None:
                 "uses_contract_decisions": [],
                 "deps": [],
                 "tests": {"count": 1, "types": ["unit"]},
-                "status": "pending",
+                "state": "pending",
             }
         ],
     }
     write(Path(f".woof/epics/E{eid}/plan.json"), json.dumps(plan, indent=2) + "\n")
 
 
-def execute_story(prompt: str) -> None:
+def execute_work_unit(prompt: str) -> None:
     eid = epic_id(prompt)
-    sid = story_id(prompt)
+    sid = work_unit_id(prompt)
     write(
         Path("app.py"),
         'def acceptance_message() -> str:\n    return "woof acceptance complete"\n',
@@ -207,7 +207,7 @@ def execute_story(prompt: str) -> None:
         json.dumps(
             {
                 "epic_id": eid,
-                "story_id": sid,
+                "work_unit_id": sid,
                 "outcome": "staged_for_verification",
                 "commit_subject": "feat: add workflow acceptance artefact",
                 "commit_body": "Adds a small application artefact, test marker, and JSON Schema contract.",
@@ -221,13 +221,13 @@ def execute_story(prompt: str) -> None:
 
 def write_disposition(prompt: str) -> None:
     eid = epic_id(prompt)
-    sid = story_id(prompt)
+    sid = work_unit_id(prompt)
     write(
-        Path(f".woof/epics/E{eid}/dispositions/story-{sid}.md"),
+        Path(f".woof/epics/E{eid}/dispositions/work-unit-{sid}.md"),
         f"""---
-target: story
+target: work_unit
 target_id: {sid}
-critique_path: .woof/epics/E{eid}/critique/story-{sid}.md
+critique_path: .woof/epics/E{eid}/critique/work-unit-{sid}.md
 severity: info
 timestamp: "{NOW}"
 harness: acceptance-primary
@@ -251,7 +251,7 @@ def main() -> int:
     elif '"node_type": "breakdown_planning"' in prompt:
         write_plan(prompt)
     elif '"node_type": "executor_dispatch"' in prompt:
-        execute_story(prompt)
+        execute_work_unit(prompt)
     elif "Primary disposition prompt" in prompt:
         write_disposition(prompt)
     else:
@@ -294,11 +294,11 @@ def epic_id(prompt: str) -> int:
     raise SystemExit("epic id not found in prompt")
 
 
-def story_id(prompt: str) -> str:
-    match = re.search(r'"story_id":\s*"(S\d+)"', prompt)
+def work_unit_id(prompt: str) -> str:
+    match = re.search(r'"work_unit_id":\s*"(S\d+)"', prompt)
     if match:
         return match.group(1)
-    raise SystemExit("story id not found in prompt")
+    raise SystemExit("work unit id not found in prompt")
 
 
 def write(path: Path, text: str) -> None:
@@ -357,13 +357,13 @@ Plan is executable.
     )
 
 
-def write_story_critique(prompt: str) -> None:
+def write_work_unit_critique(prompt: str) -> None:
     eid = epic_id(prompt)
-    sid = story_id(prompt)
+    sid = work_unit_id(prompt)
     write(
-        Path(f".woof/epics/E{eid}/critique/story-{sid}.md"),
+        Path(f".woof/epics/E{eid}/critique/work-unit-{sid}.md"),
         f"""---
-target: story
+target: work_unit
 target_id: {sid}
 severity: info
 timestamp: "{NOW}"
@@ -371,7 +371,7 @@ harness: acceptance-reviewer
 findings: []
 ---
 
-Story is ready.
+Work unit is ready.
 """,
     )
 
@@ -381,7 +381,7 @@ def main() -> int:
     if '"node_type": "plan_critique"' in prompt:
         write_plan_critique(prompt)
     elif '"node_type": "critique_dispatch"' in prompt:
-        write_story_critique(prompt)
+        write_work_unit_critique(prompt)
     else:
         raise SystemExit("reviewer stub did not recognise prompt")
     answer_path.write_text(
@@ -467,27 +467,61 @@ def _configure_consumer(consumer: Path, env: dict[str, str], woof_cmd: list[str]
     gitignore = consumer / ".gitignore"
     gitignore.write_text(gitignore.read_text(encoding="utf-8") + "\n__pycache__/\n*.pyc\n")
 
-    (consumer / ".woof" / "agents.toml").write_text(
+    (consumer / ".woof" / "policy.toml").write_text(
         """\
-[roles.primary]
-adapter = "codex"
+schema_version = 1
+default_run_profile = "acceptance"
+
+[delivery]
+profile = "B"
+repo_root = "."
+toolchain_root = "."
+base_branch = "main"
+
+[profiles.B]
+commit = true
+push = false
+
+[verification]
+command = "python -m py_compile app.py tests/test_app.py"
+timeout_seconds = 30
+
+[run_profiles.acceptance.producer]
+harness = "codex"
 model = "gpt-5.5"
 effort = "xhigh"
 
-[roles.reviewer]
-adapter = "claude"
+[run_profiles.acceptance.reviewer]
+harness = "claude"
 model = "claude-opus-4-7"
 effort = "max"
-mcp = []
 
-[roles.gate-resolver]
-adapter = "in-session"
+[checks]
+floor = [
+  "quality-gates",
+  "outcome-markers",
+  "scope",
+  "contract-refs",
+  "plan-crossrefs",
+  "critique-blocker",
+  "commit-transaction",
+  "docs-drift",
+  "review-valve",
+]
+
+[cartography]
+floor = "structural"
+""",
+        encoding="utf-8",
+    )
+    (consumer / ".woof" / "agents.toml").write_text(
+        """\
 
 [timeouts]
 default_minutes = 5
 
 [review_valve]
-every_n_stories = 5
+every_n_work_units = 5
 end_of_epic = false
 
 [audit]
@@ -597,8 +631,8 @@ def _drive_local_tracker_workflow(consumer: Path, env: dict[str, str], woof_cmd:
         "schemas/acceptance.schema.json",
         ".woof/epics/E1/EPIC.md",
         ".woof/epics/E1/plan.json",
-        ".woof/epics/E1/critique/story-S1.md",
-        ".woof/epics/E1/dispositions/story-S1.md",
+        ".woof/epics/E1/critique/work-unit-S1.md",
+        ".woof/epics/E1/dispositions/work-unit-S1.md",
     } <= committed
 
     dispatch_events = _jsonl(consumer / ".woof" / "epics" / "E1" / "dispatch.jsonl")
@@ -613,7 +647,7 @@ def _drive_local_tracker_workflow(consumer: Path, env: dict[str, str], woof_cmd:
     assert any(event.get("event") == "epic_completed" for event in epic_events)
 
 
-def test_wf_cli_drives_local_tracker_epic_to_story_commit(tmp_path: Path) -> None:
+def test_wf_cli_drives_local_tracker_epic_to_work_unit_commit(tmp_path: Path) -> None:
     """The source-checkout CLI can drive the product loop from spark to checked commit."""
 
     for tool in ("uv", "ajv", "git"):
@@ -628,7 +662,9 @@ def test_wf_cli_drives_local_tracker_epic_to_story_commit(tmp_path: Path) -> Non
     _drive_local_tracker_workflow(consumer, env, woof_cmd)
 
 
-def test_installed_package_wf_cli_drives_local_tracker_epic_to_story_commit(tmp_path: Path) -> None:
+def test_installed_package_wf_cli_drives_local_tracker_epic_to_work_unit_commit(
+    tmp_path: Path,
+) -> None:
     """The installed package can drive the same workflow without checkout wrappers."""
 
     for tool in ("uv", "ajv", "git"):

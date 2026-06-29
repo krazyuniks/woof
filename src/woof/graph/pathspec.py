@@ -1,7 +1,7 @@
 """Shared git-pathspec evaluation for Stage-5 path-discipline checks.
 
 Stage 5 Check 3, Check 7, and the transaction manifest all need to answer
-"is this path matched by the active story's git-pathspec set?". They must
+"is this path matched by the active work unit's git-pathspec set?". They must
 agree on the answer or the same staged transaction can be approved by one
 check and rejected by another.
 

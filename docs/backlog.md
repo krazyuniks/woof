@@ -120,6 +120,9 @@ work_units:
       - Partial-merge reconciliation records already-merged units before halting on any later terminal failure.
       - "Shared-file sibling conflicts are reconciled semantically: the later slice's intended diff is reapplied onto current main, expected symbols/tests are verified after resolution, and the gate reruns before merge."
       - Runner absorption preserves project-owned producer/reviewer slot selection and engine-owned harness adapters, execution, parsing, and validation.
+      - "Harness selection and any runner-level harness override resolve through the dispatch registry: changing harness resets omitted model/effort to the target harness defaults and validates effort against that harness, so one profile cannot leak an incompatible model into another harness."
+      - "Profile A worktree recovery preserves uncommitted work by default. Woof delegates dirty-lease cleanup to the worktree engine's safe recovery path and never recommends or invokes destructive recovery without an explicit force decision."
+      - "Review-size guards, if enabled, count non-generated changed lines only: `linguist-generated` files, known generated artefacts, and generated-header files do not silently skip review, and the threshold is policy-visible."
       - Profile B commits and pushes through graph-owned transactions.
   - id: run-lineage-immutable-attempts
     title: Add run lineage and immutable attempt artefacts

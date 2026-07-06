@@ -21,7 +21,7 @@ repos:
         stages: [pre-commit]
       - id: pytest
         name: pytest
-        entry: env PYTHONDONTWRITEBYTECODE=1 uv run pytest -p no:cacheprovider
+        entry: env PYTHONDONTWRITEBYTECODE=1 uv run pytest -p no:cacheprovider -m "not tmux_substrate"
         language: system
         pass_filenames: false
         stages: [pre-push]

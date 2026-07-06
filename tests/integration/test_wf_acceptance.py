@@ -16,7 +16,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WOOF_BIN = REPO_ROOT / "bin" / "woof"
 
-pytestmark = pytest.mark.host_only
+pytestmark = [pytest.mark.host_only, pytest.mark.tmux_substrate]
 
 PRIMARY_STUB = r'''#!/usr/bin/env python3
 from __future__ import annotations

@@ -747,6 +747,7 @@ def _structured_payload(
     )
 
 
+@pytest.mark.tmux_substrate
 def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: Path) -> None:
     bin_dir = tmp_path / "bin"
     claude_response = _structured_payload(session_id="worker-session-claude")
@@ -870,6 +871,7 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
     assert validate.returncode == 0, validate.stdout + validate.stderr
 
 
+@pytest.mark.tmux_substrate
 def test_repeated_review_uses_cached_verdict(git_woof_project: Path, tmp_path: Path) -> None:
     bin_dir = tmp_path / "bin"
     response = _structured_payload(verdict="pass", evidence="first pass")
@@ -939,6 +941,7 @@ def test_repeated_review_uses_cached_verdict(git_woof_project: Path, tmp_path: P
     assert validate.returncode == 0, validate.stdout + validate.stderr
 
 
+@pytest.mark.tmux_substrate
 def test_conflicting_review_verdict_records_instability(
     git_woof_project: Path, tmp_path: Path
 ) -> None:
@@ -1063,6 +1066,7 @@ for _line in sys.stdin:
         script.chmod(0o755)
 
 
+@pytest.mark.tmux_substrate
 def test_subprocess_returned_records_head_branch_fields(
     git_woof_project: Path, tmp_path: Path
 ) -> None:
@@ -1115,6 +1119,7 @@ def test_subprocess_returned_records_head_branch_fields(
     assert validate.returncode == 0, validate.stdout + validate.stderr
 
 
+@pytest.mark.tmux_substrate
 def test_subprocess_returned_records_error_signature_from_stderr(
     git_woof_project: Path, tmp_path: Path
 ) -> None:
@@ -1167,6 +1172,7 @@ def test_subprocess_returned_records_error_signature_from_stderr(
     assert validate.returncode == 0, validate.stdout + validate.stderr
 
 
+@pytest.mark.tmux_substrate
 def test_subprocess_returned_records_rate_limit_when_detected(
     git_woof_project: Path, tmp_path: Path
 ) -> None:
@@ -1203,6 +1209,7 @@ def test_subprocess_returned_records_rate_limit_when_detected(
     assert validate.returncode == 0, validate.stdout + validate.stderr
 
 
+@pytest.mark.tmux_substrate
 def test_subprocess_returned_no_rate_limit_field_on_clean_run(
     git_woof_project: Path, tmp_path: Path
 ) -> None:
@@ -1282,6 +1289,7 @@ def test_existing_consumers_unaffected_by_new_optional_fields() -> None:
     assert exit_code == 0
 
 
+@pytest.mark.tmux_substrate
 def test_end_to_end_tmux_sentinel_completion_counts_as_success(
     woof_project: Path, tmp_path: Path
 ) -> None:
@@ -1348,6 +1356,7 @@ def test_end_to_end_tmux_sentinel_completion_counts_as_success(
     assert validate.returncode == 0, validate.stdout + validate.stderr
 
 
+@pytest.mark.tmux_substrate
 def test_end_to_end_codex_records_thread_and_audit_path(woof_project: Path, tmp_path: Path) -> None:
     bin_dir = tmp_path / "bin"
     codex_stream = json.dumps(
@@ -1416,6 +1425,7 @@ def test_end_to_end_codex_records_thread_and_audit_path(woof_project: Path, tmp_
     assert validate.returncode == 0, validate.stdout + validate.stderr
 
 
+@pytest.mark.tmux_substrate
 def test_end_to_end_records_route_key_in_jsonl_and_meta(woof_project: Path, tmp_path: Path) -> None:
     """--route-key is recorded on both dispatch events and the meta file, and stays schema-valid.
 
@@ -1502,6 +1512,7 @@ def _make_claude_stub_simple(bin_dir: Path) -> None:
     _make_stub(bin_dir, "claude", payload)
 
 
+@pytest.mark.tmux_substrate
 def test_agents_schema_cache_hit_on_second_dispatch(woof_project: Path, tmp_path: Path) -> None:
     """Second dispatch with unchanged agents.toml records agents_schema_cache_hit=True."""
     bin_dir = tmp_path / "bin"
@@ -1535,6 +1546,7 @@ def test_agents_schema_cache_hit_on_second_dispatch(woof_project: Path, tmp_path
     assert _spawned_event(31)["agents_schema_cache_hit"] is True
 
 
+@pytest.mark.tmux_substrate
 def test_agents_schema_cache_miss_after_content_change(woof_project: Path, tmp_path: Path) -> None:
     """Changing agents.toml invalidates the cache; next dispatch re-validates."""
     bin_dir = tmp_path / "bin"
@@ -1589,6 +1601,7 @@ def test_agents_schema_cache_key_includes_schema() -> None:
     )
 
 
+@pytest.mark.tmux_substrate
 def test_runtime_policy_in_spawned_not_in_returned(woof_project: Path, tmp_path: Path) -> None:
     """runtime_policy is emitted once per dispatch: in subprocess_spawned, not subprocess_returned."""
     bin_dir = tmp_path / "bin"

@@ -14,7 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 WOOF_BIN = REPO_ROOT / "bin" / "woof"
 WOOF_VALIDATE = [str(WOOF_BIN), "validate", "--schema", "jsonl-events"]
 
-pytestmark = pytest.mark.host_only
+pytestmark = [pytest.mark.host_only, pytest.mark.tmux_substrate]
 
 
 def _write_project(tmp_path: Path, *, default_minutes: float = 0.05) -> Path:

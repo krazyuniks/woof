@@ -20,7 +20,7 @@ from .wf_gate_harness import (
     run,
 )
 
-pytestmark = pytest.mark.host_only
+pytestmark = [pytest.mark.host_only, pytest.mark.tmux_substrate]
 
 
 def _wf(consumer: Path, env: dict[str, str], *args: str):

@@ -47,6 +47,7 @@ addopts = [
 ]
 markers = [
     "host_only: marks tests requiring host tools such as ajv, git, or uv",
+    "tmux_substrate: marks tests dispatching through the tmux harness (needs tmux plus the tmux_harness package)",
 ]
 
 [tool.ruff]

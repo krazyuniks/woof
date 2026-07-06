@@ -8,7 +8,7 @@ Woof is the orchestration engine for AI-assisted software delivery. It turns an 
 
 The durable boundary is the consumer repository. Woof assumes a Git worktree, `.woof/` state, repo-local policy, repo-local verification commands, and the operator's subscription CLI harnesses. The engine owns harness adapters, launch, execution, readiness, output parsing, and validation. Repo policy owns only which harness/model/effort fills each worker slot.
 
-Woof is one of two tools a project composes; it does not own the other. It runs against whatever checkout it is pointed at and neither creates nor manages worktrees - the host-level worktree engine provisions those, orchestrated by the task runner; in Profile A the worktree is that engine's, never Woof's. External issue ingestion is upstream of Woof's intake: Woof decomposes an already-local epic or `work_units[]` backlog, it does not pull issues. The two tools never call each other; the project calls both.
+Woof is one of the tools a project composes, and it owns neither the other tools nor the choice of them. A project composes a host-level worktree engine and an SDLC delivery tool; Woof is one such delivery tool, selected per run. It runs against whatever checkout it is pointed at and neither creates nor manages worktrees - the worktree engine provisions those and runs the project's registered lifecycle commands, orchestrated by the project's task runner; in Profile A the worktree is that engine's, never Woof's (ADR-015). External issue ingestion is upstream of Woof's intake: Woof decomposes an already-local epic or `work_units[]` backlog, it does not pull issues. The tools never call each other; the project composes them.
 
 ## 1. Principles
 
@@ -200,6 +200,10 @@ required-check recomputation to settle before attempting the next PR. After each
 configured deploy-triggering checks to reach a terminal state before merging the next ready PR. Terraform
 state-lock failures are retryable only when the check log proves lock contention; other deploy failures remain
 terminal. Already-merged units are reconciled before any later terminal halt is reported.
+
+The mergeability-settle and deploy-wait timeouts and the terminal deploy-check set are declared in repo policy;
+preflight fails closed when Profile A deploy-aware merging is active and the deploy-check set is undeclared.
+Shared-file sibling conflicts fail closed to a human gate with no automatic reapplication (ADR-016).
 
 ## 9. State and Audit
 

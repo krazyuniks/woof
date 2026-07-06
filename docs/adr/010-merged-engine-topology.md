@@ -8,7 +8,7 @@ date: 2026-06-28
 
 ## Context
 
-Woof and VaultForeman both implement the same delivery loop: decompose work, produce changes, run deterministic checks, review independently, fix, publish, and merge. VaultForeman has proven live runner surfaces under Freeflo load. Woof has the stronger durable graph, state, schema, gate, and audit model.
+Woof and VaultForeman both implement the same delivery loop: decompose work, produce changes, run deterministic checks, review independently, fix, publish, and merge. VaultForeman has proven live runner surfaces under production consumer load. Woof has the stronger durable graph, state, schema, gate, and audit model.
 
 ## Decision
 
@@ -19,6 +19,6 @@ There is one engine path after intake has produced `work_units[]`.
 ## Consequences
 
 - VaultForeman's standalone runner is migration source code, not the long-term engine.
-- Woof absorbs the operational surfaces needed for Freeflo and other registered repos.
-- Freeflo stays on VaultForeman until the merged Woof engine has proved a guarded run.
-- The product boundary remains shareable Woof plus repo-local policy, not Ryan-local orchestration scripts.
+- Woof absorbs the operational surfaces needed for registered consumer repos.
+- A registered prod-deploying consumer stays on VaultForeman until the merged Woof engine has proved a guarded run.
+- The product boundary remains shareable Woof plus repo-local policy, not operator-local orchestration scripts.

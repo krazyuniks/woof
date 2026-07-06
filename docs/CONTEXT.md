@@ -37,3 +37,8 @@ This glossary defines Woof's project-specific terms. Architecture, ADRs, and bac
 - **Completed-but-lingering** - a worker that emitted its terminal result but whose process or child process still holds the stream open.
 - **Resume-to-correct** - recovery that feeds deterministic failure evidence back to the warm producer instead of cold re-producing.
 - **Graded recovery ladder** - bounded recovery before opening a gate: deterministic salvage, safe normalisation, bounded retry, then gate.
+- **Worktree engine** - the project-composed, host-level tool that provisions, places, recovers, and tears down per-work-unit worktrees and runs the project's registered lifecycle commands. Woof discovers and validates worktrees but never provisions, mutates, recovers, or invokes the engine (ADR-015).
+- **Profile A worktree contract** - the policy-declared worktree root, unit-to-path derivation, and informational engine identity that let Woof deterministically discover and fail-closed-validate provisioned worktrees.
+- **Sibling conflict** - a shared-file conflict where a ready Profile A pull request cannot merge cleanly against a sibling merged since its base. It fails closed to a human gate with no automatic reapplication (ADR-016).
+- **Terminal deploy-check set** - the policy-declared checks whose terminal state a deploy-triggering Profile A merge waits for before the next merge.
+- **Native drain contract** - the Woof-owned drain-policy declaration (merge-after-ready-pr, rerun-after-merge, mark-done-after-publish, commit-backlog-state, stop-when-no-eligible) that replaces the transitional VaultForeman `executor` block at retirement.

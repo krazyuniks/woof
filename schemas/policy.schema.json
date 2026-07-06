@@ -177,7 +177,18 @@
           "items": { "type": "string", "minLength": 1 },
           "uniqueItems": true,
           "default": []
-        }
+        },
+        "mergeability_settle_timeout": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Seconds to wait for GitHub mergeability and required-check recompute to settle after main moves, before the next Profile A merge."
+        },
+        "deploy_wait_timeout": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Seconds to wait for the terminal deploy-check set to reach a terminal state between consecutive deploy-triggering merges."
+        },
+        "worktree": { "$ref": "#/$defs/worktree" }
       }
     },
     "profile_b": {
@@ -245,6 +256,28 @@
     "path_group": {
       "type": "string",
       "minLength": 1
+    },
+    "worktree": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root"],
+      "properties": {
+        "root": {
+          "$ref": "#/$defs/portable_path",
+          "description": "Directory under which the project's worktree engine provisions per-work-unit worktrees. Woof discovers and fail-closed-validates; it never provisions, mutates, destroys, or invokes the engine (ADR-015)."
+        },
+        "derivation": {
+          "type": "string",
+          "enum": ["unit_id", "manifest_map"],
+          "default": "unit_id",
+          "description": "Unit-to-path derivation: root plus work_unit_id, or an explicit per-unit map the task runner records in the run manifest when the engine owns path allocation."
+        },
+        "engine": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Informational identity of the host-level worktree engine that provisions worktrees. Recorded for audit; not an invokable command. Woof never calls it."
+        }
+      }
     }
   }
 }

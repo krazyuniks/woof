@@ -39,19 +39,28 @@ work_units:
       - Policy validates profile A and profile B settings.
       - Policy declares producer and reviewer harness/model/effort slots in the consuming repo; the engine owns harness adapters, execution, parsing, and validation.
       - Missing required policy or cartography floor data fails preflight.
-  - id: intake-enrichment
-    title: Implement epic sources, enrichment, and pre-decomposed intake
+  - id: intake-predecomposed
+    title: Pre-decomposed work-unit intake
     kind: build
-    state: todo
+    state: done
     priority: high
-    summary: Support greenfield, GitHub, local-docs, and pre-decomposed work-unit sources through one intake boundary.
+    summary: Validate pre-decomposed work_units and skip decomposition; establish the work-unit-set aggregate context, persist a stable set_id, and record run metadata without fabricating an epic. Delivered in repo 9d6a768.
     deps: [schema-unification, policy-model]
     acceptance:
-      - Epic-backed intake follows sparse epic to optional enrichment to epic to work_units.
       - Pre-decomposed work_units validate and skip decomposition.
+      - Intake establishes the work-unit-set aggregate context and derives qualified references from it without fabricating an epic; when the source has no natural identity, intake assigns and persists a stable set_id once.
       - Intake records run metadata without reverse-generating a missing epic.
-      - Decomposition produces work_units through the existing breakdown playbook and brainstorm enrichment, not a second decomposer; the auto-decompose step this unit builds replaces the manual decompose earlier waves relied on.
-      - Pre-decomposed intake establishes the work-unit-set aggregate context and derives qualified references from it without fabricating an epic; when the source has no natural identity, intake assigns and persists a stable set_id once; epic-backed intake uses project_ref plus epic_id.
+      - Pre-decomposed intake accepts work_units in topological dependency order so the runtime aggregate validates without reordering.
+  - id: intake-epic-enrichment
+    title: Epic sources, enrichment, and auto-decompose
+    kind: build
+    state: todo
+    priority: medium
+    summary: Epic-backed intake from greenfield, GitHub, and local-docs sources through sparse epic, optional brainstorm enrichment, epic, then work_units via the existing breakdown playbook. 9d6a768 delivered the epic context scaffolding but not the auto-decompose/enrichment node.
+    deps: [intake-predecomposed]
+    acceptance:
+      - Epic-backed intake follows sparse epic to optional enrichment to epic to work_units, using project_ref plus epic_id.
+      - Decomposition produces work_units through the existing breakdown playbook and brainstorm enrichment, not a second decomposer; the auto-decompose step replaces the manual decompose earlier waves relied on.
       - Decomposition emits work_units in topological dependency order so the runtime aggregate validates without reordering.
   - id: dispatch-swap
     title: Replace headless dispatch with the tmux harness
@@ -111,19 +120,68 @@ work_units:
     kind: build
     state: todo
     priority: high
-    summary: Bring dependency draining, profile A/B delivery, usage telemetry, review cache, and serial merge coordination into Woof.
+    summary: Bring dependency draining, profile A/B delivery, usage telemetry, review cache, and serial merge coordination into Woof. Deploy-aware merge pacing is carved out to `deploy-aware-merge-coordinator`.
     deps: [schema-unification, policy-model, warm-session-seam]
     acceptance:
       - Work units run in dependency order with blocked/downstream reporting, consuming the aggregate's validated topological order rather than re-deriving it; cross-aggregate sequencing is out of the aggregate's scope.
       - Profile A publishes ready pull requests and serially merges the ready queue as deploy-aware transactions.
-      - Profile A waits for mergeability/check recompute after main moves, spaces deploy-triggering merges until the configured terminal deploy checks settle, and treats proved Terraform state-lock contention as bounded-retryable rather than terminal.
       - Partial-merge reconciliation records already-merged units before halting on any later terminal failure.
-      - "Shared-file sibling conflicts are reconciled semantically: the later slice's intended diff is reapplied onto current main, expected symbols/tests are verified after resolution, and the gate reruns before merge."
+      - "Shared-file sibling conflicts fail closed: the merge queue halts to a durable human gate with already-merged siblings reconciled per PR, the conflicting PR left ready with its branch unmodified (rebase aborted cleanly, no force-push of half-rebased state), the queue resumable, and a rerun producing no duplicate work. No automatic semantic reapplication. Resolution is an explicit audited engine action -- a human reconciles in the worktree and re-pushes with a full gate and fresh-review rerun on the final diff, or the unit returns to production against moved main, or it is withdrawn; no path merges without gate and review rerun. Detection triggers: a coordinator rebase of a ready PR fails to apply cleanly; mergeability settles CONFLICTING after bounded settle-retry; required checks or the gate fail after a clean rebase on a PR whose paths intersect a sibling merged since that PR's base. Queued-sibling overlap never pre-empts; transient UNKNOWN/UNSTABLE gets bounded settle-retry, not a halt."
       - Runner absorption preserves project-owned producer/reviewer slot selection and engine-owned harness adapters, execution, parsing, and validation.
       - "Harness selection and any runner-level harness override resolve through the dispatch registry: changing harness resets omitted model/effort to the target harness defaults and validates effort against that harness, so one profile cannot leak an incompatible model into another harness."
       - "Profile A worktree recovery preserves uncommitted work by default. Woof delegates dirty-lease cleanup to the worktree engine's safe recovery path and never recommends or invokes destructive recovery without an explicit force decision."
       - "Review-size guards, if enabled, count non-generated changed lines only: `linguist-generated` files, known generated artefacts, and generated-header files do not silently skip review, and the threshold is policy-visible."
       - Profile B commits and pushes through graph-owned transactions.
+  - id: deploy-aware-merge-coordinator
+    title: Deploy-aware Profile A merge coordinator
+    kind: build
+    state: todo
+    priority: high
+    summary: Native Woof merge coordinator for deploy-triggering Profile A merges, carrying VaultForeman issue #1's behaviour. No VaultForeman source asset exists for this; hand-build with operator review, not an unattended vf-drain.
+    deps: [runner-loop-absorption]
+    acceptance:
+      - Profile A waits for mergeability and check recompute after main moves, retrying transient UNKNOWN/UNSTABLE with bounded settle-retry.
+      - Deploy-triggering merges are spaced until the configured deploy checks reach a terminal state between every consecutive merge pair.
+      - Proved Terraform state-lock contention halts safely for first flight; bounded-retry of proved lock contention is deferred to post-flight behind policy.
+      - Partial-merge reconciliation records already-merged units before halting on any later terminal failure.
+      - A four-defect regression suite covers per-PR mark-done, terminal-CI wait before merge, no self-stale after a coordinator force-push, and Closes-issue linkage with artefact lineage.
+      - Anything unclassified fails safe to a terminal halt with reconciled artefacts and a resumable ready queue.
+  - id: profile-a-worktree-contract
+    title: Profile A worktree discovery and fail-closed validation
+    kind: build
+    state: todo
+    priority: high
+    summary: Policy-declared worktree root and engine; deterministic unit-to-path derivation; fail-closed preflight validation of provisioned worktrees. Woof discovers and validates, never provisions.
+    deps: [policy-model]
+    acceptance:
+      - Policy declares the worktree root and the engine identity that provisions worktrees.
+      - Unit-to-path derivation is deterministic (root plus work_unit_id, or an explicit per-unit map in the run manifest) and recorded in run metadata.
+      - Preflight validates every ready unit's worktree -- it exists, is a linked worktree of the target repo, is on the expected base or unit branch, is clean, and no two units share a path.
+      - "Any anomaly fails closed: no auto-create, no silent fallback to a single tree."
+  - id: engine-neutral-consumer-policy
+    title: Engine-neutral consumer delivery policy
+    kind: build
+    state: todo
+    priority: high
+    summary: A consumer repo declares its delivery policy once in a form both VaultForeman and Woof honour; engine selection is a per-run choice and no consumer is coupled to a specific engine. This removes the migration framing between the two runners and resolves the `lane_plan.py` / `lane_launcher.py` design call.
+    deps: [config-routing-ssot]
+    acceptance:
+      - A consumer's delivery policy (profile, run-profile slots, gate, check floor, cartography floor) is declared once in `.woof/policy.toml`; the transitional VaultForeman drain validates against and reads the same declaration.
+      - Selecting the engine for a run is a per-run operator choice, not a property baked into the consumer repo.
+      - No consumer repo carries engine-specific delivery configuration beyond the single shared declaration.
+  - id: vaultforeman-fix-parity
+    title: Inherit VaultForeman behavioural and operator-UX fixes since the merge baseline
+    kind: build
+    state: todo
+    priority: high
+    summary: Re-baseline the runner absorption against VaultForeman HEAD. The runner-asset source map was cut 2026-06-28; VaultForeman has landed drain, review-parsing, and operator-UX fixes since that Woof will not otherwise inherit. Carry the four fix families below and refresh the source map to VF HEAD.
+    deps: [runner-loop-absorption, deploy-aware-merge-coordinator]
+    acceptance:
+      - "Merge coordinator: serial one-unit-per-cycle drain, publish-rebase survival with no residue, detached coordinator worktree, index-free ready-PR listing, merge-phase transient safety (no drain crash or re-produce), rebase-and-re-gate onto the base tip before a Profile A PR, partial-merge reconciliation, and skip-re-produce when a unit already has an open PR."
+      - "Review-verdict parsing is harness-aware: glyphless, Unicode, and settled-chrome Claude Code done-markers reap a PASS; GLM and codex readiness and done glyphs are matched; multi-line and bare file:line findings are captured whole; TUI pane markers are normalised before verdict parsing."
+      - "Operator UX: slice-phase transitions narrate to stdout as the progress signal; a describe command resolves policy plus harness registry for a project or backlog; a committed branch can be adopted without a producer (resume); the producer done-signal window is configurable."
+      - "Harness and profile: producer and reviewer harness are overridable profile fields resolved through the single dispatch registry; effort tiers are correct per profile."
+      - The runner-asset source map is refreshed to VaultForeman HEAD and marked historical once parity lands.
   - id: run-lineage-immutable-attempts
     title: Add run lineage and immutable attempt artefacts
     kind: build
@@ -140,7 +198,7 @@ work_units:
     kind: build
     state: todo
     priority: medium
-    summary: Move cartography-floor selection into policy.toml cartography.floor (adding a no-cartography level) and reconcile the existing ADR-004/ADR-009 cartography artefacts and refresh hook with the merged engine. Existing cartography is reused, not re-derived.
+    summary: Move cartography-floor selection into policy.toml cartography.floor (adding a no-cartography level) and reconcile the existing ADR-004/ADR-009 cartography artefacts and refresh hook with the merged engine. Existing cartography is reused, not re-derived. Structural cartography is the deferred structural scope of this unit.
     deps: [policy-model]
     acceptance:
       - Repo policy can require no cartography, lexical/design cartography, or structural cartography.
@@ -169,39 +227,45 @@ work_units:
       - Eval manifests attribute cost and loaded artefacts by node and qualified work-unit reference, with UUID-keyed run/attempt records, consistent with the lineage identity model.
       - Prompt/output bodies are retained according to audit policy.
       - The first optimisation target is chosen from measured data.
-  - id: first-flight
-    title: Prove the merged engine on a guarded run
+  - id: flight-1
+    title: Prove the merged engine on a disposable repo
     kind: action
     state: todo
     priority: high
-    summary: Run a low-risk backlog or guarded Freeflo slice through the merged engine end to end before Freeflo cutover.
-    deps: [intake-enrichment, runner-loop-absorption, run-lineage-immutable-attempts, cartography-continuity]
+    summary: Full kernel plus deploy-decoupled Profile A on a disposable/Woof-repo pre-decomposed backlog, with failure proofs and a mock-Deploy rehearsal. Not the cutover gate.
+    deps: [intake-predecomposed, runner-loop-absorption, deploy-aware-merge-coordinator, profile-a-worktree-contract, run-lineage-immutable-attempts, cartography-continuity]
     acceptance:
-      - A complete run produces, gates, reviews, fixes, publishes, and records audit artefacts.
-      - Resume, gate handling, and Profile A merge-settle/deploy-spacing behaviour are exercised.
-      - The result identifies any required fix before Freeflo migration.
-  - id: freeflo-cutover
-    title: Cut Freeflo onto the merged Woof engine
+      - A disposable pre-decomposed backlog of at least three units with at least one dependency edge runs end to end -- produce, deterministic gate, fresh review, at least one real blocker fed back to a warm producer within budget, publish.
+      - Profile A mechanics run without deploy coupling -- worktree handshake, branch push, PR publish with issue linkage, ready labelling, serial merge of at least two ready PRs with per-PR mark-done, and a coordinator self-rebase that leaves the remaining PR ready.
+      - Resume of a killed producer from disk is exercised, and a human gate is opened and resolved with audited effect.
+      - Lineage and artefacts hold -- immutable attempts, run/unit/attempt joins, review-cache reuse on an identical diff hash, and instability on a conflicting verdict.
+      - Fail-closed behaviour is proved -- missing policy or cartography floor fails preflight; an induced sibling conflict halts to a gate; a mock Deploy workflow's terminal non-lock failure triggers a safe halt with reconciled artefacts; state-lock contention is classified and halts.
+  - id: flight-2
+    title: Prove Woof on a guarded real-deploy slice
     kind: action
     state: todo
     priority: high
-    summary: Move Freeflo delivery from VaultForeman onto Woof after the guarded first flight.
-    deps: [first-flight]
+    summary: Prove the merged engine end to end on a guarded, real prod-deploying consumer slice (Freeflo is the available consumer). Passing means Woof is trusted for prod-deploying consumers; it is not a Freeflo migration.
+    deps: [flight-1, engine-neutral-consumer-policy]
     acceptance:
-      - Freeflo policy and delivery backlog run through Woof profile A.
-      - Freeflo pull-request readiness and serial merge behaviour match the target.
-      - The legacy VaultForeman path is no longer needed for active Freeflo delivery.
+      - A guarded slice of three to five real low-risk code-only units sharing the deploy path (no schema, infra, or Terraform), outside launch-critical correctness lanes, runs with an operator-confirmation gate before every deploy-triggering merge and the prior engine held as fallback with per-run comparison evidence.
+      - Every ready PR merges serially with per-PR mark-done; mergeability and check recompute settle after each main move with at least one transient UNKNOWN/UNSTABLE retried; the deploy-check set reaches a terminal state between every consecutive merge pair.
+      - One induced or natural mid-queue failure after at least one merged PR triggers a safe halt -- already-merged units reconciled and marked done, a resumable queue, and a duplicate-free rerun.
+      - A coordinator self-rebase never drops a queued PR; any sibling conflict gates rather than merges, with no automatic reapplication.
+      - Zero hand-recovery is needed beyond operator confirmations, and lineage matches or beats the prior engine's path.
   - id: vaultforeman-retirement
     title: Retire the standalone VaultForeman runner
     kind: action
     state: todo
     priority: medium
-    summary: Remove or reduce VaultForeman to a thin compatibility wrapper once Freeflo is stable on Woof.
-    deps: [freeflo-cutover]
+    summary: Retire the standalone VaultForeman runner once Woof is at parity, proven (flight-2), carries the engine-neutral consumer policy, and no live run requires the standalone VF path. Any wrapper is proved after retirement, not before.
+    deps: [flight-2, engine-neutral-consumer-policy]
     acceptance:
-      - Active project records point to Woof as the orchestration engine.
-      - Standalone runner entry points are removed or wrap Woof without duplicate logic.
-      - VaultForeman records state the retired boundary.
+      - Active project records point to Woof as the orchestration engine, and no live consumer run requires the standalone VaultForeman path (per-run engine selection has moved live consumers, Freeflo included, onto Woof).
+      - Woof-side hidden-engine sweep -- the executor document block is removed or re-pointed in the canonical schema, the vf-drain wave instructions and `vf orchestrate` operating-order references are deleted, and the `VAULT_FOREMAN.md` reference is dropped.
+      - Schema-authority freeze -- the canonical work_units[] schema lives in Woof, VaultForeman schema files take no independent evolution, and transitional VaultForeman drains validate against Woof's schema.
+      - A post-cutover stability window is met -- at least three real Woof drains including at least one without per-merge confirmation, zero hand-recovery, VaultForeman fallback retained through the window, and the window length is operator-set.
+      - Standalone runner entry points are removed or wrap Woof without duplicate logic; VaultForeman records state the retired boundary.
   - id: safety-defect-sweep
     title: Fold remaining safety defects into the merge line
     kind: build
@@ -221,15 +285,31 @@ This is the forward work queue for the VaultForeman/Woof merge. It contains work
 
 The architecture target is `docs/architecture.md`. Decision records are in `docs/adr/`. The glossary is `docs/CONTEXT.md`.
 
+## Commission reconciliation - 2026-07-06
+
+The wave-5-onward tail below was reshaped from six deep-reasoning commissions (Fable-judged, adversarially reviewed by GLM, reconciled by Opus), plus an engine-agnostic correction. Provenance is in `~/Work/vault/records/personal/projects/vault-decomposition/commissions/`; each folder holds `ingestion-plan.md`, `plan-review.md`, and `plan-reconciliation.md`:
+
+- `woof-vaultforeman-merge` -- split intake, rewrite the wave table, move conformance/eval off the pre-flight path.
+- `vaultforeman-woof-absorption-boundary` -- carve deploy-aware behaviour out of `runner-loop-absorption`; executor sweep, schema freeze, and stability window on retirement.
+- `woof-first-flight-cutover-gate` -- split `first-flight` into `flight-1` (disposable) and `flight-2` (guarded real-deploy).
+- `woof-profile-a-worktree-merge-contract` -- Woof discovers and validates worktrees fail-closed; it never provisions.
+- `woof-semantic-conflict-policy` -- shared-file sibling conflicts fail closed to a human gate, not semantic reapplication.
+- `woof-vf-issue-1-fate` -- supersede VaultForeman issue #1 (deploy-aware merge) into Woof; VaultForeman held as interim fallback.
+
+Engine-agnostic correction (supersedes the commissions' cutover framing): Freeflo is a consumer either engine can run, so there is no `freeflo-cutover` migration. The residual is the engine-side `engine-neutral-consumer-policy` unit plus the general proving gate (`flight-1` and `flight-2`). Retirement triggers on Woof parity, proof, and no live VF-dependent run -- not "Freeflo stable on Woof".
+
+Live-state note: `intake-predecomposed` and `execution-shape-unification` are already delivered. The ADRs (015 worktree, 016 siblings, amended 014), architecture, and policy-schema edits the commissions also decided are a separate tranche, not yet applied. `vaultforeman-fix-parity` is the newly added sweep that re-baselines the absorption against VaultForeman HEAD.
+
 ## Operating Order
 
 1. Hand-build schema unification and the safety-defect sweep.
 2. Build the policy spine by hand, then drain policy-adjacent runner work in dependency order.
 3. Hand-build the execution-shape and config-routing convergence so the kernel runs one `work_units[]` shape and one routing authority before any further runner logic is absorbed.
-4. Drain the warm-session, cartography-continuity, and intake-enrichment units.
-5. Drain runner-loop absorption, conformance audit, and eval instrumentation.
-6. Run the guarded first flight manually.
-7. Cut Freeflo over manually, then retire or wrap the standalone VaultForeman runner.
+4. Drain the warm-session, cartography-continuity, and pre-decomposed intake units.
+5. Absorb the runner loop, the deploy-aware merge coordinator, the Profile A worktree contract, the engine-neutral consumer policy, and the VaultForeman fix-parity sweep.
+6. Run flight 1 (disposable repo), then flight 2 (guarded real-deploy slice), manually.
+7. Drain the post-flight richness units: conformance audit, eval instrumentation, and epic-enrichment intake.
+8. Retire the standalone VaultForeman runner once Woof is proven and no live run requires it.
 
 ## Wave Instructions
 
@@ -245,18 +325,21 @@ The `How` value controls execution mechanics:
 | 1 | `schema-unification`, `safety-defect-sweep` | hand-build | Start here. Preserve one canonical `work_units[]` schema, keep the VaultForeman `executor` document block valid for transitional drains, retire legacy runtime mirrors, and keep graph dependency validation fail-closed. |
 | 2 | `policy-model`, `dispatch-swap`, `run-lineage-immutable-attempts` | hand-build + vf-drain | Hand-build the repo-local policy schema/spine first. In `dispatch-swap`, consolidate VaultForeman's harness/model/effort registry into Woof's dispatcher before any produce/review logic is absorbed. |
 | 3 | `execution-shape-unification`, `config-routing-ssot` | hand-build | Foundational convergence. Collapse the runtime to one `work_units[]` shape (retire the `status`/`state` dual lifecycle and legacy id mirrors; rename checks, gates, and playbooks onto work-unit language) and make `policy.toml` the single routing/run-profile authority (retire `agents.toml` routing, single-source the registry vocab, delete dead headless builders). Hand-build because the vf-drain waves fold runner logic into this kernel; draining them first deepens the mirror. |
-| 4 | `warm-session-seam`, `cartography-continuity`, `intake-enrichment` | vf-drain | Drain after the kernel runs one shape and the dispatch registry is single-sourced, so warm producer and fresh reviewer sessions use one adapter contract and one unit shape. |
-| 5 | `runner-loop-absorption`, `conformance-audit`, `eval-instrumentation` | vf-drain | Absorb Profile A/B drain, deploy-aware merge pacing, partial-merge reconciliation, semantic sibling-conflict reconciliation, review cache, and usage/run telemetry. Producer reads the runner-asset source map. |
-| 6 | `first-flight` | manual | Prove the merged engine on a throwaway or guarded low-risk backlog before Freeflo. Exercise resume, gate handling, Profile A merge-settle/deploy-spacing, and audit evidence. |
-| 7 | `freeflo-cutover`, `vaultforeman-retirement` | manual | Cut Freeflo over only after first flight. Resolve the `lane_plan.py` / `lane_launcher.py` design call here; retire standalone VaultForeman once Freeflo is stable on Woof. |
+| 4 | `warm-session-seam`, `cartography-continuity`, `intake-predecomposed` | vf-drain | Drain after the kernel runs one shape and the dispatch registry is single-sourced, so warm producer and fresh reviewer sessions use one adapter contract and one unit shape. `intake-predecomposed` is already delivered. |
+| 5 | `runner-loop-absorption`, `deploy-aware-merge-coordinator`, `profile-a-worktree-contract`, `engine-neutral-consumer-policy`, `vaultforeman-fix-parity` | hand-build + vf-drain | Absorb Profile A/B drain, review cache, and usage/run telemetry. `deploy-aware-merge-coordinator` is a native new-build (no VaultForeman source asset) and is hand-build with operator review, not an unattended vf-drain. `vaultforeman-fix-parity` re-baselines the absorption against VaultForeman HEAD. Shared-file sibling conflicts fail closed to a human gate. Producer reads the runner-asset source map. |
+| 6 | `flight-1`, `flight-2` | manual | Flight 1 proves the kernel on a disposable repo with deploy decoupled. Flight 2 proves a guarded real-deploy slice and is the go/no-go for trusting Woof with prod-deploying consumers. |
+| 7 | `conformance-audit`, `eval-instrumentation`, `intake-epic-enrichment` | vf-drain | Post-flight richness. Structural cartography is the deferred structural scope of `cartography-continuity`, not a separate unit. |
+| 8 | `vaultforeman-retirement` | manual | Retire standalone VaultForeman once Woof is proven, carries the engine-neutral consumer policy, and no live run requires the VaultForeman path. |
 
-Same-day requirements are placed as follows: project-owned producer/reviewer run profiles are in `policy-model` and preserved by `runner-loop-absorption`; deploy-aware Profile A merge and partial-merge reconciliation are in `runner-loop-absorption` and exercised by `first-flight`; semantic sibling-conflict reconciliation is in `runner-loop-absorption`; the dispatch registry mismatch is an explicit `dispatch-swap` prerequisite before the warm-session and runner-loop waves.
+Same-day requirements are placed as follows: project-owned producer/reviewer run profiles are in `policy-model` and preserved by `runner-loop-absorption`; deploy-aware Profile A merge and partial-merge reconciliation are in `deploy-aware-merge-coordinator`, exercised by `flight-1`; shared-file sibling conflicts fail closed to a human gate in `runner-loop-absorption`; the dispatch registry mismatch is an explicit `dispatch-swap` prerequisite before the warm-session and runner-loop waves.
 
 ## Notes
 
 Cartography is retained as a first-class capability. The policy floor decides what is required for a repo and run; it does not create a second engine path.
 
 Pre-authored `work_units[]` are already decomposed input. They skip epic decomposition but run through the same execution kernel.
+
+Freeflo is an engine-agnostic consumer: it declares its delivery policy once and either engine can drain it, so the engine is a per-run selection, not a migration the consumer undergoes. Two operational rules follow: never point an unproven engine at a prod-deploying repo (that is what flight 2 clears), and never run two engines against the same repo at once.
 
 Single source of truth is a principal rule (architecture section 1). Each concept has one authoritative home and one bounded scope: routing and run profiles in `policy.toml`, one `work_units[]` schema for the executable unit, harness/model/effort vocabulary in the dispatch registry. `execution-shape-unification` and `config-routing-ssot` bring the runtime up to this rule; everything downstream must hold it.
 

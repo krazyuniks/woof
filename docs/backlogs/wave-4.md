@@ -16,58 +16,18 @@ executor:
     commit_backlog_state: true
     stop_when_no_eligible_units: true
 work_units:
-  - id: schema-unification
-    title: Unify execution schema on work_units
-    kind: build
-    state: done
-    priority: high
-    summary: Dependency anchor completed before Wave 4 drain.
   - id: policy-model
     title: Move project policy into repo-local Woof config
     kind: build
     state: done
     priority: high
-    summary: Dependency anchor completed before Wave 4 drain.
-    deps: [schema-unification]
-  - id: dispatch-swap
-    title: Replace headless dispatch with the tmux harness
-    kind: build
-    state: done
-    priority: high
-    summary: Dependency anchor completed before Wave 4 drain.
-    deps: [schema-unification, policy-model]
-  - id: warm-session-seam
-    title: Implement warm producer and fresh reviewer fix rounds
-    kind: build
-    state: done
-    priority: high
-    summary: Keep the producer attached across bounded fix rounds, use a fresh independent reviewer each round, and make resume producer-capable.
-    deps: [dispatch-swap]
-    acceptance:
-      - Reviewer blocker evidence is pasted back to the same producer session within budget.
-      - Each review round receives a fresh reviewer context and the full current diff.
-      - Resume can reattach or respawn the producer from disk authority.
-      - The fix-round budget is bounded and configurable, defaulting to two rounds per blocker before a gate opens.
-  - id: intake-enrichment
-    title: Implement epic sources, enrichment, and pre-decomposed intake
-    kind: build
-    state: todo
-    priority: high
-    summary: Support greenfield, GitHub, local-docs, and pre-decomposed work-unit sources through one intake boundary.
-    deps: [schema-unification, policy-model]
-    acceptance:
-      - Epic-backed intake follows sparse epic to optional enrichment to epic to work_units.
-      - Pre-decomposed work_units validate and skip decomposition.
-      - Intake records run metadata without reverse-generating a missing epic.
-      - Decomposition produces work_units through the existing breakdown playbook and brainstorm enrichment, not a second decomposer; the auto-decompose step this unit builds replaces the manual decompose earlier waves relied on.
-      - Pre-decomposed intake establishes the work-unit-set aggregate context and derives qualified references from it without fabricating an epic; when the source has no natural identity, intake assigns and persists a stable set_id once; epic-backed intake uses project_ref plus epic_id.
-      - Decomposition emits work_units in topological dependency order so the runtime aggregate validates without reordering.
+    summary: Dependency anchor completed before the Wave 4 drain.
   - id: cartography-continuity
     title: Retain cartography as a policy-enforced capability
     kind: build
     state: todo
     priority: medium
-    summary: Move cartography-floor selection into policy.toml cartography.floor (adding a no-cartography level) and reconcile the existing ADR-004/ADR-009 cartography artefacts and refresh hook with the merged engine. Existing cartography is reused, not re-derived.
+    summary: Move cartography-floor selection into policy.toml cartography.floor (adding a no-cartography level) and reconcile the existing ADR-004/ADR-009 cartography artefacts and refresh hook with the merged engine. Existing cartography is reused, not re-derived. Structural cartography is the deferred structural scope of this unit.
     deps: [policy-model]
     acceptance:
       - Repo policy can require no cartography, lexical/design cartography, or structural cartography.
@@ -77,6 +37,6 @@ work_units:
 
 # Wave 4 Sub-Backlog
 
-Drains `warm-session-seam`, `intake-enrichment`, and `cartography-continuity` after the Wave 3 kernel convergence. All three units have satisfied deps. Woof self-hosts under Profile B (commit + push, no PR).
+Drains `cartography-continuity`, the remaining Wave 4 unit. The other Wave 4 units are delivered: `warm-session-seam` landed in the earlier Wave 4 drain, and the master backlog split the pre-split `intake-enrichment` unit into `intake-predecomposed` (delivered, repo 9d6a768) and `intake-epic-enrichment` (moved to Wave 7). Woof self-hosts under Profile B (commit + push, no PR).
 
-Do not run VaultForeman against `docs/backlog.md` while this sub-backlog is active.
+Do not run VaultForeman against `docs/backlog.md` while this sub-backlog is active. When the unit lands, mark `cartography-continuity` done in the master backlog.

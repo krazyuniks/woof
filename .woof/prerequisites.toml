@@ -4,6 +4,7 @@
 just = "any"
 git = "any"
 gh = "any"
+tmux = "any"
 
 [commands]
 claude = "any"

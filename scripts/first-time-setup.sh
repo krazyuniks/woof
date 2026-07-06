@@ -196,6 +196,25 @@ require_manual_tool() {
 
 typeset -r CTAGS_HINT="Install universal-ctags: sudo apt install -y universal-ctags (Debian/Ubuntu), brew install universal-ctags (macOS), or sudo pacman -S ctags (Arch/CachyOS)."
 
+typeset -r TMUX_HINT="Install tmux: sudo apt install -y tmux (Debian/Ubuntu), brew install tmux (macOS), or sudo pacman -S tmux (Arch/CachyOS)."
+
+require_tmux_harness_source() {
+    local candidates=(
+        "$REPO_DIR/../agent-toolkit/skills/tmux-harness"
+        "$HOME/Work/agent-toolkit/skills/tmux-harness"
+    )
+    local candidate
+    for candidate in "${candidates[@]}"; do
+        if [[ -f "$candidate/pyproject.toml" ]]; then
+            log_info "tmux-harness source: ${candidate:A}"
+            return 0
+        fi
+    done
+    log_error "tmux-harness source not found (the dispatch transport package installed by 'just setup')"
+    print -r -- "       Clone agent-toolkit: git clone git@github.com:krazyuniks/agent-toolkit.git ~/Work/agent-toolkit"
+    return 1
+}
+
 require_universal_ctags() {
     if ! command -v ctags >/dev/null 2>&1; then
         log_error "ctags not found"
@@ -241,6 +260,8 @@ log_step "Checking Woof workflow prerequisites..."
 require_manual_tool gh "Install GitHub CLI and authenticate with: gh auth login" || missing=1
 require_manual_tool claude "Install the Claude Code CLI expected by .woof/agents.toml." || missing=1
 require_manual_tool codex "Install the Codex CLI expected by .woof/agents.toml." || missing=1
+require_manual_tool tmux "${TMUX_HINT}" || missing=1
+require_tmux_harness_source || missing=1
 require_universal_ctags || missing=1
 
 if (( missing != 0 )); then

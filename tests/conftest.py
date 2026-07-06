@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import shutil
 from pathlib import Path
 
@@ -32,6 +33,11 @@ def _tmux_substrate_available() -> bool:
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     if _tmux_substrate_available():
         return
+    if os.environ.get("WOOF_REQUIRE_TMUX_SUBSTRATE") == "1":
+        raise pytest.UsageError(
+            "WOOF_REQUIRE_TMUX_SUBSTRATE=1 but the tmux substrate is unavailable "
+            "(needs the tmux binary plus the tmux_harness package). Run: just setup"
+        )
     skip = pytest.mark.skip(
         reason="tmux substrate unavailable: needs tmux plus the tmux_harness package"
     )

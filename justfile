@@ -6,14 +6,16 @@ default:
 # Install/synchronise the development environment.
 setup:
     uv sync --locked
+    ./scripts/install-tmux-harness.sh
 
 # First-time host bootstrap: prerequisites, hooks, and quality gate.
 bootstrap *ARGS:
     ./scripts/first-time-setup.sh {{ARGS}}
 
-# Run the unit suite.
+# Run the unit suite. The local gate requires the tmux substrate so missing
+# tmux_harness fails loudly instead of silently skipping the dispatch tests.
 test:
-    uv run pytest
+    env WOOF_REQUIRE_TMUX_SUBSTRATE=1 uv run pytest
 
 # Run lint and formatting checks.
 lint:

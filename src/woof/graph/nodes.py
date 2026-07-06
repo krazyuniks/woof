@@ -323,6 +323,7 @@ def _plan_matches_completed_resume_delta(
         return False
     expected_plan = Plan(
         epic_id=base_plan.epic_id,
+        context=base_plan.context,
         goal=base_plan.goal,
         work_units=expected_units,
     )

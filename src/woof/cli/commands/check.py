@@ -43,6 +43,56 @@ def _load_critique_fm(epic_dir: Path, work_unit_id: str) -> dict | None:
         return None
 
 
+def _cartography_context(
+    repo_root: Path, plan: dict, work_unit_id: str
+) -> tuple[str | None, list[str], list[str]]:
+    from woof.cli.policy import cartography_floor, load_policy
+    from woof.graph.pathspec import PathspecEvaluationError, filter_paths_matching
+
+    policy = load_policy(repo_root)
+    floor = cartography_floor(policy) if isinstance(policy, dict) else None
+    if floor == "none":
+        return floor, [], []
+
+    codebase = repo_root / ".woof" / "codebase"
+    design = ["TARGET-ARCHITECTURE.md", "PRINCIPLES.md"]
+    if floor == "design":
+        return (
+            floor,
+            [f".woof/codebase/{name}" for name in design if (codebase / name).is_file()],
+            [],
+        )
+
+    paths = [
+        path.relative_to(repo_root).as_posix()
+        for path in sorted(codebase.glob("*.md"))
+        if path.is_file()
+    ]
+    files_txt = codebase / "files.txt"
+    if not files_txt.is_file():
+        return floor, paths, []
+    candidates = [
+        line for line in files_txt.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
+    work_unit = _work_unit_for_id(plan, work_unit_id)
+    if work_unit is None or not work_unit.get("paths"):
+        return floor, paths, candidates
+    try:
+        return floor, paths, filter_paths_matching(repo_root, candidates, list(work_unit["paths"]))
+    except PathspecEvaluationError:
+        return floor, paths, []
+
+
+def _work_unit_for_id(plan: dict, work_unit_id: str) -> dict | None:
+    work_units = plan.get("work_units")
+    if not isinstance(work_units, list):
+        return None
+    for work_unit in work_units:
+        if isinstance(work_unit, dict) and work_unit.get("id") == work_unit_id:
+            return work_unit
+    return None
+
+
 def _outcome_to_dict(outcome: object) -> dict:
     """Convert a CheckOutcome dataclass to a JSON-serialisable dict."""
     d = asdict(outcome)  # type: ignore[arg-type]
@@ -115,6 +165,9 @@ def cmd_check_stage_5(args: argparse.Namespace) -> int:
     plan = _load_plan(plan_path)
     work_unit_id = args.work_unit
     critique = _load_critique_fm(epic_dir, work_unit_id)
+    cartography_floor, cartography_paths, files_txt_slice = _cartography_context(
+        repo_root, plan, work_unit_id
+    )
     ctx = CheckContext(
         epic_id=args.epic,
         work_unit_id=work_unit_id,
@@ -122,6 +175,9 @@ def cmd_check_stage_5(args: argparse.Namespace) -> int:
         epic_dir=epic_dir,
         plan=plan,
         critique=critique,
+        cartography_floor=cartography_floor,
+        cartography_paths=cartography_paths,
+        files_txt_slice=files_txt_slice,
     )
 
     outcomes = []

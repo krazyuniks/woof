@@ -154,6 +154,97 @@ def test_stage_5_fails_closed_when_runner_not_implemented(
     assert by_id[missing_id]["evidence"] == "not wired"
 
 
+def test_stage_5_context_carries_declared_cartography_floor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from woof.checks import CheckContext, CheckOutcome
+    from woof.checks.registry import REGISTRY, STAGE_5_CHECK_IDS, Check
+    from woof.cli.commands.check import cmd_check_stage_5
+
+    seen: list[tuple[str | None, list[str], list[str]]] = []
+
+    def recording_runner(check_id: str):
+        def runner(ctx: CheckContext) -> CheckOutcome:
+            seen.append(
+                (
+                    ctx.cartography_floor,
+                    list(ctx.cartography_paths),
+                    list(ctx.files_txt_slice),
+                )
+            )
+            return CheckOutcome(
+                id=check_id,
+                ok=True,
+                severity=None,
+                summary=f"{check_id}: ok",
+            )
+
+        return runner
+
+    for check_id in STAGE_5_CHECK_IDS:
+        monkeypatch.setitem(
+            REGISTRY,
+            check_id,
+            Check(
+                id=check_id,
+                stage=5,
+                cost="cheap",
+                summary=f"{check_id} test stub",
+                runner=recording_runner(check_id),
+            ),
+        )
+
+    epic_dir = tmp_path / ".woof" / "epics" / "E1"
+    epic_dir.mkdir(parents=True)
+    (epic_dir / "plan.json").write_text(
+        json.dumps({"epic_id": 1, "goal": "test", "work_units": []})
+    )
+    (tmp_path / ".woof" / "policy.toml").write_text(
+        """\
+schema_version = 1
+default_run_profile = "default"
+
+[delivery]
+profile = "B"
+repo_root = "."
+toolchain_root = "."
+base_branch = "main"
+
+[profiles.B]
+commit = true
+push = true
+
+[verification]
+command = "just check"
+
+[run_profiles.default.producer]
+harness = "codex"
+model = "gpt-5.5"
+effort = "high"
+
+[run_profiles.default.reviewer]
+harness = "claude"
+model = "claude-opus-4-7"
+effort = "high"
+
+[checks]
+floor = ["quality-gates"]
+
+[cartography]
+floor = "none"
+"""
+    )
+    monkeypatch.chdir(tmp_path)
+
+    exit_code = cmd_check_stage_5(
+        argparse.Namespace(self_test=False, epic=1, work_unit="S1", format="json")
+    )
+    capsys.readouterr()
+
+    assert exit_code == 0
+    assert seen == [("none", [], [])] * len(STAGE_5_CHECK_IDS)
+
+
 # ---------------------------------------------------------------------------
 # O4 — check-result schema conformance
 # ---------------------------------------------------------------------------

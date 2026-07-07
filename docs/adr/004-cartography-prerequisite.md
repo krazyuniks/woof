@@ -14,7 +14,7 @@ LLM-dispatched nodes pay tokens to rediscover repo structure when prompts arrive
 
 ## Decision
 
-Every consumer repo has a mandatory cartography artefact group at `.woof/codebase/`, in three layers.
+Every consumer repo can maintain a cartography artefact group at `.woof/codebase/`, in three layers. ADR-013 moved the required floor into repo policy, so lean runs can declare `cartography.floor = "none"` while richer runs require design, lexical, or structural cartography.
 
 ### Design layer (human-authored, durable)
 
@@ -55,12 +55,12 @@ edges, but it does not replace the baseline files above.
 
 ### Preflight enforcement
 
-`woof preflight` fails closed on:
+When `.woof/policy.toml [cartography].floor` is non-none, `woof preflight` fails closed according to the selected floor:
 
-- Missing `scripts/refresh-cartography` (or present but non-executable).
-- Missing or stub `TARGET-ARCHITECTURE.md`.
-- Missing or stub `PRINCIPLES.md`.
-- Missing mechanical-layer files.
+- `design`: missing or stub `TARGET-ARCHITECTURE.md` or `PRINCIPLES.md`.
+- `lexical`: design requirements plus missing `scripts/refresh-cartography` (or present but non-executable), missing `tags`, missing `files.txt`, or missing `freshness.json`.
+- `structural`: currently enforced as the lexical baseline until the ADR-009 structural index implementation lands.
+- `none`: no cartography artefact group is required or loaded by the engine.
 
 A stale `freshness.json` beyond the declared floor emits a warning with a refresh prompt; it does not block.
 

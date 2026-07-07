@@ -17,7 +17,7 @@ Graph-owned input:
 
 ## Context documents — read these first
 
-The graph prepends a "Graph-owned cartography input" block with `inputs.cartography_paths` and `inputs.files_txt_slice`. Read them before implementing:
+When repo policy supplies cartography, the graph prepends a "Graph-owned cartography input" block with `inputs.cartography_paths` and, for lexical or structural floors, `inputs.files_txt_slice`. Read the supplied inputs before implementing:
 
 - `.woof/codebase/STRUCTURE.md`
 - `.woof/codebase/CONVENTIONS.md`

@@ -4,7 +4,7 @@ You are the reviewer role, dispatched by the Woof skill from a graph contract to
 
 ## Context documents — read these first
 
-The graph prepends a "Graph-owned input" block with `inputs.cartography_paths`. Read them before reviewing:
+When repo policy supplies cartography, the graph prepends a "Graph-owned input" block with `inputs.cartography_paths`. Read the supplied paths before reviewing:
 
 - `.woof/codebase/CURRENT-ARCHITECTURE.md`
 - `.woof/codebase/STRUCTURE.md`

@@ -141,8 +141,9 @@ mapper grounding follow only after the reviewer path is measurable.
 
 ## Consequences
 
-- ADR-004's three-layer cartography model remains intact. The structural index is a
-  richer mechanical artefact, not a replacement for design docs or AS-IS prose.
+- ADR-004's three-layer cartography model remains intact when repo policy selects a
+  cartography floor. The structural index is a richer mechanical artefact, not a
+  replacement for design docs or AS-IS prose.
 - `scripts/refresh-cartography` eventually regenerates the structural index alongside
   `tags`, `files.txt`, and `freshness.json`. Until that implementation lands, the
   mandatory mechanical files remain the ADR-004 baseline.

@@ -1,8 +1,10 @@
 # Mapping the codebase (cartography)
 
-Every Woof consumer repo carries a cartography artefact group at `.woof/codebase/` so dispatched
-nodes get prompt-ready repo context cheaply (ADR-004). The `/woof` umbrella owns the map-codebase
-flow. It runs in three layers.
+Woof consumer repos can carry a cartography artefact group at `.woof/codebase/` so dispatched
+nodes get prompt-ready repo context cheaply (ADR-004/ADR-013). `.woof/policy.toml`
+`[cartography].floor` decides whether a run requires no cartography, design cartography,
+lexical cartography, or structural cartography. The `/woof` umbrella owns the map-codebase flow.
+It runs in three layers.
 
 ## Design layer (human-authored, durable)
 
@@ -14,12 +16,13 @@ Authored during setup, refreshed only when architectural strategy changes:
 
 Help the operator author or update these by hand; they are not regenerated.
 
-`woof preflight` requires `prerequisites.toml` to declare `[cartography]` and treats both design
-docs as mandatory and non-stub. A doc fails preflight as a stub if it still contains the stub
-marker (`stub_marker`, default `<!-- woof:stub -->`) or if its body (front matter excluded) is
-shorter than `summary_min_chars` (default 200). A short-but-intentional doc can mark itself
-complete in front matter (`status: complete`, or `complete: true`). Author real content and remove
-the stub marker before preflight passes.
+When policy selects `cartography.floor = "design"`, `"lexical"`, or `"structural"`, `woof
+preflight` requires `prerequisites.toml` to declare `[cartography]` and treats both design docs as
+mandatory and non-stub. A doc fails preflight as a stub if it still contains the stub marker
+(`stub_marker`, default `<!-- woof:stub -->`) or if its body (front matter excluded) is shorter
+than `summary_min_chars` (default 200). A short-but-intentional doc can mark itself complete in
+front matter (`status: complete`, or `complete: true`). Author real content and remove the stub
+marker before preflight passes.
 
 ## AS-IS layer (mapper-authored, refreshed on demand)
 
@@ -89,8 +92,9 @@ woof hooks install
 ```
 
 A manual mechanical refresh is just running `./scripts/refresh-cartography` (or making a commit).
-`woof preflight` fails closed on a missing `[cartography]` block, a missing mechanical file
-(`tags`, `files.txt`, `freshness.json`), and a missing or non-executable
-`scripts/refresh-cartography`.
+For `cartography.floor = "lexical"` or `"structural"`, `woof preflight` fails closed on a missing
+`[cartography]` block, a missing mechanical file (`tags`, `files.txt`, `freshness.json`), and a
+missing or non-executable `scripts/refresh-cartography`. `structural` currently reuses the lexical
+baseline until ADR-009 structural-index generation lands.
 
 See ADR-004 (`docs/adr/004-cartography-prerequisite.md`) for the full rationale.

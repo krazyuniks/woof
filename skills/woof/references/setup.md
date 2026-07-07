@@ -13,9 +13,9 @@ Bring a consumer repository under Woof from the `/woof` umbrella.
 
    `woof init` writes `.woof/prerequisites.toml`, `agents.toml`, `quality-gates.toml`, and
    `test-markers.toml`, and adds the Woof block to `.gitignore`. The scaffolded
-   `prerequisites.toml` carries a `[cartography]` block (ADR-004) that turns on cartography
-   enforcement; see step 4. Add `--with-docs-paths` to also scaffold the Stage-5 docs-drift
-   mappings.
+   `prerequisites.toml` carries a `[cartography]` block (ADR-004) with the details used when
+   `.woof/policy.toml [cartography].floor` is non-none; see step 4. Add `--with-docs-paths` to
+   also scaffold the Stage-5 docs-drift mappings.
 
    With `--tracker` omitted, `woof init` infers the tracker from the project's git remote: a
    github `origin`/`upstream` remote scaffolds the github tracker with `repo` pre-filled from its
@@ -36,19 +36,22 @@ Bring a consumer repository under Woof from the `/woof` umbrella.
 
 3. Authenticate the model CLIs once: `claude /login` and `codex login`.
 
-4. Author cartography under `.woof/codebase/`. `woof preflight` requires the `[cartography]`
-   block and fails closed until all of the following exist (see `map-codebase.md`):
+4. Author cartography under `.woof/codebase/` when policy requires it. `woof preflight` enforces
+   the declared cartography floor (see `map-codebase.md`):
 
-   - the two human-authored design docs, `TARGET-ARCHITECTURE.md` and `PRINCIPLES.md`, with
+   - `design`, `lexical`, and `structural` require the two human-authored design docs,
+     `TARGET-ARCHITECTURE.md` and `PRINCIPLES.md`, with
      real content. A doc that still carries the stub marker (`<!-- woof:stub -->` by default),
      or whose body is shorter than `summary_min_chars`, fails as a stub unless its front matter
      marks it complete (`status: complete`);
-   - the seven mapper-authored AS-IS docs (run the map-codebase flow);
-   - the consumer-owned, executable `scripts/refresh-cartography` and the mechanical layer it
+   - `lexical` and `structural` require the consumer-owned, executable `scripts/refresh-cartography` and the mechanical layer it
      generates (`tags`, `files.txt`, `freshness.json`).
+   - mapper-authored AS-IS docs are loaded when present and required at dispatch when the selected node requests them.
+   - `none` requires no cartography artefacts.
 
-   Existing consumers whose `prerequisites.toml` has no `[cartography]` block should re-run
-   `woof init --language <lang>` and then complete this setup and map-codebase path.
+   Existing consumers whose policy selects a non-none floor but whose `prerequisites.toml` has no
+   `[cartography]` block should re-run `woof init --language <lang>` and then complete this setup
+   and map-codebase path.
 
 5. Install the post-commit cartography hook (see `map-codebase.md`):
 
@@ -66,9 +69,7 @@ Bring a consumer repository under Woof from the `/woof` umbrella.
    woof preflight
    ```
 
-   Preflight reports a missing `[cartography]` block, a missing or stub design doc, a missing
-   mechanical-layer file, or a missing/non-executable `scripts/refresh-cartography` as hard
-   failures.
+   Preflight reports cartography failures only for the floor selected in `.woof/policy.toml`.
 
 7. Start the first epic:
 

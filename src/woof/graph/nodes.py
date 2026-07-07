@@ -16,6 +16,7 @@ from pathlib import Path
 
 import yaml
 
+from woof.cli.policy import cartography_floor, load_policy
 from woof.gate.write import write_gate, write_gate_for_trigger, write_gate_from_check_result
 from woof.graph.dispositions import (
     FrontMatterError,
@@ -644,10 +645,25 @@ _EXECUTOR_CARTOGRAPHY_DOCS = [
     "PRINCIPLES.md",
 ]
 _CRITIQUE_DISPATCH_CARTOGRAPHY_DOCS = ["CONVENTIONS.md", "TESTING.md", "CONCERNS.md"]
+_DESIGN_CARTOGRAPHY_DOCS = {"TARGET-ARCHITECTURE.md", "PRINCIPLES.md"}
 
 
 def _codebase_doc_relpath(doc_name: str) -> str:
     return f".woof/codebase/{doc_name}"
+
+
+def _declared_cartography_floor(repo_root: Path) -> str | None:
+    policy = load_policy(repo_root)
+    return cartography_floor(policy) if isinstance(policy, dict) else None
+
+
+def _cartography_docs_for_floor(repo_root: Path, doc_names: list[str]) -> list[str]:
+    floor = _declared_cartography_floor(repo_root)
+    if floor == "none":
+        return []
+    if floor == "design":
+        return [name for name in doc_names if name in _DESIGN_CARTOGRAPHY_DOCS]
+    return doc_names
 
 
 def _require_cartography_docs(
@@ -664,7 +680,9 @@ def _require_cartography_docs(
     payload-build time, not in preflight — so a missing doc always halts
     rather than silently dispatching cold.
     """
-    refs = [_codebase_doc_relpath(name) for name in doc_names]
+    refs = [
+        _codebase_doc_relpath(name) for name in _cartography_docs_for_floor(repo_root, doc_names)
+    ]
     missing = [ref for ref in refs if not (repo_root / ref).is_file()]
     if missing:
         raise StageStateError(
@@ -679,13 +697,16 @@ def _require_cartography_docs(
     return refs
 
 
-def _work_unit_files_txt_slice(repo_root: Path, work_unit: WorkUnitSpec) -> list[str]:
+def _work_unit_files_txt_slice(repo_root: Path, work_unit: WorkUnitSpec) -> list[str] | None:
     """Return the work-unit-scoped subset of .woof/codebase/files.txt lines.
 
     Raises StageStateError(work_unit_gate) if files.txt is missing or the pathspec
     evaluation fails. Decision D1 (E19): filter through work_unit.paths[] at build
     time so the executor receives only its slice.
     """
+    floor = _declared_cartography_floor(repo_root)
+    if floor in {"none", "design"}:
+        return None
     files_txt_path = repo_root / ".woof" / "codebase" / "files.txt"
     if not files_txt_path.is_file():
         raise StageStateError(
@@ -1112,20 +1133,24 @@ def _executor_dispatch_prompt(
     repo_root: Path,
     epic_id: int,
     work_unit_id: str,
-    cartography_refs: list[str],
-    files_txt_slice: list[str],
+    cartography_refs: list[str] | None,
+    files_txt_slice: list[str] | None,
 ) -> str:
     """Build the executor dispatch prompt with cartography payload prepended."""
+    base = _work_unit_prompt(epic_id, work_unit_id)
+    inputs: dict[str, object] = {}
+    if cartography_refs:
+        inputs["cartography_paths"] = cartography_refs
+    if files_txt_slice is not None:
+        inputs["files_txt_slice"] = files_txt_slice
+    if not inputs:
+        return base + DISPATCH_DENIAL_EPILOGUE
     payload = {
         "node_type": NodeType.EXECUTOR_DISPATCH.value,
         "epic_id": epic_id,
         "work_unit_id": work_unit_id,
-        "inputs": {
-            "cartography_paths": cartography_refs,
-            "files_txt_slice": files_txt_slice,
-        },
+        "inputs": inputs,
     }
-    base = _work_unit_prompt(epic_id, work_unit_id)
     return (
         "Graph-owned cartography input:\n\n"
         "```json\n"
@@ -2345,7 +2370,7 @@ def executor_dispatch_node(inp: NodeInput) -> NodeOutput:
         artefacts_loaded=[
             *_work_unit_context_artefacts(inp.repo_root, inp.epic_id),
             *carto_refs,
-            _codebase_doc_relpath("files.txt"),
+            *([_codebase_doc_relpath("files.txt")] if files_txt_slice is not None else []),
         ],
         route_key="execution",
         session_mode="warm-producer",

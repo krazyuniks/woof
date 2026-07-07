@@ -10,7 +10,7 @@ Graph-owned input:
 
 ## Context documents — read these first
 
-The graph delivers these `.woof/codebase/` documents in `inputs.cartography_paths`. Read them before beginning work:
+When repo policy supplies cartography, the graph delivers relevant `.woof/codebase/` documents in `inputs.cartography_paths`. Read the supplied paths before beginning work:
 
 - `.woof/codebase/CURRENT-ARCHITECTURE.md`
 - `.woof/codebase/STRUCTURE.md`

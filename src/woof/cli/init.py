@@ -45,11 +45,9 @@ ajv-formats = "any"
 
 {tracker_block}
 
-# Cartography contract (ADR-004), enforced by `woof preflight`: the consumer
-# scripts/refresh-cartography script, the human-authored design docs
-# (.woof/codebase/TARGET-ARCHITECTURE.md and PRINCIPLES.md), and the mechanical
-# layer (tags, files.txt, freshness.json). Author the design docs through the
-# /woof setup flow, then run the /woof map-codebase flow before preflight passes.
+# Cartography details (ADR-004/ADR-013). `.woof/policy.toml [cartography].floor`
+# decides whether preflight enforces none, design, lexical, or structural
+# cartography. This block supplies the details for non-none floors.
 [cartography]
 staleness_floor_hours = 168
 summary_min_chars = 200

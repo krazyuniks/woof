@@ -83,9 +83,9 @@ ajv-formats = "any"
 kind = "github"
 repo = "<replace>/<replace>"
 
-# Cartography contract (ADR-004), enforced below. Author the design docs
-# (.woof/codebase/TARGET-ARCHITECTURE.md and PRINCIPLES.md) through the /woof
-# setup flow, then run the /woof map-codebase flow before preflight passes.
+# Cartography details (ADR-004/ADR-013). `.woof/policy.toml [cartography].floor`
+# decides whether preflight enforces none, design, lexical, or structural
+# cartography. This block supplies the details for non-none floors.
 [cartography]
 staleness_floor_hours = 168
 summary_min_chars = 200

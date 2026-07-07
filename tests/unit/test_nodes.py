@@ -78,6 +78,46 @@ def _write_plan(root: Path, epic_id: int = 1) -> Path:
     return directory
 
 
+def _write_policy(root: Path, *, cartography_floor: str) -> None:
+    woof_dir = root / ".woof"
+    woof_dir.mkdir(parents=True, exist_ok=True)
+    (woof_dir / "policy.toml").write_text(
+        f"""\
+schema_version = 1
+default_run_profile = "default"
+
+[delivery]
+profile = "B"
+repo_root = "."
+toolchain_root = "."
+base_branch = "main"
+
+[profiles.B]
+commit = true
+push = true
+
+[verification]
+command = "just check"
+
+[run_profiles.default.producer]
+harness = "codex"
+model = "gpt-5.5"
+effort = "high"
+
+[run_profiles.default.reviewer]
+harness = "claude"
+model = "claude-opus-4-7"
+effort = "high"
+
+[checks]
+floor = ["quality-gates"]
+
+[cartography]
+floor = "{cartography_floor}"
+"""
+    )
+
+
 def _write_discovery_synthesis(directory: Path) -> None:
     synthesis = directory / "discovery" / "synthesis"
     synthesis.mkdir(parents=True, exist_ok=True)
@@ -265,6 +305,83 @@ def test_critique_dispatch_missing_cartography_raises_stage_state_error(tmp_path
     assert exc.operator_recoverable
     assert exc.gate_type == "work_unit_gate"
     assert exc.work_unit_id == "S1"
+
+
+def test_executor_dispatch_omits_cartography_when_policy_floor_is_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_policy(tmp_path, cartography_floor="none")
+    _write_plan(tmp_path, 12)
+    captured: dict[str, Any] = {}
+
+    def fake_dispatch(
+        repo_root: Path,
+        role: str,
+        epic_id: int,
+        work_unit_id: str | None,
+        prompt: str,
+        artefacts_loaded: list[str] | None = None,
+        route_key: str | None = None,
+        session_mode: str = "one-shot",
+    ) -> nodes.DispatchRunResult:
+        captured["artefacts_loaded"] = artefacts_loaded
+        captured["prompt"] = prompt
+        return nodes.DispatchRunResult(
+            process=subprocess.CompletedProcess([], 0, "", ""),
+            exit_type="completed_lingering",
+        )
+
+    monkeypatch.setattr(nodes, "_run_dispatch", fake_dispatch)
+
+    nodes.executor_dispatch_node(
+        NodeInput(
+            node_type=NodeType.EXECUTOR_DISPATCH, epic_id=12, work_unit_id="S1", repo_root=tmp_path
+        )
+    )
+
+    assert not any(path.startswith(".woof/codebase/") for path in captured["artefacts_loaded"])
+    assert not captured["prompt"].startswith("Graph-owned cartography input:")
+
+
+def test_critique_dispatch_omits_cartography_when_policy_floor_is_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _init_git_repo(tmp_path)
+    _write_policy(tmp_path, cartography_floor="none")
+    directory = _write_plan(tmp_path, 13)
+    (directory / "EPIC.md").write_text("---\nepic_id: 13\n---\n")
+    captured: dict[str, Any] = {}
+
+    monkeypatch.setattr(nodes, "_stage_changed_work_unit_paths", lambda *_args: ["src/app.py"])
+
+    def fake_dispatch(
+        repo_root: Path,
+        role: str,
+        epic_id: int,
+        work_unit_id: str | None,
+        prompt: str,
+        artefacts_loaded: list[str] | None = None,
+        route_key: str | None = None,
+        session_mode: str = "one-shot",
+    ) -> nodes.DispatchRunResult:
+        captured["artefacts_loaded"] = artefacts_loaded
+        captured["prompt"] = prompt
+        return nodes.DispatchRunResult(
+            process=subprocess.CompletedProcess([], 0, "", ""),
+            exit_type="completed_lingering",
+        )
+
+    monkeypatch.setattr(nodes, "_run_dispatch", fake_dispatch)
+
+    nodes.critique_dispatch_node(
+        NodeInput(
+            node_type=NodeType.CRITIQUE_DISPATCH, epic_id=13, work_unit_id="S1", repo_root=tmp_path
+        )
+    )
+
+    assert not any(path.startswith(".woof/codebase/") for path in captured["artefacts_loaded"])
+    payload = json.loads(captured["prompt"].split("```json\n", 1)[1].split("\n```", 1)[0])
+    assert "cartography_paths" not in payload["inputs"]
 
 
 # ---------------------------------------------------------------------------

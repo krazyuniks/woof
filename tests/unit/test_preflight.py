@@ -84,6 +84,8 @@ floor = [
 floor = "structural"
 """
 
+POLICY_NO_CARTOGRAPHY = STANDARD_POLICY.replace('floor = "structural"', 'floor = "none"')
+
 CARTOGRAPHY_PREREQS = """\
 [infra]
 just = "any"
@@ -1319,6 +1321,54 @@ repo = "example/project"
     assert "/woof map-codebase" in contract["install"]
     assert "skills/woof/references/setup.md" in contract["install"]
     assert "skills/woof/references/map-codebase.md" in contract["install"]
+
+
+def test_preflight_allows_no_cartography_without_cartography_prerequisites(
+    tmp_path: Path, run_woof
+) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _stub_core_tools(bin_dir)
+
+    _write_project(
+        tmp_path,
+        policy=POLICY_NO_CARTOGRAPHY,
+        prerequisites="""\
+[infra]
+just = "any"
+git = "any"
+gh = "any"
+
+[commands]
+claude = "any"
+codex = "any"
+
+[validators]
+ajv = "any"
+ajv-formats = "any"
+
+[tracker]
+kind = "github"
+repo = "example/project"
+""",
+    )
+
+    proc = run_woof(
+        "preflight",
+        "--project-root",
+        str(tmp_path),
+        "--format",
+        "json",
+        env=_env_with_path(bin_dir),
+    )
+
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    payload = json.loads(proc.stdout)
+    by_id = {f["id"]: f for f in payload["findings"]}
+    assert by_id["policy.cartography_floor"]["detail"] == "floor=none"
+    assert "cartography.contract" not in by_id
+    assert "cartography.script" not in by_id
+    assert "cartography.mechanical" not in by_id
 
 
 def _run_cartography_preflight(tmp_path: Path, run_woof):

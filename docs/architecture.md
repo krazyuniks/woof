@@ -175,7 +175,7 @@ Repo policy is stored in `.woof/policy.toml` and declares:
 
 `policy.toml` is the single authority for delivery profile, producer/reviewer run profile (harness, model, effort), check floor, and cartography floor. Routing and run profiles are declared here and nowhere else. Other `.woof/` files own only their own bounded scope and never re-declare routing: `prerequisites.toml` owns host/tool/cartography prerequisite details, and `quality-gates.toml` owns named gate commands.
 
-The cartography floor determines what preflight enforces and what context the engine loads. Cartography remains a capability of the same engine path:
+The cartography floor determines what preflight enforces and what context the engine loads. `none` loads no cartography; `design` loads only the design layer; `lexical` loads the design/AS-IS prose and lexical mechanical layer; `structural` currently reuses the lexical baseline until the structural index implementation lands. Cartography remains a capability of the same engine path:
 
 - design docs and principles inform decomposition and checks;
 - mapper-authored AS-IS docs inform producer and reviewer context;

@@ -20,6 +20,9 @@ class CheckContext:
     epic_dir: Path
     plan: dict
     critique: dict | None = None
+    cartography_floor: str | None = None
+    cartography_paths: list[str] = field(default_factory=list)
+    files_txt_slice: list[str] = field(default_factory=list)
 
 
 @dataclass

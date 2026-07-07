@@ -384,6 +384,153 @@ def test_critique_dispatch_omits_cartography_when_policy_floor_is_none(
     assert "cartography_paths" not in payload["inputs"]
 
 
+def test_design_floor_filters_executor_docs_and_omits_reviewer_docs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _init_git_repo(tmp_path)
+    _write_policy(tmp_path, cartography_floor="design")
+    directory = _write_plan(tmp_path, 14)
+    (directory / "EPIC.md").write_text("---\nepic_id: 14\n---\n")
+    _write_codebase_docs(tmp_path, files_txt_content="src/app.py\n")
+    captured: dict[str, dict[str, Any]] = {}
+
+    monkeypatch.setattr(nodes, "_stage_changed_work_unit_paths", lambda *_args: ["src/app.py"])
+
+    def fake_dispatch(
+        repo_root: Path,
+        role: str,
+        epic_id: int,
+        work_unit_id: str | None,
+        prompt: str,
+        artefacts_loaded: list[str] | None = None,
+        route_key: str | None = None,
+        session_mode: str = "one-shot",
+    ) -> nodes.DispatchRunResult:
+        captured[role] = {
+            "artefacts_loaded": artefacts_loaded,
+            "prompt": prompt,
+            "session_mode": session_mode,
+        }
+        return nodes.DispatchRunResult(
+            process=subprocess.CompletedProcess([], 0, "", ""),
+            exit_type="completed_lingering",
+        )
+
+    monkeypatch.setattr(nodes, "_run_dispatch", fake_dispatch)
+
+    nodes.executor_dispatch_node(
+        NodeInput(
+            node_type=NodeType.EXECUTOR_DISPATCH, epic_id=14, work_unit_id="S1", repo_root=tmp_path
+        )
+    )
+    nodes.critique_dispatch_node(
+        NodeInput(
+            node_type=NodeType.CRITIQUE_DISPATCH, epic_id=14, work_unit_id="S1", repo_root=tmp_path
+        )
+    )
+
+    executor_loaded = captured["primary"]["artefacts_loaded"]
+    assert ".woof/codebase/TARGET-ARCHITECTURE.md" in executor_loaded
+    assert ".woof/codebase/PRINCIPLES.md" in executor_loaded
+    assert ".woof/codebase/STRUCTURE.md" not in executor_loaded
+    assert ".woof/codebase/CONVENTIONS.md" not in executor_loaded
+    assert ".woof/codebase/files.txt" not in executor_loaded
+    executor_payload = json.loads(
+        captured["primary"]["prompt"].split("```json\n", 1)[1].split("\n```", 1)[0]
+    )
+    assert executor_payload["inputs"] == {
+        "cartography_paths": [
+            ".woof/codebase/TARGET-ARCHITECTURE.md",
+            ".woof/codebase/PRINCIPLES.md",
+        ]
+    }
+
+    reviewer_loaded = captured["reviewer"]["artefacts_loaded"]
+    assert not any(path.startswith(".woof/codebase/") for path in reviewer_loaded)
+    reviewer_payload = json.loads(
+        captured["reviewer"]["prompt"].split("```json\n", 1)[1].split("\n```", 1)[0]
+    )
+    assert "cartography_paths" not in reviewer_payload["inputs"]
+
+
+def test_lexical_floor_carries_executor_files_txt_slice_and_reviewer_docs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _init_git_repo(tmp_path)
+    _write_policy(tmp_path, cartography_floor="lexical")
+    directory = _write_plan(tmp_path, 15)
+    (directory / "EPIC.md").write_text("---\nepic_id: 15\n---\n")
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "app.py").write_text("print('hello')\n")
+    (tmp_path / "README.md").write_text("# README\n")
+    _git(tmp_path, "add", "src/app.py", "README.md", check=True)
+    _write_codebase_docs(
+        tmp_path,
+        files_txt_content="src/app.py\nREADME.md\ndocs/design.md\n",
+    )
+    captured: dict[str, dict[str, Any]] = {}
+
+    monkeypatch.setattr(nodes, "_stage_changed_work_unit_paths", lambda *_args: ["src/app.py"])
+
+    def fake_dispatch(
+        repo_root: Path,
+        role: str,
+        epic_id: int,
+        work_unit_id: str | None,
+        prompt: str,
+        artefacts_loaded: list[str] | None = None,
+        route_key: str | None = None,
+        session_mode: str = "one-shot",
+    ) -> nodes.DispatchRunResult:
+        captured[role] = {
+            "artefacts_loaded": artefacts_loaded,
+            "prompt": prompt,
+            "session_mode": session_mode,
+        }
+        return nodes.DispatchRunResult(
+            process=subprocess.CompletedProcess([], 0, "", ""),
+            exit_type="completed_lingering",
+        )
+
+    monkeypatch.setattr(nodes, "_run_dispatch", fake_dispatch)
+
+    nodes.executor_dispatch_node(
+        NodeInput(
+            node_type=NodeType.EXECUTOR_DISPATCH, epic_id=15, work_unit_id="S1", repo_root=tmp_path
+        )
+    )
+    nodes.critique_dispatch_node(
+        NodeInput(
+            node_type=NodeType.CRITIQUE_DISPATCH, epic_id=15, work_unit_id="S1", repo_root=tmp_path
+        )
+    )
+
+    executor_loaded = captured["primary"]["artefacts_loaded"]
+    assert ".woof/codebase/STRUCTURE.md" in executor_loaded
+    assert ".woof/codebase/CONVENTIONS.md" in executor_loaded
+    assert ".woof/codebase/TARGET-ARCHITECTURE.md" in executor_loaded
+    assert ".woof/codebase/PRINCIPLES.md" in executor_loaded
+    assert ".woof/codebase/files.txt" in executor_loaded
+    executor_payload = json.loads(
+        captured["primary"]["prompt"].split("```json\n", 1)[1].split("\n```", 1)[0]
+    )
+    assert executor_payload["inputs"]["files_txt_slice"] == ["src/app.py"]
+
+    reviewer_loaded = captured["reviewer"]["artefacts_loaded"]
+    assert ".woof/codebase/CONVENTIONS.md" in reviewer_loaded
+    assert ".woof/codebase/TESTING.md" in reviewer_loaded
+    assert ".woof/codebase/CONCERNS.md" in reviewer_loaded
+    reviewer_payload = json.loads(
+        captured["reviewer"]["prompt"].split("```json\n", 1)[1].split("\n```", 1)[0]
+    )
+    assert reviewer_payload["inputs"]["cartography_paths"] == [
+        ".woof/codebase/CONVENTIONS.md",
+        ".woof/codebase/TESTING.md",
+        ".woof/codebase/CONCERNS.md",
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Mapped cartography refs in artefacts_loaded
 # ---------------------------------------------------------------------------

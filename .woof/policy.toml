@@ -1,7 +1,7 @@
 # Woof self-hosting repo-local policy.
 
 schema_version = 1
-default_run_profile = "woof-codex-produce-opus-review"
+default_run_profile = "woof-codex-high-produce-glm-max-review"
 
 [delivery]
 profile = "B"
@@ -23,15 +23,15 @@ push = true
 command = "just check"
 timeout_seconds = 600
 
-[run_profiles.woof-codex-produce-opus-review.producer]
+[run_profiles.woof-codex-high-produce-glm-max-review.producer]
 harness = "codex"
 model = "gpt-5.5"
 effort = "high"
 
-[run_profiles.woof-codex-produce-opus-review.reviewer]
-harness = "claude"
-model = "opus"
-effort = "xhigh"
+[run_profiles.woof-codex-high-produce-glm-max-review.reviewer]
+harness = "glm"
+model = "glm-5.2"
+effort = "max"
 
 [checks]
 floor = [

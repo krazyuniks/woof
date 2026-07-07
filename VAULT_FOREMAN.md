@@ -1,17 +1,17 @@
 ---
 schema_version: 1
 type: vault_foreman_project
-default_run_profile: woof-codex-produce-opus-review
+default_run_profile: woof-codex-high-produce-glm-max-review
 run_profiles:
-  woof-codex-produce-opus-review:
+  woof-codex-high-produce-glm-max-review:
     producer:
       harness: codex
       model: gpt-5.5
       effort: high
     reviewer:
-      harness: claude
-      model: opus
-      effort: xhigh
+      harness: glm
+      model: glm-5.2
+      effort: max
 ---
 
 # VaultForeman

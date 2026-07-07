@@ -205,6 +205,12 @@ graph publishes that commit with `git push` when policy enables push. If commit 
 graph restores the pre-completion state so the unit is not durably marked done before its publish
 transaction lands.
 
+For Profile A, the graph commits the verified work-unit transaction, pushes the unit branch, creates
+or reuses the pull request against `delivery.base_branch`, records the PR and issue linkage in
+`epic.jsonl`, amends that graph metadata into the branch, and force-pushes with a lease pinned to the
+initial published head. The ready label is applied only after the final push and only when the
+deterministic gate is green and the reviewer critique is non-blocking.
+
 Before dispatching a ready Profile A unit, Woof runs the Profile A worktree preflight for that unit's
 aggregate. Any worktree anomaly fails closed to a work-unit gate before provisioning, mutation,
 recovery, or engine invocation.

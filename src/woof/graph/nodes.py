@@ -33,7 +33,17 @@ from woof.graph.dispositions import (
     write_deterministic_work_unit_disposition,
 )
 from woof.graph.epilogue import DISPATCH_DENIAL_EPILOGUE
-from woof.graph.git import changed_paths, git, head_branch_drift_detected, staged_paths
+from woof.graph.git import (
+    changed_paths,
+    gh_add_label,
+    gh_open_pr,
+    gh_pr_for_branch,
+    git,
+    head_branch_drift_detected,
+    head_sha,
+    staged_paths,
+)
+from woof.graph.git import current_branch as git_current_branch
 from woof.graph.intake import ensure_epic_plan_context, epic_work_unit_context
 from woof.graph.manifest import build_work_unit_manifest, verify_staged_manifest
 from woof.graph.pathspec import PathspecEvaluationError, filter_paths_matching
@@ -2811,6 +2821,174 @@ def _commit_message(
     return f"feat: E{epic_id} {work_unit_id} - {work_unit_title}"
 
 
+@dataclass(frozen=True)
+class ProfileAPublishSettings:
+    github_repo: str
+    ready_label: str
+    base_branch: str
+    head_branch: str
+    remote: str = "origin"
+
+
+def _profile_a_publish_settings(
+    repo_root: Path, *, work_unit_id: str
+) -> ProfileAPublishSettings | None:
+    policy = load_policy(repo_root)
+    if not isinstance(policy, dict):
+        return None
+    delivery = policy.get("delivery")
+    if not isinstance(delivery, dict) or delivery.get("profile") != "A":
+        return None
+    profiles = policy.get("profiles")
+    profile_a = profiles.get("A") if isinstance(profiles, dict) else None
+    if not isinstance(profile_a, dict):
+        return None
+    github_repo = profile_a.get("github_repo")
+    ready_label = profile_a.get("ready_label")
+    base_branch = delivery.get("base_branch")
+    if (
+        not isinstance(github_repo, str)
+        or not github_repo.strip()
+        or not isinstance(ready_label, str)
+        or not ready_label.strip()
+        or not isinstance(base_branch, str)
+        or not base_branch.strip()
+    ):
+        raise StageStateError(
+            "Profile A publish requires github_repo, ready_label, and base_branch"
+        )
+
+    current = git_current_branch(repo_root)
+    head_branch = current if current and current != base_branch.strip() else work_unit_id
+    return ProfileAPublishSettings(
+        github_repo=github_repo.strip(),
+        ready_label=ready_label.strip(),
+        base_branch=base_branch.strip(),
+        head_branch=head_branch,
+    )
+
+
+def _profile_a_review_passed(repo_root: Path, epic_id: int, work_unit_id: str) -> bool:
+    try:
+        critique = read_markdown_front_matter(
+            work_unit_critique_path(epic_dir(repo_root, epic_id), work_unit_id)
+        )
+    except (OSError, FrontMatterError):
+        return False
+    return critique_severity(critique.front) in {"info", "minor"}
+
+
+def _profile_a_merge_eligible(
+    repo_root: Path, epic_id: int, work_unit_id: str, check_result: dict
+) -> bool:
+    return check_result.get("ok") is True and _profile_a_review_passed(
+        repo_root, epic_id, work_unit_id
+    )
+
+
+def _profile_a_pr_body(
+    *,
+    epic_id: int,
+    work_unit_id: str,
+    verified_tree: object,
+    verified_paths: object,
+    published_head: str,
+) -> str:
+    paths = (
+        ", ".join(verified_paths)
+        if isinstance(verified_paths, list)
+        and all(isinstance(path, str) for path in verified_paths)
+        else "(not recorded)"
+    )
+    tree = verified_tree if isinstance(verified_tree, str) and verified_tree else "(not recorded)"
+    return (
+        f"Issue: #{epic_id}\n"
+        f"Work unit: {work_unit_id}\n"
+        f"Published head: {published_head}\n"
+        f"Verified tree: {tree}\n"
+        f"Verified paths: {paths}\n"
+    )
+
+
+def _publish_profile_a_transaction(
+    inp: NodeInput,
+    *,
+    work_unit: WorkUnitSpec,
+    check_result: dict,
+    title: str,
+) -> None:
+    settings = _profile_a_publish_settings(inp.repo_root, work_unit_id=inp.work_unit_id or "")
+    if settings is None:
+        return
+    published_head = head_sha(inp.repo_root)
+    if published_head is None:
+        raise StageStateError("Profile A publish requires a readable committed HEAD")
+    verified_tree = check_result.get("verified_tree")
+    verified_paths = check_result.get("verified_paths")
+    if (
+        not isinstance(verified_tree, str)
+        or not isinstance(verified_paths, list)
+        or not all(isinstance(path, str) for path in verified_paths)
+    ):
+        raise StageStateError("Profile A publish requires verified_tree and verified_paths pins")
+    body = _profile_a_pr_body(
+        epic_id=inp.epic_id,
+        work_unit_id=work_unit.id,
+        verified_tree=verified_tree,
+        verified_paths=verified_paths,
+        published_head=published_head,
+    )
+
+    git(inp.repo_root, "push", settings.remote, f"HEAD:{settings.head_branch}")
+    pr_number = gh_pr_for_branch(
+        settings.github_repo,
+        settings.head_branch,
+        base=settings.base_branch,
+    )
+    if pr_number is None:
+        pr_number = gh_open_pr(
+            settings.github_repo,
+            head=settings.head_branch,
+            base=settings.base_branch,
+            title=title,
+            body=body,
+        )
+
+    merge_eligible = _profile_a_merge_eligible(
+        inp.repo_root, inp.epic_id, work_unit.id, check_result
+    )
+    append_epic_event(
+        inp.repo_root,
+        inp.epic_id,
+        {
+            "event": "profile_a_published",
+            "at": _now(),
+            "epic_id": inp.epic_id,
+            "work_unit_id": work_unit.id,
+            "issue_number": inp.epic_id,
+            "github_repo": settings.github_repo,
+            "head": settings.head_branch,
+            "base": settings.base_branch,
+            "pr_number": pr_number,
+            "initial_head": published_head,
+            "verified_tree": verified_tree,
+            "verified_paths": verified_paths,
+            "merge_eligible": merge_eligible,
+        },
+    )
+    git(inp.repo_root, "add", "--", f".woof/epics/E{inp.epic_id}/epic.jsonl")
+    git(inp.repo_root, "commit", "--amend", "--no-edit")
+    git(
+        inp.repo_root,
+        "push",
+        f"--force-with-lease={settings.head_branch}:{published_head}",
+        settings.remote,
+        f"HEAD:{settings.head_branch}",
+    )
+    if merge_eligible:
+        gh_add_label(settings.github_repo, pr_number, settings.ready_label)
+
+
 def _profile_b_push_target(repo_root: Path) -> str | None:
     policy = load_policy(repo_root)
     if not isinstance(policy, dict):
@@ -3099,6 +3277,12 @@ def commit_node(inp: NodeInput) -> NodeOutput:
         git(inp.repo_root, "add", "--", f".woof/epics/E{inp.epic_id}/epic.jsonl")
         git(inp.repo_root, *args)
         commit_landed = True
+        _publish_profile_a_transaction(
+            inp,
+            work_unit=work_unit,
+            check_result=check_result,
+            title=message,
+        )
         _push_profile_b_transaction(inp.repo_root)
     except Exception:
         if commit_landed:

@@ -109,7 +109,7 @@ work_units:
 - id: profile-a-pr-publish
   title: Profile A branch publish, pull request, and ready labelling
   kind: build
-  state: todo
+  state: done
   priority: high
   summary: Absorb the VaultForeman PR lifecycle (git_pr.py) and ready gate (ready_gate.py).
     Branch push, PR creation with issue linkage, ready labelling on merge eligibility.

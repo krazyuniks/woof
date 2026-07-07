@@ -445,6 +445,45 @@ floor = "none"
     )
 
 
+def _write_profile_a_policy(root: Path, *, base_branch: str, ready_label: str = "ready") -> None:
+    woof_dir = root / ".woof"
+    woof_dir.mkdir(parents=True, exist_ok=True)
+    (woof_dir / "policy.toml").write_text(
+        f"""\
+[delivery]
+profile = "A"
+repo_root = "."
+toolchain_root = "."
+base_branch = "{base_branch}"
+
+[profiles.A]
+github_repo = "example/project"
+ready_label = "{ready_label}"
+merge_path_groups = []
+
+[profiles.A.worktree]
+root = "worktrees"
+engine = "test-worktree"
+
+[run_profiles.default.producer]
+harness = "codex"
+model = "gpt-5.5"
+effort = "high"
+
+[run_profiles.default.reviewer]
+harness = "claude"
+model = "claude-opus-4-7"
+effort = "high"
+
+[checks]
+floor = []
+
+[cartography]
+floor = "none"
+"""
+    )
+
+
 def _write_codebase_docs(root: Path) -> None:
     codebase_dir = root / ".woof" / "codebase"
     codebase_dir.mkdir(parents=True, exist_ok=True)
@@ -736,6 +775,30 @@ def _write_ready_commit_state(
     src.mkdir()
     (src / "app.py").write_text("print('O1')\n")
     return directory
+
+
+def _pin_ready_commit_verified_tree(root: Path, directory: Path, epic_id: int = 1) -> None:
+    plan = Plan.model_validate_json((directory / "plan.json").read_text())
+    manifest = build_work_unit_manifest(root, epic_id, plan.work_units[0])
+    _git(root, "add", "--", *manifest.expected_paths, check=True, capture_output=True)
+    check_result = json.loads((directory / "check-result.json").read_text())
+    check_result["verified_tree"] = _git(
+        root,
+        "write-tree",
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    check_result["verified_paths"] = _git(
+        root,
+        "diff",
+        "--cached",
+        "--name-only",
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    (directory / "check-result.json").write_text(json.dumps(check_result))
 
 
 def test_graph_runs_executor_then_critique_then_verification_then_commit(tmp_path: Path) -> None:
@@ -3134,6 +3197,165 @@ def test_profile_b_push_disabled_commits_done_state_without_git_push(
     assert plan_after["work_units"][0]["state"] == "done"
     assert any(event["event"] == "work_unit_completed" for event in events)
     assert push_calls == []
+
+
+def test_profile_a_publish_pushes_branch_opens_pr_labels_ready_and_records_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _init_git_repo(tmp_path)
+    base_branch = _git(
+        tmp_path,
+        "branch",
+        "--show-current",
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    _git(tmp_path, "checkout", "-b", "S1", check=True, capture_output=True)
+    _write_profile_a_policy(tmp_path, base_branch=base_branch, ready_label="ready-to-merge")
+    directory = _write_ready_commit_state(
+        tmp_path,
+        1,
+        commit_subject="feat(graph): publish profile A unit",
+    )
+    _pin_ready_commit_verified_tree(tmp_path, directory)
+
+    push_calls: list[tuple[str, ...]] = []
+    pr_create: dict[str, Any] = {}
+    labels: list[tuple[str, int, str]] = []
+    original_git = nodes.git
+
+    def record_publish_git(
+        repo_root: Path, *args: str, **kwargs: Any
+    ) -> subprocess.CompletedProcess[str]:
+        if args and args[0] == "push":
+            push_calls.append(args)
+            return subprocess.CompletedProcess(["git", *args], 0, "", "")
+        return original_git(repo_root, *args, **kwargs)
+
+    def no_existing_pr(repo_slug: str, branch: str, *, base: str | None = None) -> int | None:
+        assert repo_slug == "example/project"
+        assert branch == "S1"
+        assert base == base_branch
+        return None
+
+    def open_pr(repo_slug: str, *, head: str, base: str, title: str, body: str) -> int:
+        pr_create.update(
+            {"repo_slug": repo_slug, "head": head, "base": base, "title": title, "body": body}
+        )
+        return 42
+
+    def add_label(repo_slug: str, pr_number: int, label: str) -> None:
+        labels.append((repo_slug, pr_number, label))
+
+    monkeypatch.setattr(nodes, "git", record_publish_git)
+    monkeypatch.setattr(nodes, "gh_pr_for_branch", no_existing_pr)
+    monkeypatch.setattr(nodes, "gh_open_pr", open_pr)
+    monkeypatch.setattr(nodes, "gh_add_label", add_label)
+
+    output = nodes.commit_node(
+        NodeInput(
+            node_type=NodeType.COMMIT,
+            epic_id=1,
+            work_unit_id="S1",
+            repo_root=tmp_path,
+        )
+    )
+
+    head = _git(
+        tmp_path,
+        "rev-parse",
+        "HEAD",
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    committed_events = [
+        json.loads(line)
+        for line in _git(
+            tmp_path,
+            "show",
+            "HEAD:.woof/epics/E1/epic.jsonl",
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+        if line.strip()
+    ]
+    publish_event = next(
+        event for event in committed_events if event["event"] == "profile_a_published"
+    )
+
+    assert output.status == NodeStatus.COMPLETED
+    assert push_calls == [
+        ("push", "origin", "HEAD:S1"),
+        ("push", f"--force-with-lease=S1:{publish_event['initial_head']}", "origin", "HEAD:S1"),
+    ]
+    assert pr_create["repo_slug"] == "example/project"
+    assert pr_create["head"] == "S1"
+    assert pr_create["base"] == base_branch
+    assert pr_create["title"] == "feat(graph): publish profile A unit"
+    assert "Issue: #1" in pr_create["body"]
+    assert "Verified tree:" in pr_create["body"]
+    assert labels == [("example/project", 42, "ready-to-merge")]
+    assert publish_event["work_unit_id"] == "S1"
+    assert publish_event["issue_number"] == 1
+    assert publish_event["pr_number"] == 42
+    assert publish_event["head"] == "S1"
+    assert publish_event["base"] == base_branch
+    assert publish_event["initial_head"] != head
+    assert publish_event["verified_tree"]
+    assert not (directory / "executor_result.json").exists()
+    assert not (directory / "check-result.json").exists()
+
+
+def test_profile_a_publish_withholds_ready_label_when_gate_is_not_green(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _init_git_repo(tmp_path)
+    base_branch = _git(
+        tmp_path,
+        "branch",
+        "--show-current",
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    _git(tmp_path, "checkout", "-b", "S1", check=True, capture_output=True)
+    _write_profile_a_policy(tmp_path, base_branch=base_branch)
+    directory = _write_ready_commit_state(tmp_path, 1)
+    check_result = json.loads((directory / "check-result.json").read_text())
+    check_result["ok"] = False
+    (directory / "check-result.json").write_text(json.dumps(check_result))
+    _pin_ready_commit_verified_tree(tmp_path, directory)
+
+    original_git = nodes.git
+
+    def record_publish_git(
+        repo_root: Path, *args: str, **kwargs: Any
+    ) -> subprocess.CompletedProcess[str]:
+        if args and args[0] == "push":
+            return subprocess.CompletedProcess(["git", *args], 0, "", "")
+        return original_git(repo_root, *args, **kwargs)
+
+    def fail_ready_label(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("red deterministic gates must not receive the ready label")
+
+    monkeypatch.setattr(nodes, "git", record_publish_git)
+    monkeypatch.setattr(nodes, "gh_pr_for_branch", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(nodes, "gh_open_pr", lambda *_args, **_kwargs: 42)
+    monkeypatch.setattr(nodes, "gh_add_label", fail_ready_label)
+
+    output = nodes.commit_node(
+        NodeInput(
+            node_type=NodeType.COMMIT,
+            epic_id=1,
+            work_unit_id="S1",
+            repo_root=tmp_path,
+        )
+    )
+
+    assert output.status == NodeStatus.COMPLETED
 
 
 def test_profile_b_push_failure_rolls_back_landed_commit_and_done_state(

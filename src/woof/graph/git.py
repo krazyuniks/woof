@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import subprocess
 from pathlib import Path
+from typing import Any, cast
 
 _LOCAL_GIT_ENV_VARS = {
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
@@ -104,6 +107,110 @@ def head_branch_drift_detected(
             return True, f"branch switched from {expected_branch!r} to {actual_branch!r}"
 
     return False, ""
+
+
+def parse_pr_number(text: str) -> int:
+    """Extract a GitHub pull request number from gh output."""
+
+    match = re.search(r"/pull/([1-9]\d*)\b", text)
+    if not match:
+        raise ValueError(f"gh pr create output did not contain a pull request URL: {text!r}")
+    return int(match.group(1))
+
+
+def gh_open_pr(
+    repo_slug: str,
+    *,
+    head: str,
+    base: str,
+    title: str,
+    body: str,
+) -> int:
+    """Open a GitHub pull request and return its number."""
+
+    proc = subprocess.run(
+        [
+            "gh",
+            "pr",
+            "create",
+            "--repo",
+            repo_slug,
+            "--head",
+            head,
+            "--base",
+            base,
+            "--title",
+            title,
+            "--body",
+            body,
+        ],
+        env=git_env(),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return parse_pr_number(proc.stdout)
+
+
+def gh_pr_for_branch(repo_slug: str, branch: str, *, base: str | None = None) -> int | None:
+    """Return the open PR number for ``branch``, if gh can find one."""
+
+    args = [
+        "gh",
+        "pr",
+        "list",
+        "--repo",
+        repo_slug,
+        "--head",
+        branch,
+        "--state",
+        "open",
+        "--json",
+        "number",
+    ]
+    if base is not None:
+        args.extend(["--base", base])
+    proc = subprocess.run(
+        args,
+        env=git_env(),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return None
+    try:
+        rows: object = json.loads(proc.stdout or "[]")
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(rows, list) or not rows:
+        return None
+    first = rows[0]
+    if not isinstance(first, dict):
+        return None
+    number = cast("dict[str, Any]", first).get("number")
+    return number if isinstance(number, int) else None
+
+
+def gh_add_label(repo_slug: str, pr_number: int, label: str) -> None:
+    """Apply ``label`` to a GitHub pull request."""
+
+    subprocess.run(
+        [
+            "gh",
+            "pr",
+            "edit",
+            str(pr_number),
+            "--repo",
+            repo_slug,
+            "--add-label",
+            label,
+        ],
+        env=git_env(),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
 
 
 def changed_paths(repo_root: Path) -> list[str]:

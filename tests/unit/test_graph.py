@@ -3021,6 +3021,65 @@ def test_profile_b_policy_pushes_committed_transaction_before_done_state_lands(
     assert json.loads(committed_plan.stdout)["work_units"][0]["state"] == "done"
 
 
+def test_profile_b_push_failure_rolls_back_landed_commit_and_done_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _init_git_repo(tmp_path)
+    branch = _git(
+        tmp_path,
+        "branch",
+        "--show-current",
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    _write_profile_b_policy(tmp_path, base_branch=branch, push=True)
+    directory = _write_ready_commit_state(tmp_path, 1)
+    plan = json.loads((directory / "plan.json").read_text())
+    plan["work_units"][0]["state"] = "in_progress"
+    (directory / "plan.json").write_text(json.dumps(plan))
+    head_before = _git(
+        tmp_path,
+        "rev-parse",
+        "HEAD",
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    original_git = nodes.git
+
+    def fail_push(repo_root: Path, *args: str, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if args and args[0] == "push":
+            raise subprocess.CalledProcessError(1, ["git", *args], stderr="push rejected")
+        return original_git(repo_root, *args, **kwargs)
+
+    monkeypatch.setattr(nodes, "git", fail_push)
+
+    with pytest.raises(subprocess.CalledProcessError):
+        nodes.commit_node(
+            NodeInput(
+                node_type=NodeType.COMMIT,
+                epic_id=1,
+                work_unit_id="S1",
+                repo_root=tmp_path,
+            )
+        )
+
+    head_after = _git(
+        tmp_path,
+        "rev-parse",
+        "HEAD",
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    plan_after = json.loads((directory / "plan.json").read_text())
+    events = [json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines()]
+    assert head_after == head_before
+    assert plan_after["work_units"][0]["state"] == "in_progress"
+    assert not any(event["event"] == "work_unit_completed" for event in events)
+
+
 def test_commit_writes_epic_completed_into_commit_for_mixed_done_abandoned_epic(
     tmp_path: Path,
 ) -> None:

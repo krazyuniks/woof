@@ -94,7 +94,7 @@ work_units:
 - id: profile-b-graph-transactions
   title: Profile B commit and push through graph-owned transactions
   kind: build
-  state: todo
+  state: done
   priority: high
   summary: Absorb VaultForeman profile_b.py as thin delegation to the produce/review
     core. Read the runner-asset source map at ~/Work/vault/records/radianit/projects/woof/planning/runner-asset-source-map.md

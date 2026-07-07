@@ -2811,6 +2811,59 @@ def _commit_message(
     return f"feat: E{epic_id} {work_unit_id} - {work_unit_title}"
 
 
+def _profile_b_push_target(repo_root: Path) -> str | None:
+    policy = load_policy(repo_root)
+    if not isinstance(policy, dict):
+        return None
+    delivery = policy.get("delivery")
+    if not isinstance(delivery, dict) or delivery.get("profile") != "B":
+        return None
+    profiles = policy.get("profiles")
+    profile_b = profiles.get("B") if isinstance(profiles, dict) else None
+    if not isinstance(profile_b, dict) or profile_b.get("push") is not True:
+        return None
+    base_branch = delivery.get("base_branch")
+    if isinstance(base_branch, str) and base_branch.strip():
+        branch = base_branch.strip()
+    else:
+        proc = git(repo_root, "symbolic-ref", "--short", "HEAD", check=False)
+        branch = proc.stdout.strip() if proc.returncode == 0 else ""
+    if not branch:
+        raise StageStateError("Profile B push is enabled, but no target branch is declared")
+    return f"HEAD:{branch}"
+
+
+def _push_profile_b_transaction(repo_root: Path) -> None:
+    target = _profile_b_push_target(repo_root)
+    if target is not None:
+        git(repo_root, "push", "origin", target)
+
+
+def _snapshot_transaction_state(directory: Path) -> dict[Path, str | None]:
+    paths = [directory / "plan.json", directory / "epic.jsonl"]
+    snapshot: dict[Path, str | None] = {}
+    for path in paths:
+        snapshot[path] = path.read_text() if path.exists() else None
+    return snapshot
+
+
+def _restore_transaction_state(repo_root: Path, snapshot: dict[Path, str | None]) -> None:
+    restored: list[str] = []
+    removed: list[str] = []
+    for path, text in snapshot.items():
+        relpath = path.relative_to(repo_root).as_posix()
+        if text is None:
+            path.unlink(missing_ok=True)
+            removed.append(relpath)
+        else:
+            path.write_text(text)
+            restored.append(relpath)
+    if restored:
+        git(repo_root, "add", "--", *restored)
+    if removed:
+        git(repo_root, "rm", "--cached", "--ignore-unmatch", "--", *removed)
+
+
 def commit_node(inp: NodeInput) -> NodeOutput:
     if not inp.work_unit_id:
         raise ValueError("commit requires work_unit_id")
@@ -2965,81 +3018,93 @@ def commit_node(inp: NodeInput) -> NodeOutput:
             message=position,
         )
 
-    mark_work_unit_state(inp.repo_root, inp.epic_id, inp.work_unit_id, "done")
-    append_epic_event_once(
-        inp.repo_root,
-        inp.epic_id,
-        {
-            "event": "work_unit_completed",
-            "at": _now(),
-            "epic_id": inp.epic_id,
-            "work_unit_id": inp.work_unit_id,
-        },
-        event="work_unit_completed",
-        work_unit_id=inp.work_unit_id,
-    )
-
-    git(inp.repo_root, "add", "--", *manifest.expected_paths)
-    verification = verify_staged_manifest(inp.repo_root, manifest)
-    if not verification.ok:
-        position = (
-            "Transaction manifest mismatch.\n\n"
-            f"Missing staged paths: {verification.missing_paths}\n"
-            f"Unexpected staged paths: {verification.extra_paths}\n"
-        )
-        pos_path = epic_dir(inp.repo_root, inp.epic_id) / "manifest-position.md"
-        pos_path.write_text(position)
-        write_gate_for_trigger(
-            trigger="check_7_commit_transaction",
-            epic_dir=epic_dir(inp.repo_root, inp.epic_id),
-            work_unit_id=inp.work_unit_id,
-            position_path=pos_path,
-            schema_path=schema_dir() / "gate.schema.json",
-        )
-        pos_path.unlink(missing_ok=True)
-        return NodeOutput(
-            node_type=inp.node_type,
-            status=NodeStatus.GATE_OPENED,
-            epic_id=inp.epic_id,
-            work_unit_id=inp.work_unit_id,
-            gate_path=_gate_path(inp.epic_id),
-            triggered_by=["check_7_commit_transaction"],
-            message=position,
-        )
-
-    append_epic_event_once(
-        inp.repo_root,
-        inp.epic_id,
-        {
-            "event": "transaction_manifest_verified",
-            "at": _now(),
-            "epic_id": inp.epic_id,
-            "work_unit_id": inp.work_unit_id,
-            "manifest": manifest.model_dump(),
-        },
-        event="transaction_manifest_verified",
-        work_unit_id=inp.work_unit_id,
-    )
-    completed_plan = load_plan(inp.repo_root, inp.epic_id)
-    if all(candidate.state in TERMINAL_WORK_UNIT_STATES for candidate in completed_plan.work_units):
-        append_epic_event_once(
-            inp.repo_root,
-            inp.epic_id,
-            {
-                "event": "epic_completed",
-                "at": _now(),
-                "epic_id": inp.epic_id,
-            },
-            event="epic_completed",
-        )
-    git(inp.repo_root, "add", "--", f".woof/epics/E{inp.epic_id}/epic.jsonl")
-
     message = _commit_message(inp.epic_id, work_unit.title, inp.work_unit_id, result)
     body = result.get("commit_body")
     args = ["commit", "-m", message]
     if body:
         args.extend(["-m", body])
-    git(inp.repo_root, *args)
+    state_snapshot = _snapshot_transaction_state(directory)
+    commit_landed = False
+    try:
+        mark_work_unit_state(inp.repo_root, inp.epic_id, inp.work_unit_id, "done")
+        append_epic_event_once(
+            inp.repo_root,
+            inp.epic_id,
+            {
+                "event": "work_unit_completed",
+                "at": _now(),
+                "epic_id": inp.epic_id,
+                "work_unit_id": inp.work_unit_id,
+            },
+            event="work_unit_completed",
+            work_unit_id=inp.work_unit_id,
+        )
+
+        git(inp.repo_root, "add", "--", *manifest.expected_paths)
+        verification = verify_staged_manifest(inp.repo_root, manifest)
+        if not verification.ok:
+            _restore_transaction_state(inp.repo_root, state_snapshot)
+            position = (
+                "Transaction manifest mismatch.\n\n"
+                f"Missing staged paths: {verification.missing_paths}\n"
+                f"Unexpected staged paths: {verification.extra_paths}\n"
+            )
+            pos_path = epic_dir(inp.repo_root, inp.epic_id) / "manifest-position.md"
+            pos_path.write_text(position)
+            write_gate_for_trigger(
+                trigger="check_7_commit_transaction",
+                epic_dir=epic_dir(inp.repo_root, inp.epic_id),
+                work_unit_id=inp.work_unit_id,
+                position_path=pos_path,
+                schema_path=schema_dir() / "gate.schema.json",
+            )
+            pos_path.unlink(missing_ok=True)
+            return NodeOutput(
+                node_type=inp.node_type,
+                status=NodeStatus.GATE_OPENED,
+                epic_id=inp.epic_id,
+                work_unit_id=inp.work_unit_id,
+                gate_path=_gate_path(inp.epic_id),
+                triggered_by=["check_7_commit_transaction"],
+                message=position,
+            )
+
+        append_epic_event_once(
+            inp.repo_root,
+            inp.epic_id,
+            {
+                "event": "transaction_manifest_verified",
+                "at": _now(),
+                "epic_id": inp.epic_id,
+                "work_unit_id": inp.work_unit_id,
+                "manifest": manifest.model_dump(),
+            },
+            event="transaction_manifest_verified",
+            work_unit_id=inp.work_unit_id,
+        )
+        completed_plan = load_plan(inp.repo_root, inp.epic_id)
+        if all(
+            candidate.state in TERMINAL_WORK_UNIT_STATES for candidate in completed_plan.work_units
+        ):
+            append_epic_event_once(
+                inp.repo_root,
+                inp.epic_id,
+                {
+                    "event": "epic_completed",
+                    "at": _now(),
+                    "epic_id": inp.epic_id,
+                },
+                event="epic_completed",
+            )
+        git(inp.repo_root, "add", "--", f".woof/epics/E{inp.epic_id}/epic.jsonl")
+        git(inp.repo_root, *args)
+        commit_landed = True
+        _push_profile_b_transaction(inp.repo_root)
+    except (subprocess.CalledProcessError, StageStateError):
+        if commit_landed:
+            git(inp.repo_root, "reset", "--soft", "HEAD~1")
+        _restore_transaction_state(inp.repo_root, state_snapshot)
+        raise
     (epic_dir(inp.repo_root, inp.epic_id) / "executor_result.json").unlink(missing_ok=True)
     (epic_dir(inp.repo_root, inp.epic_id) / "check-result.json").unlink(missing_ok=True)
     return NodeOutput(

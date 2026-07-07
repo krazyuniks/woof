@@ -411,6 +411,40 @@ def _init_git_repo(root: Path) -> None:
     _git(root, "commit", "-m", "chore: test repo setup", check=True, capture_output=True)
 
 
+def _write_profile_b_policy(root: Path, *, base_branch: str, push: bool = True) -> None:
+    woof_dir = root / ".woof"
+    woof_dir.mkdir(parents=True, exist_ok=True)
+    (woof_dir / "policy.toml").write_text(
+        f"""\
+[delivery]
+profile = "B"
+repo_root = "."
+toolchain_root = "."
+base_branch = "{base_branch}"
+
+[profiles.B]
+commit = true
+push = {str(push).lower()}
+
+[run_profiles.default.producer]
+harness = "codex"
+model = "gpt-5.5"
+effort = "high"
+
+[run_profiles.default.reviewer]
+harness = "claude"
+model = "claude-opus-4-7"
+effort = "high"
+
+[checks]
+floor = []
+
+[cartography]
+floor = "none"
+"""
+    )
+
+
 def _write_codebase_docs(root: Path) -> None:
     codebase_dir = root / ".woof" / "codebase"
     codebase_dir.mkdir(parents=True, exist_ok=True)
@@ -2896,6 +2930,95 @@ def test_commit_gates_when_verified_staged_tree_changes(tmp_path: Path) -> None:
     assert outputs[0].status == NodeStatus.GATE_OPENED
     assert outputs[0].triggered_by == ["check_7_commit_transaction"]
     assert "Verified transaction changed before commit" in outputs[0].message
+
+
+def test_profile_b_commit_failure_does_not_mark_work_unit_done(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _init_git_repo(tmp_path)
+    directory = _write_ready_commit_state(tmp_path, 1)
+    plan = json.loads((directory / "plan.json").read_text())
+    plan["work_units"][0]["state"] = "in_progress"
+    (directory / "plan.json").write_text(json.dumps(plan))
+    original_git = nodes.git
+
+    def fail_commit(repo_root: Path, *args: str, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if args and args[0] == "commit":
+            raise subprocess.CalledProcessError(1, ["git", *args], stderr="commit failed")
+        return original_git(repo_root, *args, **kwargs)
+
+    monkeypatch.setattr(nodes, "git", fail_commit)
+
+    with pytest.raises(subprocess.CalledProcessError):
+        nodes.commit_node(
+            NodeInput(
+                node_type=NodeType.COMMIT,
+                epic_id=1,
+                work_unit_id="S1",
+                repo_root=tmp_path,
+            )
+        )
+
+    plan_after = json.loads((directory / "plan.json").read_text())
+    events = [json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines()]
+    assert plan_after["work_units"][0]["state"] == "in_progress"
+    assert not any(event["event"] == "work_unit_completed" for event in events)
+
+
+def test_profile_b_policy_pushes_committed_transaction_before_done_state_lands(
+    tmp_path: Path,
+) -> None:
+    _init_git_repo(tmp_path)
+    branch = _git(
+        tmp_path,
+        "branch",
+        "--show-current",
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    remote = tmp_path / "remote.git"
+    _git(tmp_path, "init", "--bare", str(remote), check=True, capture_output=True)
+    _git(tmp_path, "remote", "add", "origin", str(remote), check=True, capture_output=True)
+    _git(tmp_path, "push", "-u", "origin", f"HEAD:{branch}", check=True, capture_output=True)
+    _write_profile_b_policy(tmp_path, base_branch=branch, push=True)
+    directory = _write_ready_commit_state(tmp_path, 1)
+    plan = json.loads((directory / "plan.json").read_text())
+    plan["work_units"][0]["state"] = "in_progress"
+    (directory / "plan.json").write_text(json.dumps(plan))
+
+    outputs = run_graph(tmp_path, 1)
+
+    assert outputs[0].node_type == NodeType.COMMIT
+    assert outputs[-1].status == NodeStatus.EPIC_COMPLETE
+    local_head = _git(
+        tmp_path,
+        "rev-parse",
+        "HEAD",
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    remote_head = _git(
+        tmp_path,
+        "--git-dir",
+        str(remote),
+        "rev-parse",
+        f"refs/heads/{branch}",
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    committed_plan = _git(
+        tmp_path,
+        "show",
+        "HEAD:.woof/epics/E1/plan.json",
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert remote_head == local_head
+    assert json.loads(committed_plan.stdout)["work_units"][0]["state"] == "done"
 
 
 def test_commit_writes_epic_completed_into_commit_for_mixed_done_abandoned_epic(

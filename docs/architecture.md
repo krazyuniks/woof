@@ -200,6 +200,10 @@ Profiles define publish and merge shape only. They do not change the engine path
 | B | Single checked-out tree. | Graph-owned commit and push. |
 
 Both profiles run producer, deterministic checks, reviewer, fix rounds, and audit in the same order.
+For Profile B, the work-unit completion marker is staged inside the graph-owned commit, and the
+graph publishes that commit with `git push` when policy enables push. If commit or push fails, the
+graph restores the pre-completion state so the unit is not durably marked done before its publish
+transaction lands.
 
 Before dispatching a ready Profile A unit, Woof runs the Profile A worktree preflight for that unit's
 aggregate. Any worktree anomaly fails closed to a work-unit gate before provisioning, mutation,

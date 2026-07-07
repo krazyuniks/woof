@@ -17,8 +17,8 @@ from woof.graph import nodes, transitions
 from woof.graph.git import git_env
 from woof.graph.lock import LOCK_FILENAME, WorkflowLockError
 from woof.graph.manifest import build_work_unit_manifest, verify_staged_manifest
-from woof.graph.runner import run_graph
-from woof.graph.state import NodeInput, NodeOutput, NodeStatus, NodeType, WorkUnitSpec
+from woof.graph.runner import drain_status, run_graph
+from woof.graph.state import NodeInput, NodeOutput, NodeStatus, NodeType, Plan, WorkUnitSpec
 from woof.graph.transitions import (
     StageStateError,
     append_epic_event,
@@ -68,6 +68,37 @@ def _write_plan(root: Path, epic_id: int = 1) -> Path:
         ],
     }
     (directory / "plan.json").write_text(json.dumps(plan))
+    (directory / "epic.jsonl").write_text("")
+    return directory
+
+
+def _work_unit(
+    work_unit_id: str,
+    *,
+    deps: list[str] | None = None,
+    state: str = "pending",
+    paths: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "id": work_unit_id,
+        "title": work_unit_id,
+        "summary": f"{work_unit_id} work",
+        "paths": paths or [f"src/{work_unit_id}.py"],
+        "satisfies": [f"O-{work_unit_id}"],
+        "implements_contract_decisions": [],
+        "uses_contract_decisions": [],
+        "deps": deps or [],
+        "tests": {"count": 1, "types": ["unit"]},
+        "state": state,
+    }
+
+
+def _write_plan_units(root: Path, epic_id: int, work_units: list[dict[str, Any]]) -> Path:
+    directory = root / ".woof" / "epics" / f"E{epic_id}"
+    directory.mkdir(parents=True)
+    (directory / "plan.json").write_text(
+        json.dumps({"epic_id": epic_id, "goal": "test graph", "work_units": work_units}) + "\n"
+    )
     (directory / "epic.jsonl").write_text("")
     return directory
 
@@ -845,6 +876,189 @@ def test_run_graph_removes_stale_workflow_lock_and_records_event(tmp_path: Path)
     assert events[0]["pid"] == dead_process.pid
     assert events[0]["reason"] == "pid_not_running"
     assert events[0]["paths"] == [".woof/epics/E22/.wf.lock"]
+
+
+def test_run_graph_drains_one_work_unit_per_cycle_in_topological_order(tmp_path: Path) -> None:
+    _write_plan_units(
+        tmp_path,
+        24,
+        [
+            _work_unit("S1"),
+            _work_unit("S2", deps=["S1"]),
+        ],
+    )
+    seen: list[tuple[NodeType, str | None]] = []
+
+    def executor(inp: NodeInput) -> NodeOutput:
+        seen.append((inp.node_type, inp.work_unit_id))
+        directory = epic_dir(inp.repo_root, inp.epic_id)
+        mark_work_unit_state(inp.repo_root, inp.epic_id, inp.work_unit_id or "", "in_progress")
+        (directory / "executor_result.json").write_text(
+            json.dumps(
+                {
+                    "epic_id": inp.epic_id,
+                    "work_unit_id": inp.work_unit_id,
+                    "outcome": "staged_for_verification",
+                    "commit_subject": f"feat: {inp.work_unit_id}",
+                    "position": None,
+                }
+            )
+        )
+        return NodeOutput(
+            node_type=inp.node_type,
+            status=NodeStatus.COMPLETED,
+            epic_id=inp.epic_id,
+            work_unit_id=inp.work_unit_id,
+        )
+
+    def complete_node(inp: NodeInput) -> NodeOutput:
+        seen.append((inp.node_type, inp.work_unit_id))
+        if inp.node_type == NodeType.CRITIQUE_DISPATCH:
+            critique_dir = epic_dir(inp.repo_root, inp.epic_id) / "critique"
+            critique_dir.mkdir(exist_ok=True)
+            (critique_dir / f"work-unit-{inp.work_unit_id}.md").write_text(
+                "---\n"
+                "target: work_unit\n"
+                f"target_id: {inp.work_unit_id}\n"
+                "severity: info\n"
+                "timestamp: '2026-01-01T00:00:00Z'\n"
+                "harness: test-reviewer\n"
+                "findings: []\n"
+                "---\n"
+                "Looks good.\n"
+            )
+        elif inp.node_type == NodeType.REVIEW_DISPOSITION:
+            _write_disposition(
+                epic_dir(inp.repo_root, inp.epic_id),
+                inp.epic_id,
+                inp.work_unit_id or "",
+            )
+        elif inp.node_type == NodeType.VERIFICATION:
+            (epic_dir(inp.repo_root, inp.epic_id) / "check-result.json").write_text(
+                json.dumps({"ok": True})
+            )
+        elif inp.node_type == NodeType.COMMIT:
+            mark_work_unit_state(inp.repo_root, inp.epic_id, inp.work_unit_id or "", "done")
+            directory = epic_dir(inp.repo_root, inp.epic_id)
+            (directory / "executor_result.json").unlink(missing_ok=True)
+            (directory / "check-result.json").unlink(missing_ok=True)
+        return NodeOutput(
+            node_type=inp.node_type,
+            status=NodeStatus.COMPLETED,
+            epic_id=inp.epic_id,
+            work_unit_id=inp.work_unit_id,
+        )
+
+    outputs = run_graph(
+        tmp_path,
+        24,
+        registry={
+            NodeType.EXECUTOR_DISPATCH: executor,
+            NodeType.CRITIQUE_DISPATCH: complete_node,
+            NodeType.REVIEW_DISPOSITION: complete_node,
+            NodeType.VERIFICATION: complete_node,
+            NodeType.COMMIT: complete_node,
+        },
+    )
+
+    assert [item for item in seen if item[0] == NodeType.EXECUTOR_DISPATCH] == [
+        (NodeType.EXECUTOR_DISPATCH, "S1")
+    ]
+    assert outputs[-1].node_type == NodeType.COMMIT
+    assert outputs[-1].work_unit_id == "S1"
+    plan = json.loads((tmp_path / ".woof" / "epics" / "E24" / "plan.json").read_text())
+    assert [(unit["id"], unit["state"]) for unit in plan["work_units"]] == [
+        ("S1", "done"),
+        ("S2", "pending"),
+    ]
+
+
+def test_drain_status_reports_blocked_and_downstream_from_validated_order() -> None:
+    plan = Plan.model_validate(
+        {
+            "epic_id": 25,
+            "goal": "blocked graph",
+            "work_units": [
+                _work_unit("S1", state="abandoned"),
+                _work_unit("S2", deps=["S1"]),
+                _work_unit("S3", deps=["S2"]),
+                _work_unit("S4"),
+            ],
+        }
+    )
+
+    status = drain_status(plan)
+
+    assert status.ready == ["S4"]
+    assert status.blocked == {"S2": ["S1"]}
+    assert status.downstream == {"S2": ["S3"]}
+
+
+def test_profile_a_worktree_preflight_failure_blocks_dispatch_without_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_plan_units(tmp_path, 26, [_work_unit("S1")])
+    (tmp_path / ".woof" / "policy.toml").write_text(
+        """\
+[delivery]
+profile = "A"
+repo_root = "."
+toolchain_root = "."
+base_branch = "main"
+
+[run_profiles.default.producer]
+harness = "claude"
+model = "sonnet"
+effort = "high"
+
+[run_profiles.default.reviewer]
+harness = "claude"
+model = "sonnet"
+effort = "high"
+
+[profiles.A]
+github_repo = "example/project"
+ready_label = "ready"
+merge_path_groups = []
+
+[profiles.A.worktree]
+root = "worktrees"
+engine = "vf-worktree"
+
+[checks]
+floor = []
+
+[cartography]
+floor = "none"
+"""
+    )
+    dispatched = False
+
+    def executor(inp: NodeInput) -> NodeOutput:
+        nonlocal dispatched
+        dispatched = True
+        return NodeOutput(
+            node_type=inp.node_type,
+            status=NodeStatus.COMPLETED,
+            epic_id=inp.epic_id,
+            work_unit_id=inp.work_unit_id,
+        )
+
+    monkeypatch.setattr(nodes, "_require_cartography_docs", lambda *args, **kwargs: [])
+
+    outputs = run_graph(
+        tmp_path,
+        26,
+        registry={NodeType.EXECUTOR_DISPATCH: executor},
+    )
+
+    assert dispatched is False
+    assert outputs[0].status == NodeStatus.GATE_OPENED
+    assert outputs[0].work_unit_id == "S1"
+    assert outputs[0].triggered_by == ["incomplete_stage_state"]
+    assert "does not exist; Woof will not create it" in outputs[0].message
+    plan = json.loads((tmp_path / ".woof" / "epics" / "E26" / "plan.json").read_text())
+    assert plan["work_units"][0]["state"] == "pending"
 
 
 def test_wf_reports_live_workflow_lock(tmp_path: Path) -> None:

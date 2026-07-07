@@ -868,6 +868,12 @@ def _check_policy_cartography_floor(
 def _check_profile_a_worktrees(
     repo_root: Path, policy: dict[str, Any] | None
 ) -> list[PreflightFinding]:
+    return _check_profile_a_worktrees_for_plans(repo_root, policy, _plan_paths(repo_root))
+
+
+def _check_profile_a_worktrees_for_plans(
+    repo_root: Path, policy: dict[str, Any] | None, plan_paths: list[Path]
+) -> list[PreflightFinding]:
     profile_a = _profile_a(policy)
     if profile_a is None:
         return []
@@ -893,7 +899,7 @@ def _check_profile_a_worktrees(
         if isinstance(raw_base_branch, str) and raw_base_branch.strip()
         else "main"
     )
-    ready_units = _ready_worktree_units(repo_root)
+    ready_units = _ready_worktree_units(repo_root, plan_paths=plan_paths)
     if not ready_units:
         return [
             PreflightFinding(
@@ -972,9 +978,11 @@ def _profile_a(policy: dict[str, Any] | None) -> dict[str, Any] | None:
     return profile_a if isinstance(profile_a, dict) else None
 
 
-def _ready_worktree_units(repo_root: Path) -> list[dict[str, Any]]:
+def _ready_worktree_units(
+    repo_root: Path, *, plan_paths: list[Path] | None = None
+) -> list[dict[str, Any]]:
     units: list[dict[str, Any]] = []
-    for plan_path in _plan_paths(repo_root):
+    for plan_path in plan_paths if plan_paths is not None else _plan_paths(repo_root):
         try:
             plan = Plan.model_validate(json.loads(plan_path.read_text(encoding="utf-8")))
         except (OSError, ValueError, json.JSONDecodeError):

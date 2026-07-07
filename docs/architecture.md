@@ -119,7 +119,7 @@ The canonical schema lives in Woof. Vault overlays, pm-structure, and downstream
 
 ## 5. Execution Kernel
 
-For each ready work unit, in dependency order:
+For each ready work unit, in the aggregate's validated topological order:
 
 1. Producer session starts or attaches.
 2. Producer writes the implementation and expected artefacts.
@@ -127,6 +127,12 @@ For each ready work unit, in dependency order:
 4. Independent reviewer inspects the diff and evidence.
 5. Blocking findings are pasted back to the warm producer within the fix-round budget.
 6. The unit is published through the configured profile.
+
+The drain cycle is strictly serial. One invocation may advance many graph nodes for the active unit,
+but after the unit's publish hand-off completes the cycle returns before any dependent or sibling
+unit starts. If no pending unit is eligible, the kernel reports the directly blocked units and the
+downstream pending units derived from the same validated order; it does not re-sort the aggregate or
+sequence across aggregates.
 
 The graph re-derives the next action from disk before each node. A run can resume from disk after process loss, operator handover, or machine restart.
 
@@ -194,6 +200,10 @@ Profiles define publish and merge shape only. They do not change the engine path
 | B | Single checked-out tree. | Graph-owned commit and push. |
 
 Both profiles run producer, deterministic checks, reviewer, fix rounds, and audit in the same order.
+
+Before dispatching a ready Profile A unit, Woof runs the Profile A worktree preflight for that unit's
+aggregate. Any worktree anomaly fails closed to a work-unit gate before provisioning, mutation,
+recovery, or engine invocation.
 
 Profile A merge is a deploy-aware transaction queue. After main moves, Woof waits for GitHub mergeability and
 required-check recomputation to settle before attempting the next PR. After each merge, Woof waits for the

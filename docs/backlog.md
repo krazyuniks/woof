@@ -198,7 +198,7 @@ work_units:
   - id: cartography-continuity
     title: Retain cartography as a policy-enforced capability
     kind: build
-    state: todo
+    state: done
     priority: medium
     summary: Move cartography-floor selection into policy.toml cartography.floor (adding a no-cartography level) and reconcile the existing ADR-004/ADR-009 cartography artefacts and refresh hook with the merged engine. Existing cartography is reused, not re-derived. Structural cartography is the deferred structural scope of this unit.
     deps: [policy-model]

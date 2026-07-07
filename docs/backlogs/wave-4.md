@@ -16,23 +16,30 @@ executor:
     commit_backlog_state: true
     stop_when_no_eligible_units: true
 work_units:
-  - id: policy-model
-    title: Move project policy into repo-local Woof config
-    kind: build
-    state: done
-    priority: high
-    summary: Dependency anchor completed before the Wave 4 drain.
-  - id: cartography-continuity
-    title: Retain cartography as a policy-enforced capability
-    kind: build
-    state: todo
-    priority: medium
-    summary: Move cartography-floor selection into policy.toml cartography.floor (adding a no-cartography level) and reconcile the existing ADR-004/ADR-009 cartography artefacts and refresh hook with the merged engine. Existing cartography is reused, not re-derived. Structural cartography is the deferred structural scope of this unit.
-    deps: [policy-model]
-    acceptance:
-      - Repo policy can require no cartography, lexical/design cartography, or structural cartography.
-      - Required cartography is enforced before execution.
-      - Producer, reviewer, and deterministic checks consume declared cartography on the same engine path.
+- id: policy-model
+  title: Move project policy into repo-local Woof config
+  kind: build
+  state: done
+  priority: high
+  summary: Dependency anchor completed before the Wave 4 drain.
+- id: cartography-continuity
+  title: Retain cartography as a policy-enforced capability
+  kind: build
+  state: done
+  priority: medium
+  summary: Move cartography-floor selection into policy.toml cartography.floor (adding
+    a no-cartography level) and reconcile the existing ADR-004/ADR-009 cartography
+    artefacts and refresh hook with the merged engine. Existing cartography is reused,
+    not re-derived. Structural cartography is the deferred structural scope of this
+    unit.
+  deps:
+  - policy-model
+  acceptance:
+  - Repo policy can require no cartography, lexical/design cartography, or structural
+    cartography.
+  - Required cartography is enforced before execution.
+  - Producer, reviewer, and deterministic checks consume declared cartography on the
+    same engine path.
 ---
 
 # Wave 4 Sub-Backlog

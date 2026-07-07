@@ -2965,6 +2965,56 @@ def test_profile_b_commit_failure_does_not_mark_work_unit_done(
     assert not any(event["event"] == "work_unit_completed" for event in events)
 
 
+def test_profile_b_completion_event_failure_rolls_back_done_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _init_git_repo(tmp_path)
+    directory = _write_ready_commit_state(tmp_path, 1)
+    plan = json.loads((directory / "plan.json").read_text())
+    plan["work_units"][0]["state"] = "in_progress"
+    (directory / "plan.json").write_text(json.dumps(plan))
+    head_before = _git(
+        tmp_path,
+        "rev-parse",
+        "HEAD",
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    original_append = nodes.append_epic_event_once
+
+    def fail_completion_event(*args: Any, **kwargs: Any) -> None:
+        if kwargs.get("event") == "work_unit_completed":
+            raise ValueError("completion event failed")
+        original_append(*args, **kwargs)
+
+    monkeypatch.setattr(nodes, "append_epic_event_once", fail_completion_event)
+
+    with pytest.raises(ValueError):
+        nodes.commit_node(
+            NodeInput(
+                node_type=NodeType.COMMIT,
+                epic_id=1,
+                work_unit_id="S1",
+                repo_root=tmp_path,
+            )
+        )
+
+    head_after = _git(
+        tmp_path,
+        "rev-parse",
+        "HEAD",
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    plan_after = json.loads((directory / "plan.json").read_text())
+    events = [json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines()]
+    assert head_after == head_before
+    assert plan_after["work_units"][0]["state"] == "in_progress"
+    assert not any(event["event"] == "work_unit_completed" for event in events)
+
+
 def test_profile_b_policy_pushes_committed_transaction_before_done_state_lands(
     tmp_path: Path,
 ) -> None:

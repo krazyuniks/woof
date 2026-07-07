@@ -3100,7 +3100,7 @@ def commit_node(inp: NodeInput) -> NodeOutput:
         git(inp.repo_root, *args)
         commit_landed = True
         _push_profile_b_transaction(inp.repo_root)
-    except (subprocess.CalledProcessError, StageStateError):
+    except Exception:
         if commit_landed:
             git(inp.repo_root, "reset", "--soft", "HEAD~1")
         _restore_transaction_state(inp.repo_root, state_snapshot)

@@ -973,10 +973,68 @@ def test_run_graph_drains_one_work_unit_per_cycle_in_topological_order(tmp_path:
     ]
 
 
+def test_run_graph_reports_blocked_downstream_after_commit(tmp_path: Path) -> None:
+    directory = _write_plan_units(
+        tmp_path,
+        25,
+        [
+            _work_unit("S0", state="abandoned"),
+            _work_unit("S1", state="in_progress"),
+            _work_unit("S2", deps=["S0"]),
+            _work_unit("S3", deps=["S2"]),
+        ],
+    )
+    (directory / "executor_result.json").write_text(
+        json.dumps(
+            {
+                "epic_id": 25,
+                "work_unit_id": "S1",
+                "outcome": "staged_for_verification",
+                "commit_subject": "feat: S1",
+                "position": None,
+            }
+        )
+    )
+    critique_dir = directory / "critique"
+    critique_dir.mkdir(exist_ok=True)
+    (critique_dir / "work-unit-S1.md").write_text(
+        "---\n"
+        "target: work_unit\n"
+        "target_id: S1\n"
+        "severity: info\n"
+        "timestamp: '2026-01-01T00:00:00Z'\n"
+        "harness: test-reviewer\n"
+        "findings: []\n"
+        "---\n"
+        "Looks good.\n"
+    )
+    _write_disposition(directory, 25, "S1")
+    (directory / "check-result.json").write_text(json.dumps({"ok": True}))
+
+    def commit(inp: NodeInput) -> NodeOutput:
+        mark_work_unit_state(inp.repo_root, inp.epic_id, inp.work_unit_id or "", "done")
+        (epic_dir(inp.repo_root, inp.epic_id) / "executor_result.json").unlink(missing_ok=True)
+        (epic_dir(inp.repo_root, inp.epic_id) / "check-result.json").unlink(missing_ok=True)
+        return NodeOutput(
+            node_type=inp.node_type,
+            status=NodeStatus.COMPLETED,
+            epic_id=inp.epic_id,
+            work_unit_id=inp.work_unit_id,
+        )
+
+    outputs = run_graph(tmp_path, 25, registry={NodeType.COMMIT: commit})
+
+    assert [output.node_type for output in outputs] == [NodeType.COMMIT, NodeType.PLAN_GATE_OPEN]
+    assert outputs[-1].status == NodeStatus.GATE_OPENED
+    assert "blocked work units: S2 (deps not done: S0)" in outputs[-1].message
+    assert "downstream pending: S2 -> S3" in outputs[-1].message
+    assert (directory / "gate.md").is_file()
+
+
 def test_drain_status_reports_blocked_and_downstream_from_validated_order() -> None:
     plan = Plan.model_validate(
         {
-            "epic_id": 25,
+            "epic_id": 26,
             "goal": "blocked graph",
             "work_units": [
                 _work_unit("S1", state="abandoned"),
@@ -997,7 +1055,7 @@ def test_drain_status_reports_blocked_and_downstream_from_validated_order() -> N
 def test_profile_a_worktree_preflight_failure_blocks_dispatch_without_mutation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _write_plan_units(tmp_path, 26, [_work_unit("S1")])
+    _write_plan_units(tmp_path, 27, [_work_unit("S1")])
     (tmp_path / ".woof" / "policy.toml").write_text(
         """\
 [delivery]
@@ -1048,7 +1106,7 @@ floor = "none"
 
     outputs = run_graph(
         tmp_path,
-        26,
+        27,
         registry={NodeType.EXECUTOR_DISPATCH: executor},
     )
 
@@ -1057,7 +1115,7 @@ floor = "none"
     assert outputs[0].work_unit_id == "S1"
     assert outputs[0].triggered_by == ["incomplete_stage_state"]
     assert "does not exist; Woof will not create it" in outputs[0].message
-    plan = json.loads((tmp_path / ".woof" / "epics" / "E26" / "plan.json").read_text())
+    plan = json.loads((tmp_path / ".woof" / "epics" / "E27" / "plan.json").read_text())
     assert plan["work_units"][0]["state"] == "pending"
 
 

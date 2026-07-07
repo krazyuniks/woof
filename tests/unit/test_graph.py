@@ -3071,6 +3071,71 @@ def test_profile_b_policy_pushes_committed_transaction_before_done_state_lands(
     assert json.loads(committed_plan.stdout)["work_units"][0]["state"] == "done"
 
 
+def test_profile_b_push_disabled_commits_done_state_without_git_push(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _init_git_repo(tmp_path)
+    branch = _git(
+        tmp_path,
+        "branch",
+        "--show-current",
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    _write_profile_b_policy(tmp_path, base_branch=branch, push=False)
+    directory = _write_ready_commit_state(tmp_path, 1)
+    plan = json.loads((directory / "plan.json").read_text())
+    plan["work_units"][0]["state"] = "in_progress"
+    (directory / "plan.json").write_text(json.dumps(plan))
+    head_before = _git(
+        tmp_path,
+        "rev-parse",
+        "HEAD",
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    push_calls: list[tuple[str, ...]] = []
+    original_git = nodes.git
+
+    def record_push(repo_root: Path, *args: str, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if args and args[0] == "push":
+            push_calls.append(args)
+            raise AssertionError("git push must not be invoked when Profile B push is disabled")
+        return original_git(repo_root, *args, **kwargs)
+
+    monkeypatch.setattr(nodes, "git", record_push)
+
+    outputs = run_graph(tmp_path, 1)
+
+    head_after = _git(
+        tmp_path,
+        "rev-parse",
+        "HEAD",
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    committed_plan = _git(
+        tmp_path,
+        "show",
+        "HEAD:.woof/epics/E1/plan.json",
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    plan_after = json.loads((directory / "plan.json").read_text())
+    events = [json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines()]
+    assert outputs[0].node_type == NodeType.COMMIT
+    assert outputs[-1].status == NodeStatus.EPIC_COMPLETE
+    assert head_after != head_before
+    assert json.loads(committed_plan.stdout)["work_units"][0]["state"] == "done"
+    assert plan_after["work_units"][0]["state"] == "done"
+    assert any(event["event"] == "work_unit_completed" for event in events)
+    assert push_calls == []
+
+
 def test_profile_b_push_failure_rolls_back_landed_commit_and_done_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

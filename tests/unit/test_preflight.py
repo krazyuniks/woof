@@ -671,6 +671,141 @@ def test_profile_a_worktree_preflight_fails_closed_on_anomalies(tmp_path: Path) 
     assert "S1 and S2 both resolve to" in findings[2].detail
 
 
+def test_profile_a_worktree_preflight_fails_closed_when_worktree_absent(
+    tmp_path: Path,
+) -> None:
+    from woof.cli.preflight import _check_profile_a_worktrees
+
+    _init_repo(tmp_path)
+    plan_dir = tmp_path / ".woof" / "work-unit-sets" / "set-a"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "plan.json").write_text(
+        json.dumps(
+            {
+                "context": {"kind": "work_unit_set", "project_ref": "woof", "set_id": "set-a"},
+                "goal": "Validate missing worktree.",
+                "work_units": [
+                    {
+                        "id": "S1",
+                        "title": "Missing worktree",
+                        "summary": "Ready unit without a provisioned worktree.",
+                        "paths": ["src/a.py"],
+                        "deps": [],
+                        "tests": {"count": 1, "types": ["unit"]},
+                        "state": "pending",
+                    }
+                ],
+            }
+        )
+        + "\n"
+    )
+
+    findings = _check_profile_a_worktrees(tmp_path, _load_policy_toml(PROFILE_A_POLICY))
+
+    assert [finding.id for finding in findings] == ["profile_a.worktree.S1"]
+    assert findings[0].ok is False
+    assert "does not exist; Woof will not create it" in findings[0].detail
+
+
+def test_profile_a_worktree_preflight_fails_closed_for_foreign_repo_worktree(
+    tmp_path: Path,
+) -> None:
+    from woof.cli.preflight import _check_profile_a_worktrees
+
+    _init_repo(tmp_path)
+    foreign_repo = tmp_path / "foreign"
+    foreign_repo.mkdir()
+    _init_repo(foreign_repo)
+    plan_dir = tmp_path / ".woof" / "work-unit-sets" / "set-a"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "plan.json").write_text(
+        json.dumps(
+            {
+                "context": {"kind": "work_unit_set", "project_ref": "woof", "set_id": "set-a"},
+                "goal": "Validate foreign worktree.",
+                "work_units": [
+                    {
+                        "id": "S1",
+                        "title": "Foreign repo",
+                        "summary": "Ready unit mapped to another repository.",
+                        "paths": ["src/a.py"],
+                        "deps": [],
+                        "tests": {"count": 1, "types": ["unit"]},
+                        "state": "pending",
+                    }
+                ],
+            }
+        )
+        + "\n"
+    )
+    (plan_dir / "intake.json").write_text(
+        json.dumps(
+            {
+                "worktrees": {
+                    "derivation": "manifest_map",
+                    "root": "worktrees",
+                    "engine": "vf-worktree",
+                    "unit_paths": {"S1": "foreign"},
+                }
+            }
+        )
+        + "\n"
+    )
+    policy = _load_policy_toml(
+        PROFILE_A_POLICY.replace(
+            'engine = "vf-worktree"\n',
+            'engine = "vf-worktree"\nderivation = "manifest_map"\n',
+        )
+    )
+
+    findings = _check_profile_a_worktrees(tmp_path, policy)
+
+    assert [finding.id for finding in findings] == ["profile_a.worktree.S1"]
+    assert findings[0].ok is False
+    assert f"{foreign_repo} is not a linked worktree of {tmp_path}" in findings[0].detail
+
+
+def test_profile_a_worktree_preflight_fails_closed_for_dirty_linked_worktree(
+    tmp_path: Path,
+) -> None:
+    from woof.cli.preflight import _check_profile_a_worktrees
+
+    _init_repo(tmp_path)
+    plan_dir = tmp_path / ".woof" / "work-unit-sets" / "set-a"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "plan.json").write_text(
+        json.dumps(
+            {
+                "context": {"kind": "work_unit_set", "project_ref": "woof", "set_id": "set-a"},
+                "goal": "Validate dirty worktree.",
+                "work_units": [
+                    {
+                        "id": "S1",
+                        "title": "Dirty worktree",
+                        "summary": "Ready unit mapped to a dirty linked worktree.",
+                        "paths": ["src/a.py"],
+                        "deps": [],
+                        "tests": {"count": 1, "types": ["unit"]},
+                        "state": "pending",
+                    }
+                ],
+            }
+        )
+        + "\n"
+    )
+    worktree_root = tmp_path / "worktrees"
+    worktree_root.mkdir()
+    worktree_path = worktree_root / "S1"
+    _git(tmp_path, "worktree", "add", "-b", "S1", str(worktree_path), "main")
+    (worktree_path / "untracked.txt").write_text("dirty\n")
+
+    findings = _check_profile_a_worktrees(tmp_path, _load_policy_toml(PROFILE_A_POLICY))
+
+    assert [finding.id for finding in findings] == ["profile_a.worktree.S1"]
+    assert findings[0].ok is False
+    assert f"{worktree_path} is dirty" in findings[0].detail
+
+
 def test_preflight_fails_for_missing_policy_producer_slot(tmp_path: Path, run_woof) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()

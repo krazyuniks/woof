@@ -16,24 +16,32 @@ executor:
     commit_backlog_state: true
     stop_when_no_eligible_units: true
 work_units:
-  - id: policy-model
-    title: Move project policy into repo-local Woof config
-    kind: build
-    state: done
-    priority: high
-    summary: Dependency anchor completed before this shakedown drain.
-  - id: profile-a-worktree-contract
-    title: Profile A worktree discovery and fail-closed validation
-    kind: build
-    state: todo
-    priority: high
-    summary: Policy-declared worktree root and engine; deterministic unit-to-path derivation; fail-closed preflight validation of provisioned worktrees. Woof discovers and validates, never provisions. Fully specified by ADR-015 plus the policy.schema.json worktree block.
-    deps: [policy-model]
-    acceptance:
-      - Policy declares the worktree root and the engine identity that provisions worktrees.
-      - Unit-to-path derivation is deterministic (root plus work_unit_id, or an explicit per-unit map in the run manifest) and recorded in run metadata.
-      - Preflight validates every ready unit's worktree -- it exists, is a linked worktree of the target repo, is on the expected base or unit branch, is clean, and no two units share a path.
-      - "Any anomaly fails closed: no auto-create, no silent fallback to a single tree, no engine invocation to repair (ADR-015)."
+- id: policy-model
+  title: Move project policy into repo-local Woof config
+  kind: build
+  state: done
+  priority: high
+  summary: Dependency anchor completed before this shakedown drain.
+- id: profile-a-worktree-contract
+  title: Profile A worktree discovery and fail-closed validation
+  kind: build
+  state: done
+  priority: high
+  summary: Policy-declared worktree root and engine; deterministic unit-to-path derivation;
+    fail-closed preflight validation of provisioned worktrees. Woof discovers and
+    validates, never provisions. Fully specified by ADR-015 plus the policy.schema.json
+    worktree block.
+  deps:
+  - policy-model
+  acceptance:
+  - Policy declares the worktree root and the engine identity that provisions worktrees.
+  - Unit-to-path derivation is deterministic (root plus work_unit_id, or an explicit
+    per-unit map in the run manifest) and recorded in run metadata.
+  - Preflight validates every ready unit's worktree -- it exists, is a linked worktree
+    of the target repo, is on the expected base or unit branch, is clean, and no two
+    units share a path.
+  - 'Any anomaly fails closed: no auto-create, no silent fallback to a single tree,
+    no engine invocation to repair (ADR-015).'
 ---
 
 # Wave 5 Shakedown Sub-Backlog

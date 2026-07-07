@@ -21,6 +21,11 @@ from woof.graph.state import Plan
 from woof.paths import schema_dir
 
 CHECK_ID = "check_5_plan_crossrefs"
+DESIGN_CARTOGRAPHY_REFS = {
+    ".woof/codebase/TARGET-ARCHITECTURE.md",
+    ".woof/codebase/PRINCIPLES.md",
+}
+POLICY_CARTOGRAPHY_FLOORS = {"none", "design", "lexical", "structural"}
 
 
 def check_5_plan_crossrefs_runner(ctx: CheckContext) -> CheckOutcome:
@@ -29,6 +34,8 @@ def check_5_plan_crossrefs_runner(ctx: CheckContext) -> CheckOutcome:
     paths = [_display_path(plan_path, ctx.repo_root), _display_path(epic_path, ctx.repo_root)]
 
     failures: list[str] = []
+    cartography_failures = _cartography_context_failures(ctx)
+    failures.extend(cartography_failures)
     plan = _load_plan(plan_path, ctx.plan, failures)
     epic = _load_epic_front_matter(epic_path, failures)
 
@@ -41,23 +48,85 @@ def check_5_plan_crossrefs_runner(ctx: CheckContext) -> CheckOutcome:
         failures.extend(stage5_plan_contract_failures(plan, epic, ctx.work_unit_id))
 
     if failures:
+        summary = (
+            f"cartography context validation failed ({len(cartography_failures)} issue(s))"
+            if cartography_failures and len(cartography_failures) == len(failures)
+            else f"plan cross-reference validation failed ({len(failures)} issue(s))"
+        )
         return CheckOutcome(
             id=CHECK_ID,
             ok=False,
             severity="blocker",
-            summary=f"plan cross-reference validation failed ({len(failures)} issue(s))",
+            summary=summary,
             evidence="\n".join(failures),
-            paths=paths,
+            paths=paths + list(ctx.cartography_paths),
         )
 
     work_unit_count = len(plan.get("work_units", [])) if plan else 0
+    cartography_note = (
+        f"; cartography context valid (floor={ctx.cartography_floor})"
+        if ctx.cartography_floor not in {None, "none"}
+        else ""
+    )
     return CheckOutcome(
         id=CHECK_ID,
         ok=True,
         severity="info",
-        summary=f"plan schema and cross-reference invariants valid ({work_unit_count} work unit(s))",
-        paths=paths,
+        summary=(
+            f"plan schema and cross-reference invariants valid "
+            f"({work_unit_count} work unit(s)){cartography_note}"
+        ),
+        paths=paths + list(ctx.cartography_paths),
     )
+
+
+def _cartography_context_failures(ctx: CheckContext) -> list[str]:
+    floor = ctx.cartography_floor
+    if floor in {None, "none"}:
+        return []
+    if floor not in POLICY_CARTOGRAPHY_FLOORS:
+        return [f"cartography.floor has unknown value {floor!r}"]
+
+    failures: list[str] = []
+    path_set = set(ctx.cartography_paths)
+    if not all(isinstance(path, str) and path for path in ctx.cartography_paths):
+        failures.append("cartography_paths must contain non-empty repo-relative strings")
+
+    invalid_paths = [
+        path
+        for path in ctx.cartography_paths
+        if not isinstance(path, str)
+        or path.startswith("/")
+        or not path.startswith(".woof/codebase/")
+    ]
+    if invalid_paths:
+        failures.append(f"cartography_paths outside .woof/codebase/: {sorted(invalid_paths)!r}")
+
+    missing_refs = sorted(DESIGN_CARTOGRAPHY_REFS - path_set)
+    if missing_refs:
+        failures.append(f"missing required design cartography path(s): {missing_refs!r}")
+
+    missing_files = [
+        path
+        for path in ctx.cartography_paths
+        if isinstance(path, str) and not (ctx.repo_root / path).is_file()
+    ]
+    if missing_files:
+        failures.append(f"declared cartography path(s) missing on disk: {sorted(missing_files)!r}")
+
+    if floor in {"lexical", "structural"}:
+        invalid_slice = [
+            path
+            for path in ctx.files_txt_slice
+            if not isinstance(path, str)
+            or not path
+            or path.startswith("/")
+            or path.startswith(".woof/")
+        ]
+        if invalid_slice:
+            failures.append(f"files_txt_slice has invalid repo path(s): {sorted(invalid_slice)!r}")
+
+    return failures
 
 
 def _load_plan(

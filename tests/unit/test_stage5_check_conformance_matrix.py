@@ -331,6 +331,12 @@ def _build_plan_crossrefs_failure(repo_root: Path) -> CheckContext:
     return _ctx(repo_root, plan=plan, epic_dir=epic_dir)
 
 
+def _write_cartography_doc(repo_root: Path, name: str) -> str:
+    path = repo_root / ".woof" / "codebase" / name
+    _write(path, f"# {name}\n\nDeclared cartography context.\n")
+    return path.relative_to(repo_root).as_posix()
+
+
 def _build_critique_success(repo_root: Path) -> CheckContext:
     epic_dir = repo_root / ".woof" / "epics" / "E1"
     _write_critique(
@@ -684,3 +690,35 @@ def test_stage_5_check_runner_conformance_matrix(
         assert fixture.evidence_contains in (outcome.evidence or "")
     if fixture.path_contains is not None:
         assert fixture.path_contains in outcome.paths
+
+
+def test_plan_crossrefs_fails_when_design_cartography_context_is_incomplete(
+    tmp_path: Path,
+) -> None:
+    ctx = _build_plan_crossrefs_success(tmp_path)
+    target = _write_cartography_doc(tmp_path, "TARGET-ARCHITECTURE.md")
+    ctx.cartography_floor = "design"
+    ctx.cartography_paths = [target]
+
+    outcome = REGISTRY["check_5_plan_crossrefs"].runner(ctx)
+
+    assert outcome.ok is False
+    assert outcome.severity == "blocker"
+    assert "cartography context validation failed" in outcome.summary
+    assert ".woof/codebase/PRINCIPLES.md" in (outcome.evidence or "")
+
+
+def test_plan_crossrefs_consumes_declared_lexical_cartography_context(tmp_path: Path) -> None:
+    ctx = _build_plan_crossrefs_success(tmp_path)
+    ctx.cartography_floor = "lexical"
+    ctx.cartography_paths = [
+        _write_cartography_doc(tmp_path, "TARGET-ARCHITECTURE.md"),
+        _write_cartography_doc(tmp_path, "PRINCIPLES.md"),
+        _write_cartography_doc(tmp_path, "STRUCTURE.md"),
+    ]
+    ctx.files_txt_slice = ["src/app.py"]
+
+    outcome = REGISTRY["check_5_plan_crossrefs"].runner(ctx)
+
+    assert outcome.ok is True
+    assert "cartography context valid" in outcome.summary

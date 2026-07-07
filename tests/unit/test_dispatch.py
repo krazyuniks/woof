@@ -116,6 +116,93 @@ def run_dispatch(
     )
 
 
+def test_profile_a_run_metadata_records_worktree_derivation(tmp_path: Path) -> None:
+    from woof.cli.dispatcher import ensure_run_metadata
+
+    epic_dir = tmp_path / ".woof" / "epics" / "E7"
+    epic_dir.mkdir(parents=True)
+    (tmp_path / ".woof" / "policy.toml").write_text(
+        """\
+schema_version = 1
+default_run_profile = "default"
+
+[delivery]
+profile = "A"
+repo_root = "."
+toolchain_root = "."
+base_branch = "main"
+
+[profiles.A]
+github_repo = "example/project"
+ready_label = "ready"
+merge_path_groups = []
+
+[profiles.A.worktree]
+root = "worktrees"
+engine = "vf-worktree"
+
+[verification]
+command = "just check"
+
+[run_profiles.default.producer]
+harness = "codex"
+model = "gpt-5.5"
+effort = "xhigh"
+
+[run_profiles.default.reviewer]
+harness = "claude"
+model = "claude-opus-4-7"
+effort = "max"
+
+[checks]
+floor = ["quality-gates"]
+
+[cartography]
+floor = "none"
+"""
+    )
+    (epic_dir / "plan.json").write_text(
+        json.dumps(
+            {
+                "epic_id": 7,
+                "goal": "Record worktree metadata.",
+                "work_units": [
+                    {
+                        "id": "S1",
+                        "title": "One",
+                        "summary": "One.",
+                        "paths": ["a"],
+                        "deps": [],
+                        "tests": {},
+                        "state": "pending",
+                    },
+                    {
+                        "id": "S2",
+                        "title": "Two",
+                        "summary": "Two.",
+                        "paths": ["b"],
+                        "deps": ["S1"],
+                        "tests": {},
+                        "state": "pending",
+                    },
+                ],
+            }
+        )
+        + "\n"
+    )
+
+    run_id = ensure_run_metadata(epic_dir, 7, datetime(2026, 7, 7, tzinfo=UTC))
+
+    payload = json.loads((epic_dir / "run.json").read_text())
+    assert payload["run_id"] == run_id
+    assert payload["worktrees"] == {
+        "derivation": "unit_id",
+        "engine": "vf-worktree",
+        "root": "worktrees",
+        "unit_paths": {"S1": "worktrees/S1", "S2": "worktrees/S2"},
+    }
+
+
 # ---------------------------------------------------------------------------
 # argv construction (via --dry-run)
 # ---------------------------------------------------------------------------

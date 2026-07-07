@@ -63,6 +63,7 @@ def ingest_predecomposed_work_units(
     project_ref: str | None = None,
     set_id: str | None = None,
     source_ref: str | None = None,
+    worktree_policy: dict[str, Any] | None = None,
 ) -> IntakeResult:
     source_path = source_path.resolve()
     payload = _load_source_payload(source_path)
@@ -110,6 +111,9 @@ def ingest_predecomposed_work_units(
             {"context": context, "work_unit_id": unit.id} for unit in plan.work_units
         ],
     }
+    worktrees = _worktree_metadata(payload, plan, worktree_policy)
+    if worktrees is not None:
+        metadata["worktrees"] = worktrees
     metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
     return IntakeResult(
         context=context,
@@ -206,6 +210,63 @@ def _load_mapping(path: Path) -> dict[str, str]:
     if not isinstance(payload, dict):
         return {}
     return {str(key): str(value) for key, value in payload.items()}
+
+
+def _worktree_metadata(
+    source_payload: dict[str, Any],
+    plan: Plan,
+    policy: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not isinstance(policy, dict):
+        return None
+    delivery = policy.get("delivery")
+    profiles = policy.get("profiles")
+    if not isinstance(delivery, dict) or delivery.get("profile") != "A":
+        return None
+    if not isinstance(profiles, dict):
+        return None
+    profile_a = profiles.get("A")
+    if not isinstance(profile_a, dict):
+        return None
+    worktree = profile_a.get("worktree")
+    if not isinstance(worktree, dict):
+        return None
+    root = _string(worktree.get("root"))
+    engine = _string(worktree.get("engine"))
+    if not root or not engine:
+        return None
+    derivation = _string(worktree.get("derivation")) or "unit_id"
+    unit_ids = [unit.id for unit in plan.work_units]
+    if derivation == "manifest_map":
+        unit_paths = _source_worktree_paths(source_payload)
+    else:
+        derivation = "unit_id"
+        unit_paths = {unit_id: f"{root.rstrip('/')}/{unit_id}" for unit_id in unit_ids}
+
+    return {
+        "derivation": derivation,
+        "engine": engine,
+        "root": root,
+        "unit_paths": {
+            unit_id: unit_paths[unit_id] for unit_id in unit_ids if unit_id in unit_paths
+        },
+    }
+
+
+def _source_worktree_paths(source_payload: dict[str, Any]) -> dict[str, str]:
+    candidates = []
+    worktrees = source_payload.get("worktrees")
+    if isinstance(worktrees, dict):
+        candidates.extend([worktrees.get("unit_paths"), worktrees.get("paths")])
+    candidates.append(source_payload.get("worktree_paths"))
+    for candidate in candidates:
+        if isinstance(candidate, dict):
+            return {
+                str(unit_id): str(path)
+                for unit_id, path in candidate.items()
+                if isinstance(unit_id, str) and isinstance(path, str) and path
+            }
+    return {}
 
 
 def _slug(value: str) -> str:

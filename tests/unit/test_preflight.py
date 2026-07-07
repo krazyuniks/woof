@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 import sys
+import tomllib
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -86,6 +88,34 @@ floor = "structural"
 
 POLICY_NO_CARTOGRAPHY = STANDARD_POLICY.replace('floor = "structural"', 'floor = "none"')
 
+PROFILE_A_POLICY = STANDARD_POLICY.replace(
+    """[delivery]
+profile = "B"
+repo_root = "."
+toolchain_root = "."
+base_branch = "main"
+
+[profiles.B]
+commit = true
+push = true
+""",
+    """[delivery]
+profile = "A"
+repo_root = "."
+toolchain_root = "."
+base_branch = "main"
+
+[profiles.A]
+github_repo = "example/project"
+ready_label = "ready"
+merge_path_groups = []
+
+[profiles.A.worktree]
+root = "worktrees"
+engine = "vf-worktree"
+""",
+)
+
 CARTOGRAPHY_PREREQS = """\
 [infra]
 just = "any"
@@ -118,6 +148,37 @@ DESIGN_DOC_BODY = (
 def _write_exe(path: Path, body: str) -> None:
     path.write_text("#!/usr/bin/env sh\n" + body)
     path.chmod(0o755)
+
+
+def _git(cwd: Path, *args: str) -> str:
+    proc = subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return proc.stdout.strip()
+
+
+def _init_repo(root: Path) -> None:
+    _git(root, "init", "-b", "main")
+    (root / "README.md").write_text("fixture\n")
+    _git(root, "add", "README.md")
+    _git(
+        root,
+        "-c",
+        "user.name=Woof Test",
+        "-c",
+        "user.email=woof@example.test",
+        "commit",
+        "-m",
+        "init",
+    )
+
+
+def _load_policy_toml(text: str) -> dict:
+    return tomllib.loads(text)
 
 
 def _write_cartography(
@@ -456,6 +517,158 @@ timeout_seconds = 30
     )
     assert reviewer_route["ok"] is True
     assert "harness=claude" in reviewer_route["detail"]
+
+
+def test_profile_a_policy_requires_worktree_root_and_engine() -> None:
+    from woof.cli.preflight import _check_policy_delivery
+
+    policy = json.loads(
+        json.dumps(
+            {
+                "delivery": {
+                    "profile": "A",
+                    "repo_root": ".",
+                    "toolchain_root": ".",
+                    "base_branch": "main",
+                },
+                "profiles": {
+                    "A": {
+                        "github_repo": "example/project",
+                        "ready_label": "ready",
+                        "merge_path_groups": [],
+                    }
+                },
+            }
+        )
+    )
+
+    finding = _check_policy_delivery(policy)
+
+    assert finding.ok is False
+    assert "profiles.A.worktree must be declared" in finding.detail
+
+
+def test_profile_a_worktree_preflight_validates_ready_units(tmp_path: Path) -> None:
+    from woof.cli.preflight import _check_profile_a_worktrees
+
+    _init_repo(tmp_path)
+    (tmp_path / ".woof" / "epics" / "E1").mkdir(parents=True)
+    (tmp_path / ".woof" / "epics" / "E1" / "plan.json").write_text(
+        json.dumps(
+            {
+                "epic_id": 1,
+                "goal": "Validate worktrees.",
+                "work_units": [
+                    {
+                        "id": "S1",
+                        "title": "Ready unit",
+                        "summary": "Ready for production.",
+                        "paths": ["src/a.py"],
+                        "deps": [],
+                        "tests": {"count": 1, "types": ["unit"]},
+                        "state": "pending",
+                    },
+                    {
+                        "id": "S2",
+                        "title": "Blocked unit",
+                        "summary": "Waits on S1.",
+                        "paths": ["src/b.py"],
+                        "deps": ["S1"],
+                        "tests": {"count": 1, "types": ["unit"]},
+                        "state": "pending",
+                    },
+                ],
+            }
+        )
+        + "\n"
+    )
+    worktree_root = tmp_path / "worktrees"
+    worktree_root.mkdir()
+    _git(tmp_path, "worktree", "add", "-b", "S1", str(worktree_root / "S1"), "main")
+
+    findings = _check_profile_a_worktrees(tmp_path, _load_policy_toml(PROFILE_A_POLICY))
+
+    assert [finding.as_dict() for finding in findings] == [
+        {
+            "id": "profile_a.worktree.S1",
+            "label": "Profile A worktree S1",
+            "ok": True,
+            "detail": f"{worktree_root / 'S1'} on branch S1",
+            "required": "existing clean linked worktree on base or unit branch",
+        }
+    ]
+
+
+def test_profile_a_worktree_preflight_fails_closed_on_anomalies(tmp_path: Path) -> None:
+    from woof.cli.preflight import _check_profile_a_worktrees
+
+    _init_repo(tmp_path)
+    plan_dir = tmp_path / ".woof" / "work-unit-sets" / "set-a"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "plan.json").write_text(
+        json.dumps(
+            {
+                "context": {"kind": "work_unit_set", "project_ref": "woof", "set_id": "set-a"},
+                "goal": "Validate duplicate worktrees.",
+                "work_units": [
+                    {
+                        "id": "S1",
+                        "title": "First",
+                        "summary": "First ready unit.",
+                        "paths": ["src/a.py"],
+                        "deps": [],
+                        "tests": {"count": 1, "types": ["unit"]},
+                        "state": "pending",
+                    },
+                    {
+                        "id": "S2",
+                        "title": "Second",
+                        "summary": "Second ready unit.",
+                        "paths": ["src/b.py"],
+                        "deps": [],
+                        "tests": {"count": 1, "types": ["unit"]},
+                        "state": "pending",
+                    },
+                ],
+            }
+        )
+        + "\n"
+    )
+    worktree_root = tmp_path / "worktrees"
+    worktree_root.mkdir()
+    _git(tmp_path, "worktree", "add", "-b", "S1", str(worktree_root / "shared"), "main")
+    (plan_dir / "intake.json").write_text(
+        json.dumps(
+            {
+                "worktrees": {
+                    "derivation": "manifest_map",
+                    "root": "worktrees",
+                    "engine": "vf-worktree",
+                    "unit_paths": {"S1": "worktrees/shared", "S2": "worktrees/shared"},
+                }
+            }
+        )
+        + "\n"
+    )
+    policy = _load_policy_toml(
+        PROFILE_A_POLICY.replace(
+            'engine = "vf-worktree"\n',
+            'engine = "vf-worktree"\nderivation = "manifest_map"\n',
+        )
+    )
+
+    findings = _check_profile_a_worktrees(tmp_path, policy)
+
+    assert [finding.id for finding in findings] == [
+        "profile_a.worktree.S1",
+        "profile_a.worktree.S2",
+        "profile_a.worktree.paths",
+    ]
+    assert findings[0].ok is True
+    assert findings[1].ok is False
+    assert "branch 'S1' is not one of: S2, main" in findings[1].detail
+    assert findings[2].ok is False
+    assert "S1 and S2 both resolve to" in findings[2].detail
 
 
 def test_preflight_fails_for_missing_policy_producer_slot(tmp_path: Path, run_woof) -> None:

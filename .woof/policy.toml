@@ -15,6 +15,10 @@ ready_label = "ready"
 merge_path_groups = ["default"]
 terminal_deploy_checks = []
 
+[profiles.A.worktree]
+root = ".vf-worktrees"
+engine = "vault-foreman"
+
 [profiles.B]
 commit = true
 push = true

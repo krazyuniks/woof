@@ -156,7 +156,7 @@
     "profile_a": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["github_repo", "ready_label", "merge_path_groups"],
+      "required": ["github_repo", "ready_label", "merge_path_groups", "worktree"],
       "properties": {
         "github_repo": {
           "type": "string",
@@ -260,7 +260,7 @@
     "worktree": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["root"],
+      "required": ["root", "engine"],
       "properties": {
         "root": {
           "$ref": "#/$defs/portable_path",

@@ -11,6 +11,7 @@ from pathlib import Path
 
 import yaml
 
+from woof.cli.policy import load_policy
 from woof.graph.decisions import all_decisions, validate_decision
 from woof.graph.dispositions import (
     NON_BLOCKING_SEVERITIES,
@@ -642,12 +643,14 @@ def cmd_wf(args: argparse.Namespace) -> int:
             sys.stderr.write("woof wf intake: --source is required\n")
             return 2
         try:
+            policy = load_policy(repo_root)
             result = ingest_predecomposed_work_units(
                 repo_root,
                 args.source,
                 project_ref=args.project_ref,
                 set_id=args.set_id,
                 source_ref=args.source_ref,
+                worktree_policy=policy if isinstance(policy, dict) else None,
             )
         except (OSError, ValueError, json.JSONDecodeError, yaml.YAMLError) as exc:
             sys.stderr.write(f"woof wf intake: {exc}\n")

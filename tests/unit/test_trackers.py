@@ -32,6 +32,45 @@ from woof.trackers.github import GITHUB_COMMAND_TIMEOUT_SECONDS, github_core_rem
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WOOF_BIN = REPO_ROOT / "bin" / "woof"
 
+PROFILE_A_POLICY = """\
+schema_version = 1
+default_run_profile = "default"
+
+[delivery]
+profile = "A"
+repo_root = "."
+toolchain_root = "."
+base_branch = "main"
+
+[profiles.A]
+github_repo = "example/project"
+ready_label = "ready"
+merge_path_groups = []
+
+[profiles.A.worktree]
+root = "worktrees"
+engine = "vf-worktree"
+
+[verification]
+command = "just check"
+
+[run_profiles.default.producer]
+harness = "codex"
+model = "gpt-5.5"
+effort = "xhigh"
+
+[run_profiles.default.reviewer]
+harness = "claude"
+model = "claude-opus-4-7"
+effort = "max"
+
+[checks]
+floor = ["quality-gates"]
+
+[cartography]
+floor = "none"
+"""
+
 
 def _write_prereq(project: Path, body: str) -> None:
     (project / ".woof").mkdir(parents=True, exist_ok=True)
@@ -846,6 +885,7 @@ def test_woof_wf_new_local_tracker_never_calls_gh(tmp_path: Path) -> None:
 def test_woof_wf_intake_predecomposed_work_units_without_epic(tmp_path: Path) -> None:
     project = tmp_path / "project"
     _write_prereq(project, '[tracker]\nkind = "local"\n')
+    (project / ".woof" / "policy.toml").write_text(PROFILE_A_POLICY)
     source = project / "backlog.md"
     source.write_text(
         textwrap.dedent(
@@ -913,4 +953,13 @@ def test_woof_wf_intake_predecomposed_work_units_without_epic(tmp_path: Path) ->
     assert metadata["qualified_work_unit_refs"][1] == {
         "context": first_payload["context"],
         "work_unit_id": "follow-up",
+    }
+    assert metadata["worktrees"] == {
+        "derivation": "unit_id",
+        "engine": "vf-worktree",
+        "root": "worktrees",
+        "unit_paths": {
+            "foundation": "worktrees/foundation",
+            "follow-up": "worktrees/follow-up",
+        },
     }

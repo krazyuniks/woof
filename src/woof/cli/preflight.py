@@ -44,6 +44,8 @@ from woof.cli.policy import (
     cartography_floor,
     load_policy,
 )
+from woof.graph.git import git_env
+from woof.graph.state import Plan
 from woof.lib.audit import scan_text_for_secrets
 from woof.paths import schema_dir, tool_root
 from woof.trackers.github import GITHUB_RATE_LIMIT_SAFETY_MARGIN, github_core_remaining
@@ -91,7 +93,7 @@ staleness_floor_hours = 168
 summary_min_chars = 200
 """
 
-CACHE_VERSION = 5  # v5: adds repo-local policy.toml to the preflight floor
+CACHE_VERSION = 6  # v6: adds Profile A worktree policy and uncached validation
 FLOOR_CACHE_TTL = timedelta(hours=24)
 RUNTIME_CACHE_TTL = timedelta(minutes=5)
 
@@ -218,6 +220,9 @@ def run_preflight(repo_root: Path, *, force: bool = False) -> PreflightResult:
     # Uncached: the floor/runtime cache keys do not track cartography doc content,
     # so a cached pass could mask a secret a mapper just wrote. A security gate
     # must re-read the docs every run.
+    findings.extend(
+        _check_profile_a_worktrees(repo_root, policy if isinstance(policy, dict) else None)
+    )
     findings.extend(_check_cartography_secrets(repo_root))
     return PreflightResult(repo_root=repo_root, findings=findings, operator_state=operator_state)
 
@@ -667,6 +672,17 @@ def _check_policy_delivery(policy: dict[str, Any]) -> PreflightFinding:
         merge_path_groups = profile_a.get("merge_path_groups")
         if not isinstance(merge_path_groups, list):
             errors.append("profiles.A.merge_path_groups must be an array")
+        worktree = profile_a.get("worktree")
+        if not isinstance(worktree, dict):
+            errors.append("profiles.A.worktree must be declared")
+        else:
+            for key in ("root", "engine"):
+                value = worktree.get(key)
+                if not isinstance(value, str) or not value.strip():
+                    errors.append(f"profiles.A.worktree.{key} must be declared")
+            derivation = worktree.get("derivation", "unit_id")
+            if derivation not in {"unit_id", "manifest_map"}:
+                errors.append("profiles.A.worktree.derivation must be unit_id or manifest_map")
 
     if selected == "B" and isinstance(profiles.get("B"), dict):
         profile_b = profiles["B"]
@@ -847,6 +863,323 @@ def _check_policy_cartography_floor(
         detail=f"floor={floor}" if not errors else "; ".join(errors),
         required="cartography floor and matching cartography prerequisites when required",
     )
+
+
+def _check_profile_a_worktrees(
+    repo_root: Path, policy: dict[str, Any] | None
+) -> list[PreflightFinding]:
+    profile_a = _profile_a(policy)
+    if profile_a is None:
+        return []
+    worktree = profile_a.get("worktree")
+    delivery = policy.get("delivery") if isinstance(policy, dict) else {}
+    if not isinstance(worktree, dict) or not isinstance(delivery, dict):
+        return []
+    root = worktree.get("root")
+    engine = worktree.get("engine")
+    if (
+        not isinstance(root, str)
+        or not root.strip()
+        or not isinstance(engine, str)
+        or not engine.strip()
+    ):
+        return []
+
+    raw_derivation = worktree.get("derivation")
+    derivation = raw_derivation if raw_derivation in {"unit_id", "manifest_map"} else "unit_id"
+    raw_base_branch = delivery.get("base_branch")
+    base_branch = (
+        raw_base_branch.strip()
+        if isinstance(raw_base_branch, str) and raw_base_branch.strip()
+        else "main"
+    )
+    ready_units = _ready_worktree_units(repo_root)
+    if not ready_units:
+        return [
+            PreflightFinding(
+                id="profile_a.worktree",
+                label="Profile A worktrees",
+                ok=True,
+                detail="no ready work units found",
+            )
+        ]
+
+    findings: list[PreflightFinding] = []
+    seen_paths: dict[Path, str] = {}
+    duplicate_details: list[str] = []
+    target_common_dir = _git_common_dir(repo_root)
+    for unit in ready_units:
+        resolved = _resolve_worktree_path(
+            repo_root,
+            root=root,
+            derivation=derivation,
+            work_unit_id=unit["work_unit_id"],
+            metadata_path=unit["metadata_path"],
+        )
+        if isinstance(resolved, str):
+            findings.append(
+                PreflightFinding(
+                    id=f"profile_a.worktree.{unit['work_unit_id']}",
+                    label=f"Profile A worktree {unit['work_unit_id']}",
+                    ok=False,
+                    detail=resolved,
+                    required="existing clean linked worktree on base or unit branch",
+                )
+            )
+            continue
+        path = resolved.resolve()
+        previous = seen_paths.get(path)
+        if previous is not None:
+            duplicate_details.append(
+                f"{previous} and {unit['work_unit_id']} both resolve to {path}"
+            )
+        else:
+            seen_paths[path] = unit["work_unit_id"]
+        findings.append(
+            _validate_profile_a_worktree(
+                repo_root,
+                path,
+                target_common_dir=target_common_dir,
+                work_unit_id=unit["work_unit_id"],
+                base_branch=base_branch,
+                metadata_path=unit["metadata_path"],
+            )
+        )
+
+    if duplicate_details:
+        findings.append(
+            PreflightFinding(
+                id="profile_a.worktree.paths",
+                label="Profile A worktree path uniqueness",
+                ok=False,
+                detail="; ".join(duplicate_details),
+                required="one unique worktree path per ready work unit",
+            )
+        )
+    return findings
+
+
+def _profile_a(policy: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(policy, dict):
+        return None
+    delivery = policy.get("delivery")
+    profiles = policy.get("profiles")
+    if not isinstance(delivery, dict) or delivery.get("profile") != "A":
+        return None
+    if not isinstance(profiles, dict):
+        return None
+    profile_a = profiles.get("A")
+    return profile_a if isinstance(profile_a, dict) else None
+
+
+def _ready_worktree_units(repo_root: Path) -> list[dict[str, Any]]:
+    units: list[dict[str, Any]] = []
+    for plan_path in _plan_paths(repo_root):
+        try:
+            plan = Plan.model_validate(json.loads(plan_path.read_text(encoding="utf-8")))
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+        done = {unit.id for unit in plan.work_units if unit.state == "done"}
+        metadata_path = _worktree_metadata_path(plan_path)
+        for unit in plan.work_units:
+            if unit.state == "pending" and all(dep in done for dep in unit.deps):
+                units.append(
+                    {
+                        "work_unit_id": unit.id,
+                        "plan_path": plan_path,
+                        "metadata_path": metadata_path,
+                    }
+                )
+    return units
+
+
+def _plan_paths(repo_root: Path) -> list[Path]:
+    roots = [repo_root / ".woof" / "epics", repo_root / ".woof" / "work-unit-sets"]
+    paths: list[Path] = []
+    for root in roots:
+        if root.is_dir():
+            paths.extend(sorted(root.glob("*/plan.json")))
+    return paths
+
+
+def _worktree_metadata_path(plan_path: Path) -> Path:
+    if plan_path.parent.parent.name == "work-unit-sets":
+        return plan_path.with_name("intake.json")
+    return plan_path.with_name("run.json")
+
+
+def _resolve_worktree_path(
+    repo_root: Path,
+    *,
+    root: str,
+    derivation: str,
+    work_unit_id: str,
+    metadata_path: Path,
+) -> Path | str:
+    if derivation == "manifest_map":
+        unit_paths = _metadata_unit_paths(metadata_path)
+        value = unit_paths.get(work_unit_id)
+        if not value:
+            return f"{metadata_path} does not map work unit {work_unit_id} to a worktree path"
+        path = Path(value)
+        return path if path.is_absolute() else repo_root / path
+    return repo_root / root / work_unit_id
+
+
+def _metadata_unit_paths(metadata_path: Path) -> dict[str, str]:
+    try:
+        payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    worktrees = payload.get("worktrees")
+    if not isinstance(worktrees, dict):
+        return {}
+    unit_paths = worktrees.get("unit_paths") or worktrees.get("paths")
+    if not isinstance(unit_paths, dict):
+        return {}
+    return {
+        str(unit_id): str(path)
+        for unit_id, path in unit_paths.items()
+        if isinstance(unit_id, str) and isinstance(path, str) and path
+    }
+
+
+def _metadata_unit_branches(metadata_path: Path) -> dict[str, str]:
+    try:
+        payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    worktrees = payload.get("worktrees")
+    if not isinstance(worktrees, dict):
+        return {}
+    branches = worktrees.get("unit_branches") or worktrees.get("branches")
+    if not isinstance(branches, dict):
+        return {}
+    return {
+        str(unit_id): str(branch)
+        for unit_id, branch in branches.items()
+        if isinstance(unit_id, str) and isinstance(branch, str) and branch
+    }
+
+
+def _validate_profile_a_worktree(
+    repo_root: Path,
+    path: Path,
+    *,
+    target_common_dir: Path | None,
+    work_unit_id: str,
+    base_branch: str,
+    metadata_path: Path,
+) -> PreflightFinding:
+    required = "existing clean linked worktree on base or unit branch"
+    if not path.exists():
+        return PreflightFinding(
+            id=f"profile_a.worktree.{work_unit_id}",
+            label=f"Profile A worktree {work_unit_id}",
+            ok=False,
+            detail=f"{path} does not exist; Woof will not create it",
+            required=required,
+        )
+    if not path.is_dir():
+        return PreflightFinding(
+            id=f"profile_a.worktree.{work_unit_id}",
+            label=f"Profile A worktree {work_unit_id}",
+            ok=False,
+            detail=f"{path} is not a directory",
+            required=required,
+        )
+
+    common_dir = _git_common_dir(path)
+    if common_dir is None or target_common_dir is None or common_dir != target_common_dir:
+        return PreflightFinding(
+            id=f"profile_a.worktree.{work_unit_id}",
+            label=f"Profile A worktree {work_unit_id}",
+            ok=False,
+            detail=f"{path} is not a linked worktree of {repo_root}",
+            required=required,
+        )
+
+    branch = _git_output(path, "symbolic-ref", "--short", "HEAD")
+    expected = {base_branch, work_unit_id}
+    expected.update(_metadata_unit_branches(metadata_path).get(work_unit_id, "").split())
+    expected.discard("")
+    if branch is None:
+        return PreflightFinding(
+            id=f"profile_a.worktree.{work_unit_id}",
+            label=f"Profile A worktree {work_unit_id}",
+            ok=False,
+            detail=f"{path} is detached; expected one of: {', '.join(sorted(expected))}",
+            required=required,
+        )
+    if branch not in expected:
+        return PreflightFinding(
+            id=f"profile_a.worktree.{work_unit_id}",
+            label=f"Profile A worktree {work_unit_id}",
+            ok=False,
+            detail=f"{path} branch {branch!r} is not one of: {', '.join(sorted(expected))}",
+            required=required,
+        )
+
+    status = _git_output(path, "status", "--porcelain")
+    if status is None:
+        return PreflightFinding(
+            id=f"profile_a.worktree.{work_unit_id}",
+            label=f"Profile A worktree {work_unit_id}",
+            ok=False,
+            detail=f"{path} git status failed",
+            required=required,
+        )
+    if status:
+        return PreflightFinding(
+            id=f"profile_a.worktree.{work_unit_id}",
+            label=f"Profile A worktree {work_unit_id}",
+            ok=False,
+            detail=f"{path} is dirty",
+            required=required,
+        )
+
+    return PreflightFinding(
+        id=f"profile_a.worktree.{work_unit_id}",
+        label=f"Profile A worktree {work_unit_id}",
+        ok=True,
+        detail=f"{path} on branch {branch}",
+        required=required,
+    )
+
+
+def _git_common_dir(path: Path) -> Path | None:
+    value = _git_output(path, "rev-parse", "--git-common-dir")
+    if value is None:
+        return None
+    common = Path(value)
+    if not common.is_absolute():
+        common = path / common
+    try:
+        return common.resolve()
+    except OSError:
+        return None
+
+
+def _git_output(cwd: Path, *args: str) -> str | None:
+    try:
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=cwd,
+            env=git_env(),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip()
 
 
 def _check_declared_binaries(prereq: dict[str, Any]) -> list[PreflightFinding]:

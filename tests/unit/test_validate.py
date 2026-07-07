@@ -97,6 +97,10 @@ github_repo = "example/project"
 ready_label = "ready"
 merge_path_groups = ["default"]
 terminal_deploy_checks = []
+
+[profiles.A.worktree]
+root = "worktrees"
+engine = "vf-worktree"
 """
         if profile == "A"
         else """\

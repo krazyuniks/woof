@@ -541,6 +541,8 @@ def ensure_run_metadata(epic_dir: Path, epic_id: int, created_at: datetime) -> s
     """Return the durable run id for this epic, creating run metadata once."""
 
     path = epic_dir / "run.json"
+    repo_root = epic_dir.resolve().parents[2]
+    worktrees = _profile_a_run_worktrees(repo_root, epic_dir)
     if path.is_file():
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
@@ -548,19 +550,69 @@ def ensure_run_metadata(epic_dir: Path, epic_id: int, created_at: datetime) -> s
             payload = {}
         run_id = payload.get("run_id") if isinstance(payload, dict) else None
         if isinstance(run_id, str) and run_id:
+            if worktrees is not None and isinstance(payload, dict) and "worktrees" not in payload:
+                payload["worktrees"] = worktrees
+                path.write_text(
+                    json.dumps(payload, indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
             return run_id
 
     run_id = f"run-{epic_id}-{uuid.uuid4().hex[:12]}"
-    path.write_text(
-        json.dumps(
-            {"run_id": run_id, "epic_id": epic_id, "created_at": iso_utc(created_at)},
-            indent=2,
-            sort_keys=True,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    payload = {"run_id": run_id, "epic_id": epic_id, "created_at": iso_utc(created_at)}
+    if worktrees is not None:
+        payload["worktrees"] = worktrees
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return run_id
+
+
+def _profile_a_run_worktrees(repo_root: Path, epic_dir: Path) -> dict[str, Any] | None:
+    policy = load_policy(repo_root)
+    if not isinstance(policy, dict):
+        return None
+    delivery = policy.get("delivery")
+    profiles = policy.get("profiles")
+    if not isinstance(delivery, dict) or delivery.get("profile") != "A":
+        return None
+    if not isinstance(profiles, dict):
+        return None
+    profile_a = profiles.get("A")
+    if not isinstance(profile_a, dict):
+        return None
+    worktree = profile_a.get("worktree")
+    if not isinstance(worktree, dict):
+        return None
+    root = worktree.get("root")
+    engine = worktree.get("engine")
+    if (
+        not isinstance(root, str)
+        or not root.strip()
+        or not isinstance(engine, str)
+        or not engine.strip()
+    ):
+        return None
+    derivation = (
+        worktree.get("derivation") if isinstance(worktree.get("derivation"), str) else "unit_id"
+    )
+    metadata = {"derivation": derivation, "engine": engine, "root": root}
+    if derivation != "unit_id":
+        return metadata
+    unit_ids = _plan_work_unit_ids(epic_dir / "plan.json")
+    metadata["unit_paths"] = {unit_id: f"{root.rstrip('/')}/{unit_id}" for unit_id in unit_ids}
+    return metadata
+
+
+def _plan_work_unit_ids(plan_path: Path) -> list[str]:
+    try:
+        payload = json.loads(plan_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    units = payload.get("work_units") if isinstance(payload, dict) else None
+    if not isinstance(units, list):
+        return []
+    return [
+        unit["id"] for unit in units if isinstance(unit, dict) and isinstance(unit.get("id"), str)
+    ]
 
 
 def _attempt_id(run_id: str, role: str, work_unit_id: str | None, started_at: datetime) -> str:

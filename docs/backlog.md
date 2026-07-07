@@ -150,7 +150,7 @@ work_units:
   - id: profile-a-worktree-contract
     title: Profile A worktree discovery and fail-closed validation
     kind: build
-    state: todo
+    state: done
     priority: high
     summary: Policy-declared worktree root and engine; deterministic unit-to-path derivation; fail-closed preflight validation of provisioned worktrees. Woof discovers and validates, never provisions.
     deps: [policy-model]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -39,6 +40,7 @@ class FakeGit:
 class FakeGithub:
     mergeability: dict[int, list[str]]
     already_merged: set[int] = field(default_factory=set)
+    fail_merge_for: set[int] = field(default_factory=set)
     calls: list[str] = field(default_factory=list)
 
     def pr_mergeability(self, repo_slug: str, pr_number: int) -> str:
@@ -52,6 +54,8 @@ class FakeGithub:
         self, repo_slug: str, pr_number: int, head_sha: str, *, subject: str, body: str
     ) -> None:
         self.calls.append(f"merge:{pr_number}:{head_sha}")
+        if pr_number in self.fail_merge_for:
+            raise subprocess.CalledProcessError(1, ["gh", "pr", "merge", str(pr_number)])
         self.already_merged.add(pr_number)
 
     def is_pr_merged(self, repo_slug: str, pr_number: int) -> bool:
@@ -164,6 +168,84 @@ def test_partial_merge_reconciliation_marks_prior_merged_units_before_terminal_h
     assert excinfo.value.outcomes[0].action == "already_merged"
     assert excinfo.value.outcomes[1].action == "gate_failed"
     assert excinfo.value.outcomes[1].terminal is True
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected_action"),
+    [
+        ("rebase", "rebase_conflict"),
+        ("mergeability", "mergeability_failed"),
+        ("merge", "merge_failed"),
+    ],
+)
+def test_partial_merge_reconciliation_runs_before_each_terminal_halt(
+    tmp_path: Path, failure: str, expected_action: str
+) -> None:
+    first = _ready("S1", 10, ready_at="2026-07-08T10:00:00Z")
+    second = _ready("S2", 11, ready_at="2026-07-08T10:01:00Z")
+    git = FakeGit(
+        {11: "rebased-11"},
+        fail_rebase_for={11} if failure == "rebase" else set(),
+    )
+    github = FakeGithub(
+        {11: ["DIRTY"] if failure == "mergeability" else ["MERGEABLE"]},
+        already_merged={10},
+        fail_merge_for={11} if failure == "merge" else set(),
+    )
+    gate = FakeGate()
+    marked_done: list[str] = []
+
+    coordinator = SerialMergeCoordinator(
+        repo_root=tmp_path,
+        epic_id=5,
+        repo_slug="example/project",
+        base_branch="main",
+        ready_label="ready",
+        git=git,
+        github=github,
+        gate=gate,
+        mark_done=marked_done.append,
+        sleep=lambda _seconds: None,
+    )
+
+    with pytest.raises(MergeQueueHalt) as excinfo:
+        coordinator.process([second, first])
+
+    assert marked_done == ["S1"]
+    assert [outcome.action for outcome in excinfo.value.outcomes] == [
+        "already_merged",
+        expected_action,
+    ]
+    assert excinfo.value.outcomes[1].terminal is True
+
+
+def test_rebase_conflict_halts_without_gate_head_or_force_push(tmp_path: Path) -> None:
+    pr = _ready("S1", 10, ready_at="2026-07-08T10:00:00Z")
+    git = FakeGit({10: "rebased-10"}, fail_rebase_for={10})
+    github = FakeGithub({10: ["MERGEABLE"]})
+    gate = FakeGate()
+
+    coordinator = SerialMergeCoordinator(
+        repo_root=tmp_path,
+        epic_id=5,
+        repo_slug="example/project",
+        base_branch="main",
+        ready_label="ready",
+        git=git,
+        github=github,
+        gate=gate,
+        mark_done=lambda _work_unit_id: None,
+        sleep=lambda _seconds: None,
+    )
+
+    with pytest.raises(MergeQueueHalt) as excinfo:
+        coordinator.process([pr])
+
+    assert excinfo.value.outcome.action == "rebase_conflict"
+    assert git.calls == ["fetch:S1:origin", "rebase:S1:origin/main"]
+    assert gate.calls == []
+    assert "mergeability:10" not in github.calls
+    assert "merge:10:rebased-10" not in github.calls
 
 
 def test_unknown_and_unstable_mergeability_settle_with_bounded_retry(tmp_path: Path) -> None:

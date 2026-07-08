@@ -126,7 +126,7 @@ work_units:
 - id: serial-merge-queue
   title: Serial ready-queue merge with partial-merge reconciliation
   kind: build
-  state: todo
+  state: done
   priority: high
   summary: Absorb the VaultForeman serial FIFO merge queue (merge_coordinator.py)
     minus deploy-aware pacing, which is carved out to deploy-aware-merge-coordinator

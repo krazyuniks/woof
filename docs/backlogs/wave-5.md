@@ -183,7 +183,7 @@ work_units:
 - id: review-size-guards
   title: Review-size guards count non-generated changed lines only
   kind: build
-  state: todo
+  state: done
   priority: high
   summary: Policy-visible review-size guard that counts only non-generated changed
     lines and never silently skips review for generated files.

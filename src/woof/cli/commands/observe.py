@@ -15,7 +15,12 @@ import yaml
 from woof.cli.dispatcher import (
     trusted_runtime_policy,
 )
-from woof.cli.harness_registry import HarnessError, build_launch_argv, get_profile
+from woof.cli.harness_registry import (
+    HarnessError,
+    build_launch_argv,
+    get_profile,
+    resolve_harness_config,
+)
 from woof.cli.policy import load_policy, policy_path
 from woof.graph.dispositions import (
     critique_severity,
@@ -584,23 +589,27 @@ def _dispatch_route_summary(
             errors.append(str(exc))
 
     model = slot_data.get("model")
-    if not isinstance(model, str) or not model.strip():
-        errors.append("model is not declared")
+    if model is not None and (not isinstance(model, str) or not model.strip()):
+        errors.append("model must be a non-empty string when declared")
 
     effort = slot_data.get("effort")
-    if not isinstance(effort, str) or not effort.strip():
-        errors.append("effort is not declared")
-    elif profile is not None and profile.effort_levels and effort not in profile.effort_levels:
-        errors.append(
-            f"{profile.name} effort {effort!r} is not supported; expected one of "
-            f"{sorted(profile.effort_levels)}"
-        )
+    if effort is not None and (not isinstance(effort, str) or not effort.strip()):
+        errors.append("effort must be a non-empty string when declared")
+    resolved_model = model
+    resolved_effort = effort
     if profile is not None:
         try:
-            build_launch_argv(
+            resolved = resolve_harness_config(
                 profile.name,
                 model=model if isinstance(model, str) else None,
                 effort=effort if isinstance(effort, str) else None,
+            )
+            resolved_model = resolved.model
+            resolved_effort = resolved.effort
+            build_launch_argv(
+                resolved.harness,
+                model=resolved.model,
+                effort=resolved.effort,
             )
         except HarnessError as exc:
             errors.append(str(exc))
@@ -612,8 +621,8 @@ def _dispatch_route_summary(
         "model_profile": profile_name,
         "profile_role": role_name,
         "adapter": profile.name if profile is not None else harness,
-        "model": model,
-        "effort": effort,
+        "model": resolved_model,
+        "effort": resolved_effort,
         "mcp": [],
         "flags": [],
         "timeout_min": timeout_min,

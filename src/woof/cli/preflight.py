@@ -28,7 +28,12 @@ from woof.cli.dispatcher import (
     TRUSTED_RUNTIME_MODE,
     TRUSTED_RUNTIME_NOTE,
 )
-from woof.cli.harness_registry import HarnessError, build_launch_argv, get_profile
+from woof.cli.harness_registry import (
+    HarnessError,
+    build_launch_argv,
+    get_profile,
+    resolve_harness_config,
+)
 from woof.cli.init import AGENTS_TEMPLATE, POLICY_TEMPLATE
 from woof.cli.main import (
     SCHEMAS,
@@ -549,27 +554,31 @@ def _check_dispatch_profile_slot(
             errors.append(str(exc))
 
     model = slot_data.get("model")
-    if not isinstance(model, str) or not model.strip():
-        errors.append("model is not declared")
+    if model is not None and (not isinstance(model, str) or not model.strip()):
+        errors.append("model must be a non-empty string when declared")
 
     effort = slot_data.get("effort")
-    if not isinstance(effort, str) or not effort.strip():
-        errors.append("effort is not declared")
-    elif profile is not None and profile.effort_levels and effort not in profile.effort_levels:
-        errors.append(
-            f"{profile.name} effort {effort!r} is not supported; expected one of "
-            f"{sorted(profile.effort_levels)}"
-        )
+    if effort is not None and (not isinstance(effort, str) or not effort.strip()):
+        errors.append("effort must be a non-empty string when declared")
 
+    resolved_model = model
+    resolved_effort = effort
     if profile is not None:
         command = profile.base[0] if profile.base else profile.name
         if shutil.which(command) is None:
             errors.append(f"{command} not found on PATH")
         try:
-            build_launch_argv(
+            resolved = resolve_harness_config(
                 profile.name,
                 model=model if isinstance(model, str) else None,
                 effort=effort if isinstance(effort, str) else None,
+            )
+            resolved_model = resolved.model
+            resolved_effort = resolved.effort
+            build_launch_argv(
+                resolved.harness,
+                model=resolved.model,
+                effort=resolved.effort,
             )
         except HarnessError as exc:
             errors.append(str(exc))
@@ -580,11 +589,11 @@ def _check_dispatch_profile_slot(
         ok=not errors,
         detail=(
             f"[run_profiles.{profile_name}.{role_name}] resolves harness={profile.name}, "
-            f"model={model}, effort={effort}, runtime={TRUSTED_RUNTIME_MODE}"
+            f"model={resolved_model}, effort={resolved_effort}, runtime={TRUSTED_RUNTIME_MODE}"
             if not errors and profile is not None
             else "; ".join(errors)
         ),
-        required="explicit harness, model, effort, and runtime-mode disclosure",
+        required="harness plus registry-resolved model, effort, and runtime-mode disclosure",
         notes=[TRUSTED_RUNTIME_NOTE] if not errors else [],
     )
 
@@ -810,16 +819,26 @@ def _check_policy_run_profile_slot(profile_name: str, role: str, slot: object) -
             errors.append(str(exc))
 
     model = slot.get("model")
-    if not isinstance(model, str) or not model.strip():
-        errors.append(f"run_profiles.{profile_name}.{role}.model must be declared")
+    if model is not None and (not isinstance(model, str) or not model.strip()):
+        errors.append(f"run_profiles.{profile_name}.{role}.model must be a non-empty string")
 
     effort = slot.get("effort")
-    if not isinstance(effort, str) or not effort.strip():
-        errors.append(f"run_profiles.{profile_name}.{role}.effort must be declared")
-    elif profile is not None and profile.effort_levels and effort not in profile.effort_levels:
-        errors.append(
-            f"{profile.name} run-profile effort must be one of {', '.join(profile.effort_levels)}"
-        )
+    if effort is not None and (not isinstance(effort, str) or not effort.strip()):
+        errors.append(f"run_profiles.{profile_name}.{role}.effort must be a non-empty string")
+
+    resolved_model = model
+    resolved_effort = effort
+    if profile is not None:
+        try:
+            resolved = resolve_harness_config(
+                profile.name,
+                model=model if isinstance(model, str) else None,
+                effort=effort if isinstance(effort, str) else None,
+            )
+            resolved_model = resolved.model
+            resolved_effort = resolved.effort
+        except HarnessError as exc:
+            errors.append(str(exc))
 
     return PreflightFinding(
         id=f"policy.run_profile.{role}",
@@ -827,11 +846,11 @@ def _check_policy_run_profile_slot(profile_name: str, role: str, slot: object) -
         ok=not errors,
         detail=(
             f"profile={profile_name}, harness={profile.name if profile else harness}, "
-            f"model={model}, effort={effort}"
+            f"model={resolved_model}, effort={resolved_effort}"
             if not errors
             else "; ".join(errors)
         ),
-        required="harness, model, and effort",
+        required="harness plus registry-resolved model and effort",
     )
 
 

@@ -503,7 +503,7 @@ timeout_seconds = 30
     )
     assert "runtime=trusted-local" in producer_route["detail"]
     assert producer_route["required"] == (
-        "explicit harness, model, effort, and runtime-mode disclosure"
+        "harness plus registry-resolved model, effort, and runtime-mode disclosure"
     )
     assert producer_route["notes"] == [
         "trusted-local runtime: Woof dispatches subscription CLIs through tmux_harness; "
@@ -920,7 +920,9 @@ def test_preflight_agents_template_matches_init_template() -> None:
     assert _agents_template() == f"Create .woof/agents.toml, for example:\n{AGENTS_TEMPLATE}"
 
 
-def test_preflight_fails_for_incomplete_policy_run_profile(tmp_path: Path, run_woof) -> None:
+def test_preflight_resolves_missing_policy_effort_to_harness_default(
+    tmp_path: Path, run_woof
+) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     _stub_core_tools(bin_dir)
@@ -957,15 +959,15 @@ repo = "example/project"
         env=_env_with_path(bin_dir),
     )
 
-    assert proc.returncode == 1
+    assert proc.returncode == 0, proc.stderr + proc.stdout
     payload = json.loads(proc.stdout)
     producer = next(
         finding
         for finding in payload["findings"]
         if finding["id"] == "policy.run_profile.producer.route"
     )
-    assert producer["ok"] is False
-    assert "effort is not declared" in producer["detail"]
+    assert producer["ok"] is True
+    assert "effort=medium" in producer["detail"]
 
 
 def test_preflight_allows_missing_agents_toml(tmp_path: Path, run_woof) -> None:

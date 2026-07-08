@@ -386,6 +386,47 @@ effort = "low"
     assert "claude-sonnet-4-6" in payload["argv"]
 
 
+def test_env_model_profile_harness_change_uses_target_defaults(woof_project: Path) -> None:
+    _write_policy(
+        woof_project,
+        extra_profiles="""\
+
+[run_profiles.claude_primary.producer]
+harness = "claude"
+
+[run_profiles.claude_primary.reviewer]
+harness = "claude"
+model = "claude-sonnet-4-6"
+effort = "low"
+""",
+    )
+    env = {**os.environ, "WOOF_MODEL_PROFILE": "claude_primary"}
+
+    proc = run_dispatch(
+        woof_project,
+        "--role",
+        "primary",
+        "--epic",
+        "42",
+        "--dry-run",
+        env=env,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    assert payload["adapter"] == "claude"
+    assert payload["model"] == "sonnet"
+    assert payload["effort"] == "high"
+    assert payload["argv"] == [
+        "cld",
+        "--model",
+        "sonnet",
+        "--effort",
+        "high",
+        "--dangerously-skip-permissions",
+    ]
+
+
 # ---------------------------------------------------------------------------
 # node route keys
 # ---------------------------------------------------------------------------
@@ -759,6 +800,13 @@ def test_harness_registry_builds_minimal_launch_argv() -> None:
         "-a",
         "never",
     ]
+
+
+def test_harness_registry_rejects_effort_from_another_harness() -> None:
+    mod = _import_woof_module()
+
+    with pytest.raises(mod.HarnessError, match="codex effort 'max' is not supported"):
+        mod.build_launch_argv("codex", model=None, effort="max")
 
 
 # ---------------------------------------------------------------------------

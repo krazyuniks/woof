@@ -6,7 +6,7 @@ This document is the system-design source of truth. It describes the target syst
 
 Woof is the orchestration engine for AI-assisted software delivery. It turns an epic or pre-decomposed `work_units[]` backlog into verified code changes through deterministic graph control, interactive LLM workers, project-owned verification, independent review, and auditable publish/merge steps.
 
-The durable boundary is the consumer repository. Woof assumes a Git worktree, `.woof/` state, repo-local policy, repo-local verification commands, and the operator's subscription CLI harnesses. The engine owns harness adapters, launch, execution, readiness, output parsing, and validation. Repo policy owns only which harness/model/effort fills each worker slot.
+The durable boundary is the consumer repository. Woof assumes a Git worktree, `.woof/` state, repo-local policy, repo-local verification commands, and the operator's subscription CLI harnesses. The engine owns harness adapters, launch, execution, readiness, output parsing, and validation. Repo policy owns which harness fills each worker slot plus optional model and effort overrides; omitted model and effort values resolve through the dispatch registry defaults for the selected harness.
 
 Woof is one of the tools a project composes, and it owns neither the other tools nor the choice of them. A project composes a host-level worktree engine and an SDLC delivery tool; Woof is one such delivery tool, selected per run. It runs against whatever checkout it is pointed at and neither creates nor manages worktrees - the worktree engine provisions those and runs the project's registered lifecycle commands, orchestrated by the project's task runner; in Profile A the worktree is that engine's, never Woof's (ADR-015). External issue ingestion is upstream of Woof's intake: Woof decomposes an already-local epic or `work_units[]` backlog, it does not pull issues. The tools never call each other; the project composes them.
 
@@ -175,11 +175,11 @@ Repo policy is stored in `.woof/policy.toml` and declares:
 - project verification command;
 - default base branch and GitHub repo;
 - ready label and merge path groups;
-- producer/reviewer run profile: slot -> harness/model/effort;
+- producer/reviewer run profile: slot -> harness, optional model, optional effort;
 - deterministic check floor;
 - cartography floor.
 
-`policy.toml` is the single authority for delivery profile, producer/reviewer run profile (harness, model, effort), check floor, and cartography floor. Routing and run profiles are declared here and nowhere else. Other `.woof/` files own only their own bounded scope and never re-declare routing: `prerequisites.toml` owns host/tool/cartography prerequisite details, and `quality-gates.toml` owns named gate commands.
+`policy.toml` is the single authority for delivery profile, producer/reviewer run profile (harness plus optional model and effort overrides), check floor, and cartography floor. Routing and run profiles are declared here and nowhere else. Harness, model, and effort vocabulary and defaults resolve through the dispatch registry. Other `.woof/` files own only their own bounded scope and never re-declare routing: `prerequisites.toml` owns host/tool/cartography prerequisite details, and `quality-gates.toml` owns named gate commands.
 
 The cartography floor determines what preflight enforces and what context the engine loads. `none` loads no cartography; `design` loads only the design layer; `lexical` loads the design/AS-IS prose and lexical mechanical layer; `structural` currently reuses the lexical baseline until the structural index implementation lands. Cartography remains a capability of the same engine path:
 

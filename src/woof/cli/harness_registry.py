@@ -31,6 +31,14 @@ class HarnessProfile:
         return self.effort_flag is not None
 
 
+@dataclass(frozen=True)
+class ResolvedHarnessConfig:
+    profile: HarnessProfile
+    harness: str
+    model: str
+    effort: str
+
+
 HARNESS_PROFILES: dict[str, HarnessProfile] = {
     "claude": HarnessProfile(
         name="claude",
@@ -116,29 +124,45 @@ def supported_harnesses() -> tuple[str, ...]:
     return tuple(sorted(HARNESS_PROFILES))
 
 
+def resolve_harness_config(
+    harness: str,
+    *,
+    model: str | None = None,
+    effort: str | None = None,
+) -> ResolvedHarnessConfig:
+    profile = get_profile(harness)
+    resolved_model = profile.default_model if model is None else model
+    resolved_effort = profile.default_effort if effort is None else effort
+    if not profile.supports_effort and resolved_effort:
+        raise HarnessError(f"{profile.name} does not support effort selection")
+    if profile.effort_levels and resolved_effort and resolved_effort not in profile.effort_levels:
+        raise HarnessError(
+            f"{profile.name} effort {resolved_effort!r} is not supported; "
+            f"expected one of {sorted(profile.effort_levels)}"
+        )
+    return ResolvedHarnessConfig(
+        profile=profile,
+        harness=profile.name,
+        model=resolved_model,
+        effort=resolved_effort,
+    )
+
+
 def build_launch_argv(
     harness: str,
     *,
     model: str | None = None,
     effort: str | None = None,
 ) -> list[str]:
-    profile = get_profile(harness)
-    resolved_model = profile.default_model if model is None else model
-    resolved_effort = profile.default_effort if effort is None else effort
-    if (
-        profile.supports_effort
-        and resolved_effort
-        and profile.effort_levels
-        and resolved_effort not in profile.effort_levels
-    ):
-        resolved_effort = profile.default_effort
+    resolved = resolve_harness_config(harness, model=model, effort=effort)
+    profile = resolved.profile
 
     argv = list(profile.base)
-    if profile.model_flag is not None and resolved_model:
+    if profile.model_flag is not None and resolved.model:
         flag, value = profile.model_flag
-        argv.extend([flag, value.format(model=resolved_model)])
-    if profile.effort_flag is not None and resolved_effort:
+        argv.extend([flag, value.format(model=resolved.model)])
+    if profile.effort_flag is not None and resolved.effort:
         flag, value = profile.effort_flag
-        argv.extend([flag, value.format(effort=resolved_effort)])
+        argv.extend([flag, value.format(effort=resolved.effort)])
     argv.extend(profile.trailer)
     return argv

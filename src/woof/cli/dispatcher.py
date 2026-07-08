@@ -24,7 +24,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from woof.cli.harness_registry import build_launch_argv, canonical_harness, get_profile
+from woof.cli.harness_registry import (
+    HarnessError,
+    build_launch_argv,
+    resolve_harness_config,
+)
 from woof.cli.policy import load_policy, policy_path
 from woof.graph.git import current_branch, git_env, head_sha
 from woof.lib.audit_config import load_audit_config
@@ -140,17 +144,7 @@ def artefacts_byte_count(repo_root: Path, artefacts_loaded: list[str]) -> int:
 
 
 def _role_effort(adapter: str, role: dict[str, Any]) -> str | None:
-    effort = role.get("effort")
-    if effort is None:
-        return None
-    effort = str(effort)
-    profile = get_profile(adapter)
-    if profile.effort_levels and effort not in profile.effort_levels:
-        raise DispatchConfigError(
-            f"{profile.name} effort {effort!r} is not supported; "
-            f"expected one of {sorted(profile.effort_levels)}"
-        )
-    return effort
+    return str(role["effort"]) if role.get("effort") is not None else None
 
 
 def _policy_route(repo_root: Path, requested_role: str, route_key: str | None) -> RoleRoute | None:
@@ -180,17 +174,31 @@ def _policy_route(repo_root: Path, requested_role: str, route_key: str | None) -
         raise DispatchConfigError(
             f"policy run profile {profile_name!r}.{slot_name}.harness missing"
         )
-    if not isinstance(model, str) or not model.strip():
-        raise DispatchConfigError(f"policy run profile {profile_name!r}.{slot_name}.model missing")
-    if not isinstance(effort, str) or not effort.strip():
-        raise DispatchConfigError(f"policy run profile {profile_name!r}.{slot_name}.effort missing")
-    canonical = canonical_harness(harness)
-    get_profile(canonical)
+    if model is not None and (not isinstance(model, str) or not model.strip()):
+        raise DispatchConfigError(
+            f"policy run profile {profile_name!r}.{slot_name}.model must be a non-empty string"
+        )
+    if effort is not None and (not isinstance(effort, str) or not effort.strip()):
+        raise DispatchConfigError(
+            f"policy run profile {profile_name!r}.{slot_name}.effort must be a non-empty string"
+        )
+    try:
+        resolved = resolve_harness_config(
+            harness,
+            model=model if isinstance(model, str) else None,
+            effort=effort if isinstance(effort, str) else None,
+        )
+    except HarnessError as exc:
+        raise DispatchConfigError(str(exc)) from exc
     return RoleRoute(
         requested_role=requested_role,
         config_role=slot_name,
-        adapter=canonical,
-        config={"harness": canonical, "model": model, "effort": effort},
+        adapter=resolved.harness,
+        config={
+            "harness": resolved.harness,
+            "model": resolved.model,
+            "effort": resolved.effort,
+        },
         model_profile=profile_name,
         profile_role=slot_name,
         route_key=route_key,
@@ -874,7 +882,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         argv.extend(str(flag) for flag in route.config.get("flags") or [])
         artefacts_loaded = normalise_artefacts_loaded(repo_root, args.artefacts_loaded)
         artefact_bytes = artefacts_byte_count(repo_root, artefacts_loaded)
-    except (DispatchConfigError, ValueError) as exc:
+    except (DispatchConfigError, HarnessError, ValueError) as exc:
         sys.stderr.write(f"woof: {exc}\n")
         return 2
 

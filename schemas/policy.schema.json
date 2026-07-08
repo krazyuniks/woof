@@ -230,7 +230,7 @@
     "run_profile_slot": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["harness", "model", "effort"],
+      "required": ["harness"],
       "properties": {
         "harness": {
           "type": "string",
@@ -239,12 +239,13 @@
         },
         "model": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "description": "Optional model override for this harness. When omitted, the dispatch harness registry supplies the harness default."
         },
         "effort": {
           "type": "string",
           "minLength": 1,
-          "description": "Harness-specific reasoning effort. The dispatch harness registry owns the accepted levels."
+          "description": "Optional harness-specific reasoning effort override. When omitted, the dispatch harness registry supplies the harness default and validates supplied levels."
         },
         "notes": {
           "type": "string"

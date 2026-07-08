@@ -145,7 +145,7 @@ work_units:
 - id: sibling-conflict-fail-closed
   title: Shared-file sibling conflicts fail closed to a human gate
   kind: build
-  state: todo
+  state: done
   priority: high
   summary: Implement the ADR-016 sibling-conflict policy on the serial merge queue.
     No automatic semantic reapplication; conflicts halt to a durable, resumable human

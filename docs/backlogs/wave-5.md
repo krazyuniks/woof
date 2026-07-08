@@ -168,7 +168,7 @@ work_units:
 - id: harness-override-registry-resolution
   title: Resolve runner-level harness overrides through the dispatch registry
   kind: build
-  state: todo
+  state: done
   priority: high
   summary: Harness selection and any runner-level harness override resolve through
     the single dispatch registry with reset-and-validate semantics.

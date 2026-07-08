@@ -112,13 +112,13 @@ work_units:
   - id: runner-loop-absorption
     title: Absorb VaultForeman runner loop and profiles
     kind: build
-    state: todo
+    state: done
     priority: high
     summary: Bring dependency draining, profile A/B delivery, usage telemetry, review cache, and serial merge coordination into Woof. Deploy-aware merge pacing is carved out to `deploy-aware-merge-coordinator`.
     deps: [schema-unification, policy-model, warm-session-seam]
     acceptance:
       - Work units run in dependency order with blocked/downstream reporting, consuming the aggregate's validated topological order rather than re-deriving it; cross-aggregate sequencing is out of the aggregate's scope.
-      - Profile A publishes ready pull requests and serially merges the ready queue as deploy-aware transactions.
+      - Profile A publishes ready pull requests and serially merges the ready queue; deploy-aware merge pacing is carved out to `deploy-aware-merge-coordinator`.
       - Partial-merge reconciliation records already-merged units before halting on any later terminal failure.
       - "Shared-file sibling conflicts fail closed: the merge queue halts to a durable human gate with already-merged siblings reconciled per PR, the conflicting PR left ready with its branch unmodified (rebase aborted cleanly, no force-push of half-rebased state), the queue resumable, and a rerun producing no duplicate work. No automatic semantic reapplication. Resolution is an explicit audited engine action -- a human reconciles in the worktree and re-pushes with a full gate and fresh-review rerun on the final diff, or the unit returns to production against moved main, or it is withdrawn; no path merges without gate and review rerun. Detection triggers: a coordinator rebase of a ready PR fails to apply cleanly; mergeability settles CONFLICTING after bounded settle-retry; required checks or the gate fail after a clean rebase on a PR whose paths intersect a sibling merged since that PR's base. Queued-sibling overlap never pre-empts; transient UNKNOWN/UNSTABLE gets bounded settle-retry, not a halt."
       - Runner absorption preserves project-owned producer/reviewer slot selection and engine-owned harness adapters, execution, parsing, and validation.
@@ -156,7 +156,7 @@ work_units:
   - id: engine-neutral-consumer-policy
     title: Engine-neutral consumer delivery policy
     kind: build
-    state: todo
+    state: done
     priority: high
     summary: A consumer repo declares its delivery policy once in a form both VaultForeman and Woof honour; engine selection is a per-run choice and no consumer is coupled to a specific engine. This removes the migration framing between the two runners and resolves the `lane_plan.py` / `lane_launcher.py` design call.
     deps: [config-routing-ssot]

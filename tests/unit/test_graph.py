@@ -3211,6 +3211,10 @@ def test_profile_a_publish_pushes_branch_opens_pr_labels_ready_and_records_metad
         capture_output=True,
         text=True,
     ).stdout.strip()
+    remote = tmp_path / "remote.git"
+    _git(tmp_path, "init", "--bare", str(remote), check=True, capture_output=True)
+    _git(tmp_path, "remote", "add", "origin", str(remote), check=True, capture_output=True)
+    _git(tmp_path, "push", "-u", "origin", f"HEAD:{base_branch}", check=True, capture_output=True)
     _git(tmp_path, "checkout", "-b", "S1", check=True, capture_output=True)
     _write_profile_a_policy(tmp_path, base_branch=base_branch, ready_label="ready-to-merge")
     directory = _write_ready_commit_state(
@@ -3321,6 +3325,10 @@ def test_profile_a_publish_withholds_ready_label_when_gate_is_not_green(
         capture_output=True,
         text=True,
     ).stdout.strip()
+    remote = tmp_path / "remote.git"
+    _git(tmp_path, "init", "--bare", str(remote), check=True, capture_output=True)
+    _git(tmp_path, "remote", "add", "origin", str(remote), check=True, capture_output=True)
+    _git(tmp_path, "push", "-u", "origin", f"HEAD:{base_branch}", check=True, capture_output=True)
     _git(tmp_path, "checkout", "-b", "S1", check=True, capture_output=True)
     _write_profile_a_policy(tmp_path, base_branch=base_branch)
     directory = _write_ready_commit_state(tmp_path, 1)
@@ -3356,6 +3364,84 @@ def test_profile_a_publish_withholds_ready_label_when_gate_is_not_green(
     )
 
     assert output.status == NodeStatus.COMPLETED
+
+
+def test_profile_a_publish_failure_deletes_new_remote_branch_and_rolls_back_done_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _init_git_repo(tmp_path)
+    base_branch = _git(
+        tmp_path,
+        "branch",
+        "--show-current",
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    remote = tmp_path / "remote.git"
+    _git(tmp_path, "init", "--bare", str(remote), check=True, capture_output=True)
+    _git(tmp_path, "remote", "add", "origin", str(remote), check=True, capture_output=True)
+    _git(tmp_path, "push", "-u", "origin", f"HEAD:{base_branch}", check=True, capture_output=True)
+    _git(tmp_path, "checkout", "-b", "S1", check=True, capture_output=True)
+    _write_profile_a_policy(tmp_path, base_branch=base_branch)
+    directory = _write_ready_commit_state(tmp_path, 1)
+    plan = json.loads((directory / "plan.json").read_text())
+    plan["work_units"][0]["state"] = "in_progress"
+    (directory / "plan.json").write_text(json.dumps(plan))
+    _pin_ready_commit_verified_tree(tmp_path, directory)
+    head_before = _git(
+        tmp_path,
+        "rev-parse",
+        "HEAD",
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    monkeypatch.setattr(nodes, "gh_pr_for_branch", lambda *_args, **_kwargs: None)
+
+    def fail_open_pr(*_args: object, **_kwargs: object) -> int:
+        raise subprocess.CalledProcessError(1, ["gh", "pr", "create"], stderr="gh rejected")
+
+    monkeypatch.setattr(nodes, "gh_open_pr", fail_open_pr)
+
+    with pytest.raises(subprocess.CalledProcessError):
+        nodes.commit_node(
+            NodeInput(
+                node_type=NodeType.COMMIT,
+                epic_id=1,
+                work_unit_id="S1",
+                repo_root=tmp_path,
+            )
+        )
+
+    head_after = _git(
+        tmp_path,
+        "rev-parse",
+        "HEAD",
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    remote_branch = _git(
+        tmp_path,
+        "--git-dir",
+        str(remote),
+        "rev-parse",
+        "--verify",
+        "refs/heads/S1",
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    plan_after = json.loads((directory / "plan.json").read_text())
+    events = [json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines()]
+
+    assert head_after == head_before
+    assert remote_branch.returncode != 0
+    assert plan_after["work_units"][0]["state"] == "in_progress"
+    assert not any(event["event"] == "work_unit_completed" for event in events)
+    assert not any(event["event"] == "profile_a_published" for event in events)
 
 
 def test_profile_b_push_failure_rolls_back_landed_commit_and_done_state(

@@ -2910,6 +2910,71 @@ def _profile_a_pr_body(
     )
 
 
+def _profile_a_remote_branch_head(repo_root: Path, settings: ProfileAPublishSettings) -> str | None:
+    proc = git(
+        repo_root,
+        "ls-remote",
+        "--heads",
+        settings.remote,
+        settings.head_branch,
+        check=False,
+    )
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()
+        raise StageStateError(f"Profile A remote branch lookup failed: {detail}")
+    line = next((line for line in proc.stdout.splitlines() if line.strip()), "")
+    if not line:
+        return None
+    fields = line.split()
+    return fields[0] if fields else None
+
+
+def _fetch_profile_a_remote_branch(
+    repo_root: Path, settings: ProfileAPublishSettings, remote_head: str
+) -> str:
+    remote_ref = f"refs/remotes/{settings.remote}/{settings.head_branch}"
+    git(
+        repo_root,
+        "fetch",
+        settings.remote,
+        f"refs/heads/{settings.head_branch}:{remote_ref}",
+    )
+    fetched = git(repo_root, "rev-parse", remote_ref).stdout.strip()
+    if fetched != remote_head:
+        raise StageStateError(
+            "Profile A remote branch moved while snapshotting "
+            f"{settings.head_branch}: {remote_head} -> {fetched}"
+        )
+    return remote_ref
+
+
+def _restore_profile_a_remote_branch(
+    repo_root: Path,
+    settings: ProfileAPublishSettings,
+    *,
+    prior_head: str | None,
+    prior_ref: str | None,
+) -> None:
+    if prior_head is None:
+        git(repo_root, "push", settings.remote, "--delete", settings.head_branch)
+        return
+    if prior_ref is None:
+        raise StageStateError(
+            f"Profile A cannot restore {settings.head_branch}; no prior ref was fetched"
+        )
+    current = _profile_a_remote_branch_head(repo_root, settings)
+    if current is None:
+        git(repo_root, "push", settings.remote, f"{prior_ref}:refs/heads/{settings.head_branch}")
+        return
+    git(
+        repo_root,
+        "push",
+        f"--force-with-lease={settings.head_branch}:{current}",
+        settings.remote,
+        f"{prior_ref}:refs/heads/{settings.head_branch}",
+    )
+
+
 def _publish_profile_a_transaction(
     inp: NodeInput,
     *,
@@ -2939,54 +3004,78 @@ def _publish_profile_a_transaction(
         published_head=published_head,
     )
 
-    git(inp.repo_root, "push", settings.remote, f"HEAD:{settings.head_branch}")
-    pr_number = gh_pr_for_branch(
-        settings.github_repo,
-        settings.head_branch,
-        base=settings.base_branch,
+    prior_remote_head = _profile_a_remote_branch_head(inp.repo_root, settings)
+    prior_remote_ref = (
+        _fetch_profile_a_remote_branch(inp.repo_root, settings, prior_remote_head)
+        if prior_remote_head is not None
+        else None
     )
-    if pr_number is None:
-        pr_number = gh_open_pr(
+    pushed_remote = False
+    try:
+        git(inp.repo_root, "push", settings.remote, f"HEAD:{settings.head_branch}")
+        pushed_remote = True
+        pr_number = gh_pr_for_branch(
             settings.github_repo,
-            head=settings.head_branch,
+            settings.head_branch,
             base=settings.base_branch,
-            title=title,
-            body=body,
         )
+        if pr_number is None:
+            pr_number = gh_open_pr(
+                settings.github_repo,
+                head=settings.head_branch,
+                base=settings.base_branch,
+                title=title,
+                body=body,
+            )
 
-    merge_eligible = _profile_a_merge_eligible(
-        inp.repo_root, inp.epic_id, work_unit.id, check_result
-    )
-    append_epic_event(
-        inp.repo_root,
-        inp.epic_id,
-        {
-            "event": "profile_a_published",
-            "at": _now(),
-            "epic_id": inp.epic_id,
-            "work_unit_id": work_unit.id,
-            "issue_number": inp.epic_id,
-            "github_repo": settings.github_repo,
-            "head": settings.head_branch,
-            "base": settings.base_branch,
-            "pr_number": pr_number,
-            "initial_head": published_head,
-            "verified_tree": verified_tree,
-            "verified_paths": verified_paths,
-            "merge_eligible": merge_eligible,
-        },
-    )
-    git(inp.repo_root, "add", "--", f".woof/epics/E{inp.epic_id}/epic.jsonl")
-    git(inp.repo_root, "commit", "--amend", "--no-edit")
-    git(
-        inp.repo_root,
-        "push",
-        f"--force-with-lease={settings.head_branch}:{published_head}",
-        settings.remote,
-        f"HEAD:{settings.head_branch}",
-    )
-    if merge_eligible:
-        gh_add_label(settings.github_repo, pr_number, settings.ready_label)
+        merge_eligible = _profile_a_merge_eligible(
+            inp.repo_root, inp.epic_id, work_unit.id, check_result
+        )
+        append_epic_event(
+            inp.repo_root,
+            inp.epic_id,
+            {
+                "event": "profile_a_published",
+                "at": _now(),
+                "epic_id": inp.epic_id,
+                "work_unit_id": work_unit.id,
+                "issue_number": inp.epic_id,
+                "github_repo": settings.github_repo,
+                "head": settings.head_branch,
+                "base": settings.base_branch,
+                "pr_number": pr_number,
+                "initial_head": published_head,
+                "verified_tree": verified_tree,
+                "verified_paths": verified_paths,
+                "merge_eligible": merge_eligible,
+            },
+        )
+        git(inp.repo_root, "add", "--", f".woof/epics/E{inp.epic_id}/epic.jsonl")
+        git(inp.repo_root, "commit", "--amend", "--no-edit")
+        git(
+            inp.repo_root,
+            "push",
+            f"--force-with-lease={settings.head_branch}:{published_head}",
+            settings.remote,
+            f"HEAD:{settings.head_branch}",
+        )
+        if merge_eligible:
+            gh_add_label(settings.github_repo, pr_number, settings.ready_label)
+    except Exception as exc:
+        if not pushed_remote:
+            raise
+        try:
+            _restore_profile_a_remote_branch(
+                inp.repo_root,
+                settings,
+                prior_head=prior_remote_head,
+                prior_ref=prior_remote_ref,
+            )
+        except Exception as rollback_exc:
+            raise RuntimeError(
+                f"Profile A publish failed and remote branch rollback failed: {rollback_exc}"
+            ) from exc
+        raise
 
 
 def _profile_b_push_target(repo_root: Path) -> str | None:

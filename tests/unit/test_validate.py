@@ -155,6 +155,22 @@ def test_validate_policy_accepts_selected_delivery_profile(
     assert "valid (policy)" in proc.stdout
 
 
+def test_validate_policy_accepts_review_size_threshold(tmp_path: Path, run_woof) -> None:
+    path = tmp_path / "policy.toml"
+    path.write_text(
+        _policy_toml(profile="B")
+        + """
+[checks.review_size]
+max_non_generated_changed_lines = 500
+"""
+    )
+
+    proc = run_woof("validate", str(path))
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "valid (policy)" in proc.stdout
+
+
 def test_validate_policy_rejects_missing_selected_profile_block(tmp_path: Path, run_woof) -> None:
     path = tmp_path / "policy.toml"
     path.write_text(_policy_toml(profile="A").replace("[profiles.A]", "[profiles.B]"))

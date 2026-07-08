@@ -50,5 +50,8 @@ floor = [
   "review-valve",
 ]
 
+[checks.review_size]
+max_non_generated_changed_lines = 500
+
 [cartography]
 floor = "structural"

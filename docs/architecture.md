@@ -259,6 +259,7 @@ The deterministic gate floor runs before LLM review. Policy and epic content dec
 - path/scope checks;
 - contract-trace checks when trace fields exist;
 - cartography checks when policy requires cartography;
+- review-size checks when `.woof/policy.toml` declares `[checks.review_size]`, counting only non-generated staged changed lines against the policy threshold while reporting excluded generated paths;
 - conformance audit when policy requires it;
 - publish/merge safety checks.
 

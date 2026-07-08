@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,14 +23,32 @@ from woof.graph.state import TERMINAL_WORK_UNIT_STATES
 
 CHECK_ID = "check_9_review_valve"
 CONFIG_PATH = ".woof/agents.toml"
+POLICY_PATH = ".woof/policy.toml"
 DEFAULT_EVERY_N_WORK_UNITS = 5
 DEFAULT_END_OF_EPIC = True
+KNOWN_GENERATED_PATHS = {
+    ".woof/codebase/files.txt",
+    ".woof/codebase/freshness.json",
+    ".woof/codebase/tags",
+}
+KNOWN_GENERATED_PREFIXES = (".woof/codebase/structural/",)
 
 
 @dataclass(frozen=True)
 class _ReviewConfig:
     every_n_work_units: int
     end_of_epic: bool
+
+
+@dataclass(frozen=True)
+class _ReviewSizeConfig:
+    max_non_generated_changed_lines: int
+
+
+@dataclass(frozen=True)
+class _DiffStat:
+    path: str
+    changed_lines: int
 
 
 @dataclass(frozen=True)
@@ -93,9 +112,15 @@ def check_9_review_valve_runner(ctx: CheckContext) -> CheckOutcome:
             summary=f"minor findings through {ctx.work_unit_id} have already been review-gated",
         )
 
+    review_size = _review_size_outcome(ctx)
+    if isinstance(review_size, CheckOutcome) and not review_size.ok:
+        return review_size
+
     periodic_due = completed_count % config.every_n_work_units == 0
     end_due = config.end_of_epic and _is_end_of_epic(work_units, ctx.work_unit_id)
     if not periodic_due and not end_due:
+        if review_size is not None:
+            return review_size
         return CheckOutcome(
             id=CHECK_ID,
             ok=True,
@@ -202,6 +227,220 @@ def _load_config(path: Path) -> _ReviewConfig | CheckOutcome:
         )
 
     return _ReviewConfig(every_n_work_units=every_n, end_of_epic=end_of_epic)
+
+
+def _review_size_outcome(ctx: CheckContext) -> CheckOutcome | None:
+    config = _load_review_size_config(ctx.repo_root / POLICY_PATH, ctx.repo_root)
+    if config is None or isinstance(config, CheckOutcome):
+        return config
+
+    diff_stats = _staged_diff_stats(ctx.repo_root)
+    if isinstance(diff_stats, CheckOutcome):
+        return diff_stats
+
+    attrs = _linguist_generated_paths(ctx.repo_root, [stat.path for stat in diff_stats])
+    if isinstance(attrs, CheckOutcome):
+        return attrs
+
+    counted = 0
+    excluded = 0
+    counted_lines: list[str] = []
+    excluded_lines: list[str] = []
+    paths: list[str] = []
+
+    for stat in diff_stats:
+        paths.append(stat.path)
+        reason = _generated_reason(ctx.repo_root, stat.path, attrs)
+        if reason is not None:
+            excluded += stat.changed_lines
+            excluded_lines.append(
+                f"{stat.path}: {stat.changed_lines} generated changed line(s) excluded ({reason})"
+            )
+            continue
+        counted += stat.changed_lines
+        counted_lines.append(f"{stat.path}: {stat.changed_lines} non-generated changed line(s)")
+
+    threshold = config.max_non_generated_changed_lines
+    evidence_lines = counted_lines + excluded_lines
+    if counted > threshold:
+        return CheckOutcome(
+            id=CHECK_ID,
+            ok=False,
+            severity="minor",
+            summary=(
+                f"review-size guard due at {ctx.work_unit_id}; "
+                f"{counted} non-generated changed line(s) exceed policy threshold {threshold}"
+            ),
+            evidence="\n".join(evidence_lines) if evidence_lines else None,
+            paths=sorted(paths),
+            command="git diff --cached --numstat --",
+        )
+
+    if excluded:
+        summary = (
+            f"review-size guard below threshold: {counted} non-generated changed line(s) "
+            f"(policy threshold {threshold}); excluded {excluded} generated changed line(s)"
+        )
+    else:
+        summary = (
+            f"review-size guard below threshold: {counted} non-generated changed line(s) "
+            f"(policy threshold {threshold})"
+        )
+    return CheckOutcome(
+        id=CHECK_ID,
+        ok=True,
+        severity="info",
+        summary=summary,
+        evidence="\n".join(excluded_lines) if excluded_lines else None,
+        paths=sorted(paths),
+        command="git diff --cached --numstat --",
+    )
+
+
+def _load_review_size_config(
+    path: Path, repo_root: Path
+) -> _ReviewSizeConfig | CheckOutcome | None:
+    if not path.exists():
+        return None
+    try:
+        with path.open("rb") as fh:
+            data = tomllib.load(fh)
+    except tomllib.TOMLDecodeError as exc:
+        return CheckOutcome(
+            id=CHECK_ID,
+            ok=False,
+            severity="blocker",
+            summary=f"malformed policy config: TOML parse error: {exc}",
+            paths=[str(path.relative_to(repo_root))],
+        )
+
+    checks = data.get("checks")
+    if not isinstance(checks, dict):
+        return None
+    review_size = checks.get("review_size")
+    if review_size is None:
+        return None
+    if not isinstance(review_size, dict):
+        return CheckOutcome(
+            id=CHECK_ID,
+            ok=False,
+            severity="blocker",
+            summary="malformed policy config: checks.review_size must be a table",
+            paths=[str(path.relative_to(repo_root))],
+        )
+    threshold = review_size.get("max_non_generated_changed_lines")
+    if type(threshold) is not int or threshold < 1:
+        return CheckOutcome(
+            id=CHECK_ID,
+            ok=False,
+            severity="blocker",
+            summary=(
+                "malformed policy config: "
+                "checks.review_size.max_non_generated_changed_lines must be an integer >= 1"
+            ),
+            paths=[str(path.relative_to(repo_root))],
+        )
+    return _ReviewSizeConfig(max_non_generated_changed_lines=threshold)
+
+
+def _staged_diff_stats(repo_root: Path) -> list[_DiffStat] | CheckOutcome:
+    proc = subprocess.run(
+        ["git", "diff", "--cached", "--numstat", "--"],
+        cwd=repo_root,
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    if proc.returncode != 0:
+        return CheckOutcome(
+            id=CHECK_ID,
+            ok=False,
+            severity="blocker",
+            summary="failed to read staged diff size",
+            evidence=proc.stderr.strip() or None,
+            command="git diff --cached --numstat --",
+            exit_code=proc.returncode,
+        )
+
+    stats: list[_DiffStat] = []
+    for line in proc.stdout.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 3:
+            continue
+        added, deleted, path = parts[0], parts[1], parts[2]
+        changed_lines = (int(added) if added.isdigit() else 0) + (
+            int(deleted) if deleted.isdigit() else 0
+        )
+        stats.append(_DiffStat(path=path, changed_lines=changed_lines))
+    return stats
+
+
+def _linguist_generated_paths(repo_root: Path, paths: list[str]) -> set[str] | CheckOutcome:
+    if not paths:
+        return set()
+    proc = subprocess.run(
+        ["git", "check-attr", "-z", "linguist-generated", "--", *paths],
+        cwd=repo_root,
+        capture_output=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return CheckOutcome(
+            id=CHECK_ID,
+            ok=False,
+            severity="blocker",
+            summary="failed to read linguist-generated attributes",
+            evidence=proc.stderr.decode(errors="replace").strip() or None,
+            command="git check-attr -z linguist-generated -- <staged paths>",
+            exit_code=proc.returncode,
+        )
+
+    generated: set[str] = set()
+    parts = [part.decode(errors="replace") for part in proc.stdout.split(b"\0") if part]
+    for index in range(0, len(parts) - 2, 3):
+        path, _attr, value = parts[index], parts[index + 1], parts[index + 2]
+        if value in {"set", "true"}:
+            generated.add(path)
+    return generated
+
+
+def _generated_reason(repo_root: Path, path: str, linguist_generated: set[str]) -> str | None:
+    if path in linguist_generated:
+        return "linguist-generated"
+    if path in KNOWN_GENERATED_PATHS or path.startswith(KNOWN_GENERATED_PREFIXES):
+        return "known generated artefact"
+    if _has_generated_header(repo_root, path):
+        return "generated header"
+    return None
+
+
+def _has_generated_header(repo_root: Path, path: str) -> bool:
+    text = _git_blob_text(repo_root, f":{path}")
+    if text is None:
+        text = _git_blob_text(repo_root, f"HEAD:{path}")
+    if text is None:
+        return False
+
+    header = "\n".join(text.splitlines()[:5]).lower()
+    return (
+        "@generated" in header
+        or "code generated" in header
+        or "auto-generated" in header
+        or "autogenerated" in header
+        or ("generated" in header and "do not edit" in header)
+    )
+
+
+def _git_blob_text(repo_root: Path, revision: str) -> str | None:
+    proc = subprocess.run(
+        ["git", "show", revision],
+        cwd=repo_root,
+        capture_output=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return None
+    return proc.stdout[:8192].decode(errors="replace")
 
 
 def _completed_count_through_boundary(work_units: list[Any], current_work_unit_id: str) -> int:

@@ -95,6 +95,18 @@
           "uniqueItems": true,
           "items": { "$ref": "#/$defs/check_id" },
           "description": "Deterministic checks required before graph-owned publish or commit."
+        },
+        "review_size": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["max_non_generated_changed_lines"],
+          "properties": {
+            "max_non_generated_changed_lines": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Enable the review-size guard and open a review gate when staged non-generated changed lines exceed this threshold. Generated files are excluded from this count but reported explicitly."
+            }
+          }
         }
       }
     },

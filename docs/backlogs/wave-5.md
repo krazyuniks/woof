@@ -191,7 +191,7 @@ work_units:
 - id: engine-neutral-consumer-policy
   title: Engine-neutral consumer delivery policy
   kind: build
-  state: todo
+  state: done
   priority: high
   summary: A consumer repo declares its delivery policy once in a form both VaultForeman
     and Woof honour; engine selection is a per-run choice and no consumer is coupled

@@ -24,6 +24,8 @@ MergeAction = Literal[
 
 _TRANSIENT_MERGEABILITY = {"UNKNOWN", "UNSTABLE"}
 _MERGEABLE = {"CLEAN", "HAS_HOOKS", "MERGEABLE"}
+_MERGE_MATCH_HEAD_ATTEMPTS = 5
+_MERGE_MATCH_HEAD_INTERVAL_S = 3.0
 
 
 @dataclass(frozen=True)
@@ -220,6 +222,8 @@ class SerialMergeCoordinator:
         remote: str = "origin",
         mergeability_attempts: int = 5,
         mergeability_interval_s: float = 3.0,
+        merge_attempts: int = _MERGE_MATCH_HEAD_ATTEMPTS,
+        merge_interval_s: float = _MERGE_MATCH_HEAD_INTERVAL_S,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self.repo_root = repo_root
@@ -234,6 +238,8 @@ class SerialMergeCoordinator:
         self.remote = remote
         self.mergeability_attempts = max(1, mergeability_attempts)
         self.mergeability_interval_s = mergeability_interval_s
+        self.merge_attempts = max(1, merge_attempts)
+        self.merge_interval_s = merge_interval_s
         self.sleep = sleep
         self._marked_done: set[str] = set()
         self._recorded_outcomes: set[tuple[str, int, MergeAction]] = set()
@@ -306,13 +312,7 @@ class SerialMergeCoordinator:
                 )
 
             try:
-                self.github.squash_merge(
-                    self.repo_slug,
-                    pr.pr_number,
-                    rebased_head,
-                    subject=f"{pr.work_unit_id}: merge PR #{pr.pr_number}",
-                    body=f"Refs #{pr.pr_number}",
-                )
+                self._squash_merge_settled(pr, repo, rebased_head)
             except subprocess.CalledProcessError as exc:
                 self._halt(
                     ordered,
@@ -321,7 +321,7 @@ class SerialMergeCoordinator:
                         pr.work_unit_id,
                         pr.pr_number,
                         "merge_failed",
-                        f"merge command failed: {exc}",
+                        f"merge command failed after {self.merge_attempts} attempt(s): {exc}",
                         terminal=True,
                     ),
                 )
@@ -345,6 +345,25 @@ class SerialMergeCoordinator:
             if attempt < self.mergeability_attempts - 1:
                 self.sleep(self.mergeability_interval_s)
         return "transient"
+
+    def _squash_merge_settled(self, pr: ReadyPullRequest, repo: Path, rebased_head: str) -> None:
+        """Squash-merge after bounded settle-retry for GitHub head-view lag."""
+
+        for attempt in range(self.merge_attempts):
+            try:
+                self.github.squash_merge(
+                    self.repo_slug,
+                    pr.pr_number,
+                    rebased_head,
+                    subject=f"{pr.work_unit_id}: merge PR #{pr.pr_number}",
+                    body=f"Refs #{pr.pr_number}",
+                )
+                return
+            except subprocess.CalledProcessError:
+                if attempt == self.merge_attempts - 1:
+                    raise
+                self.sleep(self.merge_interval_s)
+                self.git.fetch(repo, self.remote)
 
     def _pr_already_merged(self, pr: ReadyPullRequest) -> bool:
         return self.github.is_pr_merged(self.repo_slug, pr.pr_number)

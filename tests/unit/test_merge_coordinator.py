@@ -41,6 +41,7 @@ class FakeGithub:
     mergeability: dict[int, list[str]]
     already_merged: set[int] = field(default_factory=set)
     fail_merge_for: set[int] = field(default_factory=set)
+    transient_merge_failures: dict[int, int] = field(default_factory=dict)
     calls: list[str] = field(default_factory=list)
 
     def pr_mergeability(self, repo_slug: str, pr_number: int) -> str:
@@ -56,6 +57,10 @@ class FakeGithub:
     ) -> None:
         self.calls.append(f"merge:{pr_number}:{head_sha}")
         if pr_number in self.fail_merge_for:
+            raise subprocess.CalledProcessError(1, ["gh", "pr", "merge", str(pr_number)])
+        remaining_failures = self.transient_merge_failures.get(pr_number, 0)
+        if remaining_failures > 0:
+            self.transient_merge_failures[pr_number] = remaining_failures - 1
             raise subprocess.CalledProcessError(1, ["gh", "pr", "merge", str(pr_number)])
         self.already_merged.add(pr_number)
 
@@ -368,3 +373,67 @@ def test_unsettled_transient_mergeability_waits_without_halt_or_deploy_pacing(
     assert result.outcomes[0].terminal is False
     assert marked_done == []
     assert "merge:10:rebased-10" not in github.calls
+
+
+def test_transient_squash_merge_refusal_retries_then_merges(tmp_path: Path) -> None:
+    pr = _ready("S1", 10, ready_at="2026-07-08T10:00:00Z")
+    git = FakeGit({10: "rebased-10"})
+    github = FakeGithub({10: ["MERGEABLE"]}, transient_merge_failures={10: 2})
+    sleeps: list[float] = []
+    marked_done: list[str] = []
+
+    coordinator = SerialMergeCoordinator(
+        repo_root=tmp_path,
+        epic_id=5,
+        repo_slug="example/project",
+        base_branch="main",
+        ready_label="ready",
+        git=git,
+        github=github,
+        gate=FakeGate(),
+        mark_done=marked_done.append,
+        merge_attempts=3,
+        merge_interval_s=2.0,
+        sleep=sleeps.append,
+    )
+
+    result = coordinator.process([pr])
+
+    assert result.outcomes[0].action == "merged"
+    assert marked_done == ["S1"]
+    assert github.calls.count("merge:10:rebased-10") == 3
+    assert git.calls.count("fetch:S1:origin") == 3
+    assert sleeps == [2.0, 2.0]
+
+
+def test_persistent_squash_merge_refusal_halts_after_retry_budget(tmp_path: Path) -> None:
+    pr = _ready("S1", 10, ready_at="2026-07-08T10:00:00Z")
+    git = FakeGit({10: "rebased-10"})
+    github = FakeGithub({10: ["MERGEABLE"]}, fail_merge_for={10})
+    sleeps: list[float] = []
+    marked_done: list[str] = []
+
+    coordinator = SerialMergeCoordinator(
+        repo_root=tmp_path,
+        epic_id=5,
+        repo_slug="example/project",
+        base_branch="main",
+        ready_label="ready",
+        git=git,
+        github=github,
+        gate=FakeGate(),
+        mark_done=marked_done.append,
+        merge_attempts=3,
+        merge_interval_s=2.0,
+        sleep=sleeps.append,
+    )
+
+    with pytest.raises(MergeQueueHalt) as excinfo:
+        coordinator.process([pr])
+
+    assert excinfo.value.outcome.action == "merge_failed"
+    assert excinfo.value.outcome.terminal is True
+    assert marked_done == []
+    assert github.calls.count("merge:10:rebased-10") == 3
+    assert git.calls.count("fetch:S1:origin") == 3
+    assert sleeps == [2.0, 2.0]

@@ -183,6 +183,18 @@
           "minimum": 1,
           "description": "Seconds to wait for GitHub mergeability and required-check recompute to settle after main moves, before the next Profile A merge."
         },
+        "merge_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 5,
+          "description": "Maximum squash-merge attempts for a Profile A PR when GitHub has not yet settled the just-pushed head for --match-head-commit."
+        },
+        "merge_interval_s": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 3.0,
+          "description": "Seconds to wait between bounded squash-merge attempts after a transient --match-head-commit refusal."
+        },
         "deploy_wait_timeout": {
           "type": "integer",
           "minimum": 1,

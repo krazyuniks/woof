@@ -672,6 +672,20 @@ def _check_policy_delivery(policy: dict[str, Any]) -> PreflightFinding:
         merge_path_groups = profile_a.get("merge_path_groups")
         if not isinstance(merge_path_groups, list):
             errors.append("profiles.A.merge_path_groups must be an array")
+        merge_attempts = profile_a.get("merge_attempts")
+        if merge_attempts is not None and (
+            not isinstance(merge_attempts, int)
+            or isinstance(merge_attempts, bool)
+            or merge_attempts < 1
+        ):
+            errors.append("profiles.A.merge_attempts must be a positive integer")
+        merge_interval_s = profile_a.get("merge_interval_s")
+        if merge_interval_s is not None and (
+            not isinstance(merge_interval_s, int | float)
+            or isinstance(merge_interval_s, bool)
+            or merge_interval_s <= 0
+        ):
+            errors.append("profiles.A.merge_interval_s must be a positive number")
         worktree = profile_a.get("worktree")
         if not isinstance(worktree, dict):
             errors.append("profiles.A.worktree must be declared")

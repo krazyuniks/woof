@@ -218,8 +218,10 @@ recovery, or engine invocation.
 Profile A merge is a serial transaction queue. After the base branch moves, Woof rebases each ready PR on the
 new tip, reruns the gate before merging, and waits for GitHub mergeability to settle before attempting the merge.
 Transient `UNKNOWN` or `UNSTABLE` mergeability consumes a bounded retry budget and leaves the PR waiting if it
-does not settle; terminal mergeability, gate, or rebase failures halt the queue. Already-merged units are
-reconciled before any later terminal halt is reported.
+does not settle. The squash merge itself is also bounded-retried for GitHub `--match-head-commit` head-view lag
+after the coordinator force-pushes the rebased head, using the Profile A `merge_attempts` and
+`merge_interval_s` policy knobs. Terminal mergeability, gate, rebase, or exhausted merge failures halt the queue.
+Already-merged units are reconciled before any later terminal halt is reported.
 
 Deploy-aware merge pacing is separate from the serial merge queue. The serial queue does not wait for
 deploy-triggering checks between PRs; that policy belongs to the deploy-aware merge coordinator.

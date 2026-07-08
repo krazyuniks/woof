@@ -215,14 +215,14 @@ Before dispatching a ready Profile A unit, Woof runs the Profile A worktree pref
 aggregate. Any worktree anomaly fails closed to a work-unit gate before provisioning, mutation,
 recovery, or engine invocation.
 
-Profile A merge is a deploy-aware transaction queue. After main moves, Woof waits for GitHub mergeability and
-required-check recomputation to settle before attempting the next PR. After each merge, Woof waits for the
-configured deploy-triggering checks to reach a terminal state before merging the next ready PR. Terraform
-state-lock failures are retryable only when the check log proves lock contention; other deploy failures remain
-terminal. Already-merged units are reconciled before any later terminal halt is reported.
+Profile A merge is a serial transaction queue. After the base branch moves, Woof rebases each ready PR on the
+new tip, reruns the gate before merging, and waits for GitHub mergeability to settle before attempting the merge.
+Transient `UNKNOWN` or `UNSTABLE` mergeability consumes a bounded retry budget and leaves the PR waiting if it
+does not settle; terminal mergeability, gate, or rebase failures halt the queue. Already-merged units are
+reconciled before any later terminal halt is reported.
 
-The mergeability-settle and deploy-wait timeouts and the terminal deploy-check set are declared in repo policy;
-preflight fails closed when Profile A deploy-aware merging is active and the deploy-check set is undeclared.
+Deploy-aware merge pacing is separate from the serial merge queue. The serial queue does not wait for
+deploy-triggering checks between PRs; that policy belongs to the deploy-aware merge coordinator.
 Shared-file sibling conflicts fail closed to a human gate with no automatic reapplication (ADR-016).
 
 ## 9. State and Audit

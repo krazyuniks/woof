@@ -9,12 +9,6 @@ executor:
   project: woof
   timeouts:
     produce_timeout_min: 180
-  drain:
-    merge_after_ready_pr: false
-    rerun_after_merge: true
-    mark_unit_done_after_publish: true
-    commit_backlog_state: true
-    stop_when_no_eligible_units: true
 work_units:
 - id: policy-model
   title: Move project policy into repo-local Woof config
@@ -27,14 +21,14 @@ work_units:
   kind: build
   state: done
   priority: high
-  summary: Policy-declared worktree root and engine; deterministic unit-to-path derivation;
+  summary: Policy-declared worktree root; deterministic unit-to-path derivation;
     fail-closed preflight validation of provisioned worktrees. Woof discovers and
     validates, never provisions. Fully specified by ADR-015 plus the policy.schema.json
     worktree block.
   deps:
   - policy-model
   acceptance:
-  - Policy declares the worktree root and the engine identity that provisions worktrees.
+  - Policy declares the worktree root and unit-to-path derivation without naming the provider that provisions worktrees.
   - Unit-to-path derivation is deterministic (root plus work_unit_id, or an explicit
     per-unit map in the run manifest) and recorded in run metadata.
   - Preflight validates every ready unit's worktree -- it exists, is a linked worktree

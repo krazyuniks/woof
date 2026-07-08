@@ -100,7 +100,6 @@ terminal_deploy_checks = []
 
 [profiles.A.worktree]
 root = "worktrees"
-engine = "vf-worktree"
 """
         if profile == "A"
         else """\
@@ -139,6 +138,13 @@ floor = ["quality-gates"]
 
 [cartography]
 floor = "none"
+
+[drain]
+merge_after_ready_pr = true
+rerun_after_merge = true
+mark_unit_done_after_publish = true
+commit_backlog_state = true
+stop_when_no_eligible_units = true
 """
 
 
@@ -169,6 +175,43 @@ max_non_generated_changed_lines = 500
 
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "valid (policy)" in proc.stdout
+
+
+def test_validate_policy_accepts_native_drain_contract(tmp_path: Path, run_woof) -> None:
+    path = tmp_path / "policy.toml"
+    path.write_text(_policy_toml(profile="B"))
+
+    proc = run_woof("validate", str(path))
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "valid (policy)" in proc.stdout
+
+
+def test_validate_policy_requires_native_drain_contract(tmp_path: Path, run_woof) -> None:
+    path = tmp_path / "policy.toml"
+    path.write_text(_policy_toml(profile="B").split("\n[drain]\n", maxsplit=1)[0])
+
+    proc = run_woof("validate", str(path))
+
+    assert proc.returncode == 1
+    assert "INVALID" in proc.stdout
+    assert "must have required property 'drain'" in proc.stdout
+
+
+def test_validate_policy_rejects_engine_bound_worktree_config(tmp_path: Path, run_woof) -> None:
+    path = tmp_path / "policy.toml"
+    path.write_text(
+        _policy_toml(profile="A").replace(
+            'root = "worktrees"\n',
+            'root = "worktrees"\nengine = "vault-foreman"\n',
+        )
+    )
+
+    proc = run_woof("validate", str(path))
+
+    assert proc.returncode == 1
+    assert "INVALID" in proc.stdout
+    assert "must NOT have additional properties" in proc.stdout
 
 
 def test_validate_policy_rejects_missing_selected_profile_block(tmp_path: Path, run_woof) -> None:
@@ -259,7 +302,6 @@ def _minimal_backlog() -> dict:
             "contract_version": 1,
             "project": "woof",
             "timeouts": {"produce_timeout_min": 180},
-            "drain": {"merge_after_ready_pr": True},
         },
         "work_units": [
             {
@@ -289,6 +331,19 @@ def test_validate_real_backlog_accepts_document_executor(run_woof) -> None:
 def test_validate_backlog_rejects_per_unit_wave_field(tmp_path: Path, run_woof) -> None:
     payload = _minimal_backlog()
     payload["work_units"][0]["wave"] = 1
+    path = tmp_path / "backlog.md"
+    _write_front_matter(path, payload)
+
+    proc = run_woof("validate", str(path))
+
+    assert proc.returncode == 1
+    assert "INVALID" in proc.stdout
+    assert "must NOT have additional properties" in proc.stdout
+
+
+def test_validate_backlog_rejects_executor_drain_policy(tmp_path: Path, run_woof) -> None:
+    payload = _minimal_backlog()
+    payload["executor"]["drain"] = {"merge_after_ready_pr": True}
     path = tmp_path / "backlog.md"
     _write_front_matter(path, payload)
 

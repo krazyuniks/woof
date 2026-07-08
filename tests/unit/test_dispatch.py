@@ -96,6 +96,13 @@ floor = ["quality-gates"]
 
 [cartography]
 floor = "none"
+
+[drain]
+merge_after_ready_pr = true
+rerun_after_merge = true
+mark_unit_done_after_publish = true
+commit_backlog_state = true
+stop_when_no_eligible_units = true
 """
     )
 
@@ -139,7 +146,6 @@ merge_path_groups = []
 
 [profiles.A.worktree]
 root = "worktrees"
-engine = "vf-worktree"
 
 [verification]
 command = "just check"
@@ -159,6 +165,13 @@ floor = ["quality-gates"]
 
 [cartography]
 floor = "none"
+
+[drain]
+merge_after_ready_pr = true
+rerun_after_merge = true
+mark_unit_done_after_publish = true
+commit_backlog_state = true
+stop_when_no_eligible_units = true
 """
     )
     (epic_dir / "plan.json").write_text(
@@ -197,7 +210,6 @@ floor = "none"
     assert payload["run_id"] == run_id
     assert payload["worktrees"] == {
         "derivation": "unit_id",
-        "engine": "vf-worktree",
         "root": "worktrees",
         "unit_paths": {"S1": "worktrees/S1", "S2": "worktrees/S2"},
     }

@@ -699,10 +699,9 @@ def _check_policy_delivery(policy: dict[str, Any]) -> PreflightFinding:
         if not isinstance(worktree, dict):
             errors.append("profiles.A.worktree must be declared")
         else:
-            for key in ("root", "engine"):
-                value = worktree.get(key)
-                if not isinstance(value, str) or not value.strip():
-                    errors.append(f"profiles.A.worktree.{key} must be declared")
+            value = worktree.get("root")
+            if not isinstance(value, str) or not value.strip():
+                errors.append("profiles.A.worktree.root must be declared")
             derivation = worktree.get("derivation", "unit_id")
             if derivation not in {"unit_id", "manifest_map"}:
                 errors.append("profiles.A.worktree.derivation must be unit_id or manifest_map")
@@ -915,13 +914,7 @@ def _check_profile_a_worktrees_for_plans(
     if not isinstance(worktree, dict) or not isinstance(delivery, dict):
         return []
     root = worktree.get("root")
-    engine = worktree.get("engine")
-    if (
-        not isinstance(root, str)
-        or not root.strip()
-        or not isinstance(engine, str)
-        or not engine.strip()
-    ):
+    if not isinstance(root, str) or not root.strip():
         return []
 
     raw_derivation = worktree.get("derivation")

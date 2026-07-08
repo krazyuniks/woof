@@ -13,7 +13,8 @@
     "default_run_profile",
     "run_profiles",
     "checks",
-    "cartography"
+    "cartography",
+    "drain"
   ],
   "properties": {
     "schema_version": {
@@ -121,6 +122,10 @@
           "description": "Minimum cartography floor preflight enforces and the graph may load."
         }
       }
+    },
+    "drain": {
+      "$ref": "#/$defs/drain",
+      "description": "Woof-native drain semantics shared by Woof and transitional consumers such as VaultForeman."
     }
   },
   "allOf": [
@@ -285,22 +290,45 @@
     "worktree": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["root", "engine"],
+      "required": ["root"],
       "properties": {
         "root": {
           "$ref": "#/$defs/portable_path",
-          "description": "Directory under which the project's worktree engine provisions per-work-unit worktrees. Woof discovers and fail-closed-validates; it never provisions, mutates, destroys, or invokes the engine (ADR-015)."
+          "description": "Directory under which the consumer's per-run worktree provider places per-work-unit worktrees. Woof discovers and fail-closed-validates; it never provisions, mutates, destroys, or invokes that provider (ADR-015)."
         },
         "derivation": {
           "type": "string",
           "enum": ["unit_id", "manifest_map"],
           "default": "unit_id",
-          "description": "Unit-to-path derivation: root plus work_unit_id, or an explicit per-unit map the task runner records in the run manifest when the engine owns path allocation."
+          "description": "Unit-to-path derivation: root plus work_unit_id, or an explicit per-unit map the task runner records in the run manifest when the per-run worktree provider owns path allocation."
+        }
+      }
+    },
+    "drain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "merge_after_ready_pr",
+        "rerun_after_merge",
+        "mark_unit_done_after_publish",
+        "commit_backlog_state",
+        "stop_when_no_eligible_units"
+      ],
+      "properties": {
+        "merge_after_ready_pr": {
+          "type": "boolean"
         },
-        "engine": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Informational identity of the host-level worktree engine that provisions worktrees. Recorded for audit; not an invokable command. Woof never calls it."
+        "rerun_after_merge": {
+          "type": "boolean"
+        },
+        "mark_unit_done_after_publish": {
+          "type": "boolean"
+        },
+        "commit_backlog_state": {
+          "type": "boolean"
+        },
+        "stop_when_no_eligible_units": {
+          "type": "boolean"
         }
       }
     }

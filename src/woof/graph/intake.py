@@ -232,8 +232,7 @@ def _worktree_metadata(
     if not isinstance(worktree, dict):
         return None
     root = _string(worktree.get("root"))
-    engine = _string(worktree.get("engine"))
-    if not root or not engine:
+    if not root:
         return None
     derivation = _string(worktree.get("derivation")) or "unit_id"
     unit_ids = [unit.id for unit in plan.work_units]
@@ -245,7 +244,6 @@ def _worktree_metadata(
 
     return {
         "derivation": derivation,
-        "engine": engine,
         "root": root,
         "unit_paths": {
             unit_id: unit_paths[unit_id] for unit_id in unit_ids if unit_id in unit_paths

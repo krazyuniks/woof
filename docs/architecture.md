@@ -174,12 +174,14 @@ Repo policy is stored in `.woof/policy.toml` and declares:
 - repo root and toolchain root;
 - project verification command;
 - default base branch and GitHub repo;
+- Profile A worktree root and derivation when Profile A is selected;
 - ready label and merge path groups;
 - producer/reviewer run profile: slot -> harness, optional model, optional effort;
 - deterministic check floor;
-- cartography floor.
+- cartography floor;
+- native drain semantics shared by Woof and transitional drain consumers.
 
-`policy.toml` is the single authority for delivery profile, producer/reviewer run profile (harness plus optional model and effort overrides), check floor, and cartography floor. Routing and run profiles are declared here and nowhere else. Harness, model, and effort vocabulary and defaults resolve through the dispatch registry. Other `.woof/` files own only their own bounded scope and never re-declare routing: `prerequisites.toml` owns host/tool/cartography prerequisite details, and `quality-gates.toml` owns named gate commands.
+`policy.toml` is the single authority for delivery profile, producer/reviewer run profile (harness plus optional model and effort overrides), check floor, cartography floor, and drain semantics. Routing and run profiles are declared here and nowhere else. Harness, model, and effort vocabulary and defaults resolve through the dispatch registry. Other `.woof/` files own only their own bounded scope and never re-declare routing: `prerequisites.toml` owns host/tool/cartography prerequisite details, `quality-gates.toml` owns named gate commands, and transitional backlog executor metadata never carries drain policy.
 
 The cartography floor determines what preflight enforces and what context the engine loads. `none` loads no cartography; `design` loads only the design layer; `lexical` loads the design/AS-IS prose and lexical mechanical layer; `structural` currently reuses the lexical baseline until the structural index implementation lands. Cartography remains a capability of the same engine path:
 

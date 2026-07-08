@@ -277,6 +277,13 @@ floor = [
 
 [cartography]
 floor = "design"
+
+[drain]
+merge_after_ready_pr = false
+rerun_after_merge = true
+mark_unit_done_after_publish = true
+commit_backlog_state = true
+stop_when_no_eligible_units = true
 """
 
 QUALITY_GATES_TEMPLATE = """\

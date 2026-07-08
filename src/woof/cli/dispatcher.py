@@ -591,18 +591,12 @@ def _profile_a_run_worktrees(repo_root: Path, epic_dir: Path) -> dict[str, Any] 
     if not isinstance(worktree, dict):
         return None
     root = worktree.get("root")
-    engine = worktree.get("engine")
-    if (
-        not isinstance(root, str)
-        or not root.strip()
-        or not isinstance(engine, str)
-        or not engine.strip()
-    ):
+    if not isinstance(root, str) or not root.strip():
         return None
     derivation = (
         worktree.get("derivation") if isinstance(worktree.get("derivation"), str) else "unit_id"
     )
-    metadata = {"derivation": derivation, "engine": engine, "root": root}
+    metadata = {"derivation": derivation, "root": root}
     if derivation != "unit_id":
         return metadata
     unit_ids = _plan_work_unit_ids(epic_dir / "plan.json")

@@ -84,6 +84,13 @@ floor = [
 
 [cartography]
 floor = "structural"
+
+[drain]
+merge_after_ready_pr = true
+rerun_after_merge = true
+mark_unit_done_after_publish = true
+commit_backlog_state = true
+stop_when_no_eligible_units = true
 """
 
 POLICY_NO_CARTOGRAPHY = STANDARD_POLICY.replace('floor = "structural"', 'floor = "none"')
@@ -112,7 +119,6 @@ merge_path_groups = []
 
 [profiles.A.worktree]
 root = "worktrees"
-engine = "vf-worktree"
 """,
 )
 
@@ -519,7 +525,7 @@ timeout_seconds = 30
     assert "harness=claude" in reviewer_route["detail"]
 
 
-def test_profile_a_policy_requires_worktree_root_and_engine() -> None:
+def test_profile_a_policy_requires_worktree_root() -> None:
     from woof.cli.preflight import _check_policy_delivery
 
     policy = json.loads(
@@ -643,7 +649,6 @@ def test_profile_a_worktree_preflight_fails_closed_on_anomalies(tmp_path: Path) 
                 "worktrees": {
                     "derivation": "manifest_map",
                     "root": "worktrees",
-                    "engine": "vf-worktree",
                     "unit_paths": {"S1": "worktrees/shared", "S2": "worktrees/shared"},
                 }
             }
@@ -652,8 +657,8 @@ def test_profile_a_worktree_preflight_fails_closed_on_anomalies(tmp_path: Path) 
     )
     policy = _load_policy_toml(
         PROFILE_A_POLICY.replace(
-            'engine = "vf-worktree"\n',
-            'engine = "vf-worktree"\nderivation = "manifest_map"\n',
+            'root = "worktrees"\n',
+            'root = "worktrees"\nderivation = "manifest_map"\n',
         )
     )
 
@@ -744,7 +749,6 @@ def test_profile_a_worktree_preflight_fails_closed_for_foreign_repo_worktree(
                 "worktrees": {
                     "derivation": "manifest_map",
                     "root": "worktrees",
-                    "engine": "vf-worktree",
                     "unit_paths": {"S1": "foreign"},
                 }
             }
@@ -753,8 +757,8 @@ def test_profile_a_worktree_preflight_fails_closed_for_foreign_repo_worktree(
     )
     policy = _load_policy_toml(
         PROFILE_A_POLICY.replace(
-            'engine = "vf-worktree"\n',
-            'engine = "vf-worktree"\nderivation = "manifest_map"\n',
+            'root = "worktrees"\n',
+            'root = "worktrees"\nderivation = "manifest_map"\n',
         )
     )
 

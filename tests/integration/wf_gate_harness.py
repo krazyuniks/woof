@@ -568,6 +568,13 @@ floor = [
 
 [cartography]
 floor = "structural"
+
+[drain]
+merge_after_ready_pr = true
+rerun_after_merge = true
+mark_unit_done_after_publish = true
+commit_backlog_state = true
+stop_when_no_eligible_units = true
 """,
         encoding="utf-8",
     )

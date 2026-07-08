@@ -443,6 +443,7 @@ EXPECTED_GATE_TRIGGERS = {
     "tracker_sync_conflict",
     "github_sync_conflict",
     "head_branch_drift",
+    "sibling_conflict",
     "course_correction",
     "run_resilience",
     "manual",

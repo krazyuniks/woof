@@ -56,12 +56,13 @@
           "tracker_sync_conflict",
           "github_sync_conflict",
           "head_branch_drift",
+          "sibling_conflict",
           "course_correction",
           "run_resilience",
           "manual"
         ]
       },
-      "description": "Reasons the gate opened. plan_review fires automatically at Stage 4. readiness_unready opens the Stage-2.5 readiness gate when the deterministic contract-readiness node finds EPIC.md not ready for planning. readiness_escalation is the same gate type but signals that the configured escalation threshold of failed readiness cycles has been reached; it resolves through the same verbs as readiness_unready (approve_with_reason, revise_epic_contract, abandon_epic). check_1_quality_gates..check_9_review_valve map to the work-unit check registry. empty_diff_review opens when a work unit finishes with no diff. Graph-level: subprocess_crash (producer process exited non-zero), subprocess_aborted (SIGTERM/timeout), executor_aborted (producer wrote outcome=aborted_with_position), reviewer_unreachable (reviewer route exited before producing critique), incomplete_stage_state (required Stage-5 handoff artefact is missing or malformed). schema_validation_failed when planning self-validation exhausts the 2-attempt cap. tracker_sync_conflict when an issue-tracker push detects remote changes (github_sync_conflict retained as a legacy alias). manual for human-opened gates."
+      "description": "Reasons the gate opened. plan_review fires automatically at Stage 4. readiness_unready opens the Stage-2.5 readiness gate when the deterministic contract-readiness node finds EPIC.md not ready for planning. readiness_escalation is the same gate type but signals that the configured escalation threshold of failed readiness cycles has been reached; it resolves through the same verbs as readiness_unready (approve_with_reason, revise_epic_contract, abandon_epic). check_1_quality_gates..check_9_review_valve map to the work-unit check registry. empty_diff_review opens when a work unit finishes with no diff. Graph-level: subprocess_crash (producer process exited non-zero), subprocess_aborted (SIGTERM/timeout), executor_aborted (producer wrote outcome=aborted_with_position), reviewer_unreachable (reviewer route exited before producing critique), incomplete_stage_state (required Stage-5 handoff artefact is missing or malformed). schema_validation_failed when planning self-validation exhausts the 2-attempt cap. tracker_sync_conflict when an issue-tracker push detects remote changes (github_sync_conflict retained as a legacy alias). sibling_conflict when the Profile A merge coordinator detects an ADR-016 shared-file sibling conflict and fails closed to a work-unit gate. manual for human-opened gates."
     },
     "timestamp": {
       "type": "string",

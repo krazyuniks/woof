@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -34,6 +35,19 @@ class FakeGit:
         self, repo: Path, remote: str, branch: str, expected_sha: str
     ) -> None:
         self.calls.append(f"push:{branch}:{expected_sha}")
+
+    def restore_original_head(self, repo: Path, pr: ReadyPullRequest) -> None:
+        self.calls.append(f"restore-head:{pr.work_unit_id}:{pr.head_sha}")
+
+    def restore_remote_branch(
+        self,
+        repo: Path,
+        remote: str,
+        branch: str,
+        original_sha: str,
+        expected_remote_sha: str,
+    ) -> None:
+        self.calls.append(f"restore-branch:{branch}:{original_sha}:{expected_remote_sha}")
 
 
 @dataclass
@@ -85,6 +99,7 @@ def _ready(
     *,
     ready_at: str,
     head_sha: str | None = None,
+    changed_paths: tuple[str, ...] = (),
 ) -> ReadyPullRequest:
     return ReadyPullRequest(
         work_unit_id=work_unit_id,
@@ -94,7 +109,15 @@ def _ready(
         head_sha=head_sha or f"old-{pr_number}",
         worktree=Path(f"/tmp/{work_unit_id}"),
         ready_at=ready_at,
+        changed_paths=changed_paths,
     )
+
+
+def _sibling_conflict_events(repo_root: Path) -> list[dict[str, object]]:
+    corpus = repo_root / ".woof" / "sibling-conflicts.jsonl"
+    if not corpus.exists():
+        return []
+    return [json.loads(line) for line in corpus.read_text().splitlines() if line.strip()]
 
 
 def test_ready_queue_rebases_gates_merges_and_marks_done_in_fifo_order(tmp_path: Path) -> None:
@@ -252,6 +275,161 @@ def test_rebase_conflict_halts_without_gate_head_or_force_push(tmp_path: Path) -
     assert gate.calls == []
     assert "mergeability:10" not in github.calls
     assert "merge:10:rebased-10" not in github.calls
+
+
+def test_rebase_conflict_opens_durable_sibling_gate_and_is_idempotent(
+    tmp_path: Path,
+) -> None:
+    pr = _ready("S1", 10, ready_at="2026-07-08T10:00:00Z")
+    marked_done: list[str] = []
+
+    for _ in range(2):
+        coordinator = SerialMergeCoordinator(
+            repo_root=tmp_path,
+            epic_id=5,
+            repo_slug="example/project",
+            base_branch="main",
+            ready_label="ready",
+            git=FakeGit({10: "rebased-10"}, fail_rebase_for={10}),
+            github=FakeGithub({10: ["MERGEABLE"]}),
+            gate=FakeGate(),
+            mark_done=marked_done.append,
+            sleep=lambda _seconds: None,
+        )
+        with pytest.raises(MergeQueueHalt):
+            coordinator.process([pr])
+
+    gate_path = tmp_path / ".woof" / "epics" / "E5" / "gate.md"
+    assert gate_path.exists()
+    gate_text = gate_path.read_text()
+    assert "sibling_conflict" in gate_text
+    assert "work_unit_id: S1" in gate_text
+
+    epic_events = [
+        json.loads(line)
+        for line in (tmp_path / ".woof" / "epics" / "E5" / "epic.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    assert [event["event"] for event in epic_events] == ["work_unit_gate_opened"]
+
+    events = _sibling_conflict_events(tmp_path)
+    assert len(events) == 1
+    assert events[0]["detection_trigger"] == "rebase_conflict"
+    assert events[0]["resolution_outcome"] == "human_gate_opened"
+    assert marked_done == []
+
+
+def test_conflicting_mergeability_restores_branch_and_opens_sibling_gate(
+    tmp_path: Path,
+) -> None:
+    first = _ready("S1", 10, ready_at="2026-07-08T10:00:00Z")
+    second = _ready("S2", 11, ready_at="2026-07-08T10:01:00Z")
+    git = FakeGit({11: "rebased-11"})
+    github = FakeGithub({11: ["UNKNOWN", "CONFLICTING"]}, already_merged={10})
+    marked_done: list[str] = []
+
+    coordinator = SerialMergeCoordinator(
+        repo_root=tmp_path,
+        epic_id=5,
+        repo_slug="example/project",
+        base_branch="main",
+        ready_label="ready",
+        git=git,
+        github=github,
+        gate=FakeGate(),
+        mark_done=marked_done.append,
+        mergeability_attempts=2,
+        sleep=lambda _seconds: None,
+    )
+
+    with pytest.raises(MergeQueueHalt) as excinfo:
+        coordinator.process([second, first])
+
+    assert marked_done == ["S1"]
+    assert excinfo.value.outcome.action == "mergeability_failed"
+    assert "restore-branch:S2:old-11:rebased-11" in git.calls
+    assert "merge:11:rebased-11" not in github.calls
+    assert _sibling_conflict_events(tmp_path)[0]["detection_trigger"] == (
+        "mergeability_conflicting"
+    )
+
+
+def test_gate_failure_with_merged_sibling_path_overlap_opens_sibling_gate(
+    tmp_path: Path,
+) -> None:
+    first = _ready(
+        "S1",
+        10,
+        ready_at="2026-07-08T10:00:00Z",
+        changed_paths=("src/shared.py",),
+    )
+    second = _ready(
+        "S2",
+        11,
+        ready_at="2026-07-08T10:01:00Z",
+        changed_paths=("src/shared.py", "tests/test_shared.py"),
+    )
+    git = FakeGit({11: "rebased-11"})
+    github = FakeGithub({11: ["MERGEABLE"]}, already_merged={10})
+
+    coordinator = SerialMergeCoordinator(
+        repo_root=tmp_path,
+        epic_id=5,
+        repo_slug="example/project",
+        base_branch="main",
+        ready_label="ready",
+        git=git,
+        github=github,
+        gate=FakeGate(failing={11}),
+        mark_done=lambda _work_unit_id: None,
+        sleep=lambda _seconds: None,
+    )
+
+    with pytest.raises(MergeQueueHalt) as excinfo:
+        coordinator.process([second, first])
+
+    assert excinfo.value.outcome.action == "gate_failed"
+    assert "restore-head:S2:old-11" in git.calls
+    assert "push:S2:old-11" not in git.calls
+    event = _sibling_conflict_events(tmp_path)[0]
+    assert event["detection_trigger"] == "gate_failed_after_rebase"
+    assert event["overlapping_paths"] == ["src/shared.py"]
+    assert event["merged_siblings"] == [{"work_unit_id": "S1", "pr_number": 10}]
+
+
+def test_queued_sibling_path_overlap_does_not_preempt_merge(tmp_path: Path) -> None:
+    first = _ready(
+        "S1",
+        10,
+        ready_at="2026-07-08T10:00:00Z",
+        changed_paths=("src/shared.py",),
+    )
+    second = _ready(
+        "S2",
+        11,
+        ready_at="2026-07-08T10:01:00Z",
+        changed_paths=("src/shared.py",),
+    )
+    git = FakeGit({10: "rebased-10", 11: "rebased-11"})
+    github = FakeGithub({10: ["MERGEABLE"], 11: ["MERGEABLE"]})
+
+    coordinator = SerialMergeCoordinator(
+        repo_root=tmp_path,
+        epic_id=5,
+        repo_slug="example/project",
+        base_branch="main",
+        ready_label="ready",
+        git=git,
+        github=github,
+        gate=FakeGate(),
+        mark_done=lambda _work_unit_id: None,
+        sleep=lambda _seconds: None,
+    )
+
+    result = coordinator.process([second, first])
+
+    assert [outcome.action for outcome in result.outcomes] == ["merged", "merged"]
+    assert not _sibling_conflict_events(tmp_path)
 
 
 def test_unknown_and_unstable_mergeability_settle_with_bounded_retry(tmp_path: Path) -> None:

@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Protocol
 
+from woof.gate.write import iso_utc, write_gate
 from woof.graph.git import git, git_env, head_sha
 
 MergeAction = Literal[
@@ -26,6 +27,8 @@ _TRANSIENT_MERGEABILITY = {"UNKNOWN", "UNSTABLE"}
 _MERGEABLE = {"CLEAN", "HAS_HOOKS", "MERGEABLE"}
 _MERGE_MATCH_HEAD_ATTEMPTS = 5
 _MERGE_MATCH_HEAD_INTERVAL_S = 3.0
+_SIBLING_CONFLICT_TRIGGER = "sibling_conflict"
+_MERGED_ACTIONS: set[MergeAction] = {"merged", "already_merged"}
 
 
 @dataclass(frozen=True)
@@ -39,6 +42,7 @@ class ReadyPullRequest:
     head_sha: str
     worktree: Path
     ready_at: str
+    changed_paths: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -73,6 +77,17 @@ class GitMergeOps(Protocol):
 
     def force_push_with_lease(
         self, repo: Path, remote: str, branch: str, expected_sha: str
+    ) -> None: ...
+
+    def restore_original_head(self, repo: Path, pr: ReadyPullRequest) -> None: ...
+
+    def restore_remote_branch(
+        self,
+        repo: Path,
+        remote: str,
+        branch: str,
+        original_sha: str,
+        expected_remote_sha: str,
     ) -> None: ...
 
 
@@ -113,6 +128,26 @@ class DefaultGitMergeOps:
             repo,
             "push",
             f"--force-with-lease={branch}:{expected_sha}",
+            remote,
+            f"HEAD:{branch}",
+        )
+
+    def restore_original_head(self, repo: Path, pr: ReadyPullRequest) -> None:
+        git(repo, "reset", "--hard", pr.head_sha)
+
+    def restore_remote_branch(
+        self,
+        repo: Path,
+        remote: str,
+        branch: str,
+        original_sha: str,
+        expected_remote_sha: str,
+    ) -> None:
+        git(repo, "reset", "--hard", original_sha)
+        git(
+            repo,
+            "push",
+            f"--force-with-lease={branch}:{expected_remote_sha}",
             remote,
             f"HEAD:{branch}",
         )
@@ -258,7 +293,7 @@ class SerialMergeCoordinator:
             repo = pr.worktree
             self.git.fetch(repo, self.remote)
             if not self.git.rebase(repo, f"{self.remote}/{pr.base_ref or self.base_branch}", pr):
-                self._halt(
+                self._halt_sibling_conflict(
                     ordered,
                     outcomes,
                     MergeOutcome(
@@ -268,9 +303,29 @@ class SerialMergeCoordinator:
                         "rebase onto the moved base conflicted",
                         terminal=True,
                     ),
+                    detection_trigger="rebase_conflict",
                 )
 
             if not self.gate(pr):
+                merged_siblings, overlapping_paths = self._merged_siblings_overlapping(
+                    pr, outcomes, ordered
+                )
+                if merged_siblings:
+                    self.git.restore_original_head(repo, pr)
+                    self._halt_sibling_conflict(
+                        ordered,
+                        outcomes,
+                        MergeOutcome(
+                            pr.work_unit_id,
+                            pr.pr_number,
+                            "gate_failed",
+                            "gate failed after rebase on paths touched by merged sibling(s)",
+                            terminal=True,
+                        ),
+                        detection_trigger="gate_failed_after_rebase",
+                        merged_siblings=merged_siblings,
+                        overlapping_paths=overlapping_paths,
+                    )
                 self._halt(
                     ordered,
                     outcomes,
@@ -298,6 +353,26 @@ class SerialMergeCoordinator:
                     ),
                 )
                 return MergeQueueResult(outcomes)
+            if mergeability == "CONFLICTING":
+                self.git.restore_remote_branch(
+                    repo,
+                    self.remote,
+                    pr.head_ref,
+                    pr.head_sha,
+                    rebased_head,
+                )
+                self._halt_sibling_conflict(
+                    ordered,
+                    outcomes,
+                    MergeOutcome(
+                        pr.work_unit_id,
+                        pr.pr_number,
+                        "mergeability_failed",
+                        "mergeability settled CONFLICTING after rebase",
+                        terminal=True,
+                    ),
+                    detection_trigger="mergeability_conflicting",
+                )
             if mergeability != "mergeable":
                 self._halt(
                     ordered,
@@ -384,6 +459,36 @@ class SerialMergeCoordinator:
                     self._mark_done(pr, "already_merged", "PR is already merged"),
                 )
 
+    def _merged_siblings_overlapping(
+        self,
+        pr: ReadyPullRequest,
+        outcomes: list[MergeOutcome],
+        prs: list[ReadyPullRequest],
+    ) -> tuple[list[ReadyPullRequest], list[str]]:
+        if not pr.changed_paths:
+            return [], []
+
+        merged_by_id = {
+            outcome.work_unit_id
+            for outcome in outcomes
+            if outcome.action in _MERGED_ACTIONS and outcome.work_unit_id != pr.work_unit_id
+        }
+        prs_by_id = {candidate.work_unit_id: candidate for candidate in prs}
+        merged_siblings: list[ReadyPullRequest] = []
+        overlapping_paths: set[str] = set()
+        changed_paths = set(pr.changed_paths)
+        for work_unit_id in merged_by_id:
+            sibling = prs_by_id.get(work_unit_id)
+            if sibling is None:
+                continue
+            overlap = changed_paths.intersection(sibling.changed_paths)
+            if not overlap:
+                continue
+            merged_siblings.append(sibling)
+            overlapping_paths.update(overlap)
+        merged_siblings.sort(key=lambda sibling: (sibling.ready_at, sibling.pr_number))
+        return merged_siblings, sorted(overlapping_paths)
+
     def _append_outcome(self, outcomes: list[MergeOutcome], outcome: MergeOutcome) -> None:
         key = (outcome.work_unit_id, outcome.pr_number, outcome.action)
         if key in self._recorded_outcomes:
@@ -400,3 +505,136 @@ class SerialMergeCoordinator:
         self._reconcile_merged(prs, outcomes)
         self._append_outcome(outcomes, outcome)
         raise MergeQueueHalt(outcome, outcomes)
+
+    def _halt_sibling_conflict(
+        self,
+        prs: list[ReadyPullRequest],
+        outcomes: list[MergeOutcome],
+        outcome: MergeOutcome,
+        *,
+        detection_trigger: str,
+        merged_siblings: list[ReadyPullRequest] | None = None,
+        overlapping_paths: list[str] | None = None,
+    ) -> None:
+        self._reconcile_merged(prs, outcomes)
+        merged_siblings = merged_siblings or self._merged_siblings_for(outcome, outcomes, prs)
+        overlapping_paths = overlapping_paths or self._overlapping_paths(
+            outcome, merged_siblings, prs
+        )
+        self._open_sibling_conflict_gate(outcome, detection_trigger)
+        self._record_sibling_conflict(
+            outcome,
+            detection_trigger=detection_trigger,
+            merged_siblings=merged_siblings,
+            overlapping_paths=overlapping_paths,
+        )
+        self._append_outcome(outcomes, outcome)
+        raise MergeQueueHalt(outcome, outcomes)
+
+    def _merged_siblings_for(
+        self,
+        outcome: MergeOutcome,
+        outcomes: list[MergeOutcome],
+        prs: list[ReadyPullRequest],
+    ) -> list[ReadyPullRequest]:
+        merged_by_id = {
+            prior.work_unit_id
+            for prior in outcomes
+            if prior.action in _MERGED_ACTIONS and prior.work_unit_id != outcome.work_unit_id
+        }
+        siblings = [pr for pr in prs if pr.work_unit_id in merged_by_id]
+        return sorted(siblings, key=lambda sibling: (sibling.ready_at, sibling.pr_number))
+
+    def _overlapping_paths(
+        self,
+        outcome: MergeOutcome,
+        merged_siblings: list[ReadyPullRequest],
+        prs: list[ReadyPullRequest],
+    ) -> list[str]:
+        pr = next(
+            (candidate for candidate in prs if candidate.work_unit_id == outcome.work_unit_id), None
+        )
+        if pr is None or not pr.changed_paths:
+            return []
+        changed_paths = set(pr.changed_paths)
+        overlap: set[str] = set()
+        for sibling in merged_siblings:
+            overlap.update(changed_paths.intersection(sibling.changed_paths))
+        return sorted(overlap)
+
+    def _open_sibling_conflict_gate(self, outcome: MergeOutcome, detection_trigger: str) -> None:
+        epic_dir = self.repo_root / ".woof" / "epics" / f"E{self.epic_id}"
+        gate_path = epic_dir / "gate.md"
+        if self._same_sibling_conflict_gate_is_open(gate_path, outcome):
+            return
+        epic_dir.mkdir(parents=True, exist_ok=True)
+        write_gate(
+            epic_dir=epic_dir,
+            work_unit_id=outcome.work_unit_id,
+            triggered_by=[_SIBLING_CONFLICT_TRIGGER],
+            position_text=(
+                f"Profile A merge halted for PR #{outcome.pr_number}: {outcome.detail}.\n\n"
+                f"Detection trigger: {detection_trigger}.\n\n"
+                "Do not automatically reapply the change. Resolve by reconciling the "
+                "worktree and re-pushing through the full gate and fresh review, returning "
+                "the unit to production against moved main, or withdrawing it."
+            ),
+            validate=False,
+            gate_type="work_unit_gate",
+        )
+
+    def _same_sibling_conflict_gate_is_open(self, gate_path: Path, outcome: MergeOutcome) -> bool:
+        if not gate_path.exists():
+            return False
+        text = gate_path.read_text()
+        return _SIBLING_CONFLICT_TRIGGER in text and f"work_unit_id: {outcome.work_unit_id}" in text
+
+    def _record_sibling_conflict(
+        self,
+        outcome: MergeOutcome,
+        *,
+        detection_trigger: str,
+        merged_siblings: list[ReadyPullRequest],
+        overlapping_paths: list[str],
+    ) -> None:
+        corpus_path = self.repo_root / ".woof" / "sibling-conflicts.jsonl"
+        event = {
+            "event": "sibling_conflict_detected",
+            "at": iso_utc(),
+            "epic_id": self.epic_id,
+            "work_unit_id": outcome.work_unit_id,
+            "pr_number": outcome.pr_number,
+            "action": outcome.action,
+            "detection_trigger": detection_trigger,
+            "resolution_outcome": "human_gate_opened",
+            "merged_siblings": [
+                {"work_unit_id": sibling.work_unit_id, "pr_number": sibling.pr_number}
+                for sibling in merged_siblings
+            ],
+            "overlapping_paths": overlapping_paths,
+        }
+        if self._sibling_conflict_record_exists(corpus_path, event):
+            return
+        corpus_path.parent.mkdir(parents=True, exist_ok=True)
+        with corpus_path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(event, separators=(",", ":")) + "\n")
+
+    def _sibling_conflict_record_exists(self, corpus_path: Path, event: dict) -> bool:
+        if not corpus_path.exists():
+            return False
+        for line in corpus_path.read_text().splitlines():
+            if not line.strip():
+                continue
+            try:
+                existing = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if (
+                existing.get("event") == event["event"]
+                and existing.get("epic_id") == event["epic_id"]
+                and existing.get("work_unit_id") == event["work_unit_id"]
+                and existing.get("pr_number") == event["pr_number"]
+                and existing.get("detection_trigger") == event["detection_trigger"]
+            ):
+                return True
+        return False

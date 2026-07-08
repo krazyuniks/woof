@@ -225,7 +225,10 @@ Already-merged units are reconciled before any later terminal halt is reported.
 
 Deploy-aware merge pacing is separate from the serial merge queue. The serial queue does not wait for
 deploy-triggering checks between PRs; that policy belongs to the deploy-aware merge coordinator.
-Shared-file sibling conflicts fail closed to a human gate with no automatic reapplication (ADR-016).
+Shared-file sibling conflicts fail closed to a human gate with no automatic reapplication (ADR-016). Ready PR
+metadata carries the changed paths needed to classify a gate failure after clean rebase as a sibling conflict.
+Detected sibling conflicts open a work-unit gate and append an idempotent corpus record to
+`.woof/sibling-conflicts.jsonl`.
 
 ## 9. State and Audit
 

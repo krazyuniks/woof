@@ -334,7 +334,10 @@ class SerialMergeCoordinator:
 
     def _settle_mergeability(self, pr: ReadyPullRequest) -> Literal["mergeable", "transient"] | str:
         for attempt in range(self.mergeability_attempts):
-            state = self.github.pr_mergeability(self.repo_slug, pr.pr_number).upper()
+            try:
+                state = self.github.pr_mergeability(self.repo_slug, pr.pr_number).upper()
+            except subprocess.CalledProcessError:
+                state = "UNKNOWN"
             if state in _MERGEABLE:
                 return "mergeable"
             if state not in _TRANSIENT_MERGEABILITY:

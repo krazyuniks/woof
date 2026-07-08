@@ -46,9 +46,10 @@ class FakeGithub:
     def pr_mergeability(self, repo_slug: str, pr_number: int) -> str:
         self.calls.append(f"mergeability:{pr_number}")
         values = self.mergeability.setdefault(pr_number, ["MERGEABLE"])
-        if len(values) == 1:
-            return values[0]
-        return values.pop(0)
+        value = values[0] if len(values) == 1 else values.pop(0)
+        if value == "RAISE":
+            raise subprocess.CalledProcessError(1, ["gh", "pr", "view", str(pr_number)])
+        return value
 
     def squash_merge(
         self, repo_slug: str, pr_number: int, head_sha: str, *, subject: str, body: str
@@ -275,6 +276,67 @@ def test_unknown_and_unstable_mergeability_settle_with_bounded_retry(tmp_path: P
     assert result.outcomes[0].action == "merged"
     assert github.calls.count("mergeability:10") == 3
     assert sleeps == [2.0, 2.0]
+
+
+def test_mergeability_command_failure_consumes_retry_budget_then_merges(
+    tmp_path: Path,
+) -> None:
+    pr = _ready("S1", 10, ready_at="2026-07-08T10:00:00Z")
+    git = FakeGit({10: "rebased-10"})
+    github = FakeGithub({10: ["RAISE", "MERGEABLE"]})
+    sleeps: list[float] = []
+
+    coordinator = SerialMergeCoordinator(
+        repo_root=tmp_path,
+        epic_id=5,
+        repo_slug="example/project",
+        base_branch="main",
+        ready_label="ready",
+        git=git,
+        github=github,
+        gate=FakeGate(),
+        mark_done=lambda _work_unit_id: None,
+        mergeability_attempts=2,
+        mergeability_interval_s=2.0,
+        sleep=sleeps.append,
+    )
+
+    result = coordinator.process([pr])
+
+    assert result.outcomes[0].action == "merged"
+    assert github.calls.count("mergeability:10") == 2
+    assert sleeps == [2.0]
+
+
+def test_persistent_mergeability_command_failure_waits_after_reconciling_prior_merge(
+    tmp_path: Path,
+) -> None:
+    first = _ready("S1", 10, ready_at="2026-07-08T10:00:00Z")
+    second = _ready("S2", 11, ready_at="2026-07-08T10:01:00Z")
+    git = FakeGit({11: "rebased-11"})
+    github = FakeGithub({11: ["RAISE"]}, already_merged={10})
+    marked_done: list[str] = []
+
+    coordinator = SerialMergeCoordinator(
+        repo_root=tmp_path,
+        epic_id=5,
+        repo_slug="example/project",
+        base_branch="main",
+        ready_label="ready",
+        git=git,
+        github=github,
+        gate=FakeGate(),
+        mark_done=marked_done.append,
+        mergeability_attempts=2,
+        sleep=lambda _seconds: None,
+    )
+
+    result = coordinator.process([second, first])
+
+    assert marked_done == ["S1"]
+    assert [outcome.action for outcome in result.outcomes] == ["already_merged", "waiting"]
+    assert result.outcomes[1].terminal is False
+    assert github.calls.count("mergeability:11") == 2
 
 
 def test_unsettled_transient_mergeability_waits_without_halt_or_deploy_pacing(

@@ -681,6 +681,30 @@ def _check_policy_delivery(policy: dict[str, Any]) -> PreflightFinding:
         merge_path_groups = profile_a.get("merge_path_groups")
         if not isinstance(merge_path_groups, list):
             errors.append("profiles.A.merge_path_groups must be an array")
+        drain_source = policy.get("drain")
+        drain = drain_source if isinstance(drain_source, dict) else {}
+        deploy_aware_merge_active = drain.get("merge_after_ready_pr") is True
+        terminal_deploy_checks = profile_a.get("terminal_deploy_checks")
+        if deploy_aware_merge_active and (
+            not isinstance(terminal_deploy_checks, list)
+            or not terminal_deploy_checks
+            or not all(isinstance(item, str) and item.strip() for item in terminal_deploy_checks)
+        ):
+            errors.append("profiles.A.terminal_deploy_checks must list at least one check")
+        mergeability_settle_timeout = profile_a.get("mergeability_settle_timeout")
+        if deploy_aware_merge_active and (
+            not isinstance(mergeability_settle_timeout, int)
+            or isinstance(mergeability_settle_timeout, bool)
+            or mergeability_settle_timeout < 1
+        ):
+            errors.append("profiles.A.mergeability_settle_timeout must be a positive integer")
+        deploy_wait_timeout = profile_a.get("deploy_wait_timeout")
+        if deploy_aware_merge_active and (
+            not isinstance(deploy_wait_timeout, int)
+            or isinstance(deploy_wait_timeout, bool)
+            or deploy_wait_timeout < 1
+        ):
+            errors.append("profiles.A.deploy_wait_timeout must be a positive integer")
         merge_attempts = profile_a.get("merge_attempts")
         if merge_attempts is not None and (
             not isinstance(merge_attempts, int)

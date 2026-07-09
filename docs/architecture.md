@@ -225,12 +225,17 @@ after the coordinator force-pushes the rebased head, using the Profile A `merge_
 `merge_interval_s` policy knobs. Terminal mergeability, gate, rebase, or exhausted merge failures halt the queue.
 Already-merged units are reconciled before any later terminal halt is reported.
 
-Deploy-aware merge pacing is separate from the serial merge queue. The serial queue does not wait for
-deploy-triggering checks between PRs; that policy belongs to the deploy-aware merge coordinator.
-Shared-file sibling conflicts fail closed to a human gate with no automatic reapplication (ADR-016). Ready PR
-metadata carries the changed paths needed to classify a gate failure after clean rebase as a sibling conflict.
-Detected sibling conflicts open a work-unit gate and append an idempotent corpus record to
-`sibling-conflicts.jsonl` in the project's state root.
+Deploy-aware merge pacing is part of the Profile A merge transaction when policy declares a terminal deploy-check set.
+After the coordinator force-pushes a rebased ready PR, it waits for mergeability and the configured checks to recompute
+to a successful terminal state before merging. After each successful deploy-triggering merge, it waits for those checks
+on the base branch to reach a terminal state before considering the next ready PR. Proved Terraform state-lock contention
+halts safely for operator handling; bounded retry is deferred behind explicit policy. Any unclassified terminal failure
+halts with already-merged units reconciled and the remaining queue resumable.
+
+Shared-file sibling conflicts fail closed to a human gate with no automatic reapplication (ADR-016). Ready PR metadata
+carries the changed paths needed to classify a gate failure after clean rebase as a sibling conflict. Detected sibling
+conflicts open a work-unit gate and append an idempotent corpus record to `sibling-conflicts.jsonl` in the project's
+state root.
 
 ## 9. State and Audit
 

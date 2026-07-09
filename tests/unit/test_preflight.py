@@ -116,6 +116,9 @@ base_branch = "main"
 github_repo = "example/project"
 ready_label = "ready"
 merge_path_groups = []
+terminal_deploy_checks = ["Deploy"]
+mergeability_settle_timeout = 15
+deploy_wait_timeout = 300
 
 [profiles.A.worktree]
 root = "worktrees"
@@ -552,6 +555,20 @@ def test_profile_a_policy_requires_worktree_root() -> None:
 
     assert finding.ok is False
     assert "profiles.A.worktree must be declared" in finding.detail
+
+
+def test_deploy_aware_profile_a_preflight_requires_terminal_deploy_checks() -> None:
+    from woof.cli.preflight import _check_policy_delivery
+
+    policy = _load_policy_toml(
+        PROFILE_A_POLICY.replace('terminal_deploy_checks = ["Deploy"]\n', "")
+    )
+    policy["drain"]["merge_after_ready_pr"] = True
+
+    finding = _check_policy_delivery(policy)
+
+    assert finding.ok is False
+    assert "profiles.A.terminal_deploy_checks must list at least one check" in finding.detail
 
 
 def test_profile_a_worktree_preflight_validates_ready_units(tmp_path: Path) -> None:

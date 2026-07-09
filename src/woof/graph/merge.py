@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import json
+import math
 import subprocess
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol, Self
 
+from woof.cli.policy import load_policy
 from woof.gate.write import iso_utc, write_gate
 from woof.graph.git import git, git_env, head_sha
 
@@ -21,6 +23,9 @@ MergeAction = Literal[
     "rebase_conflict",
     "mergeability_failed",
     "merge_failed",
+    "checks_failed",
+    "deploy_failed",
+    "deploy_lock_contention",
 ]
 
 _TRANSIENT_MERGEABILITY = {"UNKNOWN", "UNSTABLE"}
@@ -29,6 +34,24 @@ _MERGE_MATCH_HEAD_ATTEMPTS = 5
 _MERGE_MATCH_HEAD_INTERVAL_S = 3.0
 _SIBLING_CONFLICT_TRIGGER = "sibling_conflict"
 _MERGED_ACTIONS: set[MergeAction] = {"merged", "already_merged"}
+_SUCCESSFUL_CHECK_CONCLUSIONS = {"success", "neutral", "skipped"}
+_TERMINAL_CHECK_CONCLUSIONS = {
+    "action_required",
+    "cancelled",
+    "failure",
+    "neutral",
+    "skipped",
+    "success",
+    "timed_out",
+}
+_STATE_LOCK_MARKERS = (
+    "state lock",
+    "state-lock",
+    "terraform lock",
+    "error acquiring the state lock",
+    "lock info",
+    "conditionalcheckfailedexception",
+)
 
 
 @dataclass(frozen=True)
@@ -43,6 +66,7 @@ class ReadyPullRequest:
     worktree: Path
     ready_at: str
     changed_paths: tuple[str, ...] = ()
+    artefact_lineage: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -57,6 +81,30 @@ class MergeOutcome:
 @dataclass(frozen=True)
 class MergeQueueResult:
     outcomes: list[MergeOutcome] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class CheckRunState:
+    name: str
+    status: str
+    conclusion: str | None = None
+    details: str = ""
+
+
+@dataclass(frozen=True)
+class ProfileAMergePolicy:
+    github_repo: str
+    ready_label: str
+    base_branch: str
+    terminal_deploy_checks: tuple[str, ...]
+    mergeability_settle_timeout_s: int = 15
+    deploy_wait_timeout_s: int = 300
+    merge_attempts: int = _MERGE_MATCH_HEAD_ATTEMPTS
+    merge_interval_s: float = _MERGE_MATCH_HEAD_INTERVAL_S
+
+    @property
+    def mergeability_attempts(self) -> int:
+        return max(1, math.ceil(self.mergeability_settle_timeout_s / self.merge_interval_s))
 
 
 class MergeQueueHalt(RuntimeError):
@@ -99,6 +147,10 @@ class GithubMergeOps(Protocol):
     ) -> None: ...
 
     def is_pr_merged(self, repo_slug: str, pr_number: int) -> bool: ...
+
+    def check_run_states(
+        self, repo_slug: str, ref: str, check_names: tuple[str, ...]
+    ) -> tuple[CheckRunState, ...]: ...
 
 
 class DefaultGitMergeOps:
@@ -232,6 +284,176 @@ class DefaultGithubMergeOps:
             return False
         return payload.get("state") == "MERGED" or bool(payload.get("mergedAt"))
 
+    def check_run_states(
+        self, repo_slug: str, ref: str, check_names: tuple[str, ...]
+    ) -> tuple[CheckRunState, ...]:
+        proc = subprocess.run(
+            [
+                "gh",
+                "api",
+                f"repos/{repo_slug}/commits/{ref}/check-runs",
+                "--paginate",
+                "--jq",
+                ".check_runs[] | {name,status,conclusion,details_url,html_url,output}",
+            ],
+            env=git_env(),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return _check_run_states_from_json(proc.stdout, check_names)
+
+
+def profile_a_merge_policy_from_repo(repo_root: Path) -> ProfileAMergePolicy | None:
+    """Build Profile A merge settings from repo-local policy."""
+
+    policy = load_policy(repo_root)
+    if not isinstance(policy, dict):
+        return None
+    delivery = policy.get("delivery")
+    profiles = policy.get("profiles")
+    if not isinstance(delivery, dict) or delivery.get("profile") != "A":
+        return None
+    profile_a = profiles.get("A") if isinstance(profiles, dict) else None
+    if not isinstance(profile_a, dict):
+        return None
+
+    github_repo = _required_string(profile_a, "profiles.A.github_repo")
+    ready_label = _required_string(profile_a, "profiles.A.ready_label")
+    base_branch = _required_string(delivery, "delivery.base_branch")
+    terminal_deploy_checks = tuple(
+        item.strip()
+        for item in profile_a.get("terminal_deploy_checks", [])
+        if isinstance(item, str) and item.strip()
+    )
+    return ProfileAMergePolicy(
+        github_repo=github_repo,
+        ready_label=ready_label,
+        base_branch=base_branch,
+        terminal_deploy_checks=terminal_deploy_checks,
+        mergeability_settle_timeout_s=_positive_int(
+            profile_a, "mergeability_settle_timeout", default=15
+        ),
+        deploy_wait_timeout_s=_positive_int(profile_a, "deploy_wait_timeout", default=300),
+        merge_attempts=_positive_int(
+            profile_a, "merge_attempts", default=_MERGE_MATCH_HEAD_ATTEMPTS
+        ),
+        merge_interval_s=_positive_float(
+            profile_a, "merge_interval_s", default=_MERGE_MATCH_HEAD_INTERVAL_S
+        ),
+    )
+
+
+def _required_string(table: dict[str, Any], dotted_key: str) -> str:
+    value = table.get(dotted_key.rsplit(".", 1)[-1])
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{dotted_key} must be declared")
+    return value.strip()
+
+
+def _positive_int(table: dict[str, Any], key: str, *, default: int) -> int:
+    value = table.get(key, default)
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        raise ValueError(f"profiles.A.{key} must be a positive integer")
+    return value
+
+
+def _positive_float(table: dict[str, Any], key: str, *, default: float) -> float:
+    value = table.get(key, default)
+    if not isinstance(value, int | float) or isinstance(value, bool) or value <= 0:
+        raise ValueError(f"profiles.A.{key} must be a positive number")
+    return float(value)
+
+
+def _check_run_states_from_json(
+    text: str, check_names: tuple[str, ...]
+) -> tuple[CheckRunState, ...]:
+    wanted = set(check_names)
+    states: list[CheckRunState] = []
+    for payload in _check_run_payloads(text):
+        name = payload.get("name")
+        if not isinstance(name, str) or name not in wanted:
+            continue
+        output = payload.get("output")
+        output_parts: tuple[object, ...] = ()
+        if isinstance(output, dict):
+            output_parts = (output.get("title"), output.get("summary"))
+        details = " ".join(
+            str(value)
+            for value in (
+                payload.get("details_url"),
+                payload.get("html_url"),
+                *output_parts,
+            )
+            if value
+        ).strip()
+        states.append(
+            CheckRunState(
+                name=name,
+                status=str(payload.get("status") or "").lower(),
+                conclusion=(
+                    str(payload.get("conclusion")).lower()
+                    if payload.get("conclusion") is not None
+                    else None
+                ),
+                details=details,
+            )
+        )
+    return tuple(states)
+
+
+def _check_run_payloads(text: str) -> list[dict[str, Any]]:
+    payloads: list[dict[str, Any]] = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        check_runs = payload.get("check_runs")
+        if isinstance(check_runs, list):
+            payloads.extend(item for item in check_runs if isinstance(item, dict))
+        else:
+            payloads.append(payload)
+    return payloads
+
+
+def _classify_check_runs(
+    states: tuple[CheckRunState, ...], check_names: tuple[str, ...]
+) -> Literal["success", "transient", "terminal_failure", "state_lock_contention"]:
+    by_name = {state.name: state for state in states}
+    selected = [by_name.get(name) for name in check_names]
+    if any(state is None for state in selected):
+        return "transient"
+
+    terminal: list[CheckRunState] = []
+    for state in selected:
+        assert state is not None
+        status = state.status.lower()
+        conclusion = (state.conclusion or "").lower()
+        if status != "completed" or conclusion not in _TERMINAL_CHECK_CONCLUSIONS:
+            return "transient"
+        terminal.append(state)
+
+    failing = [
+        state
+        for state in terminal
+        if (state.conclusion or "").lower() not in _SUCCESSFUL_CHECK_CONCLUSIONS
+    ]
+    if not failing:
+        return "success"
+    if any(_proves_state_lock_contention(state) for state in failing):
+        return "state_lock_contention"
+    return "terminal_failure"
+
+
+def _proves_state_lock_contention(state: CheckRunState) -> bool:
+    text = f"{state.name} {state.status} {state.conclusion or ''} {state.details}".lower()
+    return any(marker in text for marker in _STATE_LOCK_MARKERS)
+
 
 def fifo_ready_queue(prs: list[ReadyPullRequest]) -> list[ReadyPullRequest]:
     """Return ready PRs in stable FIFO order."""
@@ -259,6 +481,9 @@ class SerialMergeCoordinator:
         mergeability_interval_s: float = 3.0,
         merge_attempts: int = _MERGE_MATCH_HEAD_ATTEMPTS,
         merge_interval_s: float = _MERGE_MATCH_HEAD_INTERVAL_S,
+        deploy_check_names: tuple[str, ...] = (),
+        deploy_wait_timeout_s: int = 300,
+        check_interval_s: float | None = None,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self.repo_root = repo_root
@@ -275,9 +500,51 @@ class SerialMergeCoordinator:
         self.mergeability_interval_s = mergeability_interval_s
         self.merge_attempts = max(1, merge_attempts)
         self.merge_interval_s = merge_interval_s
+        self.deploy_check_names = tuple(name for name in deploy_check_names if name)
+        self.deploy_wait_timeout_s = max(1, deploy_wait_timeout_s)
+        self.check_interval_s = (
+            check_interval_s if check_interval_s is not None else merge_interval_s
+        )
         self.sleep = sleep
         self._marked_done: set[str] = set()
         self._recorded_outcomes: set[tuple[str, int, MergeAction]] = set()
+
+    @classmethod
+    def from_policy(
+        cls,
+        *,
+        repo_root: Path,
+        epic_id: int,
+        gate: Callable[[ReadyPullRequest], bool],
+        mark_done: Callable[[str], None],
+        git: GitMergeOps | None = None,
+        github: GithubMergeOps | None = None,
+        remote: str = "origin",
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> Self:
+        policy = profile_a_merge_policy_from_repo(repo_root)
+        if policy is None:
+            raise ValueError("Profile A merge coordinator requires delivery.profile=A policy")
+        return cls(
+            repo_root=repo_root,
+            epic_id=epic_id,
+            repo_slug=policy.github_repo,
+            base_branch=policy.base_branch,
+            ready_label=policy.ready_label,
+            git=git,
+            github=github,
+            gate=gate,
+            mark_done=mark_done,
+            remote=remote,
+            mergeability_attempts=policy.mergeability_attempts,
+            mergeability_interval_s=policy.merge_interval_s,
+            merge_attempts=policy.merge_attempts,
+            merge_interval_s=policy.merge_interval_s,
+            deploy_check_names=policy.terminal_deploy_checks,
+            deploy_wait_timeout_s=policy.deploy_wait_timeout_s,
+            check_interval_s=policy.merge_interval_s,
+            sleep=sleep,
+        )
 
     def process(self, prs: list[ReadyPullRequest]) -> MergeQueueResult:
         """Process the ready queue until it drains, waits, or halts terminally."""
@@ -386,6 +653,47 @@ class SerialMergeCoordinator:
                     ),
                 )
 
+            check_result = self._wait_for_checks(
+                ref=rebased_head,
+                timeout_s=self.mergeability_attempts * self.mergeability_interval_s,
+            )
+            if check_result == "transient":
+                self._append_outcome(
+                    outcomes,
+                    MergeOutcome(
+                        pr.work_unit_id,
+                        pr.pr_number,
+                        "waiting",
+                        "configured checks did not settle inside the retry budget",
+                        terminal=False,
+                    ),
+                )
+                return MergeQueueResult(outcomes)
+            if check_result == "state_lock_contention":
+                self._halt(
+                    ordered,
+                    outcomes,
+                    MergeOutcome(
+                        pr.work_unit_id,
+                        pr.pr_number,
+                        "deploy_lock_contention",
+                        "configured check failure proves Terraform state-lock contention",
+                        terminal=True,
+                    ),
+                )
+            if check_result == "terminal_failure":
+                self._halt(
+                    ordered,
+                    outcomes,
+                    MergeOutcome(
+                        pr.work_unit_id,
+                        pr.pr_number,
+                        "checks_failed",
+                        "configured checks reached a terminal failing state",
+                        terminal=True,
+                    ),
+                )
+
             try:
                 self._squash_merge_settled(pr, repo, rebased_head)
             except subprocess.CalledProcessError as exc:
@@ -405,6 +713,47 @@ class SerialMergeCoordinator:
                 outcomes,
                 self._mark_done(pr, "merged", "merged after rebase and gate"),
             )
+            if pr != ordered[-1]:
+                deploy_result = self._wait_for_checks(
+                    ref=self.base_branch,
+                    timeout_s=self.deploy_wait_timeout_s,
+                )
+                if deploy_result == "transient":
+                    self._halt(
+                        ordered,
+                        outcomes,
+                        MergeOutcome(
+                            pr.work_unit_id,
+                            pr.pr_number,
+                            "deploy_failed",
+                            "deploy checks did not reach a terminal state before the next merge",
+                            terminal=True,
+                        ),
+                    )
+                if deploy_result == "state_lock_contention":
+                    self._halt(
+                        ordered,
+                        outcomes,
+                        MergeOutcome(
+                            pr.work_unit_id,
+                            pr.pr_number,
+                            "deploy_lock_contention",
+                            "deploy checks prove Terraform state-lock contention",
+                            terminal=True,
+                        ),
+                    )
+                if deploy_result == "terminal_failure":
+                    self._halt(
+                        ordered,
+                        outcomes,
+                        MergeOutcome(
+                            pr.work_unit_id,
+                            pr.pr_number,
+                            "deploy_failed",
+                            "deploy checks reached a terminal failing state",
+                            terminal=True,
+                        ),
+                    )
         return MergeQueueResult(outcomes)
 
     def _settle_mergeability(self, pr: ReadyPullRequest) -> Literal["mergeable", "transient"] | str:
@@ -431,7 +780,7 @@ class SerialMergeCoordinator:
                     pr.pr_number,
                     rebased_head,
                     subject=f"{pr.work_unit_id}: merge PR #{pr.pr_number}",
-                    body=f"Refs #{pr.pr_number}",
+                    body=self._merge_body(pr, rebased_head),
                 )
                 return
             except subprocess.CalledProcessError:
@@ -439,6 +788,37 @@ class SerialMergeCoordinator:
                     raise
                 self.sleep(self.merge_interval_s)
                 self.git.fetch(repo, self.remote)
+
+    def _wait_for_checks(
+        self, *, ref: str, timeout_s: float
+    ) -> Literal["success", "transient", "terminal_failure", "state_lock_contention"]:
+        if not self.deploy_check_names:
+            return "success"
+        attempts = max(1, math.ceil(timeout_s / self.check_interval_s))
+        for attempt in range(attempts):
+            try:
+                states = self.github.check_run_states(self.repo_slug, ref, self.deploy_check_names)
+            except subprocess.CalledProcessError:
+                states = ()
+            status = _classify_check_runs(states, self.deploy_check_names)
+            if status != "transient":
+                return status
+            if attempt < attempts - 1:
+                self.sleep(self.check_interval_s)
+        return "transient"
+
+    def _merge_body(self, pr: ReadyPullRequest, rebased_head: str) -> str:
+        lines = [
+            f"Closes #{self.epic_id}",
+            f"Work unit: {pr.work_unit_id}",
+            f"PR: #{pr.pr_number}",
+            f"Published head: {pr.head_sha}",
+            f"Rebased head: {rebased_head}",
+        ]
+        if pr.artefact_lineage:
+            lines.append("Artefact lineage:")
+            lines.extend(f"{key}: {value}" for key, value in sorted(pr.artefact_lineage.items()))
+        return "\n".join(lines) + "\n"
 
     def _pr_already_merged(self, pr: ReadyPullRequest) -> bool:
         return self.github.is_pr_merged(self.repo_slug, pr.pr_number)

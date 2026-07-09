@@ -14,6 +14,8 @@ github_repo = "krazyuniks/woof"
 ready_label = "ready"
 merge_path_groups = ["default"]
 terminal_deploy_checks = []
+mergeability_settle_timeout = 15
+deploy_wait_timeout = 300
 
 [profiles.A.worktree]
 root = ".vf-worktrees"

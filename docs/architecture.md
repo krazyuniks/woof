@@ -6,18 +6,18 @@ This document is the system-design source of truth. It describes the target syst
 
 Woof is the orchestration engine for AI-assisted software delivery. It turns an epic or pre-decomposed `work_units[]` backlog into verified code changes through deterministic graph control, interactive LLM workers, project-owned verification, independent review, and auditable publish/merge steps.
 
-The durable boundary is the consumer repository. Woof assumes a Git worktree, `.woof/` state, repo-local policy, repo-local verification commands, and the operator's subscription CLI harnesses. The engine owns harness adapters, launch, execution, readiness, output parsing, and validation. Repo policy owns which harness fills each worker slot plus optional model and effort overrides; omitted model and effort values resolve through the dispatch registry defaults for the selected harness.
+The durable boundary is the operator home plus the target checkout. Woof assumes a Git worktree, per-project config and state under `~/.woof` (ADR-017), repo-local verification commands, and the operator's subscription CLI harnesses. A driven repository carries no trace of the engine: no config, planning, or tracking files. The engine owns harness adapters, launch, execution, readiness, output parsing, and validation. Repo policy owns which harness fills each worker slot plus optional model and effort overrides; omitted model and effort values resolve through the dispatch registry defaults for the selected harness.
 
 Woof is one of the tools a project composes, and it owns neither the other tools nor the choice of them. A project composes a host-level worktree engine and an SDLC delivery tool; Woof is one such delivery tool, selected per run. It runs against whatever checkout it is pointed at and neither creates nor manages worktrees - the worktree engine provisions those and runs the project's registered lifecycle commands, orchestrated by the project's task runner; in Profile A the worktree is that engine's, never Woof's (ADR-015). External issue ingestion is upstream of Woof's intake: Woof decomposes an already-local epic or `work_units[]` backlog, it does not pull issues. The tools never call each other; the project composes them.
 
 ## 1. Principles
 
 - **One engine.** Intake may vary, but execution does not. Once intake has produced executable `work_units[]`, every run follows the same produce/gate/review/fix/publish path.
-- **Disk authority.** Files under `.woof/` are the source of truth. Live sessions are attached execution resources, not state authority.
+- **Disk authority.** Files under `~/.woof/state/projects/<project-key>/` are the source of truth. Live sessions are attached execution resources, not state authority. Engine files never live in the driven repo (ADR-017).
 - **Work units execute.** `work_units[]` are the executable units. An epic normally decomposes into work units; a supplied `work_units[]` backlog is already decomposed input.
 - **Deterministic control.** Python owns graph progression, validation, gates, checks, audit, and publish/merge decisions. LLM workers produce or review bounded artefacts; they do not choose graph successors.
 - **Policy over modes.** Repo policy declares delivery profile, producer/reviewer run profile, gate command, deterministic check floor, and cartography floor. These capabilities activate checks and context loading without creating separate engine paths.
-- **Single source of truth.** Every concept has exactly one authoritative home and one bounded scope. Routing and run profiles are declared only in `.woof/policy.toml`; the executable unit has one schema; the dispatch registry owns harness, model, and effort vocabulary. A concept is never declared in two places, and a back-compat alias never outlives the change that introduces it.
+- **Single source of truth.** Every concept has exactly one authoritative home and one bounded scope. Routing and run profiles are declared only in the project's `~/.woof/config/projects/<project-key>.toml`; the executable unit has one schema; the dispatch registry owns harness, model, and effort vocabulary. A concept is never declared in two places, and a back-compat alias never outlives the change that introduces it.
 - **Cartography remains first-class.** Cartography is a policy-enforced capability for context, impact analysis, and conformance checks. Lean runs may require less cartography; richer runs may require full structural cartography.
 - **Warm producer, fresh reviewer.** The producer stays warm across bounded fix rounds. The reviewer is independent and fresh each round.
 - **Evidence before confidence.** Reviewer blockers and deterministic findings cite resolvable evidence. Confidence-like metadata is advisory and never gate-affecting on its own.
@@ -27,7 +27,7 @@ Woof is one of the tools a project composes, and it owns neither the other tools
 
 | Layer | Responsibility | Implementation |
 |---|---|---|
-| State | Durable run, epic, work-unit, gate, audit, and cartography records. | `.woof/` in the consumer repo. |
+| State | Durable run, epic, work-unit, gate, audit, and cartography records. | `~/.woof/state/projects/<project-key>/` in the operator home (ADR-017). |
 | Engine | Intake, decomposition, graph progression, checks, gates, run lineage, publish/merge, and replay. | Python under `src/woof/`. |
 | Dispatch substrate | Interactive TUI worker launch, prompt-file delivery, completion detection, output capture, and usage/session telemetry. | Shared `tmux_harness` package. |
 | Operator surface | Human-facing command and skill entry points over the engine. | `woof` CLI and `/woof` skill. |
@@ -162,13 +162,13 @@ The structured result contract includes verdict, evidence, usage, session identi
 
 The producer session is an attached execution resource for the active work unit. It persists across bounded fix rounds so reviewer findings can be returned to the same context. If it dies, resume reconstructs from disk and reattaches or respawns.
 
-The fix-round budget lives in `.woof/agents.toml` as `[fix_rounds].max_rounds_per_blocker`, defaulting to two rounds for the same blocker signature before the graph opens a human gate.
+The fix-round budget lives in the project config as `[fix_rounds].max_rounds_per_blocker`, defaulting to two rounds for the same blocker signature before the graph opens a human gate.
 
 The reviewer is fresh each round. A reviewer session may stay warm only as a launch optimisation when its context is cleared and the full current diff is supplied again.
 
 ## 7. Policy and Cartography
 
-Repo policy is stored in `.woof/policy.toml` and declares:
+Project policy is stored in `~/.woof/config/projects/<project-key>.toml` and declares:
 
 - profile (`A` worktree+PR, or `B` single-tree);
 - repo root and toolchain root;
@@ -181,7 +181,7 @@ Repo policy is stored in `.woof/policy.toml` and declares:
 - cartography floor;
 - native drain semantics shared by Woof and transitional drain consumers.
 
-`policy.toml` is the single authority for delivery profile, producer/reviewer run profile (harness plus optional model and effort overrides), check floor, cartography floor, and drain semantics. Routing and run profiles are declared here and nowhere else. Harness, model, and effort vocabulary and defaults resolve through the dispatch registry. Other `.woof/` files own only their own bounded scope and never re-declare routing: `prerequisites.toml` owns host/tool/cartography prerequisite details, `quality-gates.toml` owns named gate commands, and transitional backlog executor metadata never carries drain policy.
+The project config is the single authority for delivery profile, producer/reviewer run profile (harness plus optional model and effort overrides), check floor, cartography floor, and drain semantics. Routing and run profiles are declared here and nowhere else. Harness, model, and effort vocabulary and defaults resolve through the dispatch registry. Prerequisite, gate, and fix-round scopes live as bounded sections of the same per-project config and never re-declare routing; transitional backlog executor metadata never carries drain policy. A missing project config is a hard preflight error — there is no in-repo fallback (ADR-017).
 
 The cartography floor determines what preflight enforces and what context the engine loads. `none` loads no cartography; `design` loads only the design layer; `lexical` loads the design/AS-IS prose and lexical mechanical layer; `structural` currently reuses the lexical baseline until the structural index implementation lands. Cartography remains a capability of the same engine path:
 
@@ -230,7 +230,7 @@ deploy-triggering checks between PRs; that policy belongs to the deploy-aware me
 Shared-file sibling conflicts fail closed to a human gate with no automatic reapplication (ADR-016). Ready PR
 metadata carries the changed paths needed to classify a gate failure after clean rebase as a sibling conflict.
 Detected sibling conflicts open a work-unit gate and append an idempotent corpus record to
-`.woof/sibling-conflicts.jsonl`.
+`sibling-conflicts.jsonl` in the project's state root.
 
 ## 9. State and Audit
 
@@ -249,7 +249,7 @@ Woof records:
 
 Per-attempt artefacts are immutable. A repeated review over the same diff hash and prompt version reuses the prior verdict. A conflicting verdict over the same inputs is recorded as review instability.
 
-Dispatch events and attempt artefacts carry `run_id`, `work_unit_id`, and `attempt_id`. Review attempts are keyed by `work_unit_id`, staged `diff_hash`, and `prompt_version`; cache entries and instability records live under the epic's `.woof/epics/E<N>/reviews/` directory.
+Dispatch events and attempt artefacts carry `run_id`, `work_unit_id`, and `attempt_id`. Review attempts are keyed by `work_unit_id`, staged `diff_hash`, and `prompt_version`; cache entries and instability records live under the epic's `epics/E<N>/reviews/` directory in the project's state root.
 
 ## 10. Gates and Checks
 
@@ -261,7 +261,7 @@ The deterministic gate floor runs before LLM review. Policy and epic content dec
 - path/scope checks;
 - contract-trace checks when trace fields exist;
 - cartography checks when policy requires cartography;
-- review-size checks when `.woof/policy.toml` declares `[checks.review_size]`, counting only non-generated staged changed lines against the policy threshold while reporting excluded generated paths;
+- review-size checks when the project config declares `[checks.review_size]`, counting only non-generated staged changed lines against the policy threshold while reporting excluded generated paths;
 - conformance audit when policy requires it;
 - publish/merge safety checks.
 
@@ -271,7 +271,7 @@ A gate is a durable state recorded on disk. Resolution is an explicit engine act
 
 `woof` is the CLI entry point for init, intake, run, gate resolution, observation, validation, baseline capture, and replay.
 
-`/woof` is the operator skill over the CLI. It does not mutate `.woof/` directly and does not implement a second runner.
+`/woof` is the operator skill over the CLI. It does not mutate engine config or state directly and does not implement a second runner.
 
 `/woof:brainstorm` remains the interactive enrichment path for sparse epics. It writes enrichment artefacts consumed by intake and decomposition.
 

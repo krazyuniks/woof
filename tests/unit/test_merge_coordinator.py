@@ -8,9 +8,13 @@ from pathlib import Path
 import pytest
 
 from woof.graph.merge import (
+    CheckRunState,
     MergeQueueHalt,
     ReadyPullRequest,
     SerialMergeCoordinator,
+    _check_run_states_from_json,
+    _classify_check_runs,
+    profile_a_merge_policy_from_repo,
 )
 
 
@@ -56,7 +60,9 @@ class FakeGithub:
     already_merged: set[int] = field(default_factory=set)
     fail_merge_for: set[int] = field(default_factory=set)
     transient_merge_failures: dict[int, int] = field(default_factory=dict)
+    check_runs: dict[str, list[list[CheckRunState]]] = field(default_factory=dict)
     calls: list[str] = field(default_factory=list)
+    merge_bodies: dict[int, str] = field(default_factory=dict)
 
     def pr_mergeability(self, repo_slug: str, pr_number: int) -> str:
         self.calls.append(f"mergeability:{pr_number}")
@@ -70,6 +76,7 @@ class FakeGithub:
         self, repo_slug: str, pr_number: int, head_sha: str, *, subject: str, body: str
     ) -> None:
         self.calls.append(f"merge:{pr_number}:{head_sha}")
+        self.merge_bodies[pr_number] = body
         if pr_number in self.fail_merge_for:
             raise subprocess.CalledProcessError(1, ["gh", "pr", "merge", str(pr_number)])
         remaining_failures = self.transient_merge_failures.get(pr_number, 0)
@@ -81,6 +88,22 @@ class FakeGithub:
     def is_pr_merged(self, repo_slug: str, pr_number: int) -> bool:
         self.calls.append(f"is-merged:{pr_number}")
         return pr_number in self.already_merged
+
+    def check_run_states(
+        self, repo_slug: str, ref: str, check_names: tuple[str, ...]
+    ) -> tuple[CheckRunState, ...]:
+        self.calls.append(f"checks:{ref}:{','.join(check_names)}")
+        values = self.check_runs.setdefault(
+            ref,
+            [
+                [
+                    CheckRunState(name=name, status="completed", conclusion="success")
+                    for name in check_names
+                ]
+            ],
+        )
+        value = values[0] if len(values) == 1 else values.pop(0)
+        return tuple(value)
 
 
 @dataclass
@@ -100,6 +123,7 @@ def _ready(
     ready_at: str,
     head_sha: str | None = None,
     changed_paths: tuple[str, ...] = (),
+    artefact_lineage: dict[str, str] | None = None,
 ) -> ReadyPullRequest:
     return ReadyPullRequest(
         work_unit_id=work_unit_id,
@@ -110,6 +134,7 @@ def _ready(
         worktree=Path(f"/tmp/{work_unit_id}"),
         ready_at=ready_at,
         changed_paths=changed_paths,
+        artefact_lineage=artefact_lineage or {},
     )
 
 
@@ -165,6 +190,312 @@ def test_ready_queue_rebases_gates_merges_and_marks_done_in_fifo_order(tmp_path:
         "mergeability:11",
         "merge:11:rebased-11",
     ]
+
+
+def test_profile_a_merge_policy_reads_deploy_aware_knobs(tmp_path: Path) -> None:
+    policy_dir = tmp_path / ".woof"
+    policy_dir.mkdir()
+    (policy_dir / "policy.toml").write_text(
+        """\
+schema_version = 1
+default_run_profile = "default"
+
+[delivery]
+profile = "A"
+repo_root = "."
+toolchain_root = "."
+base_branch = "main"
+
+[profiles.A]
+github_repo = "example/project"
+ready_label = "ready"
+merge_path_groups = []
+terminal_deploy_checks = ["Deploy", "Smoke"]
+mergeability_settle_timeout = 21
+deploy_wait_timeout = 180
+merge_attempts = 7
+merge_interval_s = 3.0
+
+[profiles.A.worktree]
+root = "worktrees"
+""",
+        encoding="utf-8",
+    )
+
+    policy = profile_a_merge_policy_from_repo(tmp_path)
+
+    assert policy is not None
+    assert policy.github_repo == "example/project"
+    assert policy.ready_label == "ready"
+    assert policy.base_branch == "main"
+    assert policy.terminal_deploy_checks == ("Deploy", "Smoke")
+    assert policy.mergeability_settle_timeout_s == 21
+    assert policy.deploy_wait_timeout_s == 180
+    assert policy.merge_attempts == 7
+    assert policy.mergeability_attempts == 7
+
+    coordinator = SerialMergeCoordinator.from_policy(
+        repo_root=tmp_path,
+        epic_id=5,
+        git=FakeGit({}),
+        github=FakeGithub({}),
+        gate=FakeGate(),
+        mark_done=lambda _work_unit_id: None,
+        sleep=lambda _seconds: None,
+    )
+
+    assert coordinator.repo_slug == "example/project"
+    assert coordinator.base_branch == "main"
+    assert coordinator.ready_label == "ready"
+    assert coordinator.deploy_check_names == ("Deploy", "Smoke")
+    assert coordinator.mergeability_attempts == 7
+    assert coordinator.deploy_wait_timeout_s == 180
+
+
+def test_per_pr_mark_done_reconciles_before_deploy_halt(tmp_path: Path) -> None:
+    first = _ready("S1", 10, ready_at="2026-07-08T10:00:00Z")
+    second = _ready("S2", 11, ready_at="2026-07-08T10:01:00Z")
+    git = FakeGit({10: "rebased-10", 11: "rebased-11"})
+    github = FakeGithub(
+        {10: ["MERGEABLE"], 11: ["MERGEABLE"]},
+        check_runs={
+            "rebased-10": [[CheckRunState("Deploy", "completed", "success")]],
+            "main": [
+                [
+                    CheckRunState(
+                        "Deploy",
+                        "completed",
+                        "failure",
+                        details="terraform plan failed because an output assertion failed",
+                    )
+                ]
+            ],
+        },
+    )
+    marked_done: list[str] = []
+
+    coordinator = SerialMergeCoordinator(
+        repo_root=tmp_path,
+        epic_id=5,
+        repo_slug="example/project",
+        base_branch="main",
+        ready_label="ready",
+        git=git,
+        github=github,
+        gate=FakeGate(),
+        mark_done=marked_done.append,
+        deploy_check_names=("Deploy",),
+        deploy_wait_timeout_s=1,
+        sleep=lambda _seconds: None,
+    )
+
+    with pytest.raises(MergeQueueHalt) as excinfo:
+        coordinator.process([second, first])
+
+    assert marked_done == ["S1"]
+    assert [outcome.action for outcome in excinfo.value.outcomes] == [
+        "merged",
+        "deploy_failed",
+    ]
+    assert "rebase:S2:origin/main" not in git.calls
+
+
+def test_proved_terraform_state_lock_contention_halts_before_next_merge(
+    tmp_path: Path,
+) -> None:
+    first = _ready("S1", 10, ready_at="2026-07-08T10:00:00Z")
+    second = _ready("S2", 11, ready_at="2026-07-08T10:01:00Z")
+    git = FakeGit({10: "rebased-10", 11: "rebased-11"})
+    github = FakeGithub(
+        {10: ["MERGEABLE"], 11: ["MERGEABLE"]},
+        check_runs={
+            "rebased-10": [[CheckRunState("Deploy", "completed", "success")]],
+            "main": [
+                [
+                    CheckRunState(
+                        "Deploy",
+                        "completed",
+                        "failure",
+                        details="Error acquiring the state lock: ConditionalCheckFailedException",
+                    )
+                ]
+            ],
+        },
+    )
+    marked_done: list[str] = []
+
+    coordinator = SerialMergeCoordinator(
+        repo_root=tmp_path,
+        epic_id=5,
+        repo_slug="example/project",
+        base_branch="main",
+        ready_label="ready",
+        git=git,
+        github=github,
+        gate=FakeGate(),
+        mark_done=marked_done.append,
+        deploy_check_names=("Deploy",),
+        deploy_wait_timeout_s=1,
+        sleep=lambda _seconds: None,
+    )
+
+    with pytest.raises(MergeQueueHalt) as excinfo:
+        coordinator.process([second, first])
+
+    assert marked_done == ["S1"]
+    assert [outcome.action for outcome in excinfo.value.outcomes] == [
+        "merged",
+        "deploy_lock_contention",
+    ]
+    assert excinfo.value.outcome.terminal is True
+    assert "rebase:S2:origin/main" not in git.calls
+
+
+def test_production_check_run_json_carries_state_lock_evidence() -> None:
+    states = _check_run_states_from_json(
+        json.dumps(
+            {
+                "check_runs": [
+                    {
+                        "name": "Deploy",
+                        "status": "completed",
+                        "conclusion": "failure",
+                        "details_url": "https://api.github.com/repos/example/project/check-runs/1",
+                        "html_url": "https://github.com/example/project/runs/1",
+                        "output": {
+                            "title": "Terraform apply failed",
+                            "summary": (
+                                "Error acquiring the state lock: ConditionalCheckFailedException"
+                            ),
+                        },
+                    }
+                ]
+            }
+        ),
+        ("Deploy",),
+    )
+
+    assert _classify_check_runs(states, ("Deploy",)) == "state_lock_contention"
+    assert "ConditionalCheckFailedException" in states[0].details
+    assert "https://github.com/example/project/runs/1" in states[0].details
+
+
+def test_terminal_ci_waits_before_next_deploy_triggering_merge(tmp_path: Path) -> None:
+    first = _ready("S1", 10, ready_at="2026-07-08T10:00:00Z")
+    second = _ready("S2", 11, ready_at="2026-07-08T10:01:00Z")
+    git = FakeGit({10: "rebased-10", 11: "rebased-11"})
+    github = FakeGithub(
+        {10: ["MERGEABLE"], 11: ["MERGEABLE"]},
+        check_runs={
+            "rebased-10": [[CheckRunState("Deploy", "completed", "success")]],
+            "rebased-11": [[CheckRunState("Deploy", "completed", "success")]],
+            "main": [
+                [CheckRunState("Deploy", "in_progress", None)],
+                [CheckRunState("Deploy", "completed", "success")],
+            ],
+        },
+    )
+    sleeps: list[float] = []
+
+    coordinator = SerialMergeCoordinator(
+        repo_root=tmp_path,
+        epic_id=5,
+        repo_slug="example/project",
+        base_branch="main",
+        ready_label="ready",
+        git=git,
+        github=github,
+        gate=FakeGate(),
+        mark_done=lambda _work_unit_id: None,
+        deploy_check_names=("Deploy",),
+        deploy_wait_timeout_s=2,
+        check_interval_s=1.0,
+        sleep=sleeps.append,
+    )
+
+    result = coordinator.process([second, first])
+
+    assert [outcome.action for outcome in result.outcomes] == ["merged", "merged"]
+    assert github.calls.index("checks:main:Deploy") < github.calls.index("is-merged:11")
+    assert github.calls.count("checks:main:Deploy") == 2
+    assert sleeps == [1.0]
+
+
+def test_coordinator_waits_for_recomputed_checks_after_force_push_before_merge(
+    tmp_path: Path,
+) -> None:
+    pr = _ready("S1", 10, ready_at="2026-07-08T10:00:00Z")
+    git = FakeGit({10: "rebased-10"})
+    github = FakeGithub(
+        {10: ["MERGEABLE"]},
+        check_runs={
+            "rebased-10": [
+                [CheckRunState("Deploy", "queued", None)],
+                [CheckRunState("Deploy", "completed", "success")],
+            ],
+        },
+    )
+    sleeps: list[float] = []
+
+    coordinator = SerialMergeCoordinator(
+        repo_root=tmp_path,
+        epic_id=5,
+        repo_slug="example/project",
+        base_branch="main",
+        ready_label="ready",
+        git=git,
+        github=github,
+        gate=FakeGate(),
+        mark_done=lambda _work_unit_id: None,
+        deploy_check_names=("Deploy",),
+        mergeability_attempts=1,
+        check_interval_s=1.0,
+        sleep=sleeps.append,
+    )
+
+    result = coordinator.process([pr])
+
+    assert result.outcomes[0].action == "merged"
+    assert github.calls.index("checks:rebased-10:Deploy") < github.calls.index(
+        "merge:10:rebased-10"
+    )
+    assert github.calls.count("checks:rebased-10:Deploy") == 2
+    assert sleeps == [1.0]
+
+
+def test_merge_body_closes_issue_and_records_artefact_lineage(tmp_path: Path) -> None:
+    pr = _ready(
+        "S1",
+        10,
+        ready_at="2026-07-08T10:00:00Z",
+        artefact_lineage={"verified_tree": "tree-abc", "review_id": "review-1"},
+    )
+    git = FakeGit({10: "rebased-10"})
+    github = FakeGithub({10: ["MERGEABLE"]})
+
+    coordinator = SerialMergeCoordinator(
+        repo_root=tmp_path,
+        epic_id=5,
+        repo_slug="example/project",
+        base_branch="main",
+        ready_label="ready",
+        git=git,
+        github=github,
+        gate=FakeGate(),
+        mark_done=lambda _work_unit_id: None,
+        sleep=lambda _seconds: None,
+    )
+
+    coordinator.process([pr])
+
+    body = github.merge_bodies[10]
+    assert "Closes #5" in body
+    assert "Work unit: S1" in body
+    assert "PR: #10" in body
+    assert "Published head: old-10" in body
+    assert "Rebased head: rebased-10" in body
+    assert "verified_tree: tree-abc" in body
+    assert "review_id: review-1" in body
 
 
 def test_partial_merge_reconciliation_marks_prior_merged_units_before_terminal_halt(

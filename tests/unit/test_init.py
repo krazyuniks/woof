@@ -64,6 +64,8 @@ def test_init_creates_starter_config_and_gitignore_block(tmp_path: Path, run_woo
     policy = (woof_dir / "policy.toml").read_text()
     assert 'profile = "B"' in policy
     assert "default_run_profile" in policy
+    assert 'model = "gpt-5.6-sol"' in policy
+    assert 'effort = "high"' in policy
     agents = (woof_dir / "agents.toml").read_text()
     assert "Runtime model: trusted-local automation" in agents
 

@@ -988,7 +988,7 @@ repo = "example/project"
         if finding["id"] == "policy.run_profile.producer.route"
     )
     assert producer["ok"] is True
-    assert "effort=medium" in producer["detail"]
+    assert "effort=high" in producer["detail"]
 
 
 def test_preflight_allows_missing_agents_toml(tmp_path: Path, run_woof) -> None:

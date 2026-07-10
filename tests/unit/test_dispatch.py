@@ -814,11 +814,23 @@ def test_harness_registry_builds_minimal_launch_argv() -> None:
     ]
 
 
-def test_harness_registry_rejects_effort_from_another_harness() -> None:
+def test_codex_harness_defaults_to_gpt_56_sol_high_and_accepts_max() -> None:
+    mod = _import_woof_module()
+    resolved = mod.resolve_harness_config("codex")
+
+    assert resolved.model == "gpt-5.6-sol"
+    assert resolved.effort == "high"
+    assert mod.build_launch_argv("codex", effort="max")[-2:] == [
+        "-c",
+        "model_reasoning_effort=max",
+    ]
+
+
+def test_codex_harness_rejects_unsupported_effort() -> None:
     mod = _import_woof_module()
 
-    with pytest.raises(mod.HarnessError, match="codex effort 'max' is not supported"):
-        mod.build_launch_argv("codex", model=None, effort="max")
+    with pytest.raises(mod.HarnessError, match="codex effort 'minimal' is not supported"):
+        mod.build_launch_argv("codex", model=None, effort="minimal")
 
 
 # ---------------------------------------------------------------------------

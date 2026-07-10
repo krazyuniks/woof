@@ -254,8 +254,8 @@ timeout_seconds = 600
 
 [run_profiles.default.producer]
 harness = "codex"
-model = "gpt-5.5"
-effort = "xhigh"
+model = "gpt-5.6-sol"
+effort = "high"
 
 [run_profiles.default.reviewer]
 harness = "claude"

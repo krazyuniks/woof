@@ -295,6 +295,77 @@ work_units:
       - Raw durable artefact reads are routed through loaders.
       - Commit and publish boundaries pin the verified tree and expected paths.
       - Dead state-mutation surfaces are removed rather than mirrored.
+  - id: publish-protected-content-guard
+    title: Publish-time guard rejects producer diffs that forge protected content
+    kind: build
+    state: todo
+    priority: high
+    summary: Engine-level publish-time check on the producer diff against per-project
+      declarative predicates from policy, rejecting diffs that add or modify protected
+      content a producer may never author. Motivating incident (freeflo 2026-07-10,
+      issue 901 producer) - a producer stamped human-approval metadata (status
+      human_approved, reviewer Ryan) on corpus fixtures to satisfy a schema gate;
+      in-repo gates cannot enforce this because producers can edit repo source, so
+      enforcement belongs at the publish boundary the producer cannot touch. Policy
+      declares pathspec plus content predicate (e.g. added/changed JSON under a
+      fixtures tree carrying status human_approved or a named human reviewer);
+      engine stays project-agnostic and data-driven, no per-project branch.
+    deps: [runner-loop-absorption]
+    acceptance:
+      - A producer diff adding or modifying content matching a policy-declared protected
+        predicate fails publish with a message naming the file and predicate; the unit
+        parks rather than merges.
+      - Predicates live in consuming-repo policy, not engine code; a repo with none
+        declared is unaffected.
+      - The freeflo human-approval predicate is expressible and covered by a test that
+        replays the 2026-07-10 fabrication shape.
+  - id: produce-prompt-commit-discipline
+    title: Produce-prompt template carries commit discipline
+    kind: build
+    state: todo
+    priority: high
+    summary: Fold commit-as-you-go discipline into the engine's produce-prompt assembly
+      so it stops riding every unit body. Motivating incidents (freeflo 2026-07-10) -
+      two heavy units parked idle-without-commit with all work sitting uncommitted in
+      the worktree; a unit-body rule fixed it (the next producer committed mid-run),
+      and that rule belongs in the template. Instruct - commit each coherent green
+      slice immediately with explicit paths; before the final message verify git
+      status is clean and commits exist on the branch; work left uncommitted when the
+      turn ends is lost and parks the unit.
+    deps: [runner-loop-absorption]
+    acceptance:
+      - Every produce and fix-round prompt the engine assembles carries the commit
+        discipline block exactly once, regardless of unit body content.
+      - Unit bodies no longer need a per-unit commit rule; existing bodies carrying one
+        do not duplicate the instruction in the assembled prompt.
+      - A prompt-assembly test asserts presence and single occurrence.
+  - id: drain-liveness-status
+    title: One authoritative drain liveness status verb
+    kind: build
+    state: todo
+    priority: high
+    summary: Engine-owned status command reporting every live drain across all tmux
+      sockets (default plus shared socket dirs) and orchestrate processes, as the sole
+      sanctioned liveness evidence before any destructive action (kill, branch or
+      worktree delete, merge of a drain-owned PR, resume). Motivating incident
+      (freeflo 2026-07-11) - an operator session ran tmux ls on the default socket,
+      concluded a live drain on the shared socket was dead, and merged and deleted its
+      branch and worktree mid-review; tmux has no cross-socket view so per-socket
+      listing can never be evidence. Prior art is the vault's just
+      freeflo-drain-status (scripts/freeflo_drain.py --status); the engine version
+      generalises it - enumerate known socket dirs plus a per-run session registry the
+      launcher writes, and report session, process, log path, and last-activity age
+      per drain.
+    deps: [runner-loop-absorption]
+    acceptance:
+      - One command lists every live drain (session and process) across default and
+        shared sockets with log path and last-activity age; empty output states the
+        evidence checked.
+      - The launcher registers each run (socket, session, pid, log) in durable state
+        the status verb reads, so a drain is findable even if socket conventions
+        change.
+      - Operator docs state the rule - no destructive action without this command
+        showing the owning drain dead.
 ---
 
 # Woof Backlog

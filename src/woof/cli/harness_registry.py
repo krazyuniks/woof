@@ -56,9 +56,9 @@ HARNESS_PROFILES: dict[str, HarnessProfile] = {
         model_flag=("-m", "{model}"),
         effort_flag=("-c", "model_reasoning_effort={effort}"),
         trailer=[],
-        default_model="gpt-5.5",
-        default_effort="medium",
-        effort_levels=("low", "medium", "high", "xhigh"),
+        default_model="gpt-5.6-sol",
+        default_effort="high",
+        effort_levels=("none", "low", "medium", "high", "xhigh", "max"),
     ),
     "deepseek": HarnessProfile(
         name="deepseek",

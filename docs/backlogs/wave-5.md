@@ -25,7 +25,7 @@ work_units:
   deps:
   - schema-unification
 - id: dispatch-swap
-  title: Replace headless dispatch with the tmux harness
+  title: Replace headless dispatch with interactive harness profiles
   kind: build
   state: done
   priority: high

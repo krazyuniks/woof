@@ -6,7 +6,7 @@ date: 2026-05-30
 
 # ADR-006: Operational Resilience Guardrails
 
-Superseded by ADR-012 and ADR-013. Resilience remains part of the target, but dispatch supervision and rigour activation now sit behind the tmux harness and repo policy.
+Superseded by ADR-012 and ADR-013. Resilience remains part of the target, but dispatch supervision and rigour activation now sit behind the interactive harness boundary and repo policy.
 
 ## Context
 
@@ -73,7 +73,7 @@ Woof adds operational resilience around the graph, not inside model reasoning lo
 - The run-resilience work must include enough dispatch-return contract shape for
   circuit-breaker, rate-limit handling, and HEAD/branch drift detection. This is not
   a future embellishment; it is part of the graph contract.
-- `woof wf` can grow tmux-backed long-run supervision without creating a parallel
+- `woof wf` can grow backend-neutral long-run supervision without creating a parallel
   orchestration authority.
 - Baseline quality gates need durable baseline records and freshness rules. E4 should
   not claim per-failure subtraction unless the gate has a declared parser or structured

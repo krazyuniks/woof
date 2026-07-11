@@ -24,14 +24,14 @@ work_units:
     summary: Dependency anchor completed by the manual Wave 2 policy-spine build.
     deps: [schema-unification]
   - id: dispatch-swap
-    title: Replace headless dispatch with the tmux harness
+    title: Replace headless dispatch with interactive harness profiles
     kind: build
     state: done
     priority: high
-    summary: Remove headless worker dispatch and consume structured results from the shared interactive tmux harness. Consolidate VaultForeman's harness/model/effort registry into Woof's dispatcher before absorbing produce/review logic.
+    summary: Remove headless worker dispatch and consume structured results from the shared interactive harness boundary. Consolidate VaultForeman's harness/model/effort registry into Woof's dispatcher before absorbing produce/review logic.
     deps: [schema-unification, policy-model]
     acceptance:
-      - Producer and reviewer dispatches launch through tmux harness profiles.
+      - Producer and reviewer dispatches launch through interactive harness profiles.
       - Prompt-file delivery and structured result capture are covered by tests.
       - Engine code consumes verdict, evidence, usage, and session metadata without parsing raw terminal scrollback.
       - VaultForeman's harness/model/effort registry is consolidated into Woof's dispatcher before produce/review loop absorption.

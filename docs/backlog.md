@@ -57,14 +57,14 @@ work_units:
       - Decomposition produces work_units through the existing breakdown playbook and brainstorm enrichment, not a second decomposer; the auto-decompose step replaces the manual decompose earlier waves relied on.
       - Decomposition emits work_units in topological dependency order so the runtime aggregate validates without reordering.
   - id: dispatch-swap
-    title: Replace headless dispatch with the tmux harness
+    title: Replace headless dispatch with interactive harness profiles
     kind: build
     state: done
     priority: high
-    summary: Remove headless worker dispatch and consume structured results from the shared interactive tmux harness.
+    summary: Remove headless worker dispatch and consume structured results from the shared interactive harness boundary.
     deps: [schema-unification, policy-model]
     acceptance:
-      - Producer and reviewer dispatches launch through tmux harness profiles.
+      - Producer and reviewer dispatches launch through interactive harness profiles.
       - Prompt-file delivery and structured result capture are covered by tests.
       - Engine code consumes verdict, evidence, usage, and session metadata without parsing raw terminal scrollback.
   - id: execution-shape-unification
@@ -109,6 +109,22 @@ work_units:
       - Each review round receives a fresh reviewer context and the full current diff.
       - Resume can reattach or respawn the producer from disk authority.
       - The fix-round budget is bounded and configurable, defaulting to two rounds per blocker before a gate opens.
+  - id: herder-kept-alive-dispatch
+    title: Adopt herder for backend-neutral retained producer and reviewer sessions
+    kind: build
+    state: todo
+    priority: high
+    summary: Replace tmux-coupled engine dispatch with the backend-neutral retained-session seam while preserving explicit tmux profiles and all warm-producer/fresh-reviewer invariants.
+    deps: [config-routing-ssot, warm-session-seam]
+    acceptance:
+      - One-shot, producer, reviewer, mapper, and enrichment dispatch resolve the transport from the selected harness profile; workflow code contains no harness-name or transport branch.
+      - Every registry profile declares tmux or herder explicitly; project policy continues to select harness, optional model, and optional effort only.
+      - A herder producer keeps the same worker identity across fix rounds; every reviewer round creates a fresh independent worker and receives the full current diff.
+      - Herder lifecycle observation is armed before every prompt; `working -> idle` or `done` completes only with the payload present; blocked and timeout become distinct graph outcomes with evidence.
+      - Resume persists backend-neutral session identity and either reattaches safely or respawns from disk authority after process loss.
+      - Running-server preflight records the named socket, server version, and protocol and fails before dispatch when incompatible.
+      - Tmux remains supported for explicit tmux profiles, with backend-equivalent result and error metadata; no public field is named after tmux when it represents either backend.
+      - Tests cover launch, receipt, warm fix round, fresh review, reattach, respawn, blocked, timeout, protocol mismatch, payload absence, explicit close, and isolated named-session teardown.
   - id: runner-loop-absorption
     title: Absorb VaultForeman runner loop and profiles
     kind: build
@@ -251,11 +267,12 @@ work_units:
     state: todo
     priority: high
     summary: Full kernel plus deploy-decoupled Profile A on a disposable/Woof-repo pre-decomposed backlog, with failure proofs and a mock-Deploy rehearsal. Not the cutover gate.
-    deps: [intake-predecomposed, runner-loop-absorption, deploy-aware-merge-coordinator, profile-a-worktree-contract, run-lineage-immutable-attempts, cartography-continuity, operator-home-config-and-state]
+    deps: [intake-predecomposed, herder-kept-alive-dispatch, runner-loop-absorption, deploy-aware-merge-coordinator, profile-a-worktree-contract, run-lineage-immutable-attempts, cartography-continuity, operator-home-config-and-state]
     acceptance:
       - A disposable pre-decomposed backlog of at least three units with at least one dependency edge runs end to end -- produce, deterministic gate, fresh review, at least one real blocker fed back to a warm producer within budget, publish.
       - Profile A mechanics run without deploy coupling -- worktree handshake, branch push, PR publish with issue linkage, ready labelling, serial merge of at least two ready PRs with per-PR mark-done, and a coordinator self-rebase that leaves the remaining PR ready.
       - Resume of a killed producer from disk is exercised, and a human gate is opened and resolved with audited effect.
+      - The run exercises a herder-backed retained producer and fresh reviewer plus one explicit tmux-backed profile, proving backend-equivalent audit and failure semantics.
       - Lineage and artefacts hold -- immutable attempts, run/unit/attempt joins, review-cache reuse on an identical diff hash, and instability on a conflicting verdict.
       - Fail-closed behaviour is proved -- missing policy or cartography floor fails preflight; an induced sibling conflict halts to a gate; a mock Deploy workflow's terminal non-lock failure triggers a safe halt with reconciled artefacts; state-lock contention is classified and halts.
   - id: flight-2
@@ -344,24 +361,22 @@ work_units:
     kind: build
     state: todo
     priority: high
-    summary: Engine-owned status command reporting every live drain across all tmux
-      sockets (default plus shared socket dirs) and orchestrate processes, as the sole
+    summary: Engine-owned status command reporting every live drain across all configured
+      transport sessions, sockets, agents, and orchestrate processes, as the sole
       sanctioned liveness evidence before any destructive action (kill, branch or
       worktree delete, merge of a drain-owned PR, resume). Motivating incident
       (freeflo 2026-07-11) - an operator session ran tmux ls on the default socket,
       concluded a live drain on the shared socket was dead, and merged and deleted its
-      branch and worktree mid-review; tmux has no cross-socket view so per-socket
-      listing can never be evidence. Prior art is the vault's just
+      branch and worktree mid-review; a single transport or socket listing can never be
+      complete evidence. Prior art is the vault's just
       freeflo-drain-status (scripts/freeflo_drain.py --status); the engine version
       generalises it - enumerate known socket dirs plus a per-run session registry the
-      launcher writes, and report session, process, log path, and last-activity age
-      per drain.
-    deps: [runner-loop-absorption]
+      launcher writes, and report backend, server compatibility, session/agent, process,
+      log path, and last-activity age per drain.
+    deps: [runner-loop-absorption, herder-kept-alive-dispatch]
     acceptance:
-      - One command lists every live drain (session and process) across default and
-        shared sockets with log path and last-activity age; empty output states the
-        evidence checked.
-      - The launcher registers each run (socket, session, pid, log) in durable state
+      - One command lists every live drain across tmux and herder with backend, session or agent, process, socket, server version/protocol where applicable, log path, and last-activity age; empty output states the evidence checked.
+      - The launcher registers each run (backend, socket, session or agent, pid, log) in durable state
         the status verb reads, so a drain is findable even if socket conventions
         change.
       - Operator docs state the rule - no destructive action without this command
@@ -396,9 +411,10 @@ Live-state note: `intake-predecomposed` and `execution-shape-unification` are al
 3. Hand-build the execution-shape and config-routing convergence so the kernel runs one `work_units[]` shape and one routing authority before any further runner logic is absorbed.
 4. Drain the warm-session, cartography-continuity, and pre-decomposed intake units.
 5. Absorb the runner loop, the deploy-aware merge coordinator, the Profile A worktree contract, the engine-neutral consumer policy, and the VaultForeman fix-parity sweep.
-6. Run flight 1 (disposable repo), then flight 2 (guarded real-deploy slice), manually.
-7. Drain the post-flight richness units: conformance audit, eval instrumentation, and epic-enrichment intake.
-8. Retire the standalone VaultForeman runner once Woof is proven and no live run requires it.
+6. Adopt the backend-neutral retained-session transport after Agent Toolkit publishes it.
+7. Run flight 1 (disposable repo), then flight 2 (guarded real-deploy slice), manually.
+8. Drain the post-flight richness units: conformance audit, eval instrumentation, and epic-enrichment intake.
+9. Retire the standalone VaultForeman runner once Woof is proven and no live run requires it.
 
 ## Wave Instructions
 
@@ -416,11 +432,12 @@ The `How` value controls execution mechanics:
 | 3 | `execution-shape-unification`, `config-routing-ssot` | hand-build | Foundational convergence. Collapse the runtime to one `work_units[]` shape (retire the `status`/`state` dual lifecycle and legacy id mirrors; rename checks, gates, and playbooks onto work-unit language) and make `policy.toml` the single routing/run-profile authority (retire `agents.toml` routing, single-source the registry vocab, delete dead headless builders). Hand-build because the vf-drain waves fold runner logic into this kernel; draining them first deepens the mirror. |
 | 4 | `warm-session-seam`, `cartography-continuity`, `intake-predecomposed` | vf-drain | Drain after the kernel runs one shape and the dispatch registry is single-sourced, so warm producer and fresh reviewer sessions use one adapter contract and one unit shape. `intake-predecomposed` is already delivered. |
 | 5 | `runner-loop-absorption`, `deploy-aware-merge-coordinator`, `profile-a-worktree-contract`, `engine-neutral-consumer-policy`, `operator-home-config-and-state`, `vaultforeman-fix-parity` | hand-build + vf-drain | Absorb Profile A/B drain, review cache, and usage/run telemetry. Drain sub-backlogs in order: `docs/backlogs/wave-5-shakedown.md` (`profile-a-worktree-contract` shakedown first), then `docs/backlogs/wave-5.md` (the decomposed absorption). `deploy-aware-merge-coordinator` is a native new-build (no VaultForeman source asset) and is hand-build with operator review, not an unattended vf-drain. `operator-home-config-and-state` implements ADR-017 (engine config/state under `~/.woof`; no engine files in driven repos) and must land before the flights so the proven engine is the operator-home one. `vaultforeman-fix-parity` re-baselines the absorption against the pinned VaultForeman stabilisation freeze commit (SHA recorded when the sweep begins, not a moving HEAD); decompose it after its deps land. Shared-file sibling conflicts fail closed to a human gate. Producer reads the runner-asset source map. |
-| 6 | `flight-1`, `flight-2` | manual | Flight 1 proves the kernel on a disposable repo with deploy decoupled. Flight 2 proves a guarded real-deploy slice and is the go/no-go for trusting Woof with prod-deploying consumers. Operator run-sheets: `docs/flight/flight-1-induction.md`, `docs/flight/flight-2-audit-evidence.md`. |
-| 7 | `conformance-audit`, `eval-instrumentation`, `intake-epic-enrichment` | vf-drain | Post-flight richness. Structural cartography is the deferred structural scope of `cartography-continuity`, not a separate unit. |
-| 8 | `vaultforeman-retirement` | manual | Retire standalone VaultForeman once Woof is proven, carries the engine-neutral consumer policy, and no live run requires the VaultForeman path. |
+| 6 | `herder-kept-alive-dispatch` | hand-build | Consume Agent Toolkit's backend-neutral retained-session seam, remove tmux-only public shapes, and prove herder plus explicit tmux fallback before a flight. |
+| 7 | `flight-1`, `flight-2` | manual | Flight 1 proves the kernel on a disposable repo with deploy decoupled. Flight 2 proves a guarded real-deploy slice and is the go/no-go for trusting Woof with prod-deploying consumers. Operator run-sheets: `docs/flight/flight-1-induction.md`, `docs/flight/flight-2-audit-evidence.md`. |
+| 8 | `conformance-audit`, `eval-instrumentation`, `intake-epic-enrichment` | vf-drain | Post-flight richness. Structural cartography is the deferred structural scope of `cartography-continuity`, not a separate unit. |
+| 9 | `vaultforeman-retirement` | manual | Retire standalone VaultForeman once Woof is proven, carries the engine-neutral consumer policy, and no live run requires the VaultForeman path. |
 
-Same-day requirements are placed as follows: project-owned producer/reviewer run profiles are in `policy-model` and preserved by `runner-loop-absorption`; deploy-aware Profile A merge and partial-merge reconciliation are in `deploy-aware-merge-coordinator`, exercised by `flight-1`; shared-file sibling conflicts fail closed to a human gate in `runner-loop-absorption`; the dispatch registry mismatch is an explicit `dispatch-swap` prerequisite before the warm-session and runner-loop waves.
+Same-day requirements are placed as follows: project-owned producer/reviewer run profiles are in `policy-model` and preserved by `runner-loop-absorption`; deploy-aware Profile A merge and partial-merge reconciliation are in `deploy-aware-merge-coordinator`, exercised by `flight-1`; shared-file sibling conflicts fail closed to a human gate in `runner-loop-absorption`; the dispatch registry mismatch is an explicit `dispatch-swap` prerequisite before the warm-session and runner-loop waves; backend-neutral retained sessions land in `herder-kept-alive-dispatch` before either flight.
 
 ## Notes
 

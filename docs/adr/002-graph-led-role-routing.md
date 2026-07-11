@@ -6,7 +6,7 @@ date: 2026-05-27
 
 # ADR-002: Role Routing
 
-Superseded by ADR-012 and ADR-013. The retained principle is producer/reviewer separation; the active route and rigour model is policy-driven and dispatched through the tmux harness.
+Superseded by ADR-012 and ADR-013. The retained principle is producer/reviewer separation; the active route and rigour model is policy-driven and dispatched through the profile's interactive harness backend.
 
 ## Context
 

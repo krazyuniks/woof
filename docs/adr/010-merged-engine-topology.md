@@ -12,7 +12,7 @@ Woof and VaultForeman both implement the same delivery loop: decompose work, pro
 
 ## Decision
 
-Woof is the surviving engine. VaultForeman's runner assets fold into Woof: profile A/B publish shapes, queue draining, serial merge coordination, warm producer/fresh reviewer fix rounds, usage telemetry, review caching, and hardened tmux-based review capture.
+Woof is the surviving engine. VaultForeman's runner assets fold into Woof: profile A/B publish shapes, queue draining, serial merge coordination, warm producer/fresh reviewer fix rounds, usage telemetry, review caching, and hardened interactive review capture.
 
 There is one engine path after intake has produced `work_units[]`.
 

@@ -20,7 +20,9 @@ This glossary defines Woof's project-specific terms. Architecture, ADRs, and bac
 - **Reviewer** - the independent LLM worker that critiques the current diff and evidence.
 - **Warm producer** - the producer session kept alive across bounded fix rounds for one work unit.
 - **Fresh reviewer** - a reviewer context that is independent for each review round and receives the full current diff and evidence.
-- **Attached execution resource** - a live tmux session used to perform work while disk remains the authority for what work should happen.
+- **Attached execution resource** - a live transport session or agent used to perform work while disk remains the authority for what work should happen.
+- **Harness backend** - the tmux or herder transport declared by a harness profile. Project policy selects a harness; the registry resolves its backend.
+- **Retained session** - a backend-neutral live worker identity that accepts subsequent turns before explicit close; Woof uses it for a warm producer.
 - **Profile A** - worktree-per-work-unit delivery with a pull request and serial merge coordinator.
 - **Profile B** - single-tree delivery with graph-owned commit and push.
 - **Cartography** - the `.woof/codebase/` artefact group used for repo understanding: design docs, mapper-authored AS-IS docs, lexical files, and optional structural indexes.

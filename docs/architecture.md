@@ -29,9 +29,9 @@ Woof is one of the tools a project composes, and it owns neither the other tools
 |---|---|---|
 | State | Durable run, epic, work-unit, gate, audit, and cartography records. | `~/.woof/state/projects/<project-key>/` in the operator home (ADR-017). |
 | Engine | Intake, decomposition, graph progression, checks, gates, run lineage, publish/merge, and replay. | Python under `src/woof/`. |
-| Dispatch substrate | Interactive TUI worker launch, prompt-file delivery, completion detection, output capture, and usage/session telemetry. | Shared `tmux_harness` package. |
+| Dispatch substrate | Interactive TUI worker launch, prompt-file delivery, lifecycle observation, output capture, and usage/session telemetry. | Shared tmux and herder transport packages behind the dispatch registry. |
 | Operator surface | Human-facing command and skill entry points over the engine. | `woof` CLI and `/woof` skill. |
-| Workers | Producer, reviewer, mapper, and enrichment agents. | Subscription CLI harnesses launched through tmux. |
+| Workers | Producer, reviewer, mapper, and enrichment agents. | Subscription CLI harnesses launched through the backend declared by their registry profile. |
 
 The engine consumes structured dispatch results. It never parses raw terminal scrollback.
 
@@ -144,19 +144,23 @@ Work-unit producer discipline remains tracer-bullet red-green-refactor: for each
 
 ## 6. Dispatch and Sessions
 
-All LLM workers run as interactive TUIs under tmux. Headless `claude -p`, `codex exec`, or equivalent one-shot reasoning paths are not part of the build path.
+All LLM workers run as interactive TUIs. Each harness profile declares tmux or herder explicitly; project policy selects the harness, not its transport. Headless `claude -p`, `codex exec`, or equivalent one-shot reasoning paths are not part of the build path.
 
 The dispatch substrate owns:
 
 - harness launch and readiness;
 - prompt-file delivery with a short kickoff;
-- completion detection by sentinel, idle, or harness-specific done marker;
+- backend-specific lifecycle observation: tmux uses its declared prompt/files/markers, while herder uses semantic status events plus the payload;
 - output capture and presentation-chrome stripping;
 - structured verdict/evidence parsing;
 - usage and session telemetry;
 - process cleanup.
 
 The structured result contract includes verdict, evidence, usage, session identity, artefact references, and completion classification.
+
+The producer/reviewer session contract is backend-neutral. A retained producer keeps the same worker identity across bounded fix rounds; every reviewer round receives a fresh independent worker. Herder-backed turns arm lifecycle observation before prompt submission, complete on `working -> idle` or `done` with the payload present, and surface blocked and timeout as distinct graph outcomes. Tmux remains available for profiles whose TUI has no validated herdr lifecycle integration.
+
+Herder compatibility is established against the running named-session server reached through its explicit socket. Preflight records and validates server version and protocol. Development against a new protocol uses a disposable named session and never mutates an operator's active server.
 
 ### Warm Producer Seam
 

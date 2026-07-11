@@ -65,13 +65,7 @@ Quality gates support two postures in the target architecture. Strict mode block
 
 - [`docs/architecture.md`](docs/architecture.md) — system architecture: layers, stages, cartography, role routing, schemas, gates, transaction manifests, prerequisites.
 - [`docs/backlog.md`](docs/backlog.md) — open work and the wave operating order, prescriptive.
-- [`docs/adr/001-orchestration-topology.md`](docs/adr/001-orchestration-topology.md) — layered topology.
-- [`docs/adr/002-graph-led-role-routing.md`](docs/adr/002-graph-led-role-routing.md) — semantic role routing.
-- [`docs/adr/003-issue-tracker-abstraction.md`](docs/adr/003-issue-tracker-abstraction.md) — tracker protocol.
-- [`docs/adr/004-cartography-prerequisite.md`](docs/adr/004-cartography-prerequisite.md) — cartography artefact group.
-- [`docs/adr/005-skill-suite.md`](docs/adr/005-skill-suite.md) — operator skill suite.
-- [`docs/adr/006-operational-resilience.md`](docs/adr/006-operational-resilience.md) — readiness, dispatch telemetry, circuit breaker, baseline gates, reviewer evidence, drift detection, tmux supervision, and later conformance auditing.
-- [`docs/adr/007-operator-skill-umbrella.md`](docs/adr/007-operator-skill-umbrella.md) — single-umbrella operator skill (refines ADR-005).
+- [`docs/adr/`](docs/adr/) — decision records. ADR-010 through ADR-017 define the merged engine (topology, work-units contract, interactive harness dispatch, policy-driven rigour and cartography, VaultForeman absorption and retirement, Profile A worktree contract, sibling-conflict fail-closed, operator-home config and state); earlier ADRs carry their supersession status in front matter.
 
 ## Development
 

@@ -239,7 +239,9 @@ def test_init_outputs_next_steps(tmp_path: Path, run_woof) -> None:
     assert "woof preflight" in proc.stdout
     assert "woof wf new" in proc.stdout, "next steps must reach the first epic"
     assert "Run the graph with the command printed by `woof wf new`" in proc.stdout
-    assert "docs/consumers.md" in proc.stdout, "next steps must point at the walkthrough"
+    assert "skills/woof/references/setup.md" in proc.stdout, (
+        "next steps must point at the walkthrough"
+    )
 
 
 def test_init_json_validate_quality_gates_placeholder_is_documented(

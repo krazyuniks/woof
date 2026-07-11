@@ -776,4 +776,4 @@ def _print_result(result: InitResult) -> None:
     print('  5. Start your first epic: `woof wf new "<spark>"`.')
     print("  6. Run the graph with the command printed by `woof wf new`.")
     print()
-    print("See docs/consumers.md for the full first-run walkthrough.")
+    print("See skills/woof/references/setup.md for the full first-run walkthrough.")

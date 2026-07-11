@@ -278,7 +278,7 @@ A gate is a durable state recorded on disk. Resolution is an explicit engine act
 
 ## 11. Operator Surface
 
-`woof` is the CLI entry point for init, intake, run, gate resolution, observation, validation, baseline capture, and replay.
+`woof` is the CLI entry point. Its verbs are `init`, `wf` (graph run, intake, and reset), `observe`, `validate`, `check`, `baseline`, `dispatch`, `preflight`, `hooks`, `render-epic`, `audit-bundle`, and `check-cd`.
 
 `/woof` is the operator skill over the CLI. It does not mutate engine config or state directly and does not implement a second runner.
 

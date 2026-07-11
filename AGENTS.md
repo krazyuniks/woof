@@ -12,7 +12,7 @@ Use `just` for repo commands. Discover with `just --list`.
 
 - `just bootstrap` — first-time setup: host prerequisites, `uv sync`, git hooks, and quality gate.
 - `just setup` — synchronise the locked `uv` environment.
-- `just lint` — Ruff lint and format check.
+- `just lint` — Ruff lint, Ruff format check, and pyright.
 - `just test` — unit test suite.
 - `just check` — local quality gate.
 - `just woof --help` — run the checkout CLI wrapper.

@@ -200,7 +200,7 @@ work_units:
     kind: build
     state: todo
     priority: high
-    summary: "Re-baseline the runner absorption against a pinned VaultForeman freeze commit (SHA recorded when the sweep begins), not a moving HEAD. The runner-asset source map was cut 2026-06-28; VaultForeman has landed drain, review-parsing, prompt, and operator-UX fixes since that Woof will not otherwise inherit. Carry the fix families below and refresh the source map to that same freeze commit. Two VF changes are carried elsewhere, not here: the state-to-operator-home move (VF ac9ac02 + ff381dd) is owned by `operator-home-config-and-state` (ADR-017), and the optional-worktree-lifecycle change (VF 0411fd5) is already superseded by ADR-015."
+    summary: "Re-baseline the runner absorption against a pinned VaultForeman engine-repo commit -- 97c180a (2026-07-11), the tip at which VaultForeman was carried to completion -- not a moving HEAD. The 2026-07-09 feature freeze an earlier draft pinned to is lifted, so the pin advances to the completion tip; this pulls the post-freeze drain-entry fixes (park isolation, review-size honesty, seed-ref fix-forward, dispatch receipt and active liveness, round-completion invariant) inside the sweep window. The runner-asset source map was cut 2026-06-28; VaultForeman has landed drain, review-parsing, prompt, and operator-UX fixes since that Woof will not otherwise inherit. Carry the fix families below and refresh the source map to that same pinned commit. Two VF changes are carried elsewhere, not here: the state-to-operator-home move (VF ac9ac02 + ff381dd) is owned by `operator-home-config-and-state` (ADR-017), and the optional-worktree-lifecycle change (VF 0411fd5) is already superseded by ADR-015. The gate-environment channel is carried by its own `gate-environment-channel` unit, not here."
     deps: [runner-loop-absorption, deploy-aware-merge-coordinator]
     acceptance:
       - "Merge coordinator: serial one-unit-per-cycle drain, publish-rebase survival with no residue, detached coordinator worktree, index-free ready-PR listing, merge-phase transient safety (no drain crash or re-produce), rebase-and-re-gate onto the base tip before a Profile A PR, partial-merge reconciliation, and skip-re-produce when a unit already has an open PR."
@@ -215,7 +215,12 @@ work_units:
       - "Operator UX: slice-phase transitions narrate to stdout as the progress signal; a describe command resolves policy plus harness registry for a project or backlog; a committed branch can be adopted without a producer (resume); the producer done-signal window is configurable; reviewer prompts are persisted per round."
       - "Harness and profile: producer and reviewer harness are overridable profile fields resolved through the single dispatch registry; effort tiers are correct per profile."
       - "Manifest-first review has engine support, not only prompt text: a compact change manifest artefact (base/head, changed paths, status, numstat, file class, generated/bulk classification) is recorded per reviewed round; the review-cache fingerprint uses Git object identity rather than hashing the full patch text; oversized changes enter manifest-led review when the hand-written surface is reviewable, and only genuinely unreviewable diffs park with a split-required reason (VaultForeman `manifest-first-review-mode` is the source unit once it lands there)."
-      - The runner-asset source map is refreshed to the pinned VaultForeman freeze commit (SHA recorded when the sweep begins) and marked historical once parity lands.
+      - "Park isolation: a parked unit blocks only its dependency closure; independent units keep draining. One park never halts the whole run (VaultForeman `park-does-not-halt-independent-units`; a single park cost a full night's drain)."
+      - "Review-size budget honesty: the size budget is operator-configurable with a per-unit override, and a park for an over-budget diff reports added and deleted line counts separately rather than one conflated total (VaultForeman `review-size-budget-operator-configurable`; a deletion-dominated diff parked despite a small hand-written surface)."
+      - "Seed-ref fix-forward: a work unit may declare a seed ref applied to a fresh branch before produce, so a fix-forward round starts from a preserved commit rather than re-producing from base (VaultForeman `fix-forward-round-from-preserved-commit`; Woof's branch-exists recovery has no seed-ref concept)."
+      - "Dispatch receipt and active liveness: dispatch confirms the worker received the prompt before the run trusts it, polling actively samples and nudges a silent worker rather than waiting blind, and each sample writes a heartbeat to the run log. Herder covers receipt and lifecycle natively, so the residual Woof gap is the run-log heartbeat observability and, for explicit tmux profiles only, the active pane sampling and nudge (VaultForeman `dispatch-receipt-and-active-liveness`)."
+      - "Round-completion invariant: a produce or fix round completes on the harness done-signal, never on HEAD movement, and the round diff spans every intermediate commit the worker made. Woof's herder done-marker architecture avoids the defect structurally; state the invariant so it is enforced, not assumed (VaultForeman `producer-round-completion-not-head-movement`)."
+      - The runner-asset source map is refreshed to the pinned VaultForeman engine-repo commit 97c180a and marked historical once parity lands.
   - id: run-lineage-immutable-attempts
     title: Add run lineage and immutable attempt artefacts
     kind: build
@@ -312,6 +317,35 @@ work_units:
       - Raw durable artefact reads are routed through loaders.
       - Commit and publish boundaries pin the verified tree and expected paths.
       - Dead state-mutation surfaces are removed rather than mirrored.
+  - id: gate-environment-channel
+    title: Operator gate-environment channel with unit context and pre-authorisation
+    kind: build
+    state: todo
+    priority: high
+    summary: "Every gate invocation -- deterministic gate, review gate, and the
+      publish-time guard -- receives the work unit's identity, its declared change
+      targets, and an operator-supplied environment channel, so a gate can be
+      pre-authorised per unit without editing engine or repo source. Carries
+      VaultForeman's gate-environment-authorisation-channel (the per-unit
+      pre-authorisation half, delivered VF af42d0f0) and
+      gate-environment-unit-context-and-operator-pass-through (unit-context and
+      policy-level pass-through). Motivating context is the delivered Freeflo #895
+      preflight guard and the #897 post-mortem: a producer holding repo-edit access
+      could self-authorise an in-repo gate, so the authorisation channel must live
+      outside anything the producer can touch. Engine stays project-agnostic and
+      data-driven."
+    deps: [runner-loop-absorption]
+    acceptance:
+      - The engine exports the work-unit id and its declared change targets to every
+        gate invocation, including the publish-time re-gate; declared targets are a
+        work-unit schema field, not inferred from the diff.
+      - Policy declares a per-unit gate-environment channel the operator sets outside
+        the delivery repo; the engine passes it through to gate invocations and a
+        producer diff can never populate or alter it.
+      - A gate guard reads its pre-authorisation only from the operator channel; a value
+        the producer could write into repo source never satisfies it.
+      - A test proves an operator pre-authorisation reaches the gate and that a
+        producer-authored in-repo value does not.
   - id: publish-protected-content-guard
     title: Publish-time guard rejects producer diffs that forge protected content
     kind: build
@@ -327,13 +361,16 @@ work_units:
       declares pathspec plus content predicate (e.g. added/changed JSON under a
       fixtures tree carrying status human_approved or a named human reviewer);
       engine stays project-agnostic and data-driven, no per-project branch.
-    deps: [runner-loop-absorption]
+    deps: [runner-loop-absorption, gate-environment-channel]
     acceptance:
       - A producer diff adding or modifying content matching a policy-declared protected
         predicate fails publish with a message naming the file and predicate; the unit
         parks rather than merges.
       - Predicates live in consuming-repo policy, not engine code; a repo with none
         declared is unaffected.
+      - Any operator pre-authorisation for a protected predicate arrives only through the
+        gate-environment channel; a value the producer could write into repo source never
+        satisfies the guard.
       - The freeflo human-approval predicate is expressible and covered by a test that
         replays the 2026-07-10 fabrication shape.
   - id: produce-prompt-commit-discipline
@@ -402,7 +439,7 @@ The wave-5-onward tail below was reshaped from six deep-reasoning commissions (F
 
 Engine-agnostic framing: a prod-deploying consumer is one either engine can run, so there is no consumer-specific migration. The residual is the engine-side `engine-neutral-consumer-policy` unit plus the general proving gate (`flight-1` and `flight-2`). Retirement triggers on Woof parity, proof, and no live VF-dependent run.
 
-Live-state note: `intake-predecomposed` and `execution-shape-unification` are already delivered. The decided doc tranche is now applied: ADR-015 (Profile A worktree contract), ADR-016 (sibling-conflict fail-closed), the declarative ADR-014 rewrite (absorption, three bounded transition surfaces, schema-authority freeze, operator-set stability window), the architecture section 0/section 8 updates, the CONTEXT glossary additions, and the policy-schema worktree/deploy-timeout additions. `vaultforeman-fix-parity` is the sweep that re-baselines the absorption against a pinned VaultForeman freeze commit, not a moving HEAD.
+Live-state note: `intake-predecomposed` and `execution-shape-unification` are already delivered. The decided doc tranche is now applied: ADR-015 (Profile A worktree contract), ADR-016 (sibling-conflict fail-closed), the declarative ADR-014 rewrite (absorption, three bounded transition surfaces, schema-authority freeze, operator-set stability window), the architecture section 0/section 8 updates, the CONTEXT glossary additions, and the policy-schema worktree/deploy-timeout additions. `vaultforeman-fix-parity` is the sweep that re-baselines the absorption against a pinned VaultForeman engine-repo commit (97c180a, the carried-to-completion tip), not a moving HEAD; the pin advanced past the lifted 2026-07-09 freeze to pull in the post-freeze drain-entry fixes. The `gate-environment-channel` unit carries VaultForeman's gate-environment channel, which had no Woof twin.
 
 ## Operating Order
 
@@ -431,7 +468,7 @@ The `How` value controls execution mechanics:
 | 2 | `policy-model`, `dispatch-swap`, `run-lineage-immutable-attempts` | hand-build + vf-drain | Hand-build the repo-local policy schema/spine first. In `dispatch-swap`, consolidate VaultForeman's harness/model/effort registry into Woof's dispatcher before any produce/review logic is absorbed. |
 | 3 | `execution-shape-unification`, `config-routing-ssot` | hand-build | Foundational convergence. Collapse the runtime to one `work_units[]` shape (retire the `status`/`state` dual lifecycle and legacy id mirrors; rename checks, gates, and playbooks onto work-unit language) and make `policy.toml` the single routing/run-profile authority (retire `agents.toml` routing, single-source the registry vocab, delete dead headless builders). Hand-build because the vf-drain waves fold runner logic into this kernel; draining them first deepens the mirror. |
 | 4 | `warm-session-seam`, `cartography-continuity`, `intake-predecomposed` | vf-drain | Drain after the kernel runs one shape and the dispatch registry is single-sourced, so warm producer and fresh reviewer sessions use one adapter contract and one unit shape. `intake-predecomposed` is already delivered. |
-| 5 | `runner-loop-absorption`, `deploy-aware-merge-coordinator`, `profile-a-worktree-contract`, `engine-neutral-consumer-policy`, `operator-home-config-and-state`, `vaultforeman-fix-parity` | hand-build + vf-drain | Absorb Profile A/B drain, review cache, and usage/run telemetry. Drain sub-backlogs in order: `docs/backlogs/wave-5-shakedown.md` (`profile-a-worktree-contract` shakedown first), then `docs/backlogs/wave-5.md` (the decomposed absorption). `deploy-aware-merge-coordinator` is a native new-build (no VaultForeman source asset) and is hand-build with operator review, not an unattended vf-drain. `operator-home-config-and-state` implements ADR-017 (engine config/state under `~/.woof`; no engine files in driven repos) and must land before the flights so the proven engine is the operator-home one. `vaultforeman-fix-parity` re-baselines the absorption against the pinned VaultForeman stabilisation freeze commit (SHA recorded when the sweep begins, not a moving HEAD); decompose it after its deps land. Shared-file sibling conflicts fail closed to a human gate. Producer reads the runner-asset source map. |
+| 5 | `runner-loop-absorption`, `deploy-aware-merge-coordinator`, `profile-a-worktree-contract`, `engine-neutral-consumer-policy`, `operator-home-config-and-state`, `gate-environment-channel`, `vaultforeman-fix-parity` | hand-build + vf-drain | Absorb Profile A/B drain, review cache, and usage/run telemetry. Drain sub-backlogs in order: `docs/backlogs/wave-5-shakedown.md` (`profile-a-worktree-contract` shakedown first), then `docs/backlogs/wave-5.md` (the decomposed absorption). `deploy-aware-merge-coordinator` is a native new-build (no VaultForeman source asset) and is hand-build with operator review, not an unattended vf-drain. `operator-home-config-and-state` implements ADR-017 (engine config/state under `~/.woof`; no engine files in driven repos) and must land before the flights so the proven engine is the operator-home one. `gate-environment-channel` carries VaultForeman's gate-environment channel (unit context, declared targets, operator pre-authorisation) and is the pre-authorisation seam `publish-protected-content-guard` reads. `vaultforeman-fix-parity` re-baselines the absorption against the pinned VaultForeman engine-repo commit 97c180a (the carried-to-completion tip, not a moving HEAD); decompose it after its deps land. Shared-file sibling conflicts fail closed to a human gate. Producer reads the runner-asset source map. |
 | 6 | `herder-kept-alive-dispatch` | hand-build | Consume Agent Toolkit's backend-neutral retained-session seam, remove tmux-only public shapes, and prove herder plus explicit tmux fallback before a flight. |
 | 7 | `flight-1`, `flight-2` | manual | Flight 1 proves the kernel on a disposable repo with deploy decoupled. Flight 2 proves a guarded real-deploy slice and is the go/no-go for trusting Woof with prod-deploying consumers. Operator run-sheets: `docs/flight/flight-1-induction.md`, `docs/flight/flight-2-audit-evidence.md`. |
 | 8 | `conformance-audit`, `eval-instrumentation`, `intake-epic-enrichment` | vf-drain | Post-flight richness. Structural cartography is the deferred structural scope of `cartography-continuity`, not a separate unit. |

@@ -17,7 +17,7 @@ VaultForeman's standalone runner is absorbed into Woof and retired once the merg
 Exactly three bounded transition surfaces exist, each with a named end trigger, and no fourth:
 
 - **Live delivery.** VaultForeman keeps draining current consumer delivery until per-run engine selection has moved live consumers onto Woof.
-- **Build executor.** The transitional `executor: name: vault_foreman` block in Woof's canonical backlog schema, the `vf-drain` wave instructions, and `VAULT_FOREMAN.md` exist only so VaultForeman can drain Woof's own merge backlog. They are swept when retirement lands.
+- **Build executor.** The transitional `executor: name: vault_foreman` block in Woof's canonical backlog schema and the `vf-drain` wave instructions exist only so VaultForeman can drain Woof's own merge backlog; the VaultForeman run profile lives in the operator-home VaultForeman project config, not in this repo. They are swept when retirement lands.
 - **Fallback and comparison.** VaultForeman is held as warm fallback with per-run comparison evidence through a post-cutover stability window.
 
 No thin `vf` wrapper is built by default. If one is later proved useful it is a pure argv-translation shim over Woof with zero orchestration or state, proved after retirement, not before.

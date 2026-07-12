@@ -23,6 +23,11 @@ Bring a consumer repository under Woof from the `/woof` umbrella.
    Stage-5 docs-drift mappings. Init refuses to overwrite an existing config; pass `--force` to
    replace it.
 
+   Each quality gate declares its own `mode`, and an undeclared mode is `strict`. There is no
+   file-level default mode: a gate that should not fail the run says `mode = "baseline"` on the
+   gate itself. When migrating a project that relied on a file-level default of `baseline`, set
+   `mode = "baseline"` on each gate that needs it, or those gates start failing the run.
+
    With `--tracker` omitted, `woof init` infers the tracker from the project's git remote: a
    github `origin`/`upstream` remote scaffolds the github tracker with `repo` pre-filled from its
    `owner/name`, otherwise it scaffolds the local tracker. Pass `--tracker github` or

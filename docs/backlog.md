@@ -200,11 +200,11 @@ work_units:
     kind: build
     state: todo
     priority: high
-    summary: "Re-baseline the runner absorption against a pinned VaultForeman engine-repo commit -- 97c180a (2026-07-11), the tip at which VaultForeman was carried to completion -- not a moving HEAD. The 2026-07-09 feature freeze an earlier draft pinned to is lifted, so the pin advances to the completion tip; this pulls the post-freeze drain-entry fixes (park isolation, review-size honesty, seed-ref fix-forward, dispatch receipt and active liveness, round-completion invariant) inside the sweep window. The runner-asset source map was cut 2026-06-28; VaultForeman has landed drain, review-parsing, prompt, and operator-UX fixes since that Woof will not otherwise inherit. Carry the fix families below and refresh the source map to that same pinned commit. Two VF changes are carried elsewhere, not here: the state-to-operator-home move (VF ac9ac02 + ff381dd) is owned by `operator-home-config-and-state` (ADR-017), and the optional-worktree-lifecycle change (VF 0411fd5) is already superseded by ADR-015. The gate-environment channel is carried by its own `gate-environment-channel` unit, not here."
+    summary: "Re-baseline the runner absorption against a pinned VaultForeman engine-repo commit, not a moving HEAD. The pin is the VaultForeman tip once its review, resume, and publish defect set has landed (the four units in VaultForeman's `review-resume-and-publish-defects` backlog); until then the sweep has nothing stable to pin to, because that set changes the reviewer verdict-capture contract, the producer round-completion baselines, and the operator authorisation shape. The prior pin was 97c180a (2026-07-11), described then as the completion tip; VaultForeman is not complete, so the pin advances rather than holds. The 2026-07-09 feature freeze an earlier draft pinned to is lifted, which pulls the post-freeze drain-entry fixes (park isolation, review-size honesty, seed-ref fix-forward, dispatch receipt and active liveness, round-completion invariant) inside the sweep window. The runner-asset source map was cut 2026-06-28; VaultForeman has landed drain, review-parsing, prompt, and operator-UX fixes since that Woof will not otherwise inherit. Carry the fix families below and refresh the source map to that same pinned commit. Two VF changes are carried elsewhere, not here: the state-to-operator-home move (VF ac9ac02 + ff381dd) is owned by `operator-home-config-and-state` (ADR-017), and the optional-worktree-lifecycle change (VF 0411fd5) is already superseded by ADR-015. Operator authorisation, including its CI-parity half, is carried by its own `gate-environment-channel` unit, not here."
     deps: [runner-loop-absorption, deploy-aware-merge-coordinator]
     acceptance:
       - "Merge coordinator: serial one-unit-per-cycle drain, publish-rebase survival with no residue, detached coordinator worktree, index-free ready-PR listing, merge-phase transient safety (no drain crash or re-produce), rebase-and-re-gate onto the base tip before a Profile A PR, partial-merge reconciliation, and skip-re-produce when a unit already has an open PR."
-      - "Review-verdict acquisition is contract-first: reviewer output arrives through the structured answer contract, and herder profiles carry receipt, lifecycle, and payload natively with no pane parsing. Pane parsing exists only for explicit tmux profiles, where it is harness-aware: glyphless, Unicode, and settled-chrome Claude Code done-markers reap a PASS; GLM and codex readiness and done glyphs are matched; multi-line and bare file:line findings are captured whole; TUI pane markers are normalised before verdict parsing; a [path:line] citation the reviewer TUI hard-wrapped across rows is rejoined before finding extraction."
+      - "Review-verdict acquisition stays contract-first, and the contract is stated so it is enforced rather than assumed. Reviewer output arrives as a file the worker writes, signalled by a sentinel it writes last, and the verdict of record is the schema-validated critique artefact's severity field -- never a token scraped from pane text. This is what makes Woof structurally immune to VaultForeman's verdict scroll-off defect (VF issue 7), where a long review pushed the verdict above the captured pane region and the unit falsely timed out. The immunity comes from the file-and-sentinel capture contract in the shipped tmux transport, not from herder, which is unbuilt (`herder-kept-alive-dispatch` is still todo); do not credit it to a backend that does not exist. No verdict path may regress to classifying pane text, and pane capture stays confined to embedding a tail into error messages."
       - "Review-verdict classification recovers non-conforming reviewer output on either backend: a settled clear-prose conclusion coerces to PASS only when the round's completion signal is present and no findings, blocking prose, or negations exist; unformatted blocker prose never coerces a verdict — it parks with the blocker text preserved verbatim for the operator and the full session output captured in the park artefact. The same recovery applies when the structured answer contract is not met."
       - "Producer prompt: context parity with the reviewer (issue number, links, work-unit body); a named GitHub issue is read live including comments before editing; test-first procedure with red-proof recording (prove new tests fail against the unfixed tree, implement to green, record both runs); bulk-output guardrail (compact declarative source plus generator or stale-output gate, never thousands of committed generated lines as the only reviewable artefact); the prompt forbids mutating work-unit state in any backlog file."
       - "Reviewer prompt: the diff base is derived explicitly from the merge base with the base branch, never guessed; review starts from a compact change manifest (name-status/stat/numstat), not the full raw patch, drilling into targeted files as needed; review runs against the full checkout and a blocker may cite an unchanged file whose committed contract makes the change wrong; repo-root and directory-scoped AGENTS.md bind the review; a mandatory semantic-drift pass covers tuned behaviours, user-visible wording, persisted payload shapes, fixture provenance, and tests that strip or restate the changed fact; the verdict is demanded as the bare token, with narrative substitutes named and forbidden."
@@ -219,9 +219,43 @@ work_units:
       - "Park isolation: a parked unit blocks only its dependency closure; independent units keep draining. One park never halts the whole run (VaultForeman `park-does-not-halt-independent-units`; a single park cost a full night's drain)."
       - "Review-size budget honesty: the size budget is operator-configurable with a per-unit override, and a park for an over-budget diff reports added and deleted line counts separately rather than one conflated total (VaultForeman `review-size-budget-operator-configurable`; a deletion-dominated diff parked despite a small hand-written surface)."
       - "Seed-ref fix-forward: a work unit may declare a seed ref applied to a fresh branch before produce, so a fix-forward round starts from a preserved commit rather than re-producing from base (VaultForeman `fix-forward-round-from-preserved-commit`; Woof's branch-exists recovery has no seed-ref concept)."
-      - "Dispatch receipt and active liveness: dispatch confirms the worker received the prompt before the run trusts it, polling actively samples and nudges a silent worker rather than waiting blind, and each sample writes a heartbeat to the run log. Herder covers receipt and lifecycle natively, so the residual Woof gap is the run-log heartbeat observability and, for explicit tmux profiles only, the active pane sampling and nudge (VaultForeman `dispatch-receipt-and-active-liveness`)."
+      - "Dispatch receipt and active liveness: dispatch confirms the worker received the prompt before the run trusts it, polling actively samples and nudges a silent worker rather than waiting blind, and each sample writes a heartbeat to the run log (VaultForeman `dispatch-receipt-and-active-liveness`). The file-and-sentinel capture contract covers receipt and payload, so the residual Woof gap is the run-log heartbeat observability and the active sampling and nudge; herder does not cover this, because herder is unbuilt."
+      - "The reviewer path has liveness, not only the producer path. Woof's warm producer polls `tmux.has_session` every second and fails fast when the session dies, but the one-shot reviewer path has no liveness poll at all: a reviewer whose TUI dies in the first second still burns the entire wallclock budget before `reviewer_unreachable` opens. A dead reviewer is detected within one sample, not at the ceiling. This is the same asymmetry VaultForeman carries as issue 9, where the reviewer poll never received the receipt, sampling, and dead-session detection the producer poll has."
+      - "A failed or timed-out worker's session output survives for the operator. The tmux scratch directory holding the prompt, payload, and sentinel is currently removed on every outcome including failure, because Woof never passes `keep_scratch_on_failure`, so on a reviewer timeout the only surviving evidence is a 60-line pane tail interpolated into the error message. The park artefact carries the full session output, as this backlog already requires elsewhere; VaultForeman threads `keep_scratch_on_failure` through its dispatch registry and Woof inherits that."
       - "Round-completion invariant: a produce or fix round completes on the harness done-signal, never on HEAD movement, and the round diff spans every intermediate commit the worker made. Woof's herder done-marker architecture avoids the defect structurally; state the invariant so it is enforced, not assumed (VaultForeman `producer-round-completion-not-head-movement`)."
       - The runner-asset source map is refreshed to the pinned VaultForeman engine-repo commit 97c180a and marked historical once parity lands.
+  - id: dispatch-failure-classification-honesty
+    title: A timed-out worker is recorded as timed out, not as a non-zero exit
+    kind: build
+    state: todo
+    priority: high
+    summary: "The one-shot dispatch path catches `HarnessTimeoutError` through an
+      `except` clause bound to its parent class `HarnessDispatchError`, so a genuine
+      wallclock timeout is collapsed into `exit_type=\"nonzero\"`. The
+      `subprocess_returned` event then hardcodes `timed_out: False` and
+      `terminal_seen: True`, and the run meta repeats it -- on the failure branch. A
+      reviewer that timed out is therefore durably recorded as having not timed out and
+      having been seen to terminate. `wallclock_timeout` is a declared failure type that
+      this path can never emit, even though the warm-producer path computes the same
+      field correctly rather than hardcoding it. No false PASS results from this, but
+      the audit trail states the opposite of what happened, which is exactly the
+      evidence an operator reaches for when a drain stalls. Found comparing Woof against
+      VaultForeman's resume-timeout misreport (VF issue 8), where one message covered a
+      genuine timeout, a producer that committed nothing, and a producer that never
+      worked; the failure is the same class -- a dispatch outcome reported as something
+      it was not -- and Woof carries it independently."
+    deps: [runner-loop-absorption]
+    acceptance:
+      - A worker that exceeds its wallclock deadline is recorded with the
+        `wallclock_timeout` failure type in the dispatch event, the run meta, and the park
+        artefact. The value is computed from the outcome, never hardcoded, on every
+        dispatch path rather than only the warm-producer one.
+      - A worker that exits before writing its result and a worker that ran past its
+        deadline are distinguishable in the recorded artefacts without reading a pane tail.
+      - The `except` clause no longer collapses a timeout into a generic dispatch failure;
+        the timeout subclass is caught and classified before its parent.
+      - Regression tests cover a reviewer timeout, a reviewer that exits early, and a
+        reviewer that succeeds, asserting the recorded failure type in each.
   - id: run-lineage-immutable-attempts
     title: Add run lineage and immutable attempt artefacts
     kind: build
@@ -320,34 +354,56 @@ work_units:
       - Commit and publish boundaries pin the verified tree and expected paths.
       - Dead state-mutation surfaces are removed rather than mirrored.
   - id: gate-environment-channel
-    title: Operator gate-environment channel with unit context and pre-authorisation
+    title: Operator authorisation declared once, reaching the gate, the publish guard, and CI
     kind: build
     state: todo
     priority: high
     summary: "Every gate invocation -- deterministic gate, review gate, and the
       publish-time guard -- receives the work unit's identity, its declared change
-      targets, and an operator-supplied environment channel, so a gate can be
-      pre-authorised per unit without editing engine or repo source. Carries
-      VaultForeman's gate-environment-authorisation-channel (the per-unit
-      pre-authorisation half, delivered VF af42d0f0) and
-      gate-environment-unit-context-and-operator-pass-through (unit-context and
-      policy-level pass-through). Motivating context is the delivered Freeflo #895
-      preflight guard and the #897 post-mortem: a producer holding repo-edit access
-      could self-authorise an in-repo gate, so the authorisation channel must live
-      outside anything the producer can touch. Engine stays project-agnostic and
+      targets, and an operator-declared authorisation, so a gate can be pre-authorised
+      per unit without editing engine or repo source; and the same authorisation reaches
+      CI as pull request labels, so a locally-authorised unit does not fail the same
+      guard in CI by construction. Carries VaultForeman's
+      gate-environment-authorisation-channel (the per-unit pre-authorisation half,
+      delivered VF af42d0f0), gate-environment-unit-context-export (unit-context), and
+      unit-authorisation-reaches-both-the-gate-and-ci (the CI-parity half). Motivating
+      context is the delivered Freeflo #895 preflight guard, the #897 post-mortem, and
+      the freeflo wording-migration lane (unit issue-884, PR
+      freeflosg/freeflo.freefloAgent#971): gate green, review clear, CI failed, run
+      stopped, because the PR carried no labels and the CI workflow resolves its
+      override from the labels frozen in the pull_request event payload. A producer
+      holding repo-edit access could self-authorise an in-repo gate, so the
+      authorisation channel must live outside anything the producer can touch. Woof
+      today is behind VaultForeman on both halves: the quality gate runs the project
+      command with no env= argument at all (checks/runners/check_1_quality_gates.py:319-328),
+      so it silently inherits the ambient environment of the woof process rather than a
+      declared channel; and graph.git.gh_open_pr (graph/git.py:121-152) passes no
+      --label, so both the initial push and the post-amend force-push fire CI on a PR
+      with zero labels, and when merge_eligible is false the ready_label is never
+      applied at all (graph/nodes.py:3062). Engine stays project-agnostic and
       data-driven."
     deps: [runner-loop-absorption]
     acceptance:
       - The engine exports the work-unit id and its declared change targets to every
         gate invocation, including the publish-time re-gate; declared targets are a
         work-unit schema field, not inferred from the diff.
-      - Policy declares a per-unit gate-environment channel the operator sets outside
-        the delivery repo; the engine passes it through to gate invocations and a
-        producer diff can never populate or alter it.
+      - An operator declares an authorisation once, as one typed declaration carrying a
+        mandatory reason, the gate environment variables, and the pull request labels
+        that express the same authorisation to CI. There is one declaration shape, not a
+        gate-environment dict beside a separate label list.
+      - The engine passes the declared environment to gate invocations explicitly, with an
+        env argument rather than by ambient inheritance, and a producer diff can never
+        populate or alter it. The quality-gate runner stops inheriting the woof process
+        environment implicitly.
       - A gate guard reads its pre-authorisation only from the operator channel; a value
         the producer could write into repo source never satisfies it.
-      - A test proves an operator pre-authorisation reaches the gate and that a
-        producer-authored in-repo value does not.
+      - The engine creates the pull request carrying the declared labels, so the labels are
+        present in the pull_request event payload of the first CI run and a CI guard
+        resolves the override on its first attempt. The engine never opens a pull request
+        it knows CI will refuse, and the labels do not depend on merge eligibility.
+      - A test proves an operator pre-authorisation reaches the gate, that a
+        producer-authored in-repo value does not, and that the same declaration reaches
+        pull request creation as a label.
   - id: publish-protected-content-guard
     title: Publish-time guard rejects producer diffs that forge protected content
     kind: build

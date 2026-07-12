@@ -1,23 +1,24 @@
 """check_8_docs_drift - Stage-5 Check 8.
 
-Verifies optional project docs-drift mappings from ``.woof/docs-paths.toml``.
-When the config is absent this check is intentionally a no-op. When present,
-each mapping that matches a staged code path requires at least one staged docs
-path matching the paired documentation pattern.
+Verifies optional project docs-drift mappings from the project config's
+``[docs_paths]`` section. When the section is absent this check is
+intentionally a no-op. When present, each mapping that matches a staged code
+path requires at least one staged docs path matching the paired documentation
+pattern.
 """
 
 from __future__ import annotations
 
 import fnmatch
 import subprocess
-import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
 from woof.checks import CheckContext, CheckOutcome
+from woof.project_config import ProjectConfigError, load_project_config
 
 CHECK_ID = "check_8_docs_drift"
-CONFIG_PATH = ".woof/docs-paths.toml"
+CONFIG_LABEL = "project config [docs_paths]"
 
 
 @dataclass(frozen=True)
@@ -28,18 +29,16 @@ class _DocsPathMapping:
 
 
 def check_8_docs_drift_runner(ctx: CheckContext) -> CheckOutcome:
-    config_path = ctx.repo_root / CONFIG_PATH
-    if not config_path.exists():
+    mappings = _load_mappings()
+    if isinstance(mappings, CheckOutcome):
+        return mappings
+    if not mappings:
         return CheckOutcome(
             id=CHECK_ID,
             ok=True,
             severity="info",
-            summary=f"{CONFIG_PATH} absent; docs drift check skipped",
+            summary=f"{CONFIG_LABEL} absent; docs drift check skipped",
         )
-
-    mappings = _load_mappings(config_path, ctx.repo_root)
-    if isinstance(mappings, CheckOutcome):
-        return mappings
 
     staged = _staged_paths(ctx.repo_root)
     if isinstance(staged, CheckOutcome):
@@ -106,59 +105,29 @@ def check_8_docs_drift_runner(ctx: CheckContext) -> CheckOutcome:
     )
 
 
-def _load_mappings(path: Path, repo_root: Path) -> list[_DocsPathMapping] | CheckOutcome:
+def _load_mappings() -> list[_DocsPathMapping] | CheckOutcome:
     try:
-        with path.open("rb") as fh:
-            data = tomllib.load(fh)
-    except tomllib.TOMLDecodeError as exc:
-        return _config_failure(repo_root, path, f"TOML parse error: {exc}")
+        config = load_project_config()
+    except ProjectConfigError as exc:
+        return _config_failure(str(exc))
 
-    mappings = data.get("mappings")
-    if not isinstance(mappings, list) or not mappings:
-        return _config_failure(repo_root, path, "mappings must be a non-empty array")
-
-    parsed: list[_DocsPathMapping] = []
-    for index, item in enumerate(mappings, start=1):
-        if not isinstance(item, dict):
-            return _config_failure(repo_root, path, f"mappings[{index}] must be a table")
-        unknown_keys = set(item) - {"code_pattern", "doc_pattern", "rationale"}
-        if unknown_keys:
-            return _config_failure(
-                repo_root,
-                path,
-                f"mappings[{index}] has unsupported keys: {sorted(unknown_keys)!r}",
-            )
-        code_pattern = item.get("code_pattern")
-        doc_pattern = item.get("doc_pattern")
-        rationale = item.get("rationale")
-        if not isinstance(code_pattern, str) or not code_pattern:
-            return _config_failure(
-                repo_root, path, f"mappings[{index}].code_pattern must be a non-empty string"
-            )
-        if not isinstance(doc_pattern, str) or not doc_pattern:
-            return _config_failure(
-                repo_root, path, f"mappings[{index}].doc_pattern must be a non-empty string"
-            )
-        if rationale is not None and not isinstance(rationale, str):
-            return _config_failure(repo_root, path, f"mappings[{index}].rationale must be a string")
-        parsed.append(
-            _DocsPathMapping(
-                code_pattern=code_pattern,
-                doc_pattern=doc_pattern,
-                rationale=rationale,
-            )
+    return [
+        _DocsPathMapping(
+            code_pattern=mapping.code_pattern,
+            doc_pattern=mapping.doc_pattern,
+            rationale=mapping.rationale,
         )
+        for mapping in config.docs_paths.mappings
+    ]
 
-    return parsed
 
-
-def _config_failure(repo_root: Path, path: Path, detail: str) -> CheckOutcome:
+def _config_failure(detail: str) -> CheckOutcome:
     return CheckOutcome(
         id=CHECK_ID,
         ok=False,
         severity="blocker",
         summary=f"malformed docs-paths config: {detail}",
-        paths=[str(path.relative_to(repo_root))],
+        paths=[],
     )
 
 

@@ -47,7 +47,7 @@ def test_built_artifacts_contain_only_release_assets(tmp_path: Path) -> None:
 
     with zipfile.ZipFile(wheel) as archive:
         wheel_names = set(archive.namelist())
-    assert "schemas/agents.schema.json" in wheel_names
+    assert "schemas/project-config.schema.json" in wheel_names
     assert "playbooks/critique/work-unit.md" in wheel_names
     assert "languages/python.toml" in wheel_names
     assert "bin/woof" not in wheel_names
@@ -59,7 +59,7 @@ def test_built_artifacts_contain_only_release_assets(tmp_path: Path) -> None:
     def has_sdist_path(suffix: str) -> bool:
         return any(name.endswith(f"/{suffix}") for name in sdist_names)
 
-    assert has_sdist_path("schemas/agents.schema.json")
+    assert has_sdist_path("schemas/project-config.schema.json")
     assert has_sdist_path("playbooks/critique/work-unit.md")
     assert has_sdist_path("languages/python.toml")
     assert has_sdist_path("bin/woof")
@@ -185,7 +185,7 @@ def test_installed_wheel_runs_graph_subprocess_entry(tmp_path: Path) -> None:
         "missing = [\n"
         "    str(p)\n"
         "    for p in (\n"
-        "        schemas / 'agents.schema.json',\n"
+        "        schemas / 'project-config.schema.json',\n"
         "        schemas / 'plan.schema.json',\n"
         "        tool_root() / 'playbooks' / 'critique' / 'work-unit.md',\n"
         "        tool_root() / 'languages' / 'python.toml',\n"

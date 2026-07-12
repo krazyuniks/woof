@@ -32,7 +32,7 @@ Read:
 3. `.woof/epics/E{epic_id}/EPIC.md`
 4. `CLAUDE.md` / `AGENTS.md` if present
 
-Implement only work unit `{work_unit_id}` and only its declared `paths[]` scope. Add or update tests for the work unit's `satisfies[]` outcomes. Run the project's normal quality command if one is declared in `.woof/quality-gates.toml`.
+Implement only work unit `{work_unit_id}` and only its declared `paths[]` scope. Add or update tests for the work unit's `satisfies[]` outcomes. Run the project's normal quality command if the project config declares one.
 
 ## Tracer-bullet red-green-refactor discipline
 
@@ -42,7 +42,7 @@ Work one outcome at a time:
 
 1. RED: write one assertion-bearing test for the next outcome before implementation. The test must fail when the declared behaviour is absent, and it must assert the observable outcome rather than only internal data shape, helper calls, or fixture wiring.
 2. GREEN: implement the smallest vertical slice that makes that outcome pass while preserving earlier GREEN outcomes.
-3. Run the configured quality command after each cycle when `.woof/quality-gates.toml` declares one.
+3. Run the configured quality command after each cycle when the project config declares one.
 
 After all outcomes are GREEN, run a refactor pass with the tests as the harness, then run the configured quality command again. Never refactor while a test is RED: return to GREEN first, then refactor against a passing harness. Refactor candidates worth a pass: duplicated logic, a shallow module that only forwards calls, a leaky interface that exposes callers to internal detail, a long parameter list that should be one type, and an argument mutation that could be a returned result.
 

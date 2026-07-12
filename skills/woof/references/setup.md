@@ -4,18 +4,24 @@ Bring a consumer repository under Woof from the `/woof` umbrella.
 
 ## Steps
 
-1. Scaffold the config:
+1. Write the project config:
 
    ```bash
-   woof init --tracker github --language python   # epics are GitHub issues (needs `gh` + a repo)
-   woof init --tracker local --language python    # epics live on disk only, no remote
+   woof init --project <key> --tracker github --language python   # epics are GitHub issues (needs `gh` + a repo)
+   woof init --project <key> --tracker local --language python    # epics live on disk only, no remote
    ```
 
-   `woof init` writes `.woof/prerequisites.toml`, `agents.toml`, `quality-gates.toml`, and
-   `test-markers.toml`, and adds the Woof block to `.gitignore`. The scaffolded
-   `prerequisites.toml` carries a `[cartography]` block (ADR-004) with the details used when
-   `.woof/policy.toml [cartography].floor` is non-none; see step 4. Add `--with-docs-paths` to
-   also scaffold the Stage-5 docs-drift mappings.
+   `woof init` writes exactly one file, `~/.woof/config/projects/<key>.toml` (ADR-017). Nothing
+   is written into the repository being driven: a delivery repo carries no trace of the engine
+   that builds it. The project key is explicit at every entry point and is never derived from the
+   checkout's directory name, because worktree containers routinely hold directories called
+   `main`. Set `WOOF_PROJECT` to avoid repeating `--project` on every command.
+
+   The config carries every section the engine reads: delivery profile, verification command, run
+   profiles, check floor, cartography (ADR-004), drain semantics, dispatch timeouts and audit,
+   quality gates, prerequisites, and the tracker. Add `--with-docs-paths` to also scaffold the
+   Stage-5 docs-drift mappings. Init refuses to overwrite an existing config; pass `--force` to
+   replace it.
 
    With `--tracker` omitted, `woof init` infers the tracker from the project's git remote: a
    github `origin`/`upstream` remote scaffolds the github tracker with `repo` pre-filled from its
@@ -23,21 +29,21 @@ Bring a consumer repository under Woof from the `/woof` umbrella.
    `--tracker local` to choose explicitly.
 
    Pass `--language <lang>` (repeatable; `python`, `go`, `typescript`, `rust`) to record the
-   cartography languages in `[cartography].languages` and compose the consumer-owned
-   `scripts/refresh-cartography` from the per-language fragments. Re-running `woof init` is
-   idempotent and re-composes the script when the language set changes; with no `--language` it
-   falls back to the languages already in `prerequisites.toml`. With no declared language the
-   script is not composed - re-run with `--language` (or author `scripts/refresh-cartography` by
-   hand).
+   cartography languages in `[cartography].languages` and compose the project-owned
+   `scripts/refresh-cartography` from the per-language fragments. That script is the one file
+   init still writes into the repo, because it is the project's own generator, run by the
+   project's post-commit hook. With no declared language the script is not composed - re-run with
+   `--language` (or author `scripts/refresh-cartography` by hand).
 
-2. Replace any remaining `<replace>` placeholders in `.woof/*.toml` - in particular the project
-   test command in `quality-gates.toml`. For the GitHub tracker the `repo` is pre-filled from the
-   git remote when one is reachable; set it by hand only if it still reads `<replace>/<replace>`.
+2. Replace the `<replace>` placeholders in `~/.woof/config/projects/<key>.toml` - in particular
+   the verification command and the test gate command. For the GitHub tracker the `repo` is
+   pre-filled from the git remote when one is reachable; set it by hand only if it still reads
+   `<replace>/<replace>`.
 
 3. Authenticate the model CLIs once: `claude /login` and `codex login`.
 
-4. Author cartography under `.woof/codebase/` when policy requires it. `woof preflight` enforces
-   the declared cartography floor (see `map-codebase.md`):
+4. Author cartography under `.woof/codebase/` when the config requires it. `woof preflight`
+   enforces the declared cartography floor (see `map-codebase.md`):
 
    - `design`, `lexical`, and `structural` require the two human-authored design docs,
      `TARGET-ARCHITECTURE.md` and `PRINCIPLES.md`, with
@@ -69,7 +75,7 @@ Bring a consumer repository under Woof from the `/woof` umbrella.
    woof preflight
    ```
 
-   Preflight reports cartography failures only for the floor selected in `.woof/policy.toml`.
+   Preflight reports cartography failures only for the floor selected in the project config.
 
 7. Start the first epic:
 

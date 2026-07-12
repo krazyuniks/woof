@@ -8,7 +8,6 @@ import os
 import subprocess
 import sys
 import tempfile
-import tomllib
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -16,7 +15,6 @@ from pathlib import Path
 
 import yaml
 
-from woof.cli.policy import cartography_floor, load_policy
 from woof.gate.write import write_gate, write_gate_for_trigger, write_gate_from_check_result
 from woof.graph.dispositions import (
     FrontMatterError,
@@ -89,13 +87,11 @@ from woof.graph.transitions import (
 )
 from woof.lib.audit import prepare_commit_audit
 from woof.paths import schema_dir, tool_root
+from woof.project_config import load_project_config
 
 NodeHandler = Callable[[NodeInput], NodeOutput]
 DispatchExitType = str
 
-# Default number of failed readiness cycles before escalation. Configurable via
-# .woof/prerequisites.toml [readiness].escalation_threshold.
-DEFAULT_READINESS_ESCALATION_THRESHOLD = 3
 
 # In-process cache for plan.json schema validation keyed by SHA-256 content hash.
 # Valid across multiple node calls within a single runner invocation; a changed
@@ -131,41 +127,14 @@ def _now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _readiness_escalation_threshold(repo_root: Path) -> int:
-    """Return the configured readiness-escalation threshold.
+def _readiness_escalation_threshold() -> int:
+    """Return the configured readiness-escalation threshold."""
 
-    Reads ``[readiness].escalation_threshold`` from ``.woof/prerequisites.toml``.
-    Falls back to ``DEFAULT_READINESS_ESCALATION_THRESHOLD`` when the file is
-    absent, unreadable, or the key is not set.
-    """
-    prereq_path = repo_root / ".woof" / "prerequisites.toml"
-    try:
-        with prereq_path.open("rb") as fh:
-            data = tomllib.load(fh)
-        threshold = data.get("readiness", {}).get("escalation_threshold")
-        if isinstance(threshold, int) and threshold >= 1:
-            return threshold
-    except (OSError, tomllib.TOMLDecodeError):
-        pass
-    return DEFAULT_READINESS_ESCALATION_THRESHOLD
+    return load_project_config().readiness.escalation_threshold
 
 
-def _fix_round_budget(repo_root: Path) -> int:
-    path = repo_root / ".woof" / "agents.toml"
-    try:
-        with path.open("rb") as fh:
-            data = tomllib.load(fh)
-    except (OSError, tomllib.TOMLDecodeError):
-        return DEFAULT_FIX_ROUNDS_PER_BLOCKER
-    block = data.get("fix_rounds")
-    if not isinstance(block, dict):
-        return DEFAULT_FIX_ROUNDS_PER_BLOCKER
-    value = block.get("max_rounds_per_blocker", DEFAULT_FIX_ROUNDS_PER_BLOCKER)
-    return (
-        value
-        if isinstance(value, int) and value >= 0 and not isinstance(value, bool)
-        else DEFAULT_FIX_ROUNDS_PER_BLOCKER
-    )
+def _fix_round_budget() -> int:
+    return load_project_config().fix_rounds.max_rounds_per_blocker
 
 
 def _woof_subprocess_argv() -> list[str]:
@@ -662,13 +631,12 @@ def _codebase_doc_relpath(doc_name: str) -> str:
     return f".woof/codebase/{doc_name}"
 
 
-def _declared_cartography_floor(repo_root: Path) -> str | None:
-    policy = load_policy(repo_root)
-    return cartography_floor(policy) if isinstance(policy, dict) else None
+def _declared_cartography_floor() -> str:
+    return load_project_config().cartography.floor
 
 
-def _cartography_docs_for_floor(repo_root: Path, doc_names: list[str]) -> list[str]:
-    floor = _declared_cartography_floor(repo_root)
+def _cartography_docs_for_floor(doc_names: list[str]) -> list[str]:
+    floor = _declared_cartography_floor()
     if floor == "none":
         return []
     if floor == "design":
@@ -690,9 +658,7 @@ def _require_cartography_docs(
     payload-build time, not in preflight — so a missing doc always halts
     rather than silently dispatching cold.
     """
-    refs = [
-        _codebase_doc_relpath(name) for name in _cartography_docs_for_floor(repo_root, doc_names)
-    ]
+    refs = [_codebase_doc_relpath(name) for name in _cartography_docs_for_floor(doc_names)]
     missing = [ref for ref in refs if not (repo_root / ref).is_file()]
     if missing:
         raise StageStateError(
@@ -714,7 +680,7 @@ def _work_unit_files_txt_slice(repo_root: Path, work_unit: WorkUnitSpec) -> list
     evaluation fails. Decision D1 (E19): filter through work_unit.paths[] at build
     time so the executor receives only its slice.
     """
-    floor = _declared_cartography_floor(repo_root)
+    floor = _declared_cartography_floor()
     if floor in {"none", "design"}:
         return None
     files_txt_path = repo_root / ".woof" / "codebase" / "files.txt"
@@ -1909,7 +1875,7 @@ def contract_readiness_node(inp: NodeInput) -> NodeOutput:
         )
 
     cycles = failed_readiness_cycles(inp.repo_root, inp.epic_id)
-    threshold = _readiness_escalation_threshold(inp.repo_root)
+    threshold = _readiness_escalation_threshold()
     trigger = "readiness_escalation" if cycles >= threshold else "readiness_unready"
     gate = graph_gate_path(inp.repo_root, inp.epic_id)
     if not gate.exists():
@@ -2541,7 +2507,7 @@ def review_disposition_node(inp: NodeInput) -> NodeOutput:
 
     if severity == "blocker":
         blocker_signature = _blocker_signature(critique)
-        budget = _fix_round_budget(inp.repo_root)
+        budget = _fix_round_budget()
         rounds_used = _fix_rounds_used(
             inp.repo_root, inp.epic_id, inp.work_unit_id, blocker_signature
         )
@@ -2833,36 +2799,21 @@ class ProfileAPublishSettings:
 def _profile_a_publish_settings(
     repo_root: Path, *, work_unit_id: str
 ) -> ProfileAPublishSettings | None:
-    policy = load_policy(repo_root)
-    if not isinstance(policy, dict):
+    config = load_project_config()
+    if config.delivery.profile != "A":
         return None
-    delivery = policy.get("delivery")
-    if not isinstance(delivery, dict) or delivery.get("profile") != "A":
-        return None
-    profiles = policy.get("profiles")
-    profile_a = profiles.get("A") if isinstance(profiles, dict) else None
-    if not isinstance(profile_a, dict):
-        return None
-    github_repo = profile_a.get("github_repo")
-    ready_label = profile_a.get("ready_label")
-    base_branch = delivery.get("base_branch")
-    if (
-        not isinstance(github_repo, str)
-        or not github_repo.strip()
-        or not isinstance(ready_label, str)
-        or not ready_label.strip()
-        or not isinstance(base_branch, str)
-        or not base_branch.strip()
-    ):
+    profile_a = config.profile_a
+    if profile_a is None:
         raise StageStateError(
             "Profile A publish requires github_repo, ready_label, and base_branch"
         )
+    base_branch = config.delivery.base_branch
 
     current = git_current_branch(repo_root)
     head_branch = current if current and current != base_branch.strip() else work_unit_id
     return ProfileAPublishSettings(
-        github_repo=github_repo.strip(),
-        ready_label=ready_label.strip(),
+        github_repo=profile_a.github_repo.strip(),
+        ready_label=profile_a.ready_label.strip(),
         base_branch=base_branch.strip(),
         head_branch=head_branch,
     )
@@ -3079,20 +3030,13 @@ def _publish_profile_a_transaction(
 
 
 def _profile_b_push_target(repo_root: Path) -> str | None:
-    policy = load_policy(repo_root)
-    if not isinstance(policy, dict):
+    config = load_project_config()
+    if config.delivery.profile != "B":
         return None
-    delivery = policy.get("delivery")
-    if not isinstance(delivery, dict) or delivery.get("profile") != "B":
+    if config.profile_b is None or not config.profile_b.push:
         return None
-    profiles = policy.get("profiles")
-    profile_b = profiles.get("B") if isinstance(profiles, dict) else None
-    if not isinstance(profile_b, dict) or profile_b.get("push") is not True:
-        return None
-    base_branch = delivery.get("base_branch")
-    if isinstance(base_branch, str) and base_branch.strip():
-        branch = base_branch.strip()
-    else:
+    branch = config.delivery.base_branch.strip()
+    if not branch:
         proc = git(repo_root, "symbolic-ref", "--short", "HEAD", check=False)
         branch = proc.stdout.strip() if proc.returncode == 0 else ""
     if not branch:

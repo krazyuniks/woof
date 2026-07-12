@@ -11,7 +11,6 @@ from pathlib import Path
 
 import yaml
 
-from woof.cli.policy import load_policy
 from woof.graph.decisions import all_decisions, validate_decision
 from woof.graph.dispositions import (
     NON_BLOCKING_SEVERITIES,
@@ -44,7 +43,7 @@ from woof.graph.transitions import (
     mark_work_unit_state,
     write_plan,
 )
-from woof.paths import find_project_root
+from woof.paths import repo_root_from_git
 from woof.trackers import (
     CONFLICT_DECISIONS,
     CONFLICT_TRIGGERS,
@@ -573,7 +572,7 @@ def _reset_epic(repo_root: Path, epic_id: int, *, assume_yes: bool) -> int:
 
 def cmd_wf(args: argparse.Namespace) -> int:
     try:
-        repo_root = find_project_root(Path.cwd())
+        repo_root = repo_root_from_git()
     except FileNotFoundError as exc:
         sys.stderr.write(f"woof wf: {exc}\n")
         return 2
@@ -643,14 +642,12 @@ def cmd_wf(args: argparse.Namespace) -> int:
             sys.stderr.write("woof wf intake: --source is required\n")
             return 2
         try:
-            policy = load_policy(repo_root)
             result = ingest_predecomposed_work_units(
                 repo_root,
                 args.source,
                 project_ref=args.project_ref,
                 set_id=args.set_id,
                 source_ref=args.source_ref,
-                worktree_policy=policy if isinstance(policy, dict) else None,
             )
         except (OSError, ValueError, json.JSONDecodeError, yaml.YAMLError) as exc:
             sys.stderr.write(f"woof wf intake: {exc}\n")
@@ -763,8 +760,11 @@ def cmd_wf(args: argparse.Namespace) -> int:
     return 0
 
 
-def setup_wf_parser(sub: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
-    wf = sub.add_parser("wf", help="run the deterministic Woof graph")
+def setup_wf_parser(
+    sub: argparse._SubParsersAction,  # type: ignore[type-arg]
+    project: argparse.ArgumentParser,
+) -> None:
+    wf = sub.add_parser("wf", help="run the deterministic Woof graph", parents=[project])
     wf.add_argument(
         "action",
         nargs="?",

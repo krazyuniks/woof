@@ -16,6 +16,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from tests.support import seed_project_config
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WOOF_BIN = REPO_ROOT / "bin" / "woof"
 
@@ -89,18 +91,12 @@ def _write_last_sync(
 
 @pytest.fixture
 def epic_project(tmp_path: Path) -> Path:
-    """Skeleton project with `.woof/prerequisites.toml` + a sample EPIC.md."""
+    """Skeleton git checkout with a GitHub-tracker project config and a sample EPIC.md."""
     project = tmp_path / "proj"
     epic_dir = project / ".woof" / "epics" / "E42"
     epic_dir.mkdir(parents=True)
-
-    (project / ".woof" / "prerequisites.toml").write_text(
-        textwrap.dedent("""\
-        [tracker]
-        kind = "github"
-        repo = "acme/widgets"
-    """)
-    )
+    subprocess.run(["git", "init", "-q"], cwd=project, check=True)
+    seed_project_config({"tracker": {"kind": "github", "repo": "acme/widgets"}})
 
     front = textwrap.dedent("""\
         epic_id: 42
@@ -220,9 +216,8 @@ def test_invalid_front_matter(tmp_path: Path) -> None:
     project = tmp_path / "p"
     epic_dir = project / ".woof" / "epics" / "E1"
     epic_dir.mkdir(parents=True)
-    (project / ".woof" / "prerequisites.toml").write_text(
-        '[tracker]\nkind = "github"\nrepo = "x/y"\n'
-    )
+    subprocess.run(["git", "init", "-q"], cwd=project, check=True)
+    seed_project_config({"tracker": {"kind": "github", "repo": "x/y"}})
     # Missing required acceptance_criteria
     (epic_dir / "EPIC.md").write_text(
         _epic_md(
@@ -355,10 +350,10 @@ def _make_gh_stub(
 
 
 def _stub_env(bin_dir: Path) -> dict[str, str]:
-    return {
-        "PATH": f"{bin_dir}:{os.environ['PATH']}",
-        "HOME": os.environ.get("HOME", "/tmp"),
-    }
+    """Put the stub ``gh`` first on PATH, keeping WOOF_HOME/WOOF_PROJECT inherited."""
+    env = os.environ.copy()
+    env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    return env
 
 
 # ---------------------------------------------------------------------------

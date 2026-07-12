@@ -437,7 +437,7 @@ def test_blocker_with_schema_ref_evidence_passes_O4(tmp_path: Path) -> None:
 
 
 def test_blocker_with_quality_gate_id_evidence_passes_O4(tmp_path: Path) -> None:
-    """O4 S4: blocker evidence with explicit gate:<name> prefix resolves against quality-gates.toml."""
+    """O4 S4: blocker evidence with explicit gate:<name> prefix resolves against [gates.*]."""
     import sys
 
     sys.path.insert(0, str(REPO_ROOT))
@@ -751,7 +751,7 @@ def test_blocker_with_no_findings_fails_rollup_R6(tmp_path: Path) -> None:
 
 
 def test_nonexistent_gate_name_with_prefix_does_not_resolve_R6(tmp_path: Path) -> None:
-    """R6: gate:nonexistent does not resolve when 'nonexistent' is not in quality-gates.toml."""
+    """R6: gate:nonexistent does not resolve when 'nonexistent' is not a declared gate."""
     import sys
 
     sys.path.insert(0, str(REPO_ROOT))

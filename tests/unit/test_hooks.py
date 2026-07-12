@@ -157,7 +157,9 @@ def test_post_commit_hook_regenerates_cartography_mechanical_layer(tmp_path: Pat
     _init_repo(tmp_path)
     _configure_user(tmp_path)
     (tmp_path / "app.py").write_text("def hello():\n    return 1\n")
-    run_init(tmp_path, tracker="local", languages=["python"])
+    run_init(
+        tmp_path, project_key="test-project", tracker="local", languages=["python"], force=True
+    )
     install_woof_hooks(tmp_path)
 
     subprocess.run(

@@ -1,7 +1,8 @@
 """check_1_quality_gates — Stage-5 Check 1.
 
-Runs each command declared in ``.woof/quality-gates.toml`` from the repository
-root and reports failing gates as structured Stage-5 findings.
+Runs each command declared in the project config's ``[gates.<name>]`` sections
+from the repository root and reports failing gates as structured Stage-5
+findings.
 
 Gate modes
 ----------
@@ -30,7 +31,6 @@ import json
 import os
 import signal
 import subprocess
-import tomllib
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -38,17 +38,17 @@ from typing import Any
 
 from woof.checks import CheckContext, CheckOutcome
 from woof.lib.schema_validate import validate_against_schema
+from woof.project_config import ProjectConfigError, load_project_config
 
 CHECK_ID = "check_1_quality_gates"
-CONFIG_PATH = ".woof/quality-gates.toml"
+CONFIG_LABEL = "project config [gates.*]"
 BASELINE_PATH = ".woof/quality-gates-baseline.json"
-DEFAULT_TIMEOUT_SECONDS = 300
+# Gate mode, timeout, and blocking defaults are resolved by the project-config
+# loader; this runner receives the resolved specs.
 KILL_GRACE_SECONDS = 1
 OUTPUT_LIMIT = 1200
 
-_MODE_STRICT = "strict"
 _MODE_BASELINE = "baseline"
-_VALID_MODES = {_MODE_STRICT, _MODE_BASELINE}
 
 
 @dataclass(frozen=True)
@@ -76,15 +76,14 @@ class _BaselineEntry:
 
 
 def check_1_quality_gates_runner(ctx: CheckContext) -> CheckOutcome:
-    config_path = ctx.repo_root / CONFIG_PATH
-    specs, error = _load_gate_specs(config_path)
+    specs, error = _load_gate_specs()
     if error is not None:
         return CheckOutcome(
             id=CHECK_ID,
             ok=False,
             severity="blocker",
             summary=error,
-            paths=[CONFIG_PATH],
+            paths=[],
         )
 
     baseline, baseline_warning = _load_baseline(ctx.repo_root)
@@ -124,7 +123,7 @@ def check_1_quality_gates_runner(ctx: CheckContext) -> CheckOutcome:
             evidence=_append_warning(
                 _format_evidence(blocking_failures, non_blocking_findings, suppressed_findings)
             ),
-            paths=[CONFIG_PATH],
+            paths=[],
             command=_single_command(blocking_failures),
             exit_code=_single_exit_code(blocking_failures),
         )
@@ -143,7 +142,7 @@ def check_1_quality_gates_runner(ctx: CheckContext) -> CheckOutcome:
             evidence=_append_warning(
                 _format_evidence([], non_blocking_findings, suppressed_findings)
             ),
-            paths=[CONFIG_PATH],
+            paths=[],
             command=_single_command(all_findings),
             exit_code=_single_exit_code(all_findings),
         )
@@ -155,7 +154,7 @@ def check_1_quality_gates_runner(ctx: CheckContext) -> CheckOutcome:
             severity="minor",
             summary=f"all {len(runs)} quality gate command(s) passed; baseline file was ignored",
             evidence=baseline_warning,
-            paths=[CONFIG_PATH],
+            paths=[],
         )
 
     return CheckOutcome(
@@ -163,7 +162,7 @@ def check_1_quality_gates_runner(ctx: CheckContext) -> CheckOutcome:
         ok=True,
         severity="info",
         summary=f"all {len(runs)} quality gate command(s) passed",
-        paths=[CONFIG_PATH],
+        paths=[],
     )
 
 
@@ -238,82 +237,25 @@ def _load_baseline(repo_root: Path) -> tuple[dict[str, _BaselineEntry], str | No
     }, None
 
 
-def _load_gate_specs(config_path: Path) -> tuple[list[_GateSpec], str | None]:
-    if not config_path.exists():
-        return [], f"quality gates configuration missing: {CONFIG_PATH}"
-
+def _load_gate_specs() -> tuple[list[_GateSpec], str | None]:
     try:
-        config = tomllib.loads(config_path.read_text())
-    except OSError as exc:
-        return [], f"quality gates configuration unreadable: {exc}"
-    except tomllib.TOMLDecodeError as exc:
-        return [], f"quality gates configuration is invalid TOML: {exc}"
+        config = load_project_config()
+    except ProjectConfigError as exc:
+        return [], str(exc)
 
-    gates = config.get("gates")
-    if not isinstance(gates, dict) or not gates:
-        return [], "quality gates configuration must define at least one [gates.<name>] table"
+    if not config.gates:
+        return [], f"{CONFIG_LABEL} must define at least one gate"
 
-    raw_default_mode = config.get("default_mode", _MODE_STRICT)
-    if not isinstance(raw_default_mode, str) or raw_default_mode not in _VALID_MODES:
-        return (
-            [],
-            f"quality gates default_mode must be 'strict' or 'baseline', got {raw_default_mode!r}",
-        )
-
-    specs: list[_GateSpec] = []
-    for name, raw_spec in gates.items():
-        if not isinstance(raw_spec, dict):
-            return [], f"quality gate {name!r} must be a table"
-
-        spec, error = _parse_gate_spec(name, raw_spec, raw_default_mode)
-        if error is not None:
-            return [], error
-        specs.append(spec)
-
-    return specs, None
-
-
-def _parse_gate_spec(
-    name: str, raw_spec: dict[str, Any], default_mode: str
-) -> tuple[_GateSpec, str | None]:
-    command = raw_spec.get("command")
-    if not isinstance(command, str) or not command.strip():
-        return _empty_spec(
-            name, default_mode
-        ), f"quality gate {name!r} must define a non-empty command"
-
-    timeout_seconds = raw_spec.get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS)
-    if not isinstance(timeout_seconds, int) or timeout_seconds < 1:
-        return _empty_spec(name, default_mode), (
-            f"quality gate {name!r} timeout_seconds must be an integer >= 1"
-        )
-
-    blocking = raw_spec.get("blocking", True)
-    if not isinstance(blocking, bool):
-        return _empty_spec(name, default_mode), f"quality gate {name!r} blocking must be a boolean"
-
-    raw_mode = raw_spec.get("mode", default_mode)
-    if not isinstance(raw_mode, str) or raw_mode not in _VALID_MODES:
-        return _empty_spec(name, default_mode), (
-            f"quality gate {name!r} mode must be 'strict' or 'baseline', got {raw_mode!r}"
-        )
-
-    return (
+    return [
         _GateSpec(
-            name=name,
-            command=command,
-            timeout_seconds=timeout_seconds,
-            blocking=blocking,
-            mode=raw_mode,
-        ),
-        None,
-    )
-
-
-def _empty_spec(name: str, mode: str = _MODE_STRICT) -> _GateSpec:
-    return _GateSpec(
-        name=name, command="", timeout_seconds=DEFAULT_TIMEOUT_SECONDS, blocking=True, mode=mode
-    )
+            name=gate.name,
+            command=gate.command,
+            timeout_seconds=gate.timeout_seconds,
+            blocking=gate.blocking,
+            mode=gate.mode,
+        )
+        for gate in config.gates
+    ], None
 
 
 def _run_gate(repo_root: Path, spec: _GateSpec) -> _GateRun:
@@ -378,8 +320,7 @@ def capture_baseline(
     Returns (CaptureResult, error_message). On error the baseline is not written.
     This is the ONLY path that writes the baseline; no implicit recapture occurs.
     """
-    config_path = repo_root / CONFIG_PATH
-    specs, error = _load_gate_specs(config_path)
+    specs, error = _load_gate_specs()
     if error is not None:
         return CaptureResult(repo_root / BASELINE_PATH, 0, 0), error
 

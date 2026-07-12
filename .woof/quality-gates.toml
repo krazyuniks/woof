@@ -1,7 +1,0 @@
-[gates.lint]
-command = "just lint"
-timeout_seconds = 120
-
-[gates.test]
-command = "just test"
-timeout_seconds = 360

@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.support import seed_project_config
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WOOF_BIN = REPO_ROOT / "bin" / "woof"
 
@@ -24,10 +26,16 @@ def _write_exe(path: Path, body: str) -> None:
 def _env_with_path(bin_dir: Path) -> dict[str, str]:
     uv = shutil.which("uv")
     sh = shutil.which("sh")
+    git = shutil.which("git")
     assert uv is not None
     assert sh is not None
+    assert git is not None
     env = os.environ.copy()
-    env["PATH"] = os.pathsep.join([str(bin_dir), str(Path(uv).parent), str(Path(sh).parent)])
+    # Real git stays on PATH: the CLI resolves the delivery checkout by asking
+    # git for its top level, so a stubbed git would break every command.
+    env["PATH"] = os.pathsep.join(
+        [str(bin_dir), str(Path(uv).parent), str(Path(sh).parent), str(Path(git).parent)]
+    )
     env["ANTHROPIC_API_KEY"] = "stub-anthropic"
     env["OPENAI_API_KEY"] = "stub-openai"
     return env
@@ -44,7 +52,6 @@ echo "ajv 8.0.0"
 """,
     )
     _write_exe(bin_dir / "just", 'echo "just 1.2.3"\n')
-    _write_exe(bin_dir / "git", 'echo "git version 2.44.0"\n')
     _write_exe(bin_dir / "claude", 'echo "claude stub"\n')
     _write_exe(bin_dir / "cld", 'echo "claude stub"\n')
     _write_exe(bin_dir / "codex", 'echo "codex stub"\n')
@@ -53,69 +60,26 @@ echo "ajv 8.0.0"
 def _write_consumer(root: Path) -> None:
     epic_dir = root / ".woof" / "epics" / "E5"
     epic_dir.mkdir(parents=True)
-    (root / ".woof" / "policy.toml").write_text(
-        """\
-schema_version = 1
-default_run_profile = "default"
-
-[delivery]
-profile = "B"
-repo_root = "."
-toolchain_root = "."
-base_branch = "main"
-
-[profiles.B]
-commit = true
-push = true
-
-[verification]
-command = "just test"
-timeout_seconds = 300
-
-[run_profiles.default.producer]
-harness = "codex"
-model = "gpt-5.5"
-effort = "xhigh"
-
-[run_profiles.default.reviewer]
-harness = "claude"
-model = "claude-opus-4-7"
-effort = "max"
-
-[checks]
-floor = ["quality-gates"]
-
-[cartography]
-floor = "structural"
-
-[drain]
-merge_after_ready_pr = true
-rerun_after_merge = true
-mark_unit_done_after_publish = true
-commit_backlog_state = true
-stop_when_no_eligible_units = true
-"""
-    )
-    (root / ".woof" / "prerequisites.toml").write_text(
-        """\
-[infra]
-just = "any"
-git = "any"
-
-[commands]
-claude = "any"
-codex = "any"
-
-[validators]
-ajv = "any"
-ajv-formats = "any"
-
-[tracker]
-kind = "local"
-
-[cartography]
-summary_min_chars = 40
-"""
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    seed_project_config(
+        {
+            "verification": {"command": "just test", "timeout_seconds": 300},
+            "run_profiles": {
+                "default": {
+                    "producer": {"harness": "codex", "model": "gpt-5.5", "effort": "xhigh"},
+                    "reviewer": {
+                        "harness": "claude",
+                        "model": "claude-opus-4-7",
+                        "effort": "max",
+                    },
+                }
+            },
+            "checks": {"floor": ["quality-gates"]},
+            "cartography": {"floor": "structural", "summary_min_chars": 40, "languages": []},
+            "drain": {"merge_after_ready_pr": True},
+            "prerequisites": {"infra": {"gh": None}, "lsp": None},
+            "tracker": {"kind": "local", "repo": None},
+        }
     )
     codebase = root / ".woof" / "codebase"
     codebase.mkdir()
@@ -134,21 +98,6 @@ summary_min_chars = 40
     scripts = root / "scripts"
     scripts.mkdir()
     _write_exe(scripts / "refresh-cartography", "echo refresh\n")
-    (root / ".woof" / "agents.toml").write_text(
-        """\
-[timeouts]
-default_minutes = 30
-
-[review_valve]
-every_n_work_units = 5
-end_of_epic = true
-
-[audit]
-enabled = true
-max_bytes = 262144
-redact_patterns = []
-"""
-    )
     (root / ".woof" / ".current-epic").write_text("E5\n")
     (epic_dir / "plan.json").write_text(
         json.dumps(

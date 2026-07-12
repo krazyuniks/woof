@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.support import seed_project_config
 from woof.graph.merge import (
     CheckRunState,
     MergeQueueHalt,
@@ -14,7 +15,7 @@ from woof.graph.merge import (
     SerialMergeCoordinator,
     _check_run_states_from_json,
     _classify_check_runs,
-    profile_a_merge_policy_from_repo,
+    profile_a_merge_policy,
 )
 
 
@@ -193,36 +194,26 @@ def test_ready_queue_rebases_gates_merges_and_marks_done_in_fifo_order(tmp_path:
 
 
 def test_profile_a_merge_policy_reads_deploy_aware_knobs(tmp_path: Path) -> None:
-    policy_dir = tmp_path / ".woof"
-    policy_dir.mkdir()
-    (policy_dir / "policy.toml").write_text(
-        """\
-schema_version = 1
-default_run_profile = "default"
-
-[delivery]
-profile = "A"
-repo_root = "."
-toolchain_root = "."
-base_branch = "main"
-
-[profiles.A]
-github_repo = "example/project"
-ready_label = "ready"
-merge_path_groups = []
-terminal_deploy_checks = ["Deploy", "Smoke"]
-mergeability_settle_timeout = 21
-deploy_wait_timeout = 180
-merge_attempts = 7
-merge_interval_s = 3.0
-
-[profiles.A.worktree]
-root = "worktrees"
-""",
-        encoding="utf-8",
+    seed_project_config(
+        {
+            "delivery": {"profile": "A"},
+            "profiles": {
+                "A": {
+                    "github_repo": "example/project",
+                    "ready_label": "ready",
+                    "merge_path_groups": [],
+                    "terminal_deploy_checks": ["Deploy", "Smoke"],
+                    "mergeability_settle_timeout": 21,
+                    "deploy_wait_timeout": 180,
+                    "merge_attempts": 7,
+                    "merge_interval_s": 3.0,
+                    "worktree": {"root": "worktrees"},
+                }
+            },
+        }
     )
 
-    policy = profile_a_merge_policy_from_repo(tmp_path)
+    policy = profile_a_merge_policy()
 
     assert policy is not None
     assert policy.github_repo == "example/project"

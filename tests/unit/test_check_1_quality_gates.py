@@ -8,9 +8,11 @@ import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from tests.support import seed_project_config
 from woof.checks import CheckContext
 from woof.checks.runners.check_1_quality_gates import capture_baseline, check_1_quality_gates_runner
 
@@ -18,6 +20,10 @@ pytestmark = pytest.mark.host_only
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BASELINE_SCHEMA = REPO_ROOT / "schemas" / "quality-gates-baseline.schema.json"
+
+# The seeded default project config declares these gates; a test that wants an
+# exact set of gates clears them first.
+DEFAULT_GATE_NAMES = ("lint", "test")
 
 
 def _make_ctx(repo_root: Path) -> CheckContext:
@@ -33,10 +39,12 @@ def _make_ctx(repo_root: Path) -> CheckContext:
     )
 
 
-def _write_quality_gates(repo_root: Path, content: str) -> None:
-    woof_dir = repo_root / ".woof"
-    woof_dir.mkdir(exist_ok=True)
-    (woof_dir / "quality-gates.toml").write_text(content)
+def _seed_gates(gates: dict[str, Any]) -> None:
+    """Declare exactly ``gates`` in the operator-home project config."""
+
+    override: dict[str, Any] = dict.fromkeys(DEFAULT_GATE_NAMES)
+    override.update(gates)
+    seed_project_config({"gates": override})
 
 
 def _write_baseline(repo_root: Path, gates: dict) -> None:
@@ -53,24 +61,13 @@ def _python_command(source: str) -> str:
     return f"{shlex.quote(sys.executable)} -c {shlex.quote(source)}"
 
 
-def _toml_string(value: str) -> str:
-    return json.dumps(value)
-
-
 # ---------------------------------------------------------------------------
 # Original strict-mode tests (unchanged behaviour)
 # ---------------------------------------------------------------------------
 
 
 def test_quality_gate_passes_when_all_commands_exit_zero(tmp_path: Path) -> None:
-    _write_quality_gates(
-        tmp_path,
-        f"""\
-[gates.test]
-command = {_toml_string(_python_command("print('ok')"))}
-timeout_seconds = 5
-""",
-    )
+    _seed_gates({"test": {"command": _python_command("print('ok')"), "timeout_seconds": 5}})
 
     outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
 
@@ -82,13 +79,16 @@ timeout_seconds = 5
 
 
 def test_quality_gate_fails_and_captures_output(tmp_path: Path) -> None:
-    _write_quality_gates(
-        tmp_path,
-        f"""\
-[gates.lint]
-command = {_toml_string(_python_command("import sys; print('bad stdout'); print('bad stderr', file=sys.stderr); sys.exit(3)"))}
-timeout_seconds = 5
-""",
+    _seed_gates(
+        {
+            "lint": {
+                "command": _python_command(
+                    "import sys; print('bad stdout'); "
+                    "print('bad stderr', file=sys.stderr); sys.exit(3)"
+                ),
+                "timeout_seconds": 5,
+            }
+        }
     )
 
     outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
@@ -104,13 +104,8 @@ timeout_seconds = 5
 
 
 def test_quality_gate_times_out(tmp_path: Path) -> None:
-    _write_quality_gates(
-        tmp_path,
-        f"""\
-[gates.test]
-command = {_toml_string(_python_command("import time; time.sleep(5)"))}
-timeout_seconds = 1
-""",
+    _seed_gates(
+        {"test": {"command": _python_command("import time; time.sleep(5)"), "timeout_seconds": 1}}
     )
 
     outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
@@ -123,13 +118,8 @@ timeout_seconds = 1
 
 
 def test_missing_quality_gate_command_fails(tmp_path: Path) -> None:
-    _write_quality_gates(
-        tmp_path,
-        """\
-[gates.test]
-command = "__woof_missing_quality_gate_command__"
-timeout_seconds = 5
-""",
+    _seed_gates(
+        {"test": {"command": "__woof_missing_quality_gate_command__", "timeout_seconds": 5}}
     )
 
     outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
@@ -149,14 +139,14 @@ timeout_seconds = 5
 
 def test_strict_mode_explicit_blocks_on_failure(tmp_path: Path) -> None:
     """Explicitly-declared strict mode blocks on any failure — same as default."""
-    _write_quality_gates(
-        tmp_path,
-        f"""\
-[gates.lint]
-command = {_toml_string(_python_command("import sys; sys.exit(1)"))}
-timeout_seconds = 5
-mode = "strict"
-""",
+    _seed_gates(
+        {
+            "lint": {
+                "command": _python_command("import sys; sys.exit(1)"),
+                "timeout_seconds": 5,
+                "mode": "strict",
+            }
+        }
     )
 
     outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
@@ -168,14 +158,7 @@ mode = "strict"
 def test_default_mode_is_strict_blocks_on_failure(tmp_path: Path) -> None:
     """Omitting mode defaults to strict; a failure blocks even with a baseline present."""
     fail_cmd = _python_command("import sys; sys.exit(1)")
-    _write_quality_gates(
-        tmp_path,
-        f"""\
-[gates.lint]
-command = {_toml_string(fail_cmd)}
-timeout_seconds = 5
-""",
-    )
+    _seed_gates({"lint": {"command": fail_cmd, "timeout_seconds": 5}})
     # Provide a baseline that marks lint as red, but the gate has no mode set.
     _write_baseline(tmp_path, {"lint": {"command": fail_cmd, "passed": False}})
 
@@ -193,15 +176,7 @@ timeout_seconds = 5
 def test_baseline_suppresses_pre_existing_red(tmp_path: Path) -> None:
     """A baseline-mode gate that was red at capture is reported but does not block."""
     fail_cmd = _python_command("import sys; sys.exit(2)")
-    _write_quality_gates(
-        tmp_path,
-        f"""\
-[gates.lint]
-command = {_toml_string(fail_cmd)}
-timeout_seconds = 5
-mode = "baseline"
-""",
-    )
+    _seed_gates({"lint": {"command": fail_cmd, "timeout_seconds": 5, "mode": "baseline"}})
     _write_baseline(tmp_path, {"lint": {"command": fail_cmd, "passed": False}})
 
     outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
@@ -213,19 +188,14 @@ mode = "baseline"
     assert "baseline-suppressed finding" in outcome.evidence
 
 
-def test_baseline_default_mode_suppresses_pre_existing_red(tmp_path: Path) -> None:
-    """Project-level default_mode = baseline suppresses a known-red gate."""
-    fail_cmd = _python_command("import sys; sys.exit(2)")
-    _write_quality_gates(
-        tmp_path,
-        f"""\
-default_mode = "baseline"
+def test_declared_baseline_mode_suppresses_pre_existing_red(tmp_path: Path) -> None:
+    """A gate declaring mode = baseline suppresses a known-red gate.
 
-[gates.lint]
-command = {_toml_string(fail_cmd)}
-timeout_seconds = 5
-""",
-    )
+    This was a project-level ``default_mode`` knob; the per-gate ``mode`` is now
+    the only one, so the declaration under test moves onto the gate.
+    """
+    fail_cmd = _python_command("import sys; sys.exit(2)")
+    _seed_gates({"lint": {"command": fail_cmd, "timeout_seconds": 5, "mode": "baseline"}})
     _write_baseline(tmp_path, {"lint": {"command": fail_cmd, "passed": False}})
 
     outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
@@ -236,14 +206,14 @@ timeout_seconds = 5
 
 def test_baseline_without_record_blocks(tmp_path: Path) -> None:
     """A baseline-mode gate with no baseline record on disk blocks normally."""
-    _write_quality_gates(
-        tmp_path,
-        f"""\
-[gates.lint]
-command = {_toml_string(_python_command("import sys; sys.exit(1)"))}
-timeout_seconds = 5
-mode = "baseline"
-""",
+    _seed_gates(
+        {
+            "lint": {
+                "command": _python_command("import sys; sys.exit(1)"),
+                "timeout_seconds": 5,
+                "mode": "baseline",
+            }
+        }
     )
     # No baseline file written.
 
@@ -262,15 +232,7 @@ def test_identity_change_rearms_blocking(tmp_path: Path) -> None:
     """When the command string differs from the captured identity, the gate blocks again."""
     original_cmd = _python_command("import sys; sys.exit(1)")
     changed_cmd = _python_command("import sys; sys.exit(2)")
-    _write_quality_gates(
-        tmp_path,
-        f"""\
-[gates.lint]
-command = {_toml_string(changed_cmd)}
-timeout_seconds = 5
-mode = "baseline"
-""",
-    )
+    _seed_gates({"lint": {"command": changed_cmd, "timeout_seconds": 5, "mode": "baseline"}})
     # Baseline captured with original_cmd, but gate now runs changed_cmd.
     _write_baseline(tmp_path, {"lint": {"command": original_cmd, "passed": False}})
 
@@ -288,15 +250,7 @@ mode = "baseline"
 def test_green_at_capture_going_red_blocks(tmp_path: Path) -> None:
     """A gate that was green at capture but now fails is a regression and always blocks."""
     fail_cmd = _python_command("import sys; sys.exit(1)")
-    _write_quality_gates(
-        tmp_path,
-        f"""\
-[gates.test]
-command = {_toml_string(fail_cmd)}
-timeout_seconds = 5
-mode = "baseline"
-""",
-    )
+    _seed_gates({"test": {"command": fail_cmd, "timeout_seconds": 5, "mode": "baseline"}})
     # Baseline says the gate was passing (green).
     _write_baseline(tmp_path, {"test": {"command": fail_cmd, "passed": True}})
 
@@ -310,19 +264,11 @@ def test_mixed_baseline_blocks_on_new_failure(tmp_path: Path) -> None:
     """With two baseline gates, a new failure (green->red) blocks even if another is suppressed."""
     suppressed_cmd = _python_command("import sys; sys.exit(1)")
     regressed_cmd = _python_command("import sys; sys.exit(1)")
-    _write_quality_gates(
-        tmp_path,
-        f"""\
-[gates.lint]
-command = {_toml_string(suppressed_cmd)}
-timeout_seconds = 5
-mode = "baseline"
-
-[gates.test]
-command = {_toml_string(regressed_cmd)}
-timeout_seconds = 5
-mode = "baseline"
-""",
+    _seed_gates(
+        {
+            "lint": {"command": suppressed_cmd, "timeout_seconds": 5, "mode": "baseline"},
+            "test": {"command": regressed_cmd, "timeout_seconds": 5, "mode": "baseline"},
+        }
     )
     _write_baseline(
         tmp_path,
@@ -382,14 +328,14 @@ def test_baseline_record_validates_against_schema(tmp_path: Path) -> None:
 
 def test_advisory_gate_timeout_blocks(tmp_path: Path) -> None:
     """A blocking=false gate that times out must still block Check 1."""
-    _write_quality_gates(
-        tmp_path,
-        f"""\
-[gates.slow]
-command = {_toml_string(_python_command("import time; time.sleep(5)"))}
-timeout_seconds = 1
-blocking = false
-""",
+    _seed_gates(
+        {
+            "slow": {
+                "command": _python_command("import time; time.sleep(5)"),
+                "timeout_seconds": 1,
+                "blocking": False,
+            }
+        }
     )
 
     outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
@@ -403,15 +349,7 @@ blocking = false
 def test_baseline_mode_gate_timeout_blocks(tmp_path: Path) -> None:
     """A baseline-mode gate that times out must block regardless of the baseline record."""
     slow_cmd = _python_command("import time; time.sleep(5)")
-    _write_quality_gates(
-        tmp_path,
-        f"""\
-[gates.slow]
-command = {_toml_string(slow_cmd)}
-timeout_seconds = 1
-mode = "baseline"
-""",
-    )
+    _seed_gates({"slow": {"command": slow_cmd, "timeout_seconds": 1, "mode": "baseline"}})
     # Provide a baseline that marks slow as red — baseline suppression must not apply to timeouts.
     _write_baseline(tmp_path, {"slow": {"command": slow_cmd, "passed": False}})
 
@@ -425,38 +363,22 @@ mode = "baseline"
 
 # ---------------------------------------------------------------------------
 # Non-string mode returns config error — R1 fixes
+#
+# The project-level default_mode knob no longer exists (ADR-017): the per-gate
+# mode is the only one, so only the per-gate case remains testable.
 # ---------------------------------------------------------------------------
-
-
-def test_non_string_default_mode_returns_config_error(tmp_path: Path) -> None:
-    """A non-string default_mode (e.g. a TOML array) must return a config error, not crash."""
-    _write_quality_gates(
-        tmp_path,
-        f"""\
-default_mode = ["baseline"]
-
-[gates.lint]
-command = {_toml_string(_python_command("print('ok')"))}
-timeout_seconds = 5
-""",
-    )
-
-    outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
-
-    assert not outcome.ok
-    assert "default_mode" in outcome.summary
 
 
 def test_non_string_per_command_mode_returns_config_error(tmp_path: Path) -> None:
     """A non-string per-command mode must return a config error, not crash."""
-    _write_quality_gates(
-        tmp_path,
-        f"""\
-[gates.lint]
-command = {_toml_string(_python_command("print('ok')"))}
-timeout_seconds = 5
-mode = ["baseline"]
-""",
+    _seed_gates(
+        {
+            "lint": {
+                "command": _python_command("print('ok')"),
+                "timeout_seconds": 5,
+                "mode": ["baseline"],
+            }
+        }
     )
 
     outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
@@ -478,17 +400,9 @@ def _write_raw_baseline(repo_root: Path, content: str) -> None:
     (woof_dir / "quality-gates-baseline.json").write_text(content)
 
 
-def _write_failing_gate(repo_root: Path) -> str:
+def _write_failing_gate() -> str:
     fail_cmd = _python_command("raise SystemExit(1)")
-    _write_quality_gates(
-        repo_root,
-        f"""\
-[gates.lint]
-command = {_toml_string(fail_cmd)}
-timeout_seconds = 5
-mode = "baseline"
-""",
-    )
+    _seed_gates({"lint": {"command": fail_cmd, "timeout_seconds": 5, "mode": "baseline"}})
     return fail_cmd
 
 
@@ -498,7 +412,7 @@ def test_non_object_baseline_fails_closed(tmp_path: Path, raw: str) -> None:
 
     It should degrade to 'no baseline' — no suppression, so a red gate still blocks.
     """
-    _write_failing_gate(tmp_path)
+    _write_failing_gate()
     _write_raw_baseline(tmp_path, raw)
 
     outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
@@ -510,15 +424,7 @@ def test_non_object_baseline_fails_closed(tmp_path: Path, raw: str) -> None:
 def test_well_formed_baseline_still_suppresses(tmp_path: Path) -> None:
     """Regression guard: a valid baseline object continues to suppress pre-existing red gates."""
     fail_cmd = _python_command("raise SystemExit(1)")
-    _write_quality_gates(
-        tmp_path,
-        f"""\
-[gates.lint]
-command = {_toml_string(fail_cmd)}
-timeout_seconds = 5
-mode = "baseline"
-""",
-    )
+    _seed_gates({"lint": {"command": fail_cmd, "timeout_seconds": 5, "mode": "baseline"}})
     _write_baseline(tmp_path, {"lint": {"command": fail_cmd, "passed": False}})
 
     outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
@@ -535,15 +441,7 @@ mode = "baseline"
 def test_baseline_missing_captured_at_fails_closed(tmp_path: Path) -> None:
     """A baseline missing required captured_at suppresses nothing; the gate blocks."""
     fail_cmd = _python_command("raise SystemExit(1)")
-    _write_quality_gates(
-        tmp_path,
-        f"""\
-[gates.lint]
-command = {_toml_string(fail_cmd)}
-timeout_seconds = 5
-mode = "baseline"
-""",
-    )
+    _seed_gates({"lint": {"command": fail_cmd, "timeout_seconds": 5, "mode": "baseline"}})
     woof_dir = tmp_path / ".woof"
     woof_dir.mkdir(exist_ok=True)
     (woof_dir / "quality-gates-baseline.json").write_text(
@@ -561,15 +459,7 @@ mode = "baseline"
 def test_baseline_gate_missing_passed_field_fails_closed(tmp_path: Path) -> None:
     """A baseline where a gate entry is missing the required 'passed' field suppresses nothing."""
     fail_cmd = _python_command("raise SystemExit(1)")
-    _write_quality_gates(
-        tmp_path,
-        f"""\
-[gates.lint]
-command = {_toml_string(fail_cmd)}
-timeout_seconds = 5
-mode = "baseline"
-""",
-    )
+    _seed_gates({"lint": {"command": fail_cmd, "timeout_seconds": 5, "mode": "baseline"}})
     woof_dir = tmp_path / ".woof"
     woof_dir.mkdir(exist_ok=True)
     (woof_dir / "quality-gates-baseline.json").write_text(
@@ -592,15 +482,7 @@ mode = "baseline"
 def test_schema_valid_baseline_with_captured_at_suppresses(tmp_path: Path) -> None:
     """A fully schema-valid baseline (with captured_at) still suppresses a red-at-capture gate."""
     fail_cmd = _python_command("raise SystemExit(1)")
-    _write_quality_gates(
-        tmp_path,
-        f"""\
-[gates.lint]
-command = {_toml_string(fail_cmd)}
-timeout_seconds = 5
-mode = "baseline"
-""",
-    )
+    _seed_gates({"lint": {"command": fail_cmd, "timeout_seconds": 5, "mode": "baseline"}})
     # _write_baseline always writes a captured_at field — this is the schema-valid form.
     _write_baseline(tmp_path, {"lint": {"command": fail_cmd, "passed": False}})
 
@@ -684,16 +566,8 @@ def test_schema_invalid_baseline_fails_closed_and_warns(
 ) -> None:
     """Any baseline that woof-validate rejects suppresses nothing and warns 'ignored'."""
     fail_cmd = _python_command("raise SystemExit(1)")
-    _write_quality_gates(
-        tmp_path,
-        f"""\
-[gates.lint]
-command = {_toml_string(fail_cmd)}
-timeout_seconds = 5
-mode = "baseline"
-""",
-    )
-    (tmp_path / ".woof" / "quality-gates-baseline.json").write_text(json.dumps(payload))
+    _seed_gates({"lint": {"command": fail_cmd, "timeout_seconds": 5, "mode": "baseline"}})
+    _write_raw_baseline(tmp_path, json.dumps(payload))
 
     # Confirm ajv also rejects this payload (runtime strictness == schema).
     assert _ajv_rejects(payload, tmp_path), f"expected ajv to reject payload for case {label!r}"
@@ -709,20 +583,12 @@ mode = "baseline"
 def test_schema_valid_baseline_suppresses_and_runtime_matches_ajv(tmp_path: Path) -> None:
     """A fully schema-valid baseline suppresses a red-at-capture gate; ajv also accepts it."""
     fail_cmd = _python_command("raise SystemExit(1)")
-    _write_quality_gates(
-        tmp_path,
-        f"""\
-[gates.lint]
-command = {_toml_string(fail_cmd)}
-timeout_seconds = 5
-mode = "baseline"
-""",
-    )
+    _seed_gates({"lint": {"command": fail_cmd, "timeout_seconds": 5, "mode": "baseline"}})
     valid_payload = {
         "captured_at": "2026-06-16T00:00:00Z",
         "gates": {"lint": {"command": fail_cmd, "passed": False}},
     }
-    (tmp_path / ".woof" / "quality-gates-baseline.json").write_text(json.dumps(valid_payload))
+    _write_raw_baseline(tmp_path, json.dumps(valid_payload))
 
     # Confirm ajv accepts the payload too.
     assert not _ajv_rejects(valid_payload, tmp_path), "expected ajv to accept the valid payload"
@@ -743,21 +609,13 @@ def test_ajv_absent_from_path_fails_closed_without_crashing(
 ) -> None:
     """When ajv is not on PATH, _load_baseline fails closed: no crash, no suppression, warns."""
     fail_cmd = _python_command("raise SystemExit(1)")
-    _write_quality_gates(
-        tmp_path,
-        f"""\
-[gates.lint]
-command = {_toml_string(fail_cmd)}
-timeout_seconds = 5
-mode = "baseline"
-""",
-    )
+    _seed_gates({"lint": {"command": fail_cmd, "timeout_seconds": 5, "mode": "baseline"}})
     # Write a syntactically valid baseline so the only failure is the missing validator.
     valid_payload = {
         "captured_at": "2026-06-16T00:00:00Z",
         "gates": {"lint": {"command": fail_cmd, "passed": False}},
     }
-    (tmp_path / ".woof" / "quality-gates-baseline.json").write_text(json.dumps(valid_payload))
+    _write_raw_baseline(tmp_path, json.dumps(valid_payload))
 
     # Strip ajv from PATH; Python gate commands use a full path so gates still execute.
     monkeypatch.setenv("PATH", str(tmp_path / "empty_bin"))
@@ -796,15 +654,7 @@ def _write_fresh_baseline(repo_root: Path, gates: dict, *, expiry_seconds: int =
 def test_fresh_baseline_suppresses_pre_existing_red(tmp_path: Path) -> None:
     """O1 A fresh baseline (within wall-clock expiry) suppresses a gate that was red at capture."""
     fail_cmd = _python_command("import sys; sys.exit(2)")
-    _write_quality_gates(
-        tmp_path,
-        f"""\
-[gates.lint]
-command = {_toml_string(fail_cmd)}
-timeout_seconds = 5
-mode = "baseline"
-""",
-    )
+    _seed_gates({"lint": {"command": fail_cmd, "timeout_seconds": 5, "mode": "baseline"}})
     _write_fresh_baseline(tmp_path, {"lint": {"command": fail_cmd, "passed": False}})
 
     outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
@@ -816,15 +666,7 @@ mode = "baseline"
 def test_wall_clock_expired_baseline_blocks(tmp_path: Path) -> None:
     """O1 A baseline past its wall-clock expiry stops suppressing; the red gate blocks."""
     fail_cmd = _python_command("import sys; sys.exit(2)")
-    _write_quality_gates(
-        tmp_path,
-        f"""\
-[gates.lint]
-command = {_toml_string(fail_cmd)}
-timeout_seconds = 5
-mode = "baseline"
-""",
-    )
+    _seed_gates({"lint": {"command": fail_cmd, "timeout_seconds": 5, "mode": "baseline"}})
     # expiry_seconds = 1: captured in 2020 means it's long expired
     woof_dir = tmp_path / ".woof"
     woof_dir.mkdir(exist_ok=True)
@@ -847,15 +689,7 @@ mode = "baseline"
 def test_lowercase_z_captured_at_treats_as_expired(tmp_path: Path) -> None:
     """R3 A captured_at with lowercase 'z' suffix is parsed tolerantly and expiry still applies."""
     fail_cmd = _python_command("import sys; sys.exit(2)")
-    _write_quality_gates(
-        tmp_path,
-        f"""\
-[gates.lint]
-command = {_toml_string(fail_cmd)}
-timeout_seconds = 5
-mode = "baseline"
-""",
-    )
+    _seed_gates({"lint": {"command": fail_cmd, "timeout_seconds": 5, "mode": "baseline"}})
     # ajv accepts lowercase 'z' as a valid date-time; Python's fromisoformat does not without
     # normalisation. Captured in 2020 with expiry_seconds=1 so it is long expired.
     woof_dir = tmp_path / ".woof"
@@ -879,15 +713,7 @@ mode = "baseline"
 def test_garbage_captured_at_treats_as_expired(tmp_path: Path) -> None:
     """R3 An unparseable captured_at fails closed: the baseline is treated as expired."""
     fail_cmd = _python_command("import sys; sys.exit(2)")
-    _write_quality_gates(
-        tmp_path,
-        f"""\
-[gates.lint]
-command = {_toml_string(fail_cmd)}
-timeout_seconds = 5
-mode = "baseline"
-""",
-    )
+    _seed_gates({"lint": {"command": fail_cmd, "timeout_seconds": 5, "mode": "baseline"}})
     woof_dir = tmp_path / ".woof"
     woof_dir.mkdir(exist_ok=True)
     # captured_at passes schema validation (any string satisfying date-time format would be caught
@@ -914,17 +740,11 @@ def test_capture_baseline_writes_freshness_metadata(tmp_path: Path) -> None:
     """O1 capture_baseline() is the only path that writes the baseline; it records freshness fields."""
     pass_cmd = _python_command("print('ok')")
     fail_cmd = _python_command("import sys; sys.exit(1)")
-    _write_quality_gates(
-        tmp_path,
-        f"""\
-[gates.pass_gate]
-command = {_toml_string(pass_cmd)}
-timeout_seconds = 5
-
-[gates.fail_gate]
-command = {_toml_string(fail_cmd)}
-timeout_seconds = 5
-""",
+    _seed_gates(
+        {
+            "pass_gate": {"command": pass_cmd, "timeout_seconds": 5},
+            "fail_gate": {"command": fail_cmd, "timeout_seconds": 5},
+        }
     )
 
     result, error = capture_baseline(tmp_path, expiry_seconds=86400)
@@ -944,14 +764,7 @@ timeout_seconds = 5
 def test_captured_baseline_validates_against_schema(tmp_path: Path) -> None:
     """O1 A baseline written by capture_baseline() is valid against quality-gates-baseline.schema.json."""
     pass_cmd = _python_command("print('ok')")
-    _write_quality_gates(
-        tmp_path,
-        f"""\
-[gates.lint]
-command = {_toml_string(pass_cmd)}
-timeout_seconds = 5
-""",
-    )
+    _seed_gates({"lint": {"command": pass_cmd, "timeout_seconds": 5}})
 
     result, error = capture_baseline(tmp_path, expiry_seconds=86400)
     assert error is None
@@ -977,15 +790,7 @@ timeout_seconds = 5
 def test_recapture_only_via_explicit_action(tmp_path: Path) -> None:
     """O1 Running the check runner does not rewrite the baseline — only capture_baseline() does."""
     fail_cmd = _python_command("import sys; sys.exit(1)")
-    _write_quality_gates(
-        tmp_path,
-        f"""\
-[gates.lint]
-command = {_toml_string(fail_cmd)}
-timeout_seconds = 5
-mode = "baseline"
-""",
-    )
+    _seed_gates({"lint": {"command": fail_cmd, "timeout_seconds": 5, "mode": "baseline"}})
     # Write a fresh baseline that suppresses the failure
     _write_fresh_baseline(tmp_path, {"lint": {"command": fail_cmd, "passed": False}})
     original_content = (tmp_path / ".woof" / "quality-gates-baseline.json").read_text()

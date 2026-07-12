@@ -29,6 +29,7 @@ from typing import Any
 from woof.cli.commands.observe import ObserveError, build_observe_report
 from woof.cli.dispatcher import MODEL_PROFILE_ENV
 from woof.graph.state import NodeStatus
+from woof.paths import project_config_path, resolve_project_key
 from woof.trackers.epic_body import split_epic_front_matter
 
 MANIFEST_VERSION = 1
@@ -199,18 +200,17 @@ def seed_epic_fixture(
     epic_id = epic_id_from_fixture(epic_fixture)
     woof_dir = repo_root / ".woof"
     woof_dir.mkdir(exist_ok=True)
+    project_key = resolve_project_key()
     if config_dir is not None:
-        _copy_config_dir(config_dir, woof_dir)
-        _write_benchmark_excludes(repo_root, ignore_seeded_config=True)
+        _copy_project_config(config_dir, project_key)
     elif stub_models:
-        _write_stub_config(woof_dir)
-        _write_benchmark_excludes(repo_root, ignore_seeded_config=True)
-    elif not (woof_dir / "prerequisites.toml").is_file():
+        _write_stub_config(project_key)
+    elif not project_config_path(project_key).is_file():
         raise BenchmarkError(
-            "consumer base has no .woof/prerequisites.toml; pass --config-dir or --stub-models"
+            f"no project config at {project_config_path(project_key)}; "
+            "pass --config-dir or --stub-models"
         )
-    else:
-        _write_benchmark_excludes(repo_root, ignore_seeded_config=False)
+    _write_benchmark_excludes(repo_root)
 
     epic_dir = woof_dir / "epics" / f"E{epic_id}"
     if epic_dir.exists():
@@ -221,48 +221,45 @@ def seed_epic_fixture(
     return epic_id
 
 
-def _copy_config_dir(config_dir: Path, woof_dir: Path) -> None:
-    source = config_dir / ".woof" if (config_dir / ".woof").is_dir() else config_dir
-    if not source.is_dir():
-        raise BenchmarkError(f"config directory not found: {config_dir}")
-    for path in source.rglob("*"):
-        if not path.is_file():
-            continue
-        rel = path.relative_to(source)
-        if rel.parts and rel.parts[0] in {"epics", "codebase"}:
-            continue
-        if rel.name in {".current-epic", ".preflight-floor", ".preflight-runtime"}:
-            continue
-        target = woof_dir / rel
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(path, target)
+def _copy_project_config(config_source: Path, project_key: str) -> None:
+    """Install an operator-supplied project config into the benchmark's WOOF_HOME."""
+
+    source = config_source
+    if source.is_dir():
+        source = source / f"{project_key}.toml"
+    if not source.is_file():
+        raise BenchmarkError(f"project config not found: {source}")
+    target = project_config_path(project_key)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, target)
 
 
-def _write_stub_config(woof_dir: Path) -> None:
-    """Write local-tracker config for dry/stubbed benchmark runs."""
+def _write_stub_config(project_key: str) -> None:
+    """Write a local-tracker project config for dry/stubbed benchmark runs."""
 
-    woof_dir.joinpath("prerequisites.toml").write_text(
-        """\
-[infra]
-git = "2.30+"
+    target = project_config_path(project_key)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(_STUB_PROJECT_CONFIG, encoding="utf-8")
 
-[commands]
-claude = "any"
-codex = "any"
 
-[validators]
-ajv = "any"
-ajv-formats = "any"
-
-[tracker]
-kind = "local"
-""",
-        encoding="utf-8",
-    )
-    woof_dir.joinpath("policy.toml").write_text(
-        """\
+_STUB_PROJECT_CONFIG = """\
 schema_version = 1
+type = "woof_project"
 default_run_profile = "stub"
+
+[delivery]
+profile = "B"
+repo_root = "."
+toolchain_root = "."
+base_branch = "main"
+
+[profiles.B]
+commit = true
+push = false
+
+[verification]
+command = "true"
+timeout_seconds = 60
 
 [run_profiles.stub.producer]
 harness = "codex"
@@ -273,27 +270,32 @@ effort = "low"
 harness = "claude"
 model = "stub-reviewer"
 effort = "low"
-""",
-        encoding="utf-8",
-    )
-    woof_dir.joinpath("agents.toml").write_text(
-        """\
-[timeouts]
+
+[checks]
+floor = ["quality-gates"]
+
+[cartography]
+floor = "none"
+
+[drain]
+merge_after_ready_pr = false
+rerun_after_merge = true
+mark_unit_done_after_publish = true
+commit_backlog_state = true
+stop_when_no_eligible_units = true
+
+[dispatch.timeouts]
 default_minutes = 5
+
+[dispatch.audit]
+enabled = true
+max_bytes = 262144
+redact_patterns = []
 
 [review_valve]
 every_n_work_units = 5
 end_of_epic = false
 
-[audit]
-enabled = true
-max_bytes = 262144
-redact_patterns = []
-""",
-        encoding="utf-8",
-    )
-    woof_dir.joinpath("quality-gates.toml").write_text(
-        """\
 [gates.compile]
 command = '''PYTHONDONTWRITEBYTECODE=1 python - <<'PY'
 from pathlib import Path
@@ -310,24 +312,32 @@ for path in paths:
     py_compile.compile(str(path), doraise=True)
 PY'''
 timeout_seconds = 30
-""",
-        encoding="utf-8",
-    )
-    woof_dir.joinpath("test-markers.toml").write_text(
-        """\
-[languages.python]
+
+[prerequisites.infra]
+git = "2.30+"
+
+[prerequisites.commands]
+claude = "any"
+codex = "any"
+
+[prerequisites.validators]
+ajv = "any"
+ajv-formats = "any"
+
+[tracker]
+kind = "local"
+
+[test_markers.languages.python]
 test_paths = ["tests/", "src/**/test_*.py"]
 marker_regex = '(?<![A-Za-z0-9])O\\d+(?![A-Za-z0-9])'
 cd_marker_regex = '(?<![A-Za-z0-9])CD\\d+(?![A-Za-z0-9])'
 docstring_keyword = "outcomes:"
 comment_prefix = "#"
 context_lines = 3
-""",
-        encoding="utf-8",
-    )
+"""
 
 
-def _write_benchmark_excludes(repo_root: Path, *, ignore_seeded_config: bool) -> None:
+def _write_benchmark_excludes(repo_root: Path) -> None:
     """Keep benchmark-only runtime files out of git status in throwaway worktrees."""
 
     proc = _git(repo_root, "rev-parse", "--git-path", "info/exclude", check=False)
@@ -353,16 +363,6 @@ def _write_benchmark_excludes(repo_root: Path, *, ignore_seeded_config: bool) ->
         "tests/__pycache__/",
         "*.pyc",
     ]
-    if ignore_seeded_config:
-        patterns.extend(
-            [
-                ".woof/agents.toml",
-                ".woof/prerequisites.toml",
-                ".woof/quality-gates.toml",
-                ".woof/test-markers.toml",
-                ".woof/docs-paths.toml",
-            ]
-        )
     existing = exclude_path.read_text(encoding="utf-8")
     missing = [pattern for pattern in patterns if pattern not in existing.splitlines()]
     if missing:

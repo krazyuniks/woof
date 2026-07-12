@@ -38,6 +38,7 @@ from typing import cast, get_args
 import pytest
 
 from woof.cli.commands.wf import _apply_gate_resolution_effects, setup_wf_parser
+from woof.cli.main import project_parser
 from woof.graph.decisions import GATE_DECISIONS, all_decisions
 from woof.graph.state import GateDecision
 from woof.graph.transitions import StageStateError
@@ -115,7 +116,7 @@ def _defined_callables(module_stem: str) -> set[str]:
 def _resolve_argparse_choices() -> list[str]:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="cmd")
-    setup_wf_parser(sub)
+    setup_wf_parser(sub, project_parser())
     wf = sub.choices["wf"]
     (action,) = [a for a in wf._actions if a.dest == "resolve"]
     return list(action.choices or [])

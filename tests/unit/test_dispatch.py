@@ -9,10 +9,14 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
+
+from tests.support import seed_project_config
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WOOF_BIN = REPO_ROOT / "bin" / "woof"
@@ -35,16 +39,50 @@ pytestmark = pytest.mark.host_only
 # ---------------------------------------------------------------------------
 
 
+_CONFIG_OVERRIDES: dict[str, Any] = {}
+
+
+@pytest.fixture(autouse=True)
+def _reset_config_overrides() -> Iterator[None]:
+    """Each test starts from the default project config."""
+
+    _CONFIG_OVERRIDES.clear()
+    yield
+    _CONFIG_OVERRIDES.clear()
+
+
+def _merge_overrides(target: dict[str, Any], source: dict[str, Any]) -> None:
+    for key, value in source.items():
+        if isinstance(value, dict) and isinstance(target.get(key), dict):
+            _merge_overrides(target[key], value)
+        else:
+            target[key] = value
+
+
+def _seed_config(overrides: dict[str, Any]) -> None:
+    """Seed the operator-home project config, accumulating across helpers."""
+
+    _merge_overrides(_CONFIG_OVERRIDES, overrides)
+    seed_project_config(_CONFIG_OVERRIDES)
+
+
+def _dispatch_env(bin_dir: Path, home: Path | None = None) -> dict[str, str]:
+    """Environment for a dispatch subprocess: stub PATH plus the operator home."""
+
+    return {
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "HOME": os.environ.get("HOME", str(home) if home else "/tmp"),
+        "WOOF_HOME": os.environ["WOOF_HOME"],
+        "WOOF_PROJECT": os.environ["WOOF_PROJECT"],
+    }
+
+
 @pytest.fixture
 def woof_project(tmp_path: Path) -> Path:
-    """Skeleton woof project with runtime settings and a default policy run profile."""
+    """Delivery checkout plus the operator-home config the dispatcher reads."""
     project = tmp_path / "proj"
-    woof_dir = project / ".woof"
-    woof_dir.mkdir(parents=True)
-    (woof_dir / "agents.toml").write_text("""\
-[timeouts]
-default_minutes = 15
-""")
+    (project / ".woof").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q"], cwd=project, check=True)
     _write_policy(project)
     return project
 
@@ -54,56 +92,39 @@ def _write_policy(
     *,
     default_run_profile: str = "default",
     producer_harness: str = "codex",
-    producer_model: str = "gpt-5.5",
-    producer_effort: str = "xhigh",
+    producer_model: str | None = "gpt-5.5",
+    producer_effort: str | None = "xhigh",
     reviewer_harness: str = "claude",
-    reviewer_model: str = "claude-opus-4-7",
-    reviewer_effort: str = "max",
-    extra_profiles: str = "",
+    reviewer_model: str | None = "claude-opus-4-7",
+    reviewer_effort: str | None = "max",
+    extra_profiles: dict[str, Any] | None = None,
 ) -> None:
-    (project / ".woof" / "policy.toml").write_text(
-        f"""\
-schema_version = 1
-default_run_profile = "{default_run_profile}"
-
-[delivery]
-profile = "B"
-repo_root = "."
-toolchain_root = "."
-base_branch = "main"
-
-[profiles.B]
-commit = true
-push = true
-
-[verification]
-command = "just check"
-timeout_seconds = 600
-
-[run_profiles.default.producer]
-harness = "{producer_harness}"
-model = "{producer_model}"
-effort = "{producer_effort}"
-
-[run_profiles.default.reviewer]
-harness = "{reviewer_harness}"
-model = "{reviewer_model}"
-effort = "{reviewer_effort}"
-{extra_profiles}
-
-[checks]
-floor = ["quality-gates"]
-
-[cartography]
-floor = "none"
-
-[drain]
-merge_after_ready_pr = true
-rerun_after_merge = true
-mark_unit_done_after_publish = true
-commit_backlog_state = true
-stop_when_no_eligible_units = true
-"""
+    run_profiles: dict[str, Any] = {
+        "default": {
+            "producer": {
+                "harness": producer_harness,
+                "model": producer_model,
+                "effort": producer_effort,
+            },
+            "reviewer": {
+                "harness": reviewer_harness,
+                "model": reviewer_model,
+                "effort": reviewer_effort,
+            },
+        }
+    }
+    run_profiles.update(extra_profiles or {})
+    _seed_config(
+        {
+            "default_run_profile": default_run_profile,
+            "profiles": {"B": {"commit": True, "push": True}},
+            "verification": {"command": "just check", "timeout_seconds": 600},
+            "run_profiles": run_profiles,
+            "checks": {"floor": ["quality-gates"], "review_size": None},
+            "cartography": {"floor": "none"},
+            "drain": {"merge_after_ready_pr": True},
+            "dispatch": {"timeouts": {"default_minutes": 15}},
+        }
     )
 
 
@@ -128,51 +149,20 @@ def test_profile_a_run_metadata_records_worktree_derivation(tmp_path: Path) -> N
 
     epic_dir = tmp_path / ".woof" / "epics" / "E7"
     epic_dir.mkdir(parents=True)
-    (tmp_path / ".woof" / "policy.toml").write_text(
-        """\
-schema_version = 1
-default_run_profile = "default"
-
-[delivery]
-profile = "A"
-repo_root = "."
-toolchain_root = "."
-base_branch = "main"
-
-[profiles.A]
-github_repo = "example/project"
-ready_label = "ready"
-merge_path_groups = []
-
-[profiles.A.worktree]
-root = "worktrees"
-
-[verification]
-command = "just check"
-
-[run_profiles.default.producer]
-harness = "codex"
-model = "gpt-5.5"
-effort = "xhigh"
-
-[run_profiles.default.reviewer]
-harness = "claude"
-model = "claude-opus-4-7"
-effort = "max"
-
-[checks]
-floor = ["quality-gates"]
-
-[cartography]
-floor = "none"
-
-[drain]
-merge_after_ready_pr = true
-rerun_after_merge = true
-mark_unit_done_after_publish = true
-commit_backlog_state = true
-stop_when_no_eligible_units = true
-"""
+    _seed_config(
+        {
+            "delivery": {"profile": "A"},
+            "profiles": {
+                "B": None,
+                "A": {
+                    "github_repo": "example/project",
+                    "ready_label": "ready",
+                    "merge_path_groups": [],
+                    "worktree": {"root": "worktrees"},
+                },
+            },
+            "cartography": {"floor": "none"},
+        }
     )
     (epic_dir / "plan.json").write_text(
         json.dumps(
@@ -363,18 +353,12 @@ def test_model_profile_overrides_route_model_and_effort(woof_project: Path) -> N
 def test_env_model_profile_selects_alternate_profile(woof_project: Path) -> None:
     _write_policy(
         woof_project,
-        extra_profiles="""\
-
-[run_profiles.cheap.producer]
-harness = "codex"
-model = "gpt-5.5-mini"
-effort = "low"
-
-[run_profiles.cheap.reviewer]
-harness = "claude"
-model = "claude-sonnet-4-6"
-effort = "low"
-""",
+        extra_profiles={
+            "cheap": {
+                "producer": {"harness": "codex", "model": "gpt-5.5-mini", "effort": "low"},
+                "reviewer": {"harness": "claude", "model": "claude-sonnet-4-6", "effort": "low"},
+            }
+        },
     )
     env = {**os.environ, "WOOF_MODEL_PROFILE": "cheap"}
 
@@ -401,16 +385,12 @@ effort = "low"
 def test_env_model_profile_harness_change_uses_target_defaults(woof_project: Path) -> None:
     _write_policy(
         woof_project,
-        extra_profiles="""\
-
-[run_profiles.claude_primary.producer]
-harness = "claude"
-
-[run_profiles.claude_primary.reviewer]
-harness = "claude"
-model = "claude-sonnet-4-6"
-effort = "low"
-""",
+        extra_profiles={
+            "claude_primary": {
+                "producer": {"harness": "claude"},
+                "reviewer": {"harness": "claude", "model": "claude-sonnet-4-6", "effort": "low"},
+            }
+        },
     )
     env = {**os.environ, "WOOF_MODEL_PROFILE": "claude_primary"}
 
@@ -497,13 +477,15 @@ def test_route_key_cli_rejects_unknown_group(woof_project: Path) -> None:
 
 
 def test_dispatch_timeouts_reject_boolean_values() -> None:
-    mod = _import_woof_module()
+    from woof.project_config import ProjectConfigError, load_project_config
 
-    with pytest.raises(mod.DispatchConfigError, match=r"timeouts\.default_minutes"):
-        mod.dispatch_timeouts({"timeouts": {"default_minutes": True}})
+    _seed_config({"dispatch": {"timeouts": {"default_minutes": True}}})
+    with pytest.raises(ProjectConfigError, match=r"timeouts\.default_minutes"):
+        load_project_config()
 
-    with pytest.raises(mod.DispatchConfigError, match=r"timeouts\.idle_seconds"):
-        mod.dispatch_timeouts({"timeouts": {"idle_seconds": False}})
+    _seed_config({"dispatch": {"timeouts": {"default_minutes": 30, "idle_seconds": False}}})
+    with pytest.raises(ProjectConfigError, match=r"timeouts\.idle_seconds"):
+        load_project_config()
 
 
 def test_prompt_file_overrides_stdin(woof_project: Path, tmp_path: Path) -> None:
@@ -598,7 +580,8 @@ def test_dispatch_rejects_missing_artefact(woof_project: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_missing_woof_root(tmp_path: Path) -> None:
+def test_dispatch_outside_a_git_checkout(tmp_path: Path) -> None:
+    """The delivery root comes from git; outside a checkout dispatch fails loud."""
     proc = run_dispatch(
         tmp_path,
         "--role",
@@ -608,23 +591,22 @@ def test_missing_woof_root(tmp_path: Path) -> None:
         "--dry-run",
     )
     assert proc.returncode == 2
-    assert "no .woof/ directory" in proc.stderr
+    assert "not inside a git checkout" in proc.stderr
 
 
-def test_missing_policy_toml(tmp_path: Path) -> None:
-    project = tmp_path / "proj"
-    (project / ".woof").mkdir(parents=True)
-    (project / ".woof" / "agents.toml").write_text("[timeouts]\ndefault_minutes = 15\n")
+def test_missing_project_config(woof_project: Path) -> None:
+    """A project key with no config in the operator home fails loud; no repo fallback."""
     proc = run_dispatch(
-        project,
+        woof_project,
         "--role",
         "primary",
         "--epic",
         "1",
         "--dry-run",
+        env={**os.environ, "WOOF_PROJECT": "never-seeded"},
     )
     assert proc.returncode == 2
-    assert "policy.toml" in proc.stderr
+    assert "missing Woof project config" in proc.stderr
 
 
 def test_unknown_role(woof_project: Path) -> None:
@@ -697,16 +679,11 @@ def test_empty_prompt(woof_project: Path) -> None:
     assert "empty prompt" in proc.stderr
 
 
-def test_schema_invalid_agents_toml(tmp_path: Path) -> None:
-    project = tmp_path / "proj"
-    (project / ".woof").mkdir(parents=True)
-    _write_policy(project)
-    (project / ".woof" / "agents.toml").write_text("""\
-[review_valve]
-every_n_work_units = 0
-""")
+def test_schema_invalid_project_config(woof_project: Path) -> None:
+    """The project config is schema-validated before dispatch; a bad section is rejected."""
+    _seed_config({"agents": {"timeouts": {"default_minutes": 15}}})
     proc = run_dispatch(
-        project,
+        woof_project,
         "--role",
         "primary",
         "--epic",
@@ -915,10 +892,7 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
     epic_dir = woof_project / ".woof" / "epics" / "E7"
     epic_dir.mkdir(parents=True)
     (epic_dir / "EPIC.md").write_text("contract\n")
-    env = {
-        "PATH": f"{bin_dir}:{__import__('os').environ['PATH']}",
-        "HOME": __import__("os").environ.get("HOME", str(tmp_path)),
-    }
+    env = _dispatch_env(bin_dir, tmp_path)
 
     proc = subprocess.run(
         [
@@ -1040,10 +1014,7 @@ def test_repeated_review_uses_cached_verdict(git_woof_project: Path, tmp_path: P
     subprocess.run(
         ["git", "add", "feature.py"], cwd=git_woof_project, check=True, capture_output=True
     )
-    env = {
-        "PATH": f"{bin_dir}:{os.environ['PATH']}",
-        "HOME": os.environ.get("HOME", str(tmp_path)),
-    }
+    env = _dispatch_env(bin_dir, tmp_path)
 
     proc1 = subprocess.run(
         [
@@ -1134,10 +1105,7 @@ def test_conflicting_review_verdict_records_instability(
     bin_dir = tmp_path / "bin"
     response = _structured_payload(verdict="blocker", evidence="conflict")
     _make_stub(bin_dir, "claude", response)
-    env = {
-        "PATH": f"{bin_dir}:{os.environ['PATH']}",
-        "HOME": os.environ.get("HOME", str(tmp_path)),
-    }
+    env = _dispatch_env(bin_dir, tmp_path)
 
     proc = subprocess.run(
         [
@@ -1245,10 +1213,7 @@ def test_subprocess_returned_records_head_branch_fields(
     )
     stdin_path = tmp_path / "claude.stdin"
     _make_stub(bin_dir, "claude", claude_response, stdin_path=stdin_path)
-    env = {
-        "PATH": f"{bin_dir}:{os.environ['PATH']}",
-        "HOME": os.environ.get("HOME", str(tmp_path)),
-    }
+    env = _dispatch_env(bin_dir, tmp_path)
 
     proc = subprocess.run(
         [str(WOOF_BIN), "dispatch", "--role", "reviewer", "--epic", "20"],
@@ -1283,8 +1248,7 @@ def test_subprocess_returned_records_error_signature_from_stderr(
     git_woof_project: Path, tmp_path: Path
 ) -> None:
     """subprocess_returned carries error_signature when the subprocess writes to stderr."""
-    agents = git_woof_project / ".woof" / "agents.toml"
-    agents.write_text(agents.read_text().replace("default_minutes = 15", "default_minutes = 0.001"))
+    _seed_config({"dispatch": {"timeouts": {"default_minutes": 0.001}}})
     bin_dir = tmp_path / "bin"
     claude_response = json.dumps(
         {
@@ -1301,10 +1265,7 @@ def test_subprocess_returned_records_error_signature_from_stderr(
     stderr_text = "error: bad value in /home/ci/project/src/foo.py:42:10"
     stdin_path = tmp_path / "claude.stdin"
     _make_stderr_stub(bin_dir, "claude", claude_response, stderr_text, stdin_path)
-    env = {
-        "PATH": f"{bin_dir}:{os.environ['PATH']}",
-        "HOME": os.environ.get("HOME", str(tmp_path)),
-    }
+    env = _dispatch_env(bin_dir, tmp_path)
 
     proc = subprocess.run(
         [str(WOOF_BIN), "dispatch", "--role", "reviewer", "--epic", "21"],
@@ -1343,10 +1304,7 @@ def test_subprocess_returned_records_rate_limit_when_detected(
     )
     stdin_path = tmp_path / "claude.stdin"
     _make_stub(bin_dir, "claude", claude_response, stdin_path)
-    env = {
-        "PATH": f"{bin_dir}:{os.environ['PATH']}",
-        "HOME": os.environ.get("HOME", str(tmp_path)),
-    }
+    env = _dispatch_env(bin_dir, tmp_path)
 
     proc = subprocess.run(
         [str(WOOF_BIN), "dispatch", "--role", "reviewer", "--epic", "22"],
@@ -1388,10 +1346,7 @@ def test_subprocess_returned_no_rate_limit_field_on_clean_run(
     )
     stdin_path = tmp_path / "claude.stdin"
     _make_stub(bin_dir, "claude", claude_response, stdin_path=stdin_path)
-    env = {
-        "PATH": f"{bin_dir}:{os.environ['PATH']}",
-        "HOME": os.environ.get("HOME", str(tmp_path)),
-    }
+    env = _dispatch_env(bin_dir, tmp_path)
 
     proc = subprocess.run(
         [str(WOOF_BIN), "dispatch", "--role", "reviewer", "--epic", "23"],
@@ -1452,15 +1407,17 @@ def test_existing_consumers_unaffected_by_new_optional_fields() -> None:
 def test_end_to_end_tmux_sentinel_completion_counts_as_success(
     woof_project: Path, tmp_path: Path
 ) -> None:
-    agents_path = woof_project / ".woof" / "agents.toml"
-    agents_path.write_text(
-        agents_path.read_text().replace(
-            "[timeouts]\ndefault_minutes = 15\n",
-            "[timeouts]\ndefault_minutes = 1\n"
-            "idle_seconds = 5\n"
-            "completion_grace_seconds = 0.2\n"
-            "completion_tail_cap_seconds = 1\n",
-        )
+    _seed_config(
+        {
+            "dispatch": {
+                "timeouts": {
+                    "default_minutes": 1,
+                    "idle_seconds": 5,
+                    "completion_grace_seconds": 0.2,
+                    "completion_tail_cap_seconds": 1,
+                }
+            }
+        }
     )
     bin_dir = tmp_path / "bin"
     claude_response = _structured_payload(
@@ -1470,10 +1427,7 @@ def test_end_to_end_tmux_sentinel_completion_counts_as_success(
     )
     stdin_path = tmp_path / "claude.stdin"
     _make_lingering_stub(bin_dir, "claude", claude_response, stdin_path)
-    env = {
-        "PATH": f"{bin_dir}:{__import__('os').environ['PATH']}",
-        "HOME": __import__("os").environ.get("HOME", str(tmp_path)),
-    }
+    env = _dispatch_env(bin_dir, tmp_path)
 
     proc = subprocess.run(
         [
@@ -1532,10 +1486,7 @@ def test_end_to_end_codex_records_thread_and_audit_path(woof_project: Path, tmp_
     )
     stdin_path = tmp_path / "codex.stdin"
     _make_stub(bin_dir, "codex", codex_stream, stdin_path=stdin_path)
-    env = {
-        "PATH": f"{bin_dir}:{__import__('os').environ['PATH']}",
-        "HOME": __import__("os").environ.get("HOME", str(tmp_path)),
-    }
+    env = _dispatch_env(bin_dir, tmp_path)
 
     proc = subprocess.run(
         [
@@ -1610,10 +1561,7 @@ def test_end_to_end_records_route_key_in_jsonl_and_meta(woof_project: Path, tmp_
     )
     stdin_path = tmp_path / "codex.stdin"
     _make_stub(bin_dir, "codex", codex_stream, stdin_path=stdin_path)
-    env = {
-        "PATH": f"{bin_dir}:{__import__('os').environ['PATH']}",
-        "HOME": __import__("os").environ.get("HOME", str(tmp_path)),
-    }
+    env = _dispatch_env(bin_dir, tmp_path)
 
     proc = subprocess.run(
         [
@@ -1672,14 +1620,11 @@ def _make_claude_stub_simple(bin_dir: Path) -> None:
 
 
 @pytest.mark.tmux_substrate
-def test_agents_schema_cache_hit_on_second_dispatch(woof_project: Path, tmp_path: Path) -> None:
-    """Second dispatch with unchanged agents.toml records agents_schema_cache_hit=True."""
+def test_config_schema_cache_hit_on_second_dispatch(woof_project: Path, tmp_path: Path) -> None:
+    """Second dispatch with an unchanged project config records config_schema_cache_hit=True."""
     bin_dir = tmp_path / "bin"
     _make_claude_stub_simple(bin_dir)
-    env = {
-        "PATH": f"{bin_dir}:{os.environ['PATH']}",
-        "HOME": os.environ.get("HOME", str(tmp_path)),
-    }
+    env = _dispatch_env(bin_dir, tmp_path)
 
     def _dispatch(epic: int) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
@@ -1701,19 +1646,16 @@ def test_agents_schema_cache_hit_on_second_dispatch(woof_project: Path, tmp_path
         events = [json.loads(ln) for ln in jsonl.read_text().splitlines() if ln.strip()]
         return next(e for e in events if e["event"] == "subprocess_spawned")
 
-    assert _spawned_event(30)["agents_schema_cache_hit"] is False
-    assert _spawned_event(31)["agents_schema_cache_hit"] is True
+    assert _spawned_event(30)["config_schema_cache_hit"] is False
+    assert _spawned_event(31)["config_schema_cache_hit"] is True
 
 
 @pytest.mark.tmux_substrate
-def test_agents_schema_cache_miss_after_content_change(woof_project: Path, tmp_path: Path) -> None:
-    """Changing agents.toml invalidates the cache; next dispatch re-validates."""
+def test_config_schema_cache_miss_after_content_change(woof_project: Path, tmp_path: Path) -> None:
+    """Changing the project config invalidates the cache; next dispatch re-validates."""
     bin_dir = tmp_path / "bin"
     _make_claude_stub_simple(bin_dir)
-    env = {
-        "PATH": f"{bin_dir}:{os.environ['PATH']}",
-        "HOME": os.environ.get("HOME", str(tmp_path)),
-    }
+    env = _dispatch_env(bin_dir, tmp_path)
 
     def _dispatch(epic: int) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
@@ -1728,9 +1670,7 @@ def test_agents_schema_cache_miss_after_content_change(woof_project: Path, tmp_p
     proc1 = _dispatch(32)
     assert proc1.returncode == 0, proc1.stderr
 
-    agents_path = woof_project / ".woof" / "agents.toml"
-    original = agents_path.read_text()
-    agents_path.write_text(original.replace("default_minutes = 15", "default_minutes = 16"))
+    _seed_config({"dispatch": {"timeouts": {"default_minutes": 16}}})
 
     proc2 = _dispatch(33)
     assert proc2.returncode == 0, proc2.stderr
@@ -1740,23 +1680,23 @@ def test_agents_schema_cache_miss_after_content_change(woof_project: Path, tmp_p
         events = [json.loads(ln) for ln in jsonl.read_text().splitlines() if ln.strip()]
         return next(e for e in events if e["event"] == "subprocess_spawned")
 
-    assert _spawned_event(32)["agents_schema_cache_hit"] is False
-    assert _spawned_event(33)["agents_schema_cache_hit"] is False
+    assert _spawned_event(32)["config_schema_cache_hit"] is False
+    assert _spawned_event(33)["config_schema_cache_hit"] is False
 
 
-def test_agents_schema_cache_key_includes_schema() -> None:
+def test_config_schema_cache_key_includes_schema() -> None:
     """A schema change invalidates a pass recorded under the old schema."""
-    from woof.cli.dispatcher import _agents_schema_cache_key
+    from woof.cli.dispatcher import _config_schema_cache_key
 
-    agents = b"[timeouts]\ndefault_minutes = 15\n"
-    key_v1 = _agents_schema_cache_key(agents, b'{"schema": "v1"}')
+    config = b"[dispatch.timeouts]\ndefault_minutes = 15\n"
+    key_v1 = _config_schema_cache_key(config, b'{"schema": "v1"}')
     # Same config, different schema -> different key -> re-validation, not a stale pass.
-    assert key_v1 != _agents_schema_cache_key(agents, b'{"schema": "v2"}')
+    assert key_v1 != _config_schema_cache_key(config, b'{"schema": "v2"}')
     # Stable for identical inputs (a genuine cache hit).
-    assert key_v1 == _agents_schema_cache_key(agents, b'{"schema": "v1"}')
+    assert key_v1 == _config_schema_cache_key(config, b'{"schema": "v1"}')
     # Different config, same schema -> different key.
-    assert key_v1 != _agents_schema_cache_key(
-        b"[timeouts]\ndefault_minutes = 16\n", b'{"schema": "v1"}'
+    assert key_v1 != _config_schema_cache_key(
+        b"[dispatch.timeouts]\ndefault_minutes = 16\n", b'{"schema": "v1"}'
     )
 
 
@@ -1765,10 +1705,7 @@ def test_runtime_policy_in_spawned_not_in_returned(woof_project: Path, tmp_path:
     """runtime_policy is emitted once per dispatch: in subprocess_spawned, not subprocess_returned."""
     bin_dir = tmp_path / "bin"
     _make_claude_stub_simple(bin_dir)
-    env = {
-        "PATH": f"{bin_dir}:{os.environ['PATH']}",
-        "HOME": os.environ.get("HOME", str(tmp_path)),
-    }
+    env = _dispatch_env(bin_dir, tmp_path)
 
     proc = subprocess.run(
         [str(WOOF_BIN), "dispatch", "--role", "reviewer", "--epic", "34"],

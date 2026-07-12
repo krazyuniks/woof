@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from tests.support import seed_project_config
 from woof.checks import CheckContext
 from woof.checks.runners.check_8_docs_drift import check_8_docs_drift_runner
 
@@ -39,12 +41,13 @@ def _ctx(repo_root: Path) -> CheckContext:
     )
 
 
-def _write_docs_paths(repo_root: Path, content: str) -> None:
-    _write(repo_root / ".woof" / "docs-paths.toml", content)
+def _write_docs_paths(mappings: list[dict[str, Any]]) -> None:
+    seed_project_config({"docs_paths": {"mappings": mappings}})
 
 
 def test_missing_config_is_noop(tmp_path: Path) -> None:
     _init_repo(tmp_path)
+    seed_project_config({"docs_paths": None})
     _write(tmp_path / "src/app.py")
     _git(tmp_path, "add", "--", "src/app.py")
 
@@ -59,16 +62,16 @@ def test_missing_config_is_noop(tmp_path: Path) -> None:
 def test_configured_mapping_requires_staged_docs_path(tmp_path: Path) -> None:
     _init_repo(tmp_path)
     _write_docs_paths(
-        tmp_path,
-        """\
-[[mappings]]
-code_pattern = "src/**/*.py"
-doc_pattern = "docs/**/*.md"
-rationale = "public behaviour changed"
-""",
+        [
+            {
+                "code_pattern": "src/**/*.py",
+                "doc_pattern": "docs/**/*.md",
+                "rationale": "public behaviour changed",
+            }
+        ]
     )
     _write(tmp_path / "src/package/service.py")
-    _git(tmp_path, "add", "--", ".woof/docs-paths.toml", "src/package/service.py")
+    _git(tmp_path, "add", "--", "src/package/service.py")
 
     outcome = check_8_docs_drift_runner(_ctx(tmp_path))
 
@@ -82,21 +85,13 @@ rationale = "public behaviour changed"
 
 def test_configured_mapping_passes_with_matching_docs_path(tmp_path: Path) -> None:
     _init_repo(tmp_path)
-    _write_docs_paths(
-        tmp_path,
-        """\
-[[mappings]]
-code_pattern = "src/**/*.py"
-doc_pattern = "docs/**/*.md"
-""",
-    )
+    _write_docs_paths([{"code_pattern": "src/**/*.py", "doc_pattern": "docs/**/*.md"}])
     _write(tmp_path / "src/package/service.py")
     _write(tmp_path / "docs/package/service.md")
     _git(
         tmp_path,
         "add",
         "--",
-        ".woof/docs-paths.toml",
         "src/package/service.py",
         "docs/package/service.md",
     )
@@ -110,16 +105,9 @@ doc_pattern = "docs/**/*.md"
 
 def test_unmapped_paths_do_not_require_docs(tmp_path: Path) -> None:
     _init_repo(tmp_path)
-    _write_docs_paths(
-        tmp_path,
-        """\
-[[mappings]]
-code_pattern = "src/api/"
-doc_pattern = "docs/api/"
-""",
-    )
+    _write_docs_paths([{"code_pattern": "src/api/", "doc_pattern": "docs/api/"}])
     _write(tmp_path / "src/ui/view.py")
-    _git(tmp_path, "add", "--", ".woof/docs-paths.toml", "src/ui/view.py")
+    _git(tmp_path, "add", "--", "src/ui/view.py")
 
     outcome = check_8_docs_drift_runner(_ctx(tmp_path))
 
@@ -129,16 +117,9 @@ doc_pattern = "docs/api/"
 
 def test_docs_only_changes_pass(tmp_path: Path) -> None:
     _init_repo(tmp_path)
-    _write_docs_paths(
-        tmp_path,
-        """\
-[[mappings]]
-code_pattern = "src/api/"
-doc_pattern = "docs/api/"
-""",
-    )
+    _write_docs_paths([{"code_pattern": "src/api/", "doc_pattern": "docs/api/"}])
     _write(tmp_path / "docs/api/runbook.md")
-    _git(tmp_path, "add", "--", ".woof/docs-paths.toml", "docs/api/runbook.md")
+    _git(tmp_path, "add", "--", "docs/api/runbook.md")
 
     outcome = check_8_docs_drift_runner(_ctx(tmp_path))
 
@@ -148,18 +129,11 @@ doc_pattern = "docs/api/"
 
 def test_malformed_config_fails(tmp_path: Path) -> None:
     _init_repo(tmp_path)
-    _write_docs_paths(
-        tmp_path,
-        """\
-[[mappings]]
-code_pattern = ""
-doc_pattern = "docs/api/"
-""",
-    )
+    _write_docs_paths([{"code_pattern": "", "doc_pattern": "docs/api/"}])
 
     outcome = check_8_docs_drift_runner(_ctx(tmp_path))
 
     assert not outcome.ok
     assert outcome.severity == "blocker"
-    assert outcome.paths == [".woof/docs-paths.toml"]
+    assert outcome.paths == []
     assert "malformed docs-paths config" in outcome.summary

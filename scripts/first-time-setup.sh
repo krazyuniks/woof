@@ -258,8 +258,8 @@ ensure_ajv || missing=1
 
 log_step "Checking Woof workflow prerequisites..."
 require_manual_tool gh "Install GitHub CLI and authenticate with: gh auth login" || missing=1
-require_manual_tool claude "Install the Claude Code CLI expected by .woof/agents.toml." || missing=1
-require_manual_tool codex "Install the Codex CLI expected by .woof/agents.toml." || missing=1
+require_manual_tool claude "Install the Claude Code CLI expected by the project run profile." || missing=1
+require_manual_tool codex "Install the Codex CLI expected by the project run profile." || missing=1
 require_manual_tool tmux "${TMUX_HINT}" || missing=1
 require_tmux_harness_source || missing=1
 require_universal_ctags || missing=1

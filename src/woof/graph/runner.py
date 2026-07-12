@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from woof.cli.policy import load_policy
 from woof.cli.preflight import _check_profile_a_worktrees_for_plans
 from woof.gate.write import write_gate, write_gate_for_trigger
 from woof.graph.lock import epic_workflow_lock
@@ -129,11 +128,8 @@ def _open_stage_state_gate(repo_root: Path, epic_id: int, exc: StageStateError) 
 def _profile_a_worktree_failure(
     repo_root: Path, epic_id: int, work_unit_id: str
 ) -> StageStateError | None:
-    policy = load_policy(repo_root)
-    if not isinstance(policy, dict):
-        return None
     plan_path = epic_dir(repo_root, epic_id) / "plan.json"
-    findings = _check_profile_a_worktrees_for_plans(repo_root, policy, [plan_path])
+    findings = _check_profile_a_worktrees_for_plans(repo_root, [plan_path])
     failed = [finding for finding in findings if not finding.ok]
     if not failed:
         return None

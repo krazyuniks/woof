@@ -34,71 +34,33 @@ from woof.cli.harness_registry import (
     get_profile,
     resolve_harness_config,
 )
-from woof.cli.init import AGENTS_TEMPLATE, POLICY_TEMPLATE
 from woof.cli.main import (
     SCHEMAS,
-    load_payload,
     run_ajv,
-)
-from woof.cli.policy import (
-    CARTOGRAPHY_FLOORS,
-    CHECK_FLOOR_IDS,
-    DELIVERY_PROFILES,
-    POLICY_RELPATH,
-    RUN_PROFILE_ROLES,
-    cartography_floor,
-    load_policy,
 )
 from woof.graph.git import git_env
 from woof.graph.state import Plan
 from woof.lib.audit import scan_text_for_secrets
-from woof.paths import schema_dir, tool_root
+from woof.paths import (
+    ProjectKeyError,
+    project_config_path,
+    project_state_root,
+    repo_root_from_git,
+    resolve_project_key,
+    schema_dir,
+    tool_root,
+)
+from woof.project_config import (
+    RUN_PROFILE_ROLES,
+    ProjectConfig,
+    ProjectConfigError,
+    RunProfileSlot,
+    load_project_config,
+    load_raw_project_config,
+)
 from woof.trackers.github import GITHUB_RATE_LIMIT_SAFETY_MARGIN, github_core_remaining
 
-CONFIG_SCHEMAS = {
-    "policy.toml": "policy",
-    "prerequisites.toml": "prerequisites",
-    "agents.toml": "agents",
-    "quality-gates.toml": "quality-gates",
-    "test-markers.toml": "test-markers",
-    "docs-paths.toml": "docs-paths",
-}
-REQUIRED_CONFIGS = {"policy.toml", "prerequisites.toml"}
-
-PREREQUISITES_TEMPLATE = """\
-# Woof project prerequisites. Verified by `woof preflight`.
-# Replace every <replace> placeholder before invoking `woof wf`.
-
-[infra]
-just = "1.0+"
-git = "2.30+"
-gh = "2.0+"
-
-[commands]
-claude = "any"
-codex = "any"
-
-[validators]
-ajv = "any"
-ajv-formats = "any"
-
-# Issue tracker for epic-level contracts. The default GitHub adapter keeps
-# each epic in a GitHub issue and requires `repo`. Use `woof init --tracker
-# local` to scaffold a no-remote setup for repositories without a hosted
-# tracker.
-[tracker]
-kind = "github"
-repo = "<replace>/<replace>"
-
-# Cartography details (ADR-004/ADR-013). `.woof/policy.toml [cartography].floor`
-# decides whether preflight enforces none, design, lexical, or structural
-# cartography. This block supplies the details for non-none floors.
-[cartography]
-staleness_floor_hours = 168
-summary_min_chars = 200
-"""
-
-CACHE_VERSION = 6  # v6: adds Profile A worktree policy and uncached validation
+CACHE_VERSION = 7  # v7: single operator-home project config (ADR-017)
 FLOOR_CACHE_TTL = timedelta(hours=24)
 RUNTIME_CACHE_TTL = timedelta(minutes=5)
 
@@ -163,8 +125,13 @@ class PreflightResult:
 
 
 def cmd_preflight(args: argparse.Namespace) -> int:
-    repo_root = _resolve_repo_root(args.project_root)
-    result = run_preflight(repo_root, force=args.force)
+    try:
+        repo_root = _resolve_repo_root(args.project_root)
+        project_key = resolve_project_key(args.project)
+    except ProjectKeyError as exc:
+        sys.stderr.write(f"woof: {exc}\n")
+        return 2
+    result = run_preflight(repo_root, project_key=project_key, force=args.force)
     if args.format == "json":
         print(json.dumps(result.as_dict(), indent=2))
     else:
@@ -172,80 +139,73 @@ def cmd_preflight(args: argparse.Namespace) -> int:
     return 0 if result.ok else 1
 
 
-def run_preflight(repo_root: Path, *, force: bool = False) -> PreflightResult:
+def run_preflight(
+    repo_root: Path, *, project_key: str | None = None, force: bool = False
+) -> PreflightResult:
+    """Validate the project's prerequisites, config, and cartography.
+
+    A missing project config is a hard failure and the only finding: nothing
+    downstream can be judged without it, and there is no in-repo fallback to
+    fall back to.
+    """
+
     operator_state = build_operator_state_summary(repo_root)
-    prereq_path = repo_root / ".woof" / "prerequisites.toml"
-    policy = load_policy(repo_root)
-    if not prereq_path.is_file():
+    key = resolve_project_key(project_key)
+    try:
+        config = load_project_config(key)
+        raw = load_raw_project_config(key)
+    except ProjectConfigError as exc:
         return PreflightResult(
             repo_root=repo_root,
             operator_state=operator_state,
             findings=[
                 PreflightFinding(
-                    id="config.prerequisites",
-                    label="prerequisites.toml",
+                    id="config.project",
+                    label="project config",
                     ok=False,
-                    detail=f"{prereq_path} not found",
-                    install=f"Create {prereq_path} from this template:\n{PREREQUISITES_TEMPLATE}",
+                    detail=str(exc),
+                    required=f"{project_config_path(key)}",
+                    install=f"woof init --project {key}",
                 )
             ],
         )
 
-    findings: list[PreflightFinding] = []
-    prereq = _load_toml(prereq_path)
-    if isinstance(prereq, dict):
-        cache_key = _preflight_cache_key(repo_root, prereq)
-        findings.extend(
-            _cached_findings(
-                repo_root / ".woof" / ".preflight-floor",
-                cache_key=cache_key,
-                ttl=FLOOR_CACHE_TTL,
-                force=force,
-                producer=lambda: _run_floor_checks(repo_root, prereq, policy),
-            )
+    cache_key = _preflight_cache_key(config)
+    cache_dir = project_state_root(key)
+    findings: list[PreflightFinding] = list(
+        _cached_findings(
+            cache_dir / "preflight-floor",
+            cache_key=cache_key,
+            ttl=FLOOR_CACHE_TTL,
+            force=force,
+            producer=lambda: _run_floor_checks(repo_root, config, raw),
         )
-        findings.extend(
-            _cached_findings(
-                repo_root / ".woof" / ".preflight-runtime",
-                cache_key=cache_key,
-                ttl=RUNTIME_CACHE_TTL,
-                force=force,
-                producer=lambda: _run_runtime_checks(repo_root, prereq),
-            )
+    )
+    findings.extend(
+        _cached_findings(
+            cache_dir / "preflight-runtime",
+            cache_key=cache_key,
+            ttl=RUNTIME_CACHE_TTL,
+            force=force,
+            producer=lambda: _run_runtime_checks(repo_root, config),
         )
-    else:
-        findings.append(
-            PreflightFinding(
-                id="config.prerequisites",
-                label="prerequisites.toml",
-                ok=False,
-                detail=prereq,
-            )
-        )
+    )
     # Uncached: the floor/runtime cache keys do not track cartography doc content,
     # so a cached pass could mask a secret a mapper just wrote. A security gate
     # must re-read the docs every run.
-    findings.extend(
-        _check_profile_a_worktrees(repo_root, policy if isinstance(policy, dict) else None)
-    )
+    findings.extend(_check_profile_a_worktrees(repo_root, config))
     findings.extend(_check_cartography_secrets(repo_root))
     return PreflightResult(repo_root=repo_root, findings=findings, operator_state=operator_state)
 
 
 def _resolve_repo_root(project_root: str | None) -> Path:
     if project_root:
-        root = Path(project_root).resolve()
-        if not (root / ".woof").is_dir():
-            sys.stderr.write(f"woof: {root}/.woof not found; not a woof project\n")
-            sys.exit(2)
-        return root
-
-    current = Path.cwd().resolve()
-    for candidate in (current, *current.parents):
-        if (candidate / ".woof").is_dir():
-            return candidate
-    sys.stderr.write(f"woof: no .woof/ directory found at or above {current}; not a woof project\n")
-    sys.exit(2)
+        return Path(project_root).resolve()
+    try:
+        return repo_root_from_git()
+    except FileNotFoundError as exc:
+        sys.stderr.write(f"woof: {exc}\n")
+        sys.exit(2)
 
 
 def _load_toml(path: Path) -> dict[str, Any] | str:
@@ -257,30 +217,28 @@ def _load_toml(path: Path) -> dict[str, Any] | str:
 
 
 def _run_floor_checks(
-    repo_root: Path, prereq: dict[str, Any], policy: dict[str, Any] | str
+    repo_root: Path, config: ProjectConfig, raw: dict[str, Any]
 ) -> list[PreflightFinding]:
     findings: list[PreflightFinding] = []
     findings.extend(_check_woof_install())
-    findings.extend(_check_config_schemas(repo_root))
-    findings.extend(_check_repo_policy(repo_root, policy, prereq))
-    findings.extend(_check_declared_binaries(prereq))
-    findings.extend(_check_role_routes(repo_root))
-    findings.extend(_check_ajv_formats(prereq))
-    findings.extend(_check_language_tools(prereq))
-    findings.extend(_check_tree_sitter(prereq))
-    findings.extend(_check_quality_gate_commands(repo_root))
-    findings.extend(
-        _check_cartography(repo_root, prereq, policy if isinstance(policy, dict) else None)
-    )
-    findings.extend(_check_host_prerequisites(repo_root, prereq))
-    findings.extend(_check_server_prerequisites(repo_root, prereq))
+    findings.extend(_check_config_schema(config, raw))
+    findings.extend(_check_repo_policy(config))
+    findings.extend(_check_declared_binaries(config))
+    findings.extend(_check_role_routes(config))
+    findings.extend(_check_ajv_formats(config))
+    findings.extend(_check_language_tools(config))
+    findings.extend(_check_tree_sitter(config))
+    findings.extend(_check_quality_gate_commands(repo_root, config))
+    findings.extend(_check_cartography(repo_root, config))
+    findings.extend(_check_host_prerequisites(repo_root, config))
+    findings.extend(_check_server_prerequisites(repo_root, config))
     return findings
 
 
-def _run_runtime_checks(repo_root: Path, prereq: dict[str, Any]) -> list[PreflightFinding]:
+def _run_runtime_checks(repo_root: Path, config: ProjectConfig) -> list[PreflightFinding]:
     findings: list[PreflightFinding] = []
-    findings.extend(_check_tracker(prereq))
-    findings.extend(_check_adapter_auth_markers(repo_root))
+    findings.extend(_check_tracker(config))
+    findings.extend(_check_adapter_auth_markers(config))
     return findings
 
 
@@ -374,9 +332,9 @@ def _finding_from_dict(payload: dict[str, Any]) -> PreflightFinding:
     )
 
 
-def _preflight_cache_key(repo_root: Path, prereq: dict[str, Any]) -> str:
+def _preflight_cache_key(config: ProjectConfig) -> str:
     digest = hashlib.sha256()
-    for path in _cache_input_paths(repo_root, prereq):
+    for path in _cache_input_paths(config):
         digest.update(str(path).encode())
         digest.update(b"\0")
         try:
@@ -387,16 +345,13 @@ def _preflight_cache_key(repo_root: Path, prereq: dict[str, Any]) -> str:
     return digest.hexdigest()
 
 
-def _cache_input_paths(repo_root: Path, prereq: dict[str, Any]) -> list[Path]:
-    woof_dir = repo_root / ".woof"
-    paths = [
-        woof_dir / filename
-        for filename in CONFIG_SCHEMAS
-        if (woof_dir / filename).is_file() or filename in REQUIRED_CONFIGS
-    ]
-    languages = set((prereq.get("lsp") or {}).get("languages") or [])
+def _cache_input_paths(config: ProjectConfig) -> list[Path]:
+    """Every file whose content can change a floor or runtime verdict."""
+
+    paths = [config.source]
+    languages = set(config.prerequisites.lsp_languages)
     languages.update(
-        ((prereq.get("indexing") or {}).get("tree-sitter") or {}).get("grammars") or []
+        ((config.prerequisites.indexing.get("tree-sitter") or {}).get("grammars")) or []
     )
     paths.extend(_language_registry_path(str(language)) for language in sorted(languages))
     return paths
@@ -409,9 +364,7 @@ def _utc_now() -> datetime:
 def _check_woof_install() -> list[PreflightFinding]:
     root = tool_root()
     required = [
-        root / "schemas" / "policy.schema.json",
-        root / "schemas" / "prerequisites.schema.json",
-        root / "schemas" / "agents.schema.json",
+        root / "schemas" / "project-config.schema.json",
         root / "languages",
     ]
     missing = [path for path in required if not path.exists()]
@@ -435,134 +388,59 @@ def _check_woof_install() -> list[PreflightFinding]:
     ]
 
 
-def _check_config_schemas(repo_root: Path) -> list[PreflightFinding]:
+def _check_config_schema(config: ProjectConfig, raw: dict[str, Any]) -> list[PreflightFinding]:
     if shutil.which("ajv") is None:
         return [
             PreflightFinding(
                 id="config.schemas",
-                label="consumer config schemas",
+                label="project config schema",
                 ok=False,
-                detail="ajv-cli not found; cannot validate .woof/*.toml schemas",
+                detail=f"ajv-cli not found; cannot validate {config.source}",
                 install="volta install ajv-cli ajv-formats",
             )
         ]
 
-    findings: list[PreflightFinding] = []
-    for filename, schema in CONFIG_SCHEMAS.items():
-        path = repo_root / ".woof" / filename
-        if filename not in REQUIRED_CONFIGS and not path.is_file():
-            continue
-        if not path.is_file():
-            findings.append(
-                PreflightFinding(
-                    id=f"config.{schema}",
-                    label=filename,
-                    ok=False,
-                    detail=f"{path} not found",
-                )
-            )
-            continue
-        try:
-            payload = load_payload(path, schema)
-        except (ValueError, tomllib.TOMLDecodeError) as exc:
-            findings.append(
-                PreflightFinding(
-                    id=f"config.{schema}",
-                    label=filename,
-                    ok=False,
-                    detail=f"parse error: {exc}",
-                )
-            )
-            continue
-        ok, output = run_ajv(schema_dir() / SCHEMAS[schema], json.dumps(payload).encode())
-        findings.append(
-            PreflightFinding(
-                id=f"config.{schema}",
-                label=filename,
-                ok=ok,
-                detail="schema valid" if ok else output,
-            )
-        )
-    return findings
-
-
-def _check_role_routes(repo_root: Path) -> list[PreflightFinding]:
-    policy = load_policy(repo_root)
-    if not isinstance(policy, dict):
-        return [
-            PreflightFinding(
-                id="policy.run_profile.dispatch",
-                label="policy dispatch routes",
-                ok=False,
-                detail=policy,
-                install=_policy_template(),
-            )
-        ]
-
-    selected_name = policy.get("default_run_profile")
-    profiles = policy.get("run_profiles") or {}
-    if not isinstance(selected_name, str) or not isinstance(profiles, dict):
-        return [
-            PreflightFinding(
-                id="policy.run_profile.dispatch",
-                label="policy dispatch routes",
-                ok=False,
-                detail="default_run_profile and run_profiles must be declared",
-                required="default run profile with producer and reviewer slots",
-            )
-        ]
-    selected = profiles.get(selected_name)
-    if not isinstance(selected, dict):
-        return [
-            PreflightFinding(
-                id="policy.run_profile.dispatch",
-                label="policy dispatch routes",
-                ok=False,
-                detail=f"default_run_profile {selected_name!r} is not declared",
-                required="default run profile with producer and reviewer slots",
-            )
-        ]
-
+    ok, output = run_ajv(schema_dir() / SCHEMAS["project-config"], json.dumps(raw).encode())
     return [
-        _check_dispatch_profile_slot(selected_name, "producer", selected.get("producer")),
-        _check_dispatch_profile_slot(selected_name, "reviewer", selected.get("reviewer")),
+        PreflightFinding(
+            id="config.project",
+            label="project config schema",
+            ok=ok,
+            detail="schema valid" if ok else output,
+        )
+    ]
+
+
+def _check_role_routes(config: ProjectConfig) -> list[PreflightFinding]:
+    profile = config.run_profile
+    return [
+        _check_dispatch_profile_slot(profile.name, "producer", profile.producer),
+        _check_dispatch_profile_slot(profile.name, "reviewer", profile.reviewer),
     ]
 
 
 def _check_dispatch_profile_slot(
     profile_name: str,
     role_name: str,
-    slot: object,
+    slot: RunProfileSlot,
 ) -> PreflightFinding:
+    """Check one dispatch slot resolves to a runnable harness on this host.
+
+    The loader has already checked the declaration's shape, so what is left is
+    what only the host can answer: the harness is known to the registry, its
+    binary is on PATH, and the model/effort pair builds a launch argv.
+    """
+
     label = f"{role_name} dispatch route"
     errors: list[str] = []
-    slot_data: dict[str, Any]
-    if isinstance(slot, dict):
-        slot_data = slot
-    else:
-        slot_data = {}
-        errors.append(f"run_profiles.{profile_name}.{role_name} must be a table")
-
-    harness = slot_data.get("harness")
     profile = None
-    if not isinstance(harness, str) or not harness.strip():
-        errors.append("harness is not declared")
-    else:
-        try:
-            profile = get_profile(harness)
-        except HarnessError as exc:
-            errors.append(str(exc))
+    try:
+        profile = get_profile(slot.harness)
+    except HarnessError as exc:
+        errors.append(str(exc))
 
-    model = slot_data.get("model")
-    if model is not None and (not isinstance(model, str) or not model.strip()):
-        errors.append("model must be a non-empty string when declared")
-
-    effort = slot_data.get("effort")
-    if effort is not None and (not isinstance(effort, str) or not effort.strip()):
-        errors.append("effort must be a non-empty string when declared")
-
-    resolved_model = model
-    resolved_effort = effort
+    resolved_model = slot.model
+    resolved_effort = slot.effort
     if profile is not None:
         command = profile.base[0] if profile.base else profile.name
         if shutil.which(command) is None:
@@ -570,8 +448,8 @@ def _check_dispatch_profile_slot(
         try:
             resolved = resolve_harness_config(
                 profile.name,
-                model=model if isinstance(model, str) else None,
-                effort=effort if isinstance(effort, str) else None,
+                model=slot.model,
+                effort=slot.effort,
             )
             resolved_model = resolved.model
             resolved_effort = resolved.effort
@@ -619,130 +497,60 @@ def _check_mcp_server_command(
     )
 
 
-def _agents_template() -> str:
-    return f"Create .woof/agents.toml, for example:\n{AGENTS_TEMPLATE}"
+def _check_repo_policy(config: ProjectConfig) -> list[PreflightFinding]:
+    """Report on the declaration the loader has already resolved.
+
+    The loader is the shape gate: a malformed config never reaches here, it
+    fails preflight outright. What is left for these findings is the semantics
+    the loader deliberately does not enforce - the settings a delivery profile
+    only needs once another setting turns a feature on, and placeholders a
+    scaffold leaves behind.
+    """
+
+    return [
+        _check_policy_delivery(config),
+        _check_policy_verification(config),
+        _check_policy_run_profile(config),
+        _check_policy_check_floor(config),
+        _check_policy_cartography_floor(config),
+    ]
 
 
-def _policy_template() -> str:
-    return f"Create {POLICY_RELPATH}, for example:\n{POLICY_TEMPLATE}"
-
-
-def _check_repo_policy(
-    repo_root: Path, policy: dict[str, Any] | str, prereq: dict[str, Any]
-) -> list[PreflightFinding]:
-    if not isinstance(policy, dict):
-        return [
-            PreflightFinding(
-                id="policy.config",
-                label="policy.toml",
-                ok=False,
-                detail=policy,
-                install=_policy_template(),
-            )
-        ]
-
-    findings: list[PreflightFinding] = []
-    findings.append(_check_policy_delivery(policy))
-    findings.append(_check_policy_verification(policy))
-    findings.extend(_check_policy_run_profile(policy))
-    findings.append(_check_policy_check_floor(policy))
-    findings.append(_check_policy_cartography_floor(policy, prereq))
-    return findings
-
-
-def _check_policy_delivery(policy: dict[str, Any]) -> PreflightFinding:
-    delivery = policy.get("delivery") or {}
-    profiles = policy.get("profiles") or {}
+def _check_policy_delivery(config: ProjectConfig) -> PreflightFinding:
+    delivery = config.delivery
     errors: list[str] = []
-    if not isinstance(delivery, dict):
-        errors.append("[delivery] must be a table")
-        delivery = {}
-    if not isinstance(profiles, dict):
-        errors.append("[profiles] must be a table")
-        profiles = {}
 
-    selected = delivery.get("profile")
-    if selected not in DELIVERY_PROFILES:
-        errors.append("delivery.profile must be A or B")
-    elif selected not in profiles:
-        errors.append(f"[profiles.{selected}] is required for delivery.profile={selected}")
-
-    for key in ("repo_root", "toolchain_root", "base_branch"):
-        value = delivery.get(key)
-        if not isinstance(value, str) or not value.strip():
-            errors.append(f"delivery.{key} must be declared")
-
-    if selected == "A" and isinstance(profiles.get("A"), dict):
-        profile_a = profiles["A"]
-        for key in ("github_repo", "ready_label"):
-            value = profile_a.get(key)
-            if not isinstance(value, str) or not value.strip():
-                errors.append(f"profiles.A.{key} must be declared")
-        merge_path_groups = profile_a.get("merge_path_groups")
-        if not isinstance(merge_path_groups, list):
-            errors.append("profiles.A.merge_path_groups must be an array")
-        drain_source = policy.get("drain")
-        drain = drain_source if isinstance(drain_source, dict) else {}
-        deploy_aware_merge_active = drain.get("merge_after_ready_pr") is True
-        terminal_deploy_checks = profile_a.get("terminal_deploy_checks")
-        if deploy_aware_merge_active and (
-            not isinstance(terminal_deploy_checks, list)
-            or not terminal_deploy_checks
-            or not all(isinstance(item, str) and item.strip() for item in terminal_deploy_checks)
-        ):
-            errors.append("profiles.A.terminal_deploy_checks must list at least one check")
-        mergeability_settle_timeout = profile_a.get("mergeability_settle_timeout")
-        if deploy_aware_merge_active and (
-            not isinstance(mergeability_settle_timeout, int)
-            or isinstance(mergeability_settle_timeout, bool)
-            or mergeability_settle_timeout < 1
-        ):
-            errors.append("profiles.A.mergeability_settle_timeout must be a positive integer")
-        deploy_wait_timeout = profile_a.get("deploy_wait_timeout")
-        if deploy_aware_merge_active and (
-            not isinstance(deploy_wait_timeout, int)
-            or isinstance(deploy_wait_timeout, bool)
-            or deploy_wait_timeout < 1
-        ):
-            errors.append("profiles.A.deploy_wait_timeout must be a positive integer")
-        merge_attempts = profile_a.get("merge_attempts")
-        if merge_attempts is not None and (
-            not isinstance(merge_attempts, int)
-            or isinstance(merge_attempts, bool)
-            or merge_attempts < 1
-        ):
-            errors.append("profiles.A.merge_attempts must be a positive integer")
-        merge_interval_s = profile_a.get("merge_interval_s")
-        if merge_interval_s is not None and (
-            not isinstance(merge_interval_s, int | float)
-            or isinstance(merge_interval_s, bool)
-            or merge_interval_s <= 0
-        ):
-            errors.append("profiles.A.merge_interval_s must be a positive number")
-        worktree = profile_a.get("worktree")
-        if not isinstance(worktree, dict):
-            errors.append("profiles.A.worktree must be declared")
+    if delivery.profile == "A":
+        profile_a = config.profile_a
+        if profile_a is None:
+            errors.append("[profiles.A] is required for delivery.profile=A")
         else:
-            value = worktree.get("root")
-            if not isinstance(value, str) or not value.strip():
-                errors.append("profiles.A.worktree.root must be declared")
-            derivation = worktree.get("derivation", "unit_id")
-            if derivation not in {"unit_id", "manifest_map"}:
-                errors.append("profiles.A.worktree.derivation must be unit_id or manifest_map")
-
-    if selected == "B" and isinstance(profiles.get("B"), dict):
-        profile_b = profiles["B"]
-        for key in ("commit", "push"):
-            if not isinstance(profile_b.get(key), bool):
-                errors.append(f"profiles.B.{key} must be boolean")
+            # Profile A runs each unit in its own linked worktree, so a Profile A
+            # project without a declared worktree root has nowhere to run. This
+            # fails closed rather than defaulting to a path nobody chose.
+            if profile_a.worktree is None:
+                errors.append("profiles.A.worktree must be declared")
+            if config.drain.merge_after_ready_pr:
+                # Deploy-aware merge is the only mode that needs these, so they are
+                # required here rather than in the loader.
+                if not profile_a.terminal_deploy_checks:
+                    errors.append("profiles.A.terminal_deploy_checks must list at least one check")
+                if not profile_a.mergeability_settle_timeout:
+                    errors.append(
+                        "profiles.A.mergeability_settle_timeout must be a positive integer"
+                    )
+                if not profile_a.deploy_wait_timeout:
+                    errors.append("profiles.A.deploy_wait_timeout must be a positive integer")
+    if delivery.profile == "B" and config.profile_b is None:
+        errors.append("[profiles.B] is required for delivery.profile=B")
 
     return PreflightFinding(
         id="policy.delivery",
         label="repo policy delivery profile",
         ok=not errors,
         detail=(
-            f"profile={selected}, base_branch={delivery.get('base_branch')}, "
-            f"toolchain_root={delivery.get('toolchain_root')}"
+            f"profile={delivery.profile}, base_branch={delivery.base_branch}, "
+            f"toolchain_root={delivery.toolchain_root}"
             if not errors
             else "; ".join(errors)
         ),
@@ -750,22 +558,11 @@ def _check_policy_delivery(policy: dict[str, Any]) -> PreflightFinding:
     )
 
 
-def _check_policy_verification(policy: dict[str, Any]) -> PreflightFinding:
-    verification = policy.get("verification") or {}
+def _check_policy_verification(config: ProjectConfig) -> PreflightFinding:
+    command = config.verification.command
     errors: list[str] = []
-    if not isinstance(verification, dict):
-        errors.append("[verification] must be a table")
-        verification = {}
-    command = verification.get("command")
-    if not isinstance(command, str) or not command.strip():
-        errors.append("verification.command must be declared")
-    elif "<replace" in command:
+    if "<replace" in command:
         errors.append("verification.command still contains a <replace> placeholder")
-    timeout = verification.get("timeout_seconds")
-    if timeout is not None and (
-        not isinstance(timeout, int) or isinstance(timeout, bool) or timeout < 1
-    ):
-        errors.append("verification.timeout_seconds must be a positive integer")
 
     return PreflightFinding(
         id="policy.verification",
@@ -776,179 +573,63 @@ def _check_policy_verification(policy: dict[str, Any]) -> PreflightFinding:
     )
 
 
-def _check_policy_run_profile(policy: dict[str, Any]) -> list[PreflightFinding]:
-    run_profiles = policy.get("run_profiles") or {}
-    default_name = policy.get("default_run_profile")
-    if not isinstance(run_profiles, dict):
-        return [
-            PreflightFinding(
-                id="policy.run_profile",
-                label="repo policy run profile",
-                ok=False,
-                detail="[run_profiles] must be a table",
-                required="default run profile with producer and reviewer slots",
-            )
-        ]
-    if not isinstance(default_name, str) or not default_name.strip():
-        return [
-            PreflightFinding(
-                id="policy.run_profile",
-                label="repo policy run profile",
-                ok=False,
-                detail="default_run_profile must be declared",
-                required="default run profile with producer and reviewer slots",
-            )
-        ]
-    selected = run_profiles.get(default_name)
-    if not isinstance(selected, dict):
-        return [
-            PreflightFinding(
-                id="policy.run_profile",
-                label="repo policy run profile",
-                ok=False,
-                detail=f"default_run_profile {default_name!r} is not declared",
-                required="default run profile with producer and reviewer slots",
-            )
-        ]
-
-    findings = [
-        PreflightFinding(
-            id="policy.run_profile",
-            label="repo policy run profile",
-            ok=True,
-            detail=f"default_run_profile={default_name}",
-            required="default run profile with producer and reviewer slots",
-        )
-    ]
-    for role in RUN_PROFILE_ROLES:
-        findings.append(_check_policy_run_profile_slot(default_name, role, selected.get(role)))
-    return findings
-
-
-def _check_policy_run_profile_slot(profile_name: str, role: str, slot: object) -> PreflightFinding:
-    errors: list[str] = []
-    if not isinstance(slot, dict):
-        errors.append(f"run_profiles.{profile_name}.{role} must be a table")
-        slot = {}
-
-    harness = slot.get("harness")
-    profile = None
-    if not isinstance(harness, str) or not harness.strip():
-        errors.append(f"run_profiles.{profile_name}.{role}.harness must be declared")
-    else:
-        try:
-            profile = get_profile(harness)
-        except HarnessError as exc:
-            errors.append(str(exc))
-
-    model = slot.get("model")
-    if model is not None and (not isinstance(model, str) or not model.strip()):
-        errors.append(f"run_profiles.{profile_name}.{role}.model must be a non-empty string")
-
-    effort = slot.get("effort")
-    if effort is not None and (not isinstance(effort, str) or not effort.strip()):
-        errors.append(f"run_profiles.{profile_name}.{role}.effort must be a non-empty string")
-
-    resolved_model = model
-    resolved_effort = effort
-    if profile is not None:
-        try:
-            resolved = resolve_harness_config(
-                profile.name,
-                model=model if isinstance(model, str) else None,
-                effort=effort if isinstance(effort, str) else None,
-            )
-            resolved_model = resolved.model
-            resolved_effort = resolved.effort
-        except HarnessError as exc:
-            errors.append(str(exc))
-
+def _check_policy_run_profile(config: ProjectConfig) -> PreflightFinding:
     return PreflightFinding(
-        id=f"policy.run_profile.{role}",
-        label=f"repo policy {role} slot",
-        ok=not errors,
-        detail=(
-            f"profile={profile_name}, harness={profile.name if profile else harness}, "
-            f"model={resolved_model}, effort={resolved_effort}"
-            if not errors
-            else "; ".join(errors)
-        ),
-        required="harness plus registry-resolved model and effort",
+        id="policy.run_profile",
+        label="repo policy run profile",
+        ok=True,
+        detail=f"default_run_profile={config.run_profile.name}",
+        required="default run profile with producer and reviewer slots",
     )
 
 
-def _check_policy_check_floor(policy: dict[str, Any]) -> PreflightFinding:
-    checks = policy.get("checks") or {}
-    errors: list[str] = []
-    if not isinstance(checks, dict):
-        errors.append("[checks] must be a table")
-        checks = {}
-    floor = checks.get("floor")
-    floor_values: list[str] = []
-    if not isinstance(floor, list) or not floor:
-        errors.append("checks.floor must list at least one check")
-    else:
-        floor_values = [str(item) for item in floor]
-        unknown = [item for item in floor_values if item not in CHECK_FLOOR_IDS]
-        if unknown:
-            errors.append("unknown checks.floor value(s): " + ", ".join(sorted(unknown)))
-
+def _check_policy_check_floor(config: ProjectConfig) -> PreflightFinding:
     return PreflightFinding(
         id="policy.check_floor",
         label="repo policy check floor",
-        ok=not errors,
-        detail=", ".join(floor_values) if not errors else "; ".join(errors),
+        ok=True,
+        detail=", ".join(config.checks.floor),
         required="deterministic check floor",
     )
 
 
-def _check_policy_cartography_floor(
-    policy: dict[str, Any], prereq: dict[str, Any]
-) -> PreflightFinding:
-    floor = cartography_floor(policy)
+def _check_policy_cartography_floor(config: ProjectConfig) -> PreflightFinding:
+    floor = config.cartography.floor
     errors: list[str] = []
-    if floor not in CARTOGRAPHY_FLOORS:
-        errors.append("cartography.floor must be none, design, lexical, or structural")
-    elif floor != "none" and not isinstance(prereq.get("cartography"), dict):
-        errors.append(f"cartography.floor={floor} requires .woof/prerequisites.toml [cartography]")
+    if floor != "none" and not config.cartography.declared:
+        errors.append(f"cartography.floor={floor} requires a [cartography] section")
 
     return PreflightFinding(
         id="policy.cartography_floor",
         label="repo policy cartography floor",
         ok=not errors,
         detail=f"floor={floor}" if not errors else "; ".join(errors),
-        required="cartography floor and matching cartography prerequisites when required",
+        required="cartography floor and matching cartography details when required",
     )
 
 
-def _check_profile_a_worktrees(
-    repo_root: Path, policy: dict[str, Any] | None
-) -> list[PreflightFinding]:
-    return _check_profile_a_worktrees_for_plans(repo_root, policy, _plan_paths(repo_root))
+def _check_profile_a_worktrees(repo_root: Path, config: ProjectConfig) -> list[PreflightFinding]:
+    return _check_profile_a_worktrees_for_plans(repo_root, _plan_paths(repo_root), config=config)
 
 
 def _check_profile_a_worktrees_for_plans(
-    repo_root: Path, policy: dict[str, Any] | None, plan_paths: list[Path]
+    repo_root: Path, plan_paths: list[Path], *, config: ProjectConfig | None = None
 ) -> list[PreflightFinding]:
-    profile_a = _profile_a(policy)
-    if profile_a is None:
+    resolved = config
+    if resolved is None:
+        try:
+            resolved = load_project_config()
+        except ProjectConfigError:
+            return []
+    if resolved.delivery.profile != "A" or resolved.profile_a is None:
         return []
-    worktree = profile_a.get("worktree")
-    delivery = policy.get("delivery") if isinstance(policy, dict) else {}
-    if not isinstance(worktree, dict) or not isinstance(delivery, dict):
-        return []
-    root = worktree.get("root")
-    if not isinstance(root, str) or not root.strip():
+    worktree = resolved.profile_a.worktree
+    if worktree is None or not worktree.root.strip():
         return []
 
-    raw_derivation = worktree.get("derivation")
-    derivation = raw_derivation if raw_derivation in {"unit_id", "manifest_map"} else "unit_id"
-    raw_base_branch = delivery.get("base_branch")
-    base_branch = (
-        raw_base_branch.strip()
-        if isinstance(raw_base_branch, str) and raw_base_branch.strip()
-        else "main"
-    )
+    root = worktree.root
+    derivation = worktree.derivation
+    base_branch = resolved.delivery.base_branch.strip() or "main"
     ready_units = _ready_worktree_units(repo_root, plan_paths=plan_paths)
     if not ready_units:
         return [
@@ -1013,19 +694,6 @@ def _check_profile_a_worktrees_for_plans(
             )
         )
     return findings
-
-
-def _profile_a(policy: dict[str, Any] | None) -> dict[str, Any] | None:
-    if not isinstance(policy, dict):
-        return None
-    delivery = policy.get("delivery")
-    profiles = policy.get("profiles")
-    if not isinstance(delivery, dict) or delivery.get("profile") != "A":
-        return None
-    if not isinstance(profiles, dict):
-        return None
-    profile_a = profiles.get("A")
-    return profile_a if isinstance(profile_a, dict) else None
 
 
 def _ready_worktree_units(
@@ -1240,15 +908,21 @@ def _git_output(cwd: Path, *args: str) -> str | None:
     return proc.stdout.strip()
 
 
-def _check_declared_binaries(prereq: dict[str, Any]) -> list[PreflightFinding]:
+def _check_declared_binaries(config: ProjectConfig) -> list[PreflightFinding]:
+    prerequisites = config.prerequisites
     findings: list[PreflightFinding] = []
-    for section in ("infra", "commands", "validators"):
-        for binary, version_spec in (prereq.get(section) or {}).items():
+    sections = (
+        ("infra", prerequisites.infra),
+        ("commands", prerequisites.commands),
+        ("validators", prerequisites.validators),
+    )
+    for section, declared in sections:
+        for binary, version_spec in declared.items():
             if binary == "ajv-formats":
                 continue
             findings.append(_check_binary(section, binary, str(version_spec)))
 
-    indexing = prereq.get("indexing") or {}
+    indexing = prerequisites.indexing
     for binary, version_spec in indexing.items():
         if binary == "tree-sitter":
             continue
@@ -1310,8 +984,8 @@ def _version_tuple(version: str) -> tuple[int, int, int]:
     )
 
 
-def _check_ajv_formats(prereq: dict[str, Any]) -> list[PreflightFinding]:
-    if "ajv-formats" not in (prereq.get("validators") or {}):
+def _check_ajv_formats(config: ProjectConfig) -> list[PreflightFinding]:
+    if "ajv-formats" not in config.prerequisites.validators:
         return []
     if shutil.which("ajv") is None:
         return [
@@ -1362,10 +1036,9 @@ def _check_ajv_formats(prereq: dict[str, Any]) -> list[PreflightFinding]:
     ]
 
 
-def _check_tracker(prereq: dict[str, Any]) -> list[PreflightFinding]:
-    tracker = prereq.get("tracker") or {}
-    kind = tracker.get("kind")
-    if kind == "local":
+def _check_tracker(config: ProjectConfig) -> list[PreflightFinding]:
+    tracker = config.tracker
+    if tracker.kind == "local":
         return [
             PreflightFinding(
                 id="tracker.kind",
@@ -1374,9 +1047,7 @@ def _check_tracker(prereq: dict[str, Any]) -> list[PreflightFinding]:
                 detail="tracker kind 'local'; filesystem-only, no remote reachability checks",
             )
         ]
-    if kind != "github":
-        return []
-    repo = tracker.get("repo")
+    repo = tracker.repo
     if not repo:
         return []
     findings = [
@@ -1441,31 +1112,16 @@ def _check_github_rate_limit() -> PreflightFinding:
     )
 
 
-def _check_adapter_auth_markers(repo_root: Path) -> list[PreflightFinding]:
+def _check_adapter_auth_markers(config: ProjectConfig) -> list[PreflightFinding]:
     """Probe credential markers for auth-sensitive harnesses in the default profile."""
 
-    policy = load_policy(repo_root)
-    if not isinstance(policy, dict):
-        return []
-    default_name = policy.get("default_run_profile")
-    run_profiles = policy.get("run_profiles") or {}
-    if not isinstance(default_name, str) or not isinstance(run_profiles, dict):
-        return []
-    selected = run_profiles.get(default_name)
-    if not isinstance(selected, dict):
-        return []
-
+    selected = config.run_profile
     findings: list[PreflightFinding] = []
     checked: set[str] = set()
     for role_name in RUN_PROFILE_ROLES:
-        slot = selected.get(role_name)
-        if not isinstance(slot, dict):
-            continue
-        harness = slot.get("harness")
-        if not isinstance(harness, str) or not harness.strip():
-            continue
+        slot: RunProfileSlot = getattr(selected, role_name)
         try:
-            profile = get_profile(harness)
+            profile = get_profile(slot.harness)
         except HarnessError:
             continue
         adapter = profile.name
@@ -1564,7 +1220,7 @@ CARTOGRAPHY_AUTHOR_HINT = (
 )
 CARTOGRAPHY_ONBOARDING_INSTALL = """\
 Follow the /woof setup onboarding path:
-1. Run `woof init --language <lang>` (repeat --language as needed) so `.woof/prerequisites.toml` contains `[cartography]` and `scripts/refresh-cartography` is composed.
+1. Run `woof init --project <key> --language <lang>` (repeat --language as needed) so the project config carries [cartography] and `scripts/refresh-cartography` is composed.
 2. Author `.woof/codebase/TARGET-ARCHITECTURE.md` and `.woof/codebase/PRINCIPLES.md` during setup.
 3. Run the /woof map-codebase flow to write the AS-IS cartography docs, then run `./scripts/refresh-cartography` and `woof hooks install`.
 References:
@@ -1573,48 +1229,40 @@ References:
 """
 
 
-def _check_cartography(
-    repo_root: Path, prereq: dict[str, Any], policy: dict[str, Any] | None = None
-) -> list[PreflightFinding]:
+def _check_cartography(repo_root: Path, config: ProjectConfig) -> list[PreflightFinding]:
     """Validate the cartography artefact group at ``.woof/codebase/`` (ADR-004).
 
-    The repo policy decides the required floor. ``none`` skips the artefact
+    The project config declares the required floor. ``none`` skips the artefact
     group. ``design`` requires the human-authored target/principles docs.
     ``lexical`` and ``structural`` additionally require the refresh script and
     current mechanical files (``tags``, ``files.txt``, ``freshness.json``).
     """
 
-    floor = cartography_floor(policy) if isinstance(policy, dict) else None
-    if floor == "none":
+    cartography = config.cartography
+    if cartography.floor == "none":
         return []
+    if not cartography.declared:
+        return [_check_cartography_onboarding(config)]
 
-    cartography = prereq.get("cartography")
-    required = isinstance(cartography, dict)
-    findings: list[PreflightFinding] = []
-    if not required:
-        return [_check_cartography_onboarding(repo_root)]
-
-    min_chars = int(cartography.get("summary_min_chars") or DEFAULT_SUMMARY_MIN_CHARS)
-    stub_marker = str(cartography.get("stub_marker") or DEFAULT_STUB_MARKER)
-    for finding_id, filename in CARTOGRAPHY_DESIGN_DOCS:
-        findings.append(
-            _check_cartography_doc(
-                repo_root,
-                finding_id,
-                filename,
-                min_chars=min_chars,
-                stub_marker=stub_marker,
-            )
+    findings: list[PreflightFinding] = [
+        _check_cartography_doc(
+            repo_root,
+            finding_id,
+            filename,
+            min_chars=cartography.summary_min_chars,
+            stub_marker=cartography.stub_marker,
         )
+        for finding_id, filename in CARTOGRAPHY_DESIGN_DOCS
+    ]
 
-    if floor in {None, "lexical", "structural"}:
-        script = _check_cartography_script(repo_root)
-        findings.append(script)
+    if cartography.floor in {"lexical", "structural"}:
+        findings.append(_check_cartography_script(repo_root))
         findings.append(_check_cartography_mechanical(repo_root))
-        if cartography.get("languages"):
+        if cartography.languages:
             findings.append(_check_cartography_ctags())
-        floor_hours = int(cartography.get("staleness_floor_hours") or DEFAULT_STALENESS_FLOOR_HOURS)
-        freshness = _check_cartography_freshness(repo_root, floor_hours=floor_hours)
+        freshness = _check_cartography_freshness(
+            repo_root, floor_hours=cartography.staleness_floor_hours
+        )
         if freshness is not None:
             findings.append(freshness)
     return findings
@@ -1686,18 +1334,17 @@ def _check_cartography_secrets(repo_root: Path) -> list[PreflightFinding]:
     return findings
 
 
-def _check_cartography_onboarding(repo_root: Path) -> PreflightFinding:
-    prereq_path = repo_root / ".woof" / "prerequisites.toml"
+def _check_cartography_onboarding(config: ProjectConfig) -> PreflightFinding:
     return PreflightFinding(
         id="cartography.contract",
         label="cartography contract",
         ok=False,
         required=(
-            ".woof/prerequisites.toml [cartography], .woof/codebase/ design and "
-            "mapper docs, scripts/refresh-cartography, and the Woof post-commit hook"
+            "project config [cartography], .woof/codebase/ design and mapper docs, "
+            "scripts/refresh-cartography, and the Woof post-commit hook"
         ),
         detail=(
-            f"{prereq_path} has no [cartography] block; Woof requires the "
+            f"{config.source} has no [cartography] section; Woof requires the "
             "cartography onboarding path before preflight can pass"
         ),
         install=CARTOGRAPHY_ONBOARDING_INSTALL,
@@ -2008,10 +1655,10 @@ def _doc_marked_complete(front: dict[str, Any]) -> bool:
     return status == "complete" or front.get("complete") is True
 
 
-def _check_language_tools(prereq: dict[str, Any]) -> list[PreflightFinding]:
+def _check_language_tools(config: ProjectConfig) -> list[PreflightFinding]:
     findings: list[PreflightFinding] = []
     plugin_list: str | None = None
-    for language in (prereq.get("lsp") or {}).get("languages") or []:
+    for language in config.prerequisites.lsp_languages:
         registry = _load_language_registry(str(language))
         if isinstance(registry, PreflightFinding):
             findings.append(registry)
@@ -2064,8 +1711,8 @@ def _claude_plugin_list() -> str:
     return output
 
 
-def _check_tree_sitter(prereq: dict[str, Any]) -> list[PreflightFinding]:
-    tree_sitter = ((prereq.get("indexing") or {}).get("tree-sitter")) or {}
+def _check_tree_sitter(config: ProjectConfig) -> list[PreflightFinding]:
+    tree_sitter = config.prerequisites.indexing.get("tree-sitter") or {}
     findings: list[PreflightFinding] = []
     for language in tree_sitter.get("grammars") or []:
         registry = _load_language_registry(str(language))
@@ -2149,32 +1796,18 @@ def _language_registry_path(language: str) -> Path:
     return tool_root() / "languages" / f"{language}.toml"
 
 
-def _check_quality_gate_commands(repo_root: Path) -> list[PreflightFinding]:
-    config_path = repo_root / ".woof" / "quality-gates.toml"
-    if not config_path.is_file():
-        return []
-    loaded = _load_toml(config_path)
-    if not isinstance(loaded, dict):
-        return [
-            PreflightFinding(
-                id="quality-gates.config",
-                label="quality-gates.toml",
-                ok=False,
-                detail=loaded,
-            )
-        ]
+def _check_quality_gate_commands(repo_root: Path, config: ProjectConfig) -> list[PreflightFinding]:
     findings: list[PreflightFinding] = []
-    for name, gate in (loaded.get("gates") or {}).items():
-        command = str(gate.get("command") or "")
+    for gate in config.gates:
         try:
-            first = shlex.split(command)[0]
+            first = shlex.split(gate.command)[0]
         except (IndexError, ValueError) as exc:
             findings.append(
                 PreflightFinding(
-                    id=f"quality-gates.{name}",
-                    label=f"quality gate command: {name}",
+                    id=f"quality-gates.{gate.name}",
+                    label=f"quality gate command: {gate.name}",
                     ok=False,
-                    detail=f"cannot parse command {command!r}: {exc}",
+                    detail=f"cannot parse command {gate.command!r}: {exc}",
                 )
             )
             continue
@@ -2182,8 +1815,8 @@ def _check_quality_gate_commands(repo_root: Path) -> list[PreflightFinding]:
         exists = _command_exists(first, repo_root)
         findings.append(
             PreflightFinding(
-                id=f"quality-gates.{name}",
-                label=f"quality gate command: {name}",
+                id=f"quality-gates.{gate.name}",
+                label=f"quality gate command: {gate.name}",
                 ok=exists,
                 detail=f"{first} resolves" if exists else f"{first} not found on PATH",
             )
@@ -2193,9 +1826,9 @@ def _check_quality_gate_commands(repo_root: Path) -> list[PreflightFinding]:
 
 def _check_host_prerequisites(
     repo_root: Path,
-    prereq: dict[str, Any],
+    config: ProjectConfig,
 ) -> list[PreflightFinding]:
-    host = prereq.get("host") or {}
+    host = config.prerequisites.host
     findings: list[PreflightFinding] = []
     platforms = [str(platform) for platform in host.get("platforms") or []]
     if platforms:
@@ -2224,10 +1857,10 @@ def _check_host_prerequisites(
 
 def _check_server_prerequisites(
     repo_root: Path,
-    prereq: dict[str, Any],
+    config: ProjectConfig,
 ) -> list[PreflightFinding]:
     findings: list[PreflightFinding] = []
-    for name, check in (prereq.get("servers") or {}).items():
+    for name, check in config.prerequisites.servers.items():
         if "url" in check:
             findings.append(_run_server_url_check(name, check))
         else:

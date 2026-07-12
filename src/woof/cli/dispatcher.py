@@ -29,12 +29,21 @@ from woof.cli.harness_registry import (
     build_launch_argv,
     resolve_harness_config,
 )
-from woof.cli.policy import load_policy, policy_path
 from woof.graph.git import current_branch, git_env, head_sha
-from woof.lib.audit_config import load_audit_config
 from woof.lib.error_signature import normalise as _normalise_error_sig
 from woof.lib.rate_limit import classify as _classify_rate_limit
-from woof.paths import schema_dir
+from woof.paths import (
+    ProjectKeyError,
+    project_state_root,
+    repo_root_from_git,
+    resolve_project_key,
+    schema_dir,
+)
+from woof.project_config import (
+    ProjectConfig,
+    ProjectConfigError,
+    load_project_config,
+)
 
 DEFAULT_TIMEOUT_MINUTES = 30
 DEFAULT_IDLE_SECONDS = 600.0
@@ -42,7 +51,7 @@ DEFAULT_COMPLETION_GRACE_SECONDS = 60.0
 DEFAULT_COMPLETION_TAIL_CAP_SECONDS = 120.0
 WORK_UNIT_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9._-]*$")
 AUDIT_COMPONENT_RE = re.compile(r"[^A-Za-z0-9_-]+")
-AGENTS_SCHEMA_PATH = schema_dir() / "agents.schema.json"
+PROJECT_CONFIG_SCHEMA_PATH = schema_dir() / "project-config.schema.json"
 TRUSTED_RUNTIME_MODE = "trusted-local"
 MODEL_PROFILE_ENV = "WOOF_MODEL_PROFILE"
 NODE_GROUPS = frozenset({"discovery", "definition", "planning", "execution"})
@@ -104,15 +113,6 @@ def trusted_runtime_policy() -> dict[str, Any]:
     }
 
 
-def find_woof_root(start: Path) -> Path:
-    """Walk up from ``start`` to the first directory containing ``.woof/``."""
-    for candidate in (start, *start.parents):
-        if (candidate / ".woof").is_dir():
-            return candidate
-    sys.stderr.write(f"woof: no .woof/ directory found at or above {start}; not a woof project\n")
-    sys.exit(2)
-
-
 def iso_utc(dt: datetime) -> str:
     return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -147,46 +147,22 @@ def _role_effort(adapter: str, role: dict[str, Any]) -> str | None:
     return str(role["effort"]) if role.get("effort") is not None else None
 
 
-def _policy_route(repo_root: Path, requested_role: str, route_key: str | None) -> RoleRoute | None:
-    path = policy_path(repo_root)
-    if not path.is_file():
-        return None
-    policy = load_policy(repo_root)
-    if not isinstance(policy, dict):
-        raise DispatchConfigError(str(policy))
+def _policy_route(
+    config: ProjectConfig, requested_role: str, route_key: str | None
+) -> RoleRoute | None:
     slot_name = POLICY_ROLE_SLOTS.get(requested_role)
     if slot_name is None:
         return None
-    profile_name = os.environ.get(MODEL_PROFILE_ENV) or policy.get("default_run_profile")
-    profiles = policy.get("run_profiles") or {}
-    if not isinstance(profile_name, str) or not isinstance(profiles, dict):
-        raise DispatchConfigError("policy default_run_profile and run_profiles must be declared")
-    profile = profiles.get(profile_name)
-    if not isinstance(profile, dict):
-        raise DispatchConfigError(f"policy run profile {profile_name!r} is not declared")
-    slot = profile.get(slot_name)
-    if not isinstance(slot, dict):
-        raise DispatchConfigError(f"policy run profile {profile_name!r} has no {slot_name} slot")
-    harness = slot.get("harness")
-    model = slot.get("model")
-    effort = slot.get("effort")
-    if not isinstance(harness, str) or not harness.strip():
-        raise DispatchConfigError(
-            f"policy run profile {profile_name!r}.{slot_name}.harness missing"
-        )
-    if model is not None and (not isinstance(model, str) or not model.strip()):
-        raise DispatchConfigError(
-            f"policy run profile {profile_name!r}.{slot_name}.model must be a non-empty string"
-        )
-    if effort is not None and (not isinstance(effort, str) or not effort.strip()):
-        raise DispatchConfigError(
-            f"policy run profile {profile_name!r}.{slot_name}.effort must be a non-empty string"
-        )
+    profile_name = os.environ.get(MODEL_PROFILE_ENV) or config.run_profile.name
+    profile = config.run_profiles.get(profile_name)
+    if profile is None:
+        raise DispatchConfigError(f"run profile {profile_name!r} is not declared")
+    slot = getattr(profile, slot_name)
     try:
         resolved = resolve_harness_config(
-            harness,
-            model=model if isinstance(model, str) else None,
-            effort=effort if isinstance(effort, str) else None,
+            slot.harness,
+            model=slot.model,
+            effort=slot.effort,
         )
     except HarnessError as exc:
         raise DispatchConfigError(str(exc)) from exc
@@ -205,53 +181,19 @@ def _policy_route(repo_root: Path, requested_role: str, route_key: str | None) -
     )
 
 
-def dispatch_timeouts(agents: dict[str, Any]) -> DispatchTimeouts:
-    block = agents.get("timeouts") or {}
-    if not isinstance(block, dict):
-        raise DispatchConfigError("timeouts table is not an object")
+def dispatch_timeouts(config: ProjectConfig) -> DispatchTimeouts:
+    """Return the resolved dispatch timeouts from the project config."""
 
-    timeout_fields = {
-        "default_minutes": block.get("default_minutes", DEFAULT_TIMEOUT_MINUTES),
-        "idle_seconds": block.get("idle_seconds", DEFAULT_IDLE_SECONDS),
-        "completion_grace_seconds": block.get(
-            "completion_grace_seconds", DEFAULT_COMPLETION_GRACE_SECONDS
-        ),
-        "completion_tail_cap_seconds": block.get(
-            "completion_tail_cap_seconds", DEFAULT_COMPLETION_TAIL_CAP_SECONDS
-        ),
-    }
-    for name, value in timeout_fields.items():
-        if isinstance(value, bool):
-            raise DispatchConfigError(f"timeouts.{name} must be numeric, not boolean")
-
-    try:
-        raw_default_minutes = timeout_fields["default_minutes"]
-        default_minutes = float(raw_default_minutes)
-        if isinstance(raw_default_minutes, int):
-            default_minutes = raw_default_minutes
-        idle_seconds = float(timeout_fields["idle_seconds"])
-        completion_grace_seconds = float(timeout_fields["completion_grace_seconds"])
-        completion_tail_cap_seconds = float(timeout_fields["completion_tail_cap_seconds"])
-    except (TypeError, ValueError) as exc:
-        raise DispatchConfigError(
-            "timeouts.default_minutes and timeout seconds must be numeric"
-        ) from exc
-
-    if default_minutes <= 0:
-        raise DispatchConfigError("timeouts.default_minutes must be > 0")
-    for name, value in (
-        ("idle_seconds", idle_seconds),
-        ("completion_grace_seconds", completion_grace_seconds),
-        ("completion_tail_cap_seconds", completion_tail_cap_seconds),
-    ):
-        if value < 0:
-            raise DispatchConfigError(f"timeouts.{name} must be >= 0")
-
+    timeouts = config.dispatch.timeouts
+    # A whole number of minutes is reported as an int so the dispatch event
+    # carries `30`, not `30.0`.
+    minutes = float(timeouts.default_minutes)
+    default_minutes: int | float = int(minutes) if minutes.is_integer() else minutes
     return DispatchTimeouts(
         default_minutes=default_minutes,
-        idle_seconds=idle_seconds,
-        completion_grace_seconds=completion_grace_seconds,
-        completion_tail_cap_seconds=completion_tail_cap_seconds,
+        idle_seconds=timeouts.idle_seconds,
+        completion_grace_seconds=timeouts.completion_grace_seconds,
+        completion_tail_cap_seconds=timeouts.completion_tail_cap_seconds,
     )
 
 
@@ -394,32 +336,34 @@ def _run_ajv(schema_path: Path, data_json: bytes) -> tuple[bool, str]:
     return proc.returncode == 0, output
 
 
-def _agents_schema_cache_path(repo_root: Path) -> Path:
-    return repo_root / ".woof" / ".agents-schema-cache"
+def _config_schema_cache_path(project_key: str) -> Path:
+    return project_state_root(project_key) / "config-schema-cache"
 
 
-def _agents_schema_cache_key(agents_bytes: bytes, schema_bytes: bytes) -> str:
+def _config_schema_cache_key(config_bytes: bytes, schema_bytes: bytes) -> str:
     """Cache key over both the config and the schema it was validated against.
 
-    Folding the schema in means a Woof upgrade that changes agents.schema.json
-    invalidates a pass recorded for an unchanged agents.toml under the old schema,
-    instead of skipping re-validation against the new (possibly stricter) rules.
+    Folding the schema in means a Woof upgrade that changes
+    project-config.schema.json invalidates a pass recorded for an unchanged
+    config under the old schema, instead of skipping re-validation against the
+    new (possibly stricter) rules.
     """
-    return hashlib.sha256(agents_bytes + b"\0" + schema_bytes).hexdigest()
+    return hashlib.sha256(config_bytes + b"\0" + schema_bytes).hexdigest()
 
 
-def _check_agents_schema_cache(repo_root: Path, cache_key: str) -> bool:
-    """Return True if agents.toml has already been validated under this cache key."""
+def _check_config_schema_cache(project_key: str, cache_key: str) -> bool:
+    """Return True if this config has already been validated under this cache key."""
     try:
-        return _agents_schema_cache_path(repo_root).read_text().strip() == cache_key
+        return _config_schema_cache_path(project_key).read_text().strip() == cache_key
     except OSError:
         return False
 
 
-def _write_agents_schema_cache(repo_root: Path, cache_key: str) -> None:
-    """Record that agents.toml passed schema validation under this cache key."""
-    cache_path = _agents_schema_cache_path(repo_root)
+def _write_config_schema_cache(project_key: str, cache_key: str) -> None:
+    """Record that the config passed schema validation under this cache key."""
+    cache_path = _config_schema_cache_path(project_key)
     try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = cache_path.with_suffix(".tmp")
         tmp.write_text(cache_key + "\n")
         tmp.replace(cache_path)
@@ -549,8 +493,7 @@ def ensure_run_metadata(epic_dir: Path, epic_id: int, created_at: datetime) -> s
     """Return the durable run id for this epic, creating run metadata once."""
 
     path = epic_dir / "run.json"
-    repo_root = epic_dir.resolve().parents[2]
-    worktrees = _profile_a_run_worktrees(repo_root, epic_dir)
+    worktrees = _profile_a_run_worktrees(epic_dir)
     if path.is_file():
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
@@ -574,29 +517,19 @@ def ensure_run_metadata(epic_dir: Path, epic_id: int, created_at: datetime) -> s
     return run_id
 
 
-def _profile_a_run_worktrees(repo_root: Path, epic_dir: Path) -> dict[str, Any] | None:
-    policy = load_policy(repo_root)
-    if not isinstance(policy, dict):
+def _profile_a_run_worktrees(epic_dir: Path) -> dict[str, Any] | None:
+    try:
+        config = load_project_config()
+    except ProjectConfigError:
         return None
-    delivery = policy.get("delivery")
-    profiles = policy.get("profiles")
-    if not isinstance(delivery, dict) or delivery.get("profile") != "A":
+    if config.delivery.profile != "A" or config.profile_a is None:
         return None
-    if not isinstance(profiles, dict):
+    worktree = config.profile_a.worktree
+    if worktree is None or not worktree.root.strip():
         return None
-    profile_a = profiles.get("A")
-    if not isinstance(profile_a, dict):
-        return None
-    worktree = profile_a.get("worktree")
-    if not isinstance(worktree, dict):
-        return None
-    root = worktree.get("root")
-    if not isinstance(root, str) or not root.strip():
-        return None
-    derivation = (
-        worktree.get("derivation") if isinstance(worktree.get("derivation"), str) else "unit_id"
-    )
-    metadata = {"derivation": derivation, "root": root}
+    derivation = worktree.derivation
+    root = worktree.root
+    metadata: dict[str, Any] = {"derivation": derivation, "root": root}
     if derivation != "unit_id":
         return metadata
     unit_ids = _plan_work_unit_ids(epic_dir / "plan.json")
@@ -799,33 +732,38 @@ def _restore_cached_critique(repo_root: Path, cached: dict[str, Any]) -> None:
 
 
 def cmd_dispatch(args: argparse.Namespace) -> int:
-    repo_root = find_woof_root(Path.cwd().resolve())
-    agents_path = repo_root / ".woof" / "agents.toml"
-    agents: dict[str, Any] = {}
-    agents_schema_cache_hit = False
-    if agents_path.is_file():
-        agents_bytes = agents_path.read_bytes()
-        agents = tomllib.loads(agents_bytes.decode("utf-8"))
-        try:
-            schema_bytes = AGENTS_SCHEMA_PATH.read_bytes()
-        except OSError:
-            # Missing schema: empty key still misses, then ajv runs and fails cleanly.
-            schema_bytes = b""
-        agents_schema_cache_key = _agents_schema_cache_key(agents_bytes, schema_bytes)
-        agents_schema_cache_hit = _check_agents_schema_cache(repo_root, agents_schema_cache_key)
-        if not agents_schema_cache_hit:
-            _ensure_ajv()
-            ok, output = _run_ajv(AGENTS_SCHEMA_PATH, json.dumps(agents).encode())
-            if not ok:
-                sys.stderr.write(f"woof: {agents_path}: schema invalid\n{output}\n")
-                return 2
-            _write_agents_schema_cache(repo_root, agents_schema_cache_key)
+    try:
+        repo_root = repo_root_from_git()
+        project_key = resolve_project_key(getattr(args, "project", None))
+        config = load_project_config(project_key)
+    except (FileNotFoundError, ProjectConfigError, ProjectKeyError) as exc:
+        sys.stderr.write(f"woof: {exc}\n")
+        return 2
+
+    config_bytes = config.source.read_bytes()
+    try:
+        schema_bytes = PROJECT_CONFIG_SCHEMA_PATH.read_bytes()
+    except OSError:
+        # Missing schema: empty key still misses, then ajv runs and fails cleanly.
+        schema_bytes = b""
+    schema_cache_key = _config_schema_cache_key(config_bytes, schema_bytes)
+    schema_cache_hit = _check_config_schema_cache(project_key, schema_cache_key)
+    if not schema_cache_hit:
+        _ensure_ajv()
+        ok, output = _run_ajv(
+            PROJECT_CONFIG_SCHEMA_PATH,
+            json.dumps(tomllib.loads(config_bytes.decode("utf-8"))).encode(),
+        )
+        if not ok:
+            sys.stderr.write(f"woof: {config.source}: schema invalid\n{output}\n")
+            return 2
+        _write_config_schema_cache(project_key, schema_cache_key)
 
     try:
-        route = _policy_route(repo_root, args.role, args.route_key)
+        route = _policy_route(config, args.role, args.route_key)
         if route is None:
             sys.stderr.write(
-                f"woof: {policy_path(repo_root)} does not declare dispatch role {args.role!r}\n"
+                f"woof: {config.source} does not declare dispatch role {args.role!r}\n"
             )
             return 2
     except DispatchConfigError as exc:
@@ -859,8 +797,8 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         return 2
 
     try:
-        timeouts = dispatch_timeouts(agents)
-        audit_config = load_audit_config(agents)
+        timeouts = dispatch_timeouts(config)
+        audit_config = config.dispatch.audit
     except (DispatchConfigError, TypeError, ValueError) as exc:
         sys.stderr.write(f"woof: {exc}\n")
         return 2
@@ -1104,7 +1042,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         "prompt_transport": prompt_transport,
         "session_mode": args.session_mode,
         "runtime_policy": trusted_runtime_policy(),
-        "agents_schema_cache_hit": agents_schema_cache_hit,
+        "config_schema_cache_hit": schema_cache_hit,
         "artefacts_loaded": artefacts_loaded,
         "prompt_bytes": prompt_bytes,
         "artefact_bytes": artefact_bytes,

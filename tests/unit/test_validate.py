@@ -10,10 +10,13 @@ import json
 import os
 import shutil
 import subprocess
+import tomllib
 from pathlib import Path
 
 import pytest
 import yaml
+
+from tests.support import MINIMAL_PROJECT_CONFIG, render_toml, seed_project_config
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WOOF_BIN = REPO_ROOT / "bin" / "woof"
@@ -51,15 +54,10 @@ def test_shipped_schema_count() -> None:
         "critique.schema.json",
         "disposition.schema.json",
         "jsonl-events.schema.json",
-        "policy.schema.json",
-        "prerequisites.schema.json",
-        "agents.schema.json",
-        "test-markers.schema.json",
+        "project-config.schema.json",
         "language-registry.schema.json",
         "freshness.schema.json",
-        "quality-gates.schema.json",
         "quality-gates-baseline.schema.json",
-        "docs-paths.schema.json",
         "check-result.schema.json",
         "executor-result.schema.json",
         "readiness-result.schema.json",
@@ -73,25 +71,81 @@ def test_shipped_schema_count() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Real-file validation (the bootstrapped project prerequisites)
+# The one per-project config (ADR-017)
 # ---------------------------------------------------------------------------
 
 
-def test_validate_real_prerequisites(run_woof) -> None:
-    proc = run_woof("validate", str(REPO_ROOT / ".woof" / "prerequisites.toml"))
+def test_validate_detects_project_config_from_its_path(run_woof) -> None:
+    """A file under config/projects/<key>.toml validates as project-config."""
+
+    path = seed_project_config()
+
+    proc = run_woof("validate", str(path))
+
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert "valid (prerequisites)" in proc.stdout
+    assert "valid (project-config)" in proc.stdout
 
 
-def test_validate_real_policy(run_woof) -> None:
-    proc = run_woof("validate", str(REPO_ROOT / ".woof" / "policy.toml"))
-    assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert "valid (policy)" in proc.stdout
+@pytest.mark.parametrize(
+    "schema",
+    ["policy", "prerequisites", "agents", "quality-gates", "test-markers", "docs-paths"],
+)
+def test_validate_rejects_the_collapsed_schema_names(tmp_path: Path, run_woof, schema: str) -> None:
+    """The six per-file schemas are gone; only project-config remains."""
+
+    path = tmp_path / "config.toml"
+    path.write_text(MINIMAL_PROJECT_CONFIG)
+
+    proc = run_woof("validate", "--schema", schema, str(path))
+
+    assert proc.returncode == 2
+    assert "invalid choice" in proc.stderr
 
 
-def _policy_toml(*, profile: str) -> str:
-    profile_block = (
-        """\
+# Every section the six superseded schemas made mandatory. Collapsing six files
+# into one must not quietly turn a required section into an optional one.
+@pytest.mark.parametrize(
+    "section",
+    [
+        "schema_version",
+        "delivery",
+        "profiles",
+        "verification",
+        "default_run_profile",
+        "run_profiles",
+        "checks",
+        "cartography",
+        "drain",
+        "gates",
+        "prerequisites",
+        "tracker",
+    ],
+)
+def test_project_config_schema_keeps_every_required_section(
+    tmp_path: Path, run_woof, section: str
+) -> None:
+    data = tomllib.loads(MINIMAL_PROJECT_CONFIG)
+    del data[section]
+    path = tmp_path / "config.toml"
+    path.write_text(render_toml(data))
+
+    proc = run_woof("validate", "--schema", "project-config", str(path))
+
+    assert proc.returncode == 1, f"dropping [{section}] should fail schema validation"
+    assert section in proc.stdout + proc.stderr
+
+
+def _project_config_path(tmp_path: Path, body: str, key: str = "demo") -> Path:
+    """Write ``body`` where the path rule detects it as a project config."""
+
+    projects = tmp_path / "config" / "projects"
+    projects.mkdir(parents=True, exist_ok=True)
+    path = projects / f"{key}.toml"
+    path.write_text(body)
+    return path
+
+
+PROFILE_A_BLOCK = """
 [profiles.A]
 github_repo = "example/project"
 ready_label = "ready"
@@ -103,111 +157,65 @@ deploy_wait_timeout = 300
 [profiles.A.worktree]
 root = "worktrees"
 """
-        if profile == "A"
-        else """\
-[profiles.B]
-commit = true
-push = true
-"""
-    )
-    return f"""\
-schema_version = 1
-default_run_profile = "default"
-
-[delivery]
-profile = "{profile}"
-repo_root = "."
-toolchain_root = "."
-base_branch = "main"
-
-{profile_block}
-[verification]
-command = "just check"
-timeout_seconds = 600
-
-[run_profiles.default.producer]
-harness = "codex"
-model = "gpt-5.5"
-effort = "xhigh"
-
-[run_profiles.default.reviewer]
-harness = "claude"
-model = "opus"
-effort = "xhigh"
-
-[checks]
-floor = ["quality-gates"]
-
-[cartography]
-floor = "none"
-
-[drain]
-merge_after_ready_pr = true
-rerun_after_merge = true
-mark_unit_done_after_publish = true
-commit_backlog_state = true
-stop_when_no_eligible_units = true
-"""
 
 
 @pytest.mark.parametrize("profile", ["A", "B"])
-def test_validate_policy_accepts_selected_delivery_profile(
+def test_validate_project_config_accepts_selected_delivery_profile(
     tmp_path: Path, run_woof, profile: str
 ) -> None:
-    path = tmp_path / "policy.toml"
-    path.write_text(_policy_toml(profile=profile))
+    body = MINIMAL_PROJECT_CONFIG
+    if profile == "A":
+        body = body.replace('profile = "B"', 'profile = "A"') + PROFILE_A_BLOCK
+    path = _project_config_path(tmp_path, body)
 
     proc = run_woof("validate", str(path))
 
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert "valid (policy)" in proc.stdout
+    assert "valid (project-config)" in proc.stdout
 
 
-def test_validate_policy_accepts_review_size_threshold(tmp_path: Path, run_woof) -> None:
-    path = tmp_path / "policy.toml"
-    path.write_text(
-        _policy_toml(profile="B")
-        + """
-[checks.review_size]
-max_non_generated_changed_lines = 500
-"""
-    )
+def test_validate_project_config_accepts_review_size_threshold(tmp_path: Path, run_woof) -> None:
+    path = _project_config_path(tmp_path, MINIMAL_PROJECT_CONFIG)
 
     proc = run_woof("validate", str(path))
 
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert "valid (policy)" in proc.stdout
+    assert "[checks.review_size]" in path.read_text()
+    assert "valid (project-config)" in proc.stdout
 
 
-def test_validate_policy_accepts_native_drain_contract(tmp_path: Path, run_woof) -> None:
-    path = tmp_path / "policy.toml"
-    path.write_text(_policy_toml(profile="B"))
+def test_validate_project_config_accepts_native_drain_contract(tmp_path: Path, run_woof) -> None:
+    path = _project_config_path(tmp_path, MINIMAL_PROJECT_CONFIG)
 
     proc = run_woof("validate", str(path))
 
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert "valid (policy)" in proc.stdout
+    assert "[drain]" in path.read_text()
+    assert "valid (project-config)" in proc.stdout
 
 
-def test_validate_policy_requires_native_drain_contract(tmp_path: Path, run_woof) -> None:
-    path = tmp_path / "policy.toml"
-    path.write_text(_policy_toml(profile="B").split("\n[drain]\n", maxsplit=1)[0])
+def test_validate_project_config_requires_the_execution_contract(tmp_path: Path, run_woof) -> None:
+    """The sections nothing can run without stay required."""
+
+    body = MINIMAL_PROJECT_CONFIG.split("\n[run_profiles.default.producer]", maxsplit=1)[0]
+    path = _project_config_path(tmp_path, body)
 
     proc = run_woof("validate", str(path))
 
     assert proc.returncode == 1
     assert "INVALID" in proc.stdout
-    assert "must have required property 'drain'" in proc.stdout
+    assert "must have required property 'run_profiles'" in proc.stdout
 
 
-def test_validate_policy_rejects_engine_bound_worktree_config(tmp_path: Path, run_woof) -> None:
-    path = tmp_path / "policy.toml"
-    path.write_text(
-        _policy_toml(profile="A").replace(
-            'root = "worktrees"\n',
-            'root = "worktrees"\nengine = "vault-foreman"\n',
-        )
+def test_validate_project_config_rejects_engine_bound_worktree_config(
+    tmp_path: Path, run_woof
+) -> None:
+    body = (
+        MINIMAL_PROJECT_CONFIG.replace('profile = "B"', 'profile = "A"')
+        + PROFILE_A_BLOCK
+        + 'engine = "vault-foreman"\n'
     )
+    path = _project_config_path(tmp_path, body)
 
     proc = run_woof("validate", str(path))
 
@@ -216,14 +224,16 @@ def test_validate_policy_rejects_engine_bound_worktree_config(tmp_path: Path, ru
     assert "must NOT have additional properties" in proc.stdout
 
 
-def test_validate_policy_rejects_missing_selected_profile_block(tmp_path: Path, run_woof) -> None:
-    path = tmp_path / "policy.toml"
-    path.write_text(_policy_toml(profile="A").replace("[profiles.A]", "[profiles.B]"))
+def test_validate_project_config_rejects_unknown_section(tmp_path: Path, run_woof) -> None:
+    path = _project_config_path(
+        tmp_path, MINIMAL_PROJECT_CONFIG + '\n[legacy_policy]\nprofile = "B"\n'
+    )
 
     proc = run_woof("validate", str(path))
 
     assert proc.returncode == 1
     assert "INVALID" in proc.stdout
+    assert "must NOT have additional properties" in proc.stdout
 
 
 # ---------------------------------------------------------------------------
@@ -1004,11 +1014,11 @@ def test_no_schema_match_fails(tmp_path: Path, run_woof) -> None:
 
 def test_schema_override(tmp_path: Path, run_woof) -> None:
     """--schema lets validate pick a schema for unrecognised filenames."""
-    path = tmp_path / "renamed-prereqs.toml"
-    path.write_text((REPO_ROOT / ".woof" / "prerequisites.toml").read_text())
-    proc = run_woof("validate", "--schema", "prerequisites", str(path))
+    path = tmp_path / "renamed-config.toml"
+    path.write_text(MINIMAL_PROJECT_CONFIG)
+    proc = run_woof("validate", "--schema", "project-config", str(path))
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert "valid (prerequisites)" in proc.stdout
+    assert "valid (project-config)" in proc.stdout
 
 
 def test_missing_ajv_fails_loud(tmp_path: Path, run_woof) -> None:
@@ -1017,9 +1027,10 @@ def test_missing_ajv_fails_loud(tmp_path: Path, run_woof) -> None:
     assert uv_path is not None
     (tmp_path / "uv").symlink_to(uv_path)
 
+    config = _project_config_path(tmp_path, MINIMAL_PROJECT_CONFIG)
     env = os.environ.copy()
     env["PATH"] = str(tmp_path)
-    proc = run_woof("validate", str(REPO_ROOT / ".woof" / "prerequisites.toml"), env=env)
+    proc = run_woof("validate", str(config), env=env)
     assert proc.returncode == 2
     assert "ajv-cli not found" in proc.stderr
     assert "volta install ajv-cli" in proc.stderr

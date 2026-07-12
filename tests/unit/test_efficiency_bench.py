@@ -20,6 +20,7 @@ from woof.bench.efficiency import (
     resolve_git_sha,
     seed_epic_fixture,
 )
+from woof.paths import project_config_path, resolve_project_key
 
 
 def _run(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -397,7 +398,7 @@ def test_stub_quality_gate_is_plan_neutral_for_src_and_tests_paths(tmp_path: Pat
         "    assert fixture_benchmark_note()['measured'] is True\n",
         encoding="utf-8",
     )
-    config = tomllib.loads((repo / ".woof" / "quality-gates.toml").read_text())
+    config = tomllib.loads(project_config_path(resolve_project_key()).read_text())
     command = config["gates"]["compile"]["command"]
 
     proc = subprocess.run(command, cwd=repo, shell=True, capture_output=True, text=True)

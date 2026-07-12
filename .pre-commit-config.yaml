@@ -15,7 +15,13 @@ repos:
         stages: [pre-commit]
       - id: validate-woof-config
         name: validate woof config
-        entry: uv run woof validate .woof/policy.toml .woof/prerequisites.toml .woof/agents.toml .woof/quality-gates.toml docs/backlog.md
+        entry: uv run woof validate --schema project-config examples/project-config/woof.toml
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+      - id: validate-woof-backlog
+        name: validate woof backlog
+        entry: uv run woof validate docs/backlog.md
         language: system
         pass_filenames: false
         stages: [pre-commit]

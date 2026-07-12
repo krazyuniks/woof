@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from tests.support import seed_project_config
 from woof.graph import nodes
 from woof.graph.epilogue import DISPATCH_DENIAL_EPILOGUE
 from woof.graph.git import git_env
@@ -79,49 +80,13 @@ def _write_plan(root: Path, epic_id: int = 1) -> Path:
 
 
 def _write_policy(root: Path, *, cartography_floor: str) -> None:
-    woof_dir = root / ".woof"
-    woof_dir.mkdir(parents=True, exist_ok=True)
-    (woof_dir / "policy.toml").write_text(
-        f"""\
-schema_version = 1
-default_run_profile = "default"
-
-[delivery]
-profile = "B"
-repo_root = "."
-toolchain_root = "."
-base_branch = "main"
-
-[profiles.B]
-commit = true
-push = true
-
-[verification]
-command = "just check"
-
-[run_profiles.default.producer]
-harness = "codex"
-model = "gpt-5.5"
-effort = "high"
-
-[run_profiles.default.reviewer]
-harness = "claude"
-model = "claude-opus-4-7"
-effort = "high"
-
-[checks]
-floor = ["quality-gates"]
-
-[cartography]
-floor = "{cartography_floor}"
-
-[drain]
-merge_after_ready_pr = true
-rerun_after_merge = true
-mark_unit_done_after_publish = true
-commit_backlog_state = true
-stop_when_no_eligible_units = true
-"""
+    seed_project_config(
+        {
+            "profiles": {"B": {"commit": True, "push": True}},
+            "checks": {"floor": ["quality-gates"]},
+            "cartography": {"floor": cartography_floor},
+            "drain": {"merge_after_ready_pr": True},
+        }
     )
 
 

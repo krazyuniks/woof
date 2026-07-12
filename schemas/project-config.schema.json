@@ -1,0 +1,360 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://woof.dev/schemas/project-config.schema.json",
+  "title": "woof project config",
+  "description": "The single per-project Woof config at ~/.woof/config/projects/<project-key>.toml (ADR-017). Engine config lives in the operator home, never in the driven repo. This file replaces the six former in-repo files: policy.toml, agents.toml, quality-gates.toml, prerequisites.toml, test-markers.toml, and docs-paths.toml.",
+  "type": "object",
+  "additionalProperties": false,
+  "$comment": "The required list is the union of the six superseded schemas' floors, so collapsing them loses no fail-closed rule: policy required schema_version/delivery/profiles/verification/default_run_profile/run_profiles/checks/cartography/drain, prerequisites required infra/commands/validators/tracker, and quality-gates required gates.",
+  "required": [
+    "schema_version",
+    "default_run_profile",
+    "delivery",
+    "profiles",
+    "verification",
+    "run_profiles",
+    "checks",
+    "cartography",
+    "drain",
+    "gates",
+    "prerequisites",
+    "tracker"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "type": { "const": "woof_project" },
+    "default_run_profile": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Name of the run profile in run_profiles used unless an invocation overrides it."
+    },
+    "delivery": { "$ref": "#/$defs/delivery" },
+    "profiles": { "$ref": "#/$defs/profiles" },
+    "verification": { "$ref": "#/$defs/verification" },
+    "run_profiles": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "$ref": "#/$defs/runProfile" },
+      "description": "Named producer/reviewer harness routes. The dispatch registry owns the harness, model, and effort vocabulary."
+    },
+    "checks": { "$ref": "#/$defs/checks" },
+    "cartography": { "$ref": "#/$defs/cartography" },
+    "drain": { "$ref": "#/$defs/drain" },
+    "dispatch": { "$ref": "#/$defs/dispatch" },
+    "review_valve": { "$ref": "#/$defs/reviewValve" },
+    "fix_rounds": { "$ref": "#/$defs/fixRounds" },
+    "readiness": { "$ref": "#/$defs/readiness" },
+    "gates": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/gate" },
+      "description": "Quality gates run by Stage 5 Check 1 and by `woof baseline capture`."
+    },
+    "prerequisites": { "$ref": "#/$defs/prerequisites" },
+    "tracker": { "$ref": "#/$defs/tracker" },
+    "test_markers": { "$ref": "#/$defs/testMarkers" },
+    "docs_paths": { "$ref": "#/$defs/docsPaths" }
+  },
+  "$defs": {
+    "delivery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profile", "repo_root", "toolchain_root", "base_branch"],
+      "properties": {
+        "profile": {
+          "enum": ["A", "B"],
+          "description": "A: publish through a hosted tracker and pull requests. B: commit directly on the delivery branch."
+        },
+        "repo_root": { "type": "string", "minLength": 1 },
+        "toolchain_root": { "type": "string", "minLength": 1 },
+        "base_branch": { "type": "string", "minLength": 1 }
+      }
+    },
+    "profiles": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "A": { "$ref": "#/$defs/profileA" },
+        "B": { "$ref": "#/$defs/profileB" }
+      }
+    },
+    "profileA": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["github_repo", "ready_label"],
+      "properties": {
+        "github_repo": { "type": "string", "minLength": 1 },
+        "ready_label": { "type": "string", "minLength": 1 },
+        "merge_path_groups": { "type": "array", "items": { "type": "string" } },
+        "terminal_deploy_checks": { "type": "array", "items": { "type": "string" } },
+        "mergeability_settle_timeout": { "type": "integer", "minimum": 1 },
+        "deploy_wait_timeout": { "type": "integer", "minimum": 1 },
+        "merge_attempts": { "type": "integer", "minimum": 1 },
+        "merge_interval_s": { "type": "number", "exclusiveMinimum": 0 },
+        "worktree": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["root"],
+          "properties": {
+            "root": { "type": "string", "minLength": 1 },
+            "derivation": { "enum": ["unit_id", "manifest_map"] }
+          }
+        }
+      }
+    },
+    "profileB": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "push"],
+      "properties": {
+        "commit": { "type": "boolean" },
+        "push": { "type": "boolean" }
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command"],
+      "properties": {
+        "command": { "type": "string", "minLength": 1 },
+        "timeout_seconds": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "runProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["producer", "reviewer"],
+      "properties": {
+        "producer": { "$ref": "#/$defs/runProfileSlot" },
+        "reviewer": { "$ref": "#/$defs/runProfileSlot" }
+      }
+    },
+    "runProfileSlot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["harness"],
+      "properties": {
+        "harness": { "type": "string", "minLength": 1 },
+        "model": { "type": "string", "minLength": 1 },
+        "effort": { "type": "string", "minLength": 1 }
+      }
+    },
+    "checks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["floor"],
+      "properties": {
+        "floor": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "quality-gates",
+              "outcome-markers",
+              "scope",
+              "contract-refs",
+              "plan-crossrefs",
+              "critique-blocker",
+              "commit-transaction",
+              "docs-drift",
+              "review-valve"
+            ]
+          }
+        },
+        "review_size": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "max_non_generated_changed_lines": { "type": "integer", "minimum": 1 }
+          }
+        }
+      }
+    },
+    "cartography": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The cartography floor and the details the non-none floors need. Both halves were once split across policy.toml and prerequisites.toml; they are one concept with one home.",
+      "properties": {
+        "floor": { "enum": ["none", "design", "lexical", "structural"] },
+        "staleness_floor_hours": { "type": "integer", "minimum": 1 },
+        "summary_min_chars": { "type": "integer", "minimum": 1 },
+        "stub_marker": { "type": "string", "minLength": 1 },
+        "languages": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "drain": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "merge_after_ready_pr": { "type": "boolean" },
+        "rerun_after_merge": { "type": "boolean" },
+        "mark_unit_done_after_publish": { "type": "boolean" },
+        "commit_backlog_state": { "type": "boolean" },
+        "stop_when_no_eligible_units": { "type": "boolean" }
+      }
+    },
+    "dispatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "timeouts": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "default_minutes": { "type": "number", "exclusiveMinimum": 0 },
+            "idle_seconds": { "type": "number", "minimum": 0 },
+            "completion_grace_seconds": { "type": "number", "minimum": 0 },
+            "completion_tail_cap_seconds": { "type": "number", "minimum": 0 }
+          }
+        },
+        "audit": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "max_bytes": { "type": "integer", "minimum": 1 },
+            "redact_patterns": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    },
+    "reviewValve": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "every_n_work_units": { "type": "integer", "minimum": 1 },
+        "end_of_epic": { "type": "boolean" }
+      }
+    },
+    "fixRounds": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_rounds_per_blocker": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "readiness": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "escalation_threshold": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command"],
+      "properties": {
+        "command": { "type": "string", "minLength": 1 },
+        "timeout_seconds": { "type": "integer", "minimum": 1 },
+        "blocking": { "type": "boolean" },
+        "mode": { "enum": ["strict", "baseline"] }
+      }
+    },
+    "prerequisites": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["infra", "commands", "validators"],
+      "properties": {
+        "infra": { "$ref": "#/$defs/versionMap" },
+        "commands": { "$ref": "#/$defs/versionMap" },
+        "validators": { "$ref": "#/$defs/versionMap" },
+        "lsp": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "languages": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "indexing": { "type": "object" },
+        "host": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "platforms": { "type": "array", "items": { "type": "string" } },
+            "checks": { "type": "object", "additionalProperties": { "$ref": "#/$defs/commandCheck" } }
+          }
+        },
+        "servers": { "type": "object" }
+      }
+    },
+    "versionMap": {
+      "type": "object",
+      "additionalProperties": { "type": "string", "minLength": 1 },
+      "description": "Binary name to version floor, e.g. git = \"2.30+\" or gh = \"any\"."
+    },
+    "commandCheck": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command"],
+      "properties": {
+        "command": { "type": "string", "minLength": 1 },
+        "required": { "type": "string" },
+        "install": { "type": "string" },
+        "timeout_seconds": { "type": "integer", "minimum": 1 },
+        "notes": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "tracker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["github", "local"] },
+        "repo": { "type": "string", "minLength": 1 }
+      },
+      "if": { "properties": { "kind": { "const": "github" } } },
+      "then": { "required": ["repo"] }
+    },
+    "testMarkers": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "languages": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "$ref": "#/$defs/testMarkerLanguage" }
+        }
+      }
+    },
+    "testMarkerLanguage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "test_paths",
+        "marker_regex",
+        "cd_marker_regex",
+        "docstring_keyword",
+        "comment_prefix"
+      ],
+      "properties": {
+        "test_paths": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "marker_regex": { "type": "string", "minLength": 1 },
+        "cd_marker_regex": { "type": "string", "minLength": 1 },
+        "docstring_keyword": { "type": "string", "minLength": 1 },
+        "comment_prefix": { "type": "string", "minLength": 1 },
+        "context_lines": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "docsPaths": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mappings": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["code_pattern", "doc_pattern"],
+            "properties": {
+              "code_pattern": { "type": "string", "minLength": 1 },
+              "doc_pattern": { "type": "string", "minLength": 1 },
+              "rationale": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

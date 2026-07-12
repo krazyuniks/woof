@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.support import seed_project_config
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WOOF_BIN = REPO_ROOT / "bin" / "woof"
 WOOF_VALIDATE = [str(WOOF_BIN), "validate", "--schema", "jsonl-events"]
@@ -21,65 +23,25 @@ def _write_project(tmp_path: Path, *, default_minutes: float = 0.05) -> Path:
     project = tmp_path / "project"
     woof_dir = project / ".woof"
     woof_dir.mkdir(parents=True)
-    (woof_dir / "agents.toml").write_text(
-        f"""\
-[timeouts]
-default_minutes = {default_minutes}
-
-[review_valve]
-every_n_work_units = 5
-end_of_epic = false
-
-[audit]
-enabled = true
-max_bytes = 262144
-redact_patterns = []
-""",
-        encoding="utf-8",
-    )
-    (woof_dir / "policy.toml").write_text(
-        """\
-schema_version = 1
-default_run_profile = "integration"
-
-[delivery]
-profile = "B"
-repo_root = "."
-toolchain_root = "."
-base_branch = "main"
-
-[profiles.B]
-commit = false
-push = false
-
-[verification]
-command = "true"
-timeout_seconds = 30
-
-[run_profiles.integration.producer]
-harness = "codex"
-model = "gpt-5.5"
-effort = "low"
-
-[run_profiles.integration.reviewer]
-harness = "codex"
-model = "gpt-5.5"
-effort = "low"
-
-[checks]
-floor = ["quality-gates"]
-
-[cartography]
-floor = "none"
-
-[drain]
-merge_after_ready_pr = true
-rerun_after_merge = true
-mark_unit_done_after_publish = true
-commit_backlog_state = true
-stop_when_no_eligible_units = true
-""",
-        encoding="utf-8",
+    subprocess.run(["git", "init", "-q"], cwd=project, check=True)
+    seed_project_config(
+        {
+            "default_run_profile": "integration",
+            "verification": {"command": "true", "timeout_seconds": 30},
+            "profiles": {"B": {"commit": False, "push": False}},
+            "run_profiles": {
+                "default": None,
+                "integration": {
+                    "producer": {"harness": "codex", "model": "gpt-5.5", "effort": "low"},
+                    "reviewer": {"harness": "codex", "model": "gpt-5.5", "effort": "low"},
+                },
+            },
+            "checks": {"floor": ["quality-gates"]},
+            "cartography": {"floor": "none"},
+            "dispatch": {"timeouts": {"default_minutes": default_minutes}},
+            "review_valve": {"every_n_work_units": 5, "end_of_epic": False},
+            "drain": {"merge_after_ready_pr": True},
+        }
     )
     return project
 

@@ -13,6 +13,10 @@ from typing import Any
 
 import pytest
 
+from tests.support import seed_project_config
+
+from .wf_gate_harness import WOOF_RUNTIME_IGNORES
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WOOF_BIN = REPO_ROOT / "bin" / "woof"
 
@@ -473,88 +477,45 @@ def _configure_consumer(consumer: Path, env: dict[str, str], woof_cmd: list[str]
     _assert_ok(_run(["git", "init"], cwd=consumer, env=env))
     _assert_ok(_run(["git", "config", "user.email", "test@example.com"], cwd=consumer, env=env))
     _assert_ok(_run(["git", "config", "user.name", "Workflow Test"], cwd=consumer, env=env))
-    _assert_ok(_run_woof(woof_cmd, "init", "--tracker", "local", cwd=consumer, env=env))
+    _assert_ok(_run_woof(woof_cmd, "init", "--tracker", "local", "--force", cwd=consumer, env=env))
     gitignore = consumer / ".gitignore"
-    gitignore.write_text(gitignore.read_text(encoding="utf-8") + "\n__pycache__/\n*.pyc\n")
-
-    (consumer / ".woof" / "policy.toml").write_text(
-        """\
-schema_version = 1
-default_run_profile = "acceptance"
-
-[delivery]
-profile = "B"
-repo_root = "."
-toolchain_root = "."
-base_branch = "main"
-
-[profiles.B]
-commit = true
-push = false
-
-[verification]
-command = "python -m py_compile app.py tests/test_app.py"
-timeout_seconds = 30
-
-[run_profiles.acceptance.producer]
-harness = "codex"
-model = "gpt-5.5"
-effort = "xhigh"
-
-[run_profiles.acceptance.reviewer]
-harness = "claude"
-model = "claude-opus-4-7"
-effort = "max"
-
-[checks]
-floor = [
-  "quality-gates",
-  "outcome-markers",
-  "scope",
-  "contract-refs",
-  "plan-crossrefs",
-  "critique-blocker",
-  "commit-transaction",
-  "docs-drift",
-  "review-valve",
-]
-
-[cartography]
-floor = "structural"
-
-[drain]
-merge_after_ready_pr = true
-rerun_after_merge = true
-mark_unit_done_after_publish = true
-commit_backlog_state = true
-stop_when_no_eligible_units = true
-""",
+    gitignore.write_text(
+        "\n".join([*WOOF_RUNTIME_IGNORES, "__pycache__/", "*.pyc", ""]),
         encoding="utf-8",
     )
-    (consumer / ".woof" / "agents.toml").write_text(
-        """\
 
-[timeouts]
-default_minutes = 5
-
-[review_valve]
-every_n_work_units = 5
-end_of_epic = false
-
-[audit]
-enabled = true
-max_bytes = 262144
-redact_patterns = []
-""",
-        encoding="utf-8",
-    )
-    (consumer / ".woof" / "quality-gates.toml").write_text(
-        """\
-[gates.compile]
-command = "python -m py_compile app.py tests/test_app.py"
-timeout_seconds = 30
-""",
-        encoding="utf-8",
+    seed_project_config(
+        {
+            "default_run_profile": "acceptance",
+            "verification": {
+                "command": "python -m py_compile app.py tests/test_app.py",
+                "timeout_seconds": 30,
+            },
+            "run_profiles": {
+                "default": None,
+                "acceptance": {
+                    "producer": {"harness": "codex", "model": "gpt-5.5", "effort": "xhigh"},
+                    "reviewer": {
+                        "harness": "claude",
+                        "model": "claude-opus-4-7",
+                        "effort": "max",
+                    },
+                },
+            },
+            "cartography": {"floor": "structural"},
+            "dispatch": {"timeouts": {"default_minutes": 5}},
+            "review_valve": {"every_n_work_units": 5, "end_of_epic": False},
+            "drain": {"merge_after_ready_pr": True},
+            "gates": {
+                "lint": None,
+                "test": None,
+                "compile": {
+                    "command": "python -m py_compile app.py tests/test_app.py",
+                    "timeout_seconds": 30,
+                },
+            },
+            "tracker": {"kind": "local", "repo": None},
+        }
     )
     codebase_dir = consumer / ".woof" / "codebase"
     codebase_dir.mkdir(parents=True, exist_ok=True)

@@ -1,7 +1,7 @@
 """Issue-tracker abstraction (ADR-003).
 
-Woof keeps the epic-level contract in an external issue tracker. A consumer
-declares which tracker under ``.woof/prerequisites.toml`` ``[tracker]``:
+Woof keeps the epic-level contract in an external issue tracker. The operator
+declares which tracker in the project config's ``[tracker]`` section:
 
     [tracker]
     kind = "github"          # or "local"
@@ -13,10 +13,9 @@ The graph, CLI, and gate code depend on the :class:`Tracker` protocol only.
 
 from __future__ import annotations
 
-import tomllib
 from pathlib import Path
-from typing import Any
 
+from woof.project_config import ProjectConfigError, TrackerConfig, load_project_config
 from woof.trackers.base import (
     CONFLICT_DECISIONS,
     CONFLICT_TRIGGERS,
@@ -52,36 +51,25 @@ __all__ = [
 TRACKER_KINDS = ("github", "local")
 
 
-def load_tracker_config(repo_root: Path) -> dict[str, Any]:
-    """Return the ``[tracker]`` table from ``.woof/prerequisites.toml``."""
+def load_tracker_config(project_key: str | None = None) -> TrackerConfig:
+    """Return the ``[tracker]`` section of the project's config."""
 
-    prereq = repo_root / ".woof" / "prerequisites.toml"
-    if not prereq.is_file():
-        raise TrackerError(f"{prereq} not found; cannot resolve [tracker]")
     try:
-        with prereq.open("rb") as handle:
-            data = tomllib.load(handle)
-    except tomllib.TOMLDecodeError as exc:
-        raise TrackerError(f"{prereq} is not valid TOML: {exc}") from exc
-    tracker = data.get("tracker")
-    if not isinstance(tracker, dict):
-        raise TrackerError(f"{prereq} missing [tracker]")
-    return tracker
+        return load_project_config(project_key).tracker
+    except ProjectConfigError as exc:
+        raise TrackerError(str(exc)) from exc
 
 
-def resolve_tracker(repo_root: Path) -> Tracker:
-    """Resolve the configured issue-tracker adapter for a consumer checkout."""
+def resolve_tracker(repo_root: Path, project_key: str | None = None) -> Tracker:
+    """Resolve the configured issue-tracker adapter for a delivery checkout."""
 
-    config = load_tracker_config(repo_root)
-    kind = config.get("kind")
-    if kind == "github":
-        repo = config.get("repo")
-        if not isinstance(repo, str) or not repo:
-            raise TrackerError(
-                f"{repo_root / '.woof' / 'prerequisites.toml'} [tracker] with "
-                'kind = "github" requires a non-empty repo'
-            )
-        return GitHubTracker(repo_root, repo)
-    if kind == "local":
+    config = load_tracker_config(project_key)
+    if config.kind == "github":
+        if not config.repo:
+            raise TrackerError('[tracker] with kind = "github" requires a non-empty repo')
+        return GitHubTracker(repo_root, config.repo)
+    if config.kind == "local":
         return LocalTracker(repo_root)
-    raise TrackerError(f"[tracker].kind must be one of {', '.join(TRACKER_KINDS)}; got {kind!r}")
+    raise TrackerError(
+        f"[tracker].kind must be one of {', '.join(TRACKER_KINDS)}; got {config.kind!r}"
+    )

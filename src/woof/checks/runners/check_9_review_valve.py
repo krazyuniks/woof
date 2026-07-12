@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 import re
 import subprocess
-import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -20,12 +19,9 @@ import yaml
 
 from woof.checks import CheckContext, CheckOutcome
 from woof.graph.state import TERMINAL_WORK_UNIT_STATES
+from woof.project_config import ProjectConfigError, load_project_config
 
 CHECK_ID = "check_9_review_valve"
-CONFIG_PATH = ".woof/agents.toml"
-POLICY_PATH = ".woof/policy.toml"
-DEFAULT_EVERY_N_WORK_UNITS = 5
-DEFAULT_END_OF_EPIC = True
 KNOWN_GENERATED_PATHS = {
     ".woof/codebase/files.txt",
     ".woof/codebase/freshness.json",
@@ -59,7 +55,7 @@ class _MinorFinding:
 
 
 def check_9_review_valve_runner(ctx: CheckContext) -> CheckOutcome:
-    config = _load_config(ctx.repo_root / CONFIG_PATH)
+    config = _load_config()
     if isinstance(config, CheckOutcome):
         return config
 
@@ -174,63 +170,25 @@ def check_9_review_valve_runner(ctx: CheckContext) -> CheckOutcome:
     )
 
 
-def _load_config(path: Path) -> _ReviewConfig | CheckOutcome:
-    if not path.exists():
-        return _ReviewConfig(
-            every_n_work_units=DEFAULT_EVERY_N_WORK_UNITS,
-            end_of_epic=DEFAULT_END_OF_EPIC,
-        )
-
+def _load_config() -> _ReviewConfig | CheckOutcome:
     try:
-        with path.open("rb") as fh:
-            data = tomllib.load(fh)
-    except tomllib.TOMLDecodeError as exc:
+        config = load_project_config()
+    except ProjectConfigError as exc:
         return CheckOutcome(
             id=CHECK_ID,
             ok=False,
             severity="blocker",
-            summary=f"malformed agents config: TOML parse error: {exc}",
-            paths=[CONFIG_PATH],
+            summary=str(exc),
+            paths=[],
         )
-
-    review_valve = data.get("review_valve", {})
-    if review_valve is None:
-        review_valve = {}
-    if not isinstance(review_valve, dict):
-        return CheckOutcome(
-            id=CHECK_ID,
-            ok=False,
-            severity="blocker",
-            summary="malformed agents config: review_valve must be a table",
-            paths=[CONFIG_PATH],
-        )
-
-    every_n = review_valve.get("every_n_work_units", DEFAULT_EVERY_N_WORK_UNITS)
-    end_of_epic = review_valve.get("end_of_epic", DEFAULT_END_OF_EPIC)
-    if type(every_n) is not int or every_n < 1:
-        return CheckOutcome(
-            id=CHECK_ID,
-            ok=False,
-            severity="blocker",
-            summary=(
-                "malformed agents config: review_valve.every_n_work_units must be an integer >= 1"
-            ),
-            paths=[CONFIG_PATH],
-        )
-    if not isinstance(end_of_epic, bool):
-        return CheckOutcome(
-            id=CHECK_ID,
-            ok=False,
-            severity="blocker",
-            summary="malformed agents config: review_valve.end_of_epic must be a boolean",
-            paths=[CONFIG_PATH],
-        )
-
-    return _ReviewConfig(every_n_work_units=every_n, end_of_epic=end_of_epic)
+    return _ReviewConfig(
+        every_n_work_units=config.review_valve.every_n_work_units,
+        end_of_epic=config.review_valve.end_of_epic,
+    )
 
 
 def _review_size_outcome(ctx: CheckContext) -> CheckOutcome | None:
-    config = _load_review_size_config(ctx.repo_root / POLICY_PATH, ctx.repo_root)
+    config = _load_review_size_config()
     if config is None or isinstance(config, CheckOutcome):
         return config
 
@@ -297,50 +255,24 @@ def _review_size_outcome(ctx: CheckContext) -> CheckOutcome | None:
     )
 
 
-def _load_review_size_config(
-    path: Path, repo_root: Path
-) -> _ReviewSizeConfig | CheckOutcome | None:
-    if not path.exists():
-        return None
-    try:
-        with path.open("rb") as fh:
-            data = tomllib.load(fh)
-    except tomllib.TOMLDecodeError as exc:
-        return CheckOutcome(
-            id=CHECK_ID,
-            ok=False,
-            severity="blocker",
-            summary=f"malformed policy config: TOML parse error: {exc}",
-            paths=[str(path.relative_to(repo_root))],
-        )
+def _load_review_size_config() -> _ReviewSizeConfig | CheckOutcome | None:
+    """Return the review-size guard, or None when the project declares none."""
 
-    checks = data.get("checks")
-    if not isinstance(checks, dict):
-        return None
-    review_size = checks.get("review_size")
-    if review_size is None:
-        return None
-    if not isinstance(review_size, dict):
+    try:
+        config = load_project_config()
+    except ProjectConfigError as exc:
         return CheckOutcome(
             id=CHECK_ID,
             ok=False,
             severity="blocker",
-            summary="malformed policy config: checks.review_size must be a table",
-            paths=[str(path.relative_to(repo_root))],
+            summary=str(exc),
+            paths=[],
         )
-    threshold = review_size.get("max_non_generated_changed_lines")
-    if type(threshold) is not int or threshold < 1:
-        return CheckOutcome(
-            id=CHECK_ID,
-            ok=False,
-            severity="blocker",
-            summary=(
-                "malformed policy config: "
-                "checks.review_size.max_non_generated_changed_lines must be an integer >= 1"
-            ),
-            paths=[str(path.relative_to(repo_root))],
-        )
-    return _ReviewSizeConfig(max_non_generated_changed_lines=threshold)
+    if config.checks.review_size is None:
+        return None
+    return _ReviewSizeConfig(
+        max_non_generated_changed_lines=(config.checks.review_size.max_non_generated_changed_lines)
+    )
 
 
 def _staged_diff_stats(repo_root: Path) -> list[_DiffStat] | CheckOutcome:

@@ -1,18 +1,19 @@
-"""Consumer bootstrap for Woof projects.
+"""Project bootstrap for Woof (ADR-017).
 
-``woof init`` scaffolds a fresh ``.woof/`` directory and the matching
-``.gitignore`` entries so a stranger checking Woof out against their own repo
-does not have to hand-assemble four schema-bound TOMLs and remember every
-required gitignore line. The templates use explicit ``<replace>`` placeholders
-so a consumer cannot accidentally run preflight against unedited boilerplate.
+``woof init --project <key>`` writes one config file into the operator home at
+``~/.woof/config/projects/<key>.toml``. It writes nothing into the driven
+repository: a delivery repo carries no trace of the engine that builds it.
 
-Init infers what it safely can from the project's git remotes. With ``--tracker``
-omitted it picks the tracker kind: ``github`` (pre-filling ``repo`` as ``owner/name``)
-when an ``origin``/``upstream`` github remote is reachable, otherwise ``local``. An
-explicit ``--tracker`` is always honoured; for an explicit ``github`` tracker the
-``repo`` slug is still inferred when a github remote is reachable. Inference only ever
-replaces a placeholder with a real value; when no github remote is reachable the github
-``repo`` keeps its ``<replace>`` placeholder, so init stays fail-closed.
+The template uses explicit ``<replace>`` placeholders so nobody can run
+preflight against unedited boilerplate. Init infers what it safely can from the
+project's git remotes: with ``--tracker`` omitted it picks ``github``
+(pre-filling ``repo`` as ``owner/name``) when an ``origin``/``upstream`` github
+remote is reachable, otherwise ``local``. An explicit ``--tracker`` is always
+honoured. Inference only ever replaces a placeholder with a real value, so init
+stays fail-closed.
+
+The one file init still writes into the repo is ``scripts/refresh-cartography``:
+it is the project's own generator, invoked by the project's post-commit hook.
 """
 
 from __future__ import annotations
@@ -25,55 +26,145 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
-from woof.paths import tool_root
-
-PREREQUISITES_TEMPLATE = """\
-# Woof project prerequisites. Verified by `woof preflight`.
-# Replace every <replace> placeholder before invoking `woof wf`.
-
-[infra]
-just = "1.0+"
-git = "2.30+"
-{infra_gh}
-[commands]
-claude = "any"
-codex = "any"
-
-[validators]
-ajv = "any"
-ajv-formats = "any"
-
-{tracker_block}
-
-# Cartography details (ADR-004/ADR-013). `.woof/policy.toml [cartography].floor`
-# decides whether preflight enforces none, design, lexical, or structural
-# cartography. This block supplies the details for non-none floors.
-[cartography]
-staleness_floor_hours = 168
-summary_min_chars = 200
-{cartography_languages}
-
-# Uncomment when the project uses LSP-backed reviewer context.
-# [lsp]
-# languages = ["python"]
-"""
+from woof.paths import ProjectKeyError, project_config_path, resolve_project_key, tool_root
 
 # Bumped when the composed refresh-cartography body changes shape, so stamps from
 # an older `woof init` are distinguishable (freshness.json.generator_version).
 REFRESH_GENERATOR_VERSION = 2
 
+GITHUB_REPO_PLACEHOLDER = "<replace>/<replace>"
+
+PROJECT_CONFIG_TEMPLATE = """\
+# Woof project config for `{project_key}`. Verified by `woof preflight`.
+# Engine config lives in the operator home, never in the driven repo (ADR-017).
+# Replace every <replace> placeholder before invoking `woof wf`.
+
+schema_version = 1
+type = "woof_project"
+default_run_profile = "default"
+
+[delivery]
+profile = "B"
+repo_root = "{repo_root}"
+toolchain_root = "{repo_root}"
+base_branch = "main"
+
+[profiles.B]
+commit = true
+push = true
+
+[verification]
+command = "<replace project verification command, e.g. just check>"
+timeout_seconds = 600
+
+[run_profiles.default.producer]
+harness = "codex"
+model = "gpt-5.6-sol"
+effort = "high"
+
+[run_profiles.default.reviewer]
+harness = "claude"
+model = "claude-opus-4-7"
+effort = "max"
+
+[checks]
+floor = [
+  "quality-gates",
+  "outcome-markers",
+  "scope",
+  "contract-refs",
+  "plan-crossrefs",
+  "critique-blocker",
+  "commit-transaction",
+  "docs-drift",
+  "review-valve",
+]
+
+# Cartography (ADR-004/ADR-013). `floor` decides whether preflight enforces
+# none, design, lexical, or structural cartography; the remaining keys supply
+# the details the non-none floors need.
+[cartography]
+floor = "design"
+staleness_floor_hours = 168
+summary_min_chars = 200
+{cartography_languages}
+
+[drain]
+merge_after_ready_pr = false
+rerun_after_merge = true
+mark_unit_done_after_publish = true
+commit_backlog_state = true
+stop_when_no_eligible_units = true
+
+# Runtime model: trusted-local automation. Woof does not sandbox dispatched
+# agents, restrict writable paths, allow-list commands, block network access, or
+# add MCP restrictions; commit-safety checks and gates guard what lands.
+[dispatch.timeouts]
+default_minutes = 30
+
+[dispatch.audit]
+enabled = true
+max_bytes = 262144
+redact_patterns = []
+
+[review_valve]
+every_n_work_units = 5
+end_of_epic = true
+
+[fix_rounds]
+max_rounds_per_blocker = 2
+
+# Stage 5 Check 1 runs each gate from the delivery repository root. Blocking
+# gates must exit 0 within `timeout_seconds`; set `blocking = false` to record
+# a minor finding without failing Check 1.
+[gates.test]
+command = "<replace project test command, e.g. just test>"
+timeout_seconds = 300
+
+[prerequisites.infra]
+just = "1.0+"
+git = "2.30+"
+{infra_gh}
+[prerequisites.commands]
+claude = "any"
+codex = "any"
+
+[prerequisites.validators]
+ajv = "any"
+ajv-formats = "any"
+
+# Uncomment when the project uses LSP-backed reviewer context.
+# [prerequisites.lsp]
+# languages = ["python"]
+
+{tracker_block}
+
+# Stage 5 Check 2 outcome-marker rules per language. Woof ships Python and
+# TypeScript defaults; declare [test_markers.languages.<lang>] only to override
+# them or to add a language.
+
+# Stage 5 Check 8 code-to-doc drift mappings. Check 8 is a no-op when
+# [docs_paths] is absent; declare it only when the project wants enforced docs
+# updates alongside specific code areas.
+{docs_paths_block}"""
+
 CARTOGRAPHY_LANGUAGES_HINT = (
     '# languages = ["python"]  # refresh-cartography fragments to compose (woof init --language)'
 )
 
-GITHUB_REPO_PLACEHOLDER = "<replace>/<replace>"
-
 TRACKER_BLOCK_LOCAL = """\
-# Issue tracker for epic-level contracts. kind = "local" keeps every epic under
-# .woof/epics/E<N>/ with no remote, so any repository can run Woof without a
+# Issue tracker for epic-level contracts. kind = "local" keeps every epic on
+# the filesystem with no remote, so any repository can run Woof without a
 # hosted issue tracker. Re-run `woof init --tracker github` for a GitHub setup.
 [tracker]
 kind = "local\""""
+
+DOCS_PATHS_BLOCK = """
+[[docs_paths.mappings]]
+code_pattern = "<replace, e.g. src/api/**/*.py>"
+doc_pattern = "<replace, e.g. docs/api/**/*.md>"
+rationale = "<replace with the reason this mapping exists>"
+"""
 
 # github remote URL forms init understands: scp-like ssh, ssh://, git://, and
 # https (with an optional `user@`). The `owner/name` after the host is captured,
@@ -183,180 +274,37 @@ def _cartography_languages_line(languages: list[str]) -> str:
     return f"languages = [{rendered}]"
 
 
-def _prerequisites_template(
-    tracker_kind: str, languages: list[str], repo_slug: str | None = None
+def project_config_template(
+    project_key: str,
+    tracker_kind: str,
+    languages: list[str],
+    repo_slug: str | None = None,
+    *,
+    with_docs_paths: bool = False,
+    repo_root: str = ".",
 ) -> str:
-    """Render prerequisites.toml for the chosen tracker.
+    """Render the project config for the chosen tracker.
 
     The github tracker declares `gh` as required infra; the local tracker omits
-    it so a consumer with no hosted issue tracker is not forced to install it.
-    Declared cartography languages are written into ``[cartography].languages``.
+    it so a project with no hosted issue tracker is not forced to install it.
     ``repo_slug`` pre-fills the github ``repo`` line when inferred from a git
     remote; without it the ``<replace>`` placeholder is kept.
     """
-    cartography_languages = _cartography_languages_line(languages)
-    if tracker_kind == "local":
-        return PREREQUISITES_TEMPLATE.format(
-            infra_gh="",
-            tracker_block=TRACKER_BLOCK_LOCAL,
-            cartography_languages=cartography_languages,
-        )
-    tracker_block = _tracker_block_github(repo_slug or GITHUB_REPO_PLACEHOLDER)
-    return PREREQUISITES_TEMPLATE.format(
-        infra_gh='gh = "2.0+"\n',
+
+    tracker_block = (
+        TRACKER_BLOCK_LOCAL
+        if tracker_kind == "local"
+        else _tracker_block_github(repo_slug or GITHUB_REPO_PLACEHOLDER)
+    )
+    return PROJECT_CONFIG_TEMPLATE.format(
+        project_key=project_key,
+        repo_root=repo_root,
+        infra_gh='gh = "2.0+"\n' if tracker_kind == "github" else "",
         tracker_block=tracker_block,
-        cartography_languages=cartography_languages,
+        cartography_languages=_cartography_languages_line(languages),
+        docs_paths_block=DOCS_PATHS_BLOCK if with_docs_paths else "",
     )
 
-
-AGENTS_TEMPLATE = """\
-# Woof runtime settings. Routing and run profiles live in .woof/policy.toml.
-# Runtime model: trusted-local automation. Woof does not sandbox dispatched
-# agents, restrict writable paths, allow-list commands, block network access, or
-# add MCP restrictions; commit-safety checks and gates guard what lands.
-
-[timeouts]
-default_minutes = 30
-
-[review_valve]
-every_n_work_units = 5
-end_of_epic = true
-
-[fix_rounds]
-max_rounds_per_blocker = 2
-
-[audit]
-enabled = true
-max_bytes = 262144
-redact_patterns = []
-"""
-
-POLICY_TEMPLATE = """\
-# Woof repo-local policy. Verified by `woof preflight`.
-# Replace every <replace> placeholder before invoking `woof wf`.
-
-schema_version = 1
-default_run_profile = "default"
-
-[delivery]
-profile = "B"
-repo_root = "."
-toolchain_root = "."
-base_branch = "main"
-
-[profiles.B]
-commit = true
-push = true
-
-[verification]
-command = "<replace project verification command, e.g. just check>"
-timeout_seconds = 600
-
-[run_profiles.default.producer]
-harness = "codex"
-model = "gpt-5.6-sol"
-effort = "high"
-
-[run_profiles.default.reviewer]
-harness = "claude"
-model = "claude-opus-4-7"
-effort = "max"
-
-[checks]
-floor = [
-  "quality-gates",
-  "outcome-markers",
-  "scope",
-  "contract-refs",
-  "plan-crossrefs",
-  "critique-blocker",
-  "commit-transaction",
-  "docs-drift",
-  "review-valve",
-]
-
-[cartography]
-floor = "design"
-
-[drain]
-merge_after_ready_pr = false
-rerun_after_merge = true
-mark_unit_done_after_publish = true
-commit_backlog_state = true
-stop_when_no_eligible_units = true
-"""
-
-QUALITY_GATES_TEMPLATE = """\
-# Stage 5 Check 1 runs each gate from the consumer repository root. Blocking
-# gates must exit 0 within `timeout_seconds`; set `blocking = false` to record
-# a minor finding without failing Check 1.
-
-[gates.test]
-command = "<replace project test command, e.g. just test>"
-timeout_seconds = 300
-"""
-
-TEST_MARKERS_TEMPLATE = """\
-# Stage 5 Check 2 outcome-marker rules per language. Defaults ship for Python
-# and TypeScript; add or override languages here when the project uses other
-# test layouts or marker conventions.
-
-[languages.python]
-test_paths = ["tests/", "src/**/test_*.py"]
-marker_regex = '(?<![A-Za-z0-9])O\\d+(?![A-Za-z0-9])'
-cd_marker_regex = '(?<![A-Za-z0-9])CD\\d+(?![A-Za-z0-9])'
-docstring_keyword = "outcomes:"
-comment_prefix = "#"
-context_lines = 3
-
-[languages.typescript]
-test_paths = ["tests/", "src/**/*.test.ts"]
-marker_regex = '(?<![A-Za-z0-9])O\\d+(?![A-Za-z0-9])'
-cd_marker_regex = '(?<![A-Za-z0-9])CD\\d+(?![A-Za-z0-9])'
-docstring_keyword = "outcomes:"
-comment_prefix = "//"
-context_lines = 3
-"""
-
-DOCS_PATHS_TEMPLATE = """\
-# Stage 5 Check 8 code-to-doc drift mappings. Stage 5 Check 8 is a no-op when
-# this file is absent; populate it only when the project wants enforced docs
-# updates alongside specific code areas.
-
-[[mappings]]
-code_pattern = "<replace, e.g. src/api/**/*.py>"
-doc_pattern = "<replace, e.g. docs/api/**/*.md>"
-rationale = "<replace with the reason this mapping exists>"
-"""
-
-GITIGNORE_BEGIN = "# >>> woof"
-GITIGNORE_END = "# <<< woof"
-GITIGNORE_ENTRIES = [
-    ".woof/.current-epic",
-    ".woof/.agents-schema-cache",
-    ".woof/epics/*/gate.md",
-    ".woof/epics/*/.wf.lock",
-    ".woof/epics/*/.last-sync",
-    ".woof/epics/*/executor_result.json",
-    ".woof/epics/*/check-result.json",
-    ".woof/epics/*/audit/raw/",
-    ".woof/codebase/tags",
-    ".woof/codebase/files.txt",
-    ".woof/codebase/freshness.json",
-    ".woof/.preflight-floor",
-    ".woof/.preflight-runtime",
-]
-GITIGNORE_BLOCK = "\n".join(
-    [
-        GITIGNORE_BEGIN,
-        "# Managed by `woof init`; runtime/per-worktree state that must not be committed.",
-        *GITIGNORE_ENTRIES,
-        GITIGNORE_END,
-    ]
-)
-GITIGNORE_BLOCK_RE = re.compile(
-    rf"(?ms)^{re.escape(GITIGNORE_BEGIN)}\n.*?^{re.escape(GITIGNORE_END)}\n?"
-)
 
 # --- Cartography refresh script composition (ADR-004, E1/S3) ----------------
 #
@@ -365,8 +313,8 @@ GITIGNORE_BLOCK_RE = re.compile(
 # scaffold owns the mechanical layer (git ls-files -> files.txt; a single ctags
 # pass -> tags; the freshness.json stamp); each fragment registers its ctags
 # language so the one ctags pass covers exactly the declared languages. The body
-# lives in a managed block, mirroring the gitignore and post-commit hook idioms,
-# so re-running init replaces the block in place rather than duplicating it.
+# lives in a managed block, mirroring the post-commit hook idiom, so re-running
+# init replaces the block in place rather than duplicating it.
 
 REFRESH_SCRIPT_RELPATH = "scripts/refresh-cartography"
 REFRESH_SHEBANG = "#!/usr/bin/env sh"
@@ -428,7 +376,7 @@ printf '{"ts":"%s","git_ref":"%s","age_s":%d,"generator_version":%d}\\n' \\
 
 
 class InitError(RuntimeError):
-    """Raised when init cannot compose a requested cartography script."""
+    """Raised when init cannot write a project config or compose a script."""
 
 
 @dataclass(frozen=True)
@@ -441,8 +389,8 @@ class FileAction:
 @dataclass(frozen=True)
 class InitResult:
     project_root: Path
-    files: list[FileAction]
-    gitignore_changed: bool
+    project_key: str
+    config: FileAction
     tracker: str = "github"
     script: FileAction | None = None
     script_note: str | None = None
@@ -452,9 +400,9 @@ class InitResult:
 
     @property
     def changed(self) -> bool:
-        file_changed = any(f.action in {"created", "updated"} for f in self.files)
+        config_changed = self.config.action in {"created", "updated"}
         script_changed = self.script is not None and self.script.action in {"created", "updated"}
-        return file_changed or script_changed or self.gitignore_changed
+        return config_changed or script_changed
 
 
 def cmd_init(args: argparse.Namespace) -> int:
@@ -464,47 +412,53 @@ def cmd_init(args: argparse.Namespace) -> int:
         return 2
 
     try:
+        project_key = resolve_project_key(args.project)
         result = run_init(
             project_root,
+            project_key=project_key,
             force=args.force,
             with_docs_paths=args.with_docs_paths,
             tracker=args.tracker,
             languages=args.language,
         )
-    except InitError as exc:
+    except (InitError, ProjectKeyError) as exc:
         sys.stderr.write(f"woof: {exc}\n")
         return 2
     _print_result(result)
     return 0
 
 
-def setup_init_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
+def setup_init_parser(
+    subparsers: argparse._SubParsersAction,  # type: ignore[type-arg]
+    project: argparse.ArgumentParser,
+) -> None:
     init = subparsers.add_parser(
         "init",
-        help="scaffold a .woof/ consumer config and required .gitignore entries",
+        help="write a project config into the operator home",
+        parents=[project],
     )
     init.add_argument(
         "--project-root",
-        help="consumer project root to initialise; defaults to the current directory",
+        help="delivery checkout the config describes; defaults to the current directory",
     )
     init.add_argument(
         "--force",
         action="store_true",
-        help="overwrite existing .woof/ TOML files instead of skipping them",
+        help="overwrite an existing project config instead of refusing",
     )
     init.add_argument(
         "--with-docs-paths",
         action="store_true",
-        help="also scaffold .woof/docs-paths.toml (Stage 5 Check 8 mappings)",
+        help="also scaffold the [docs_paths] section (Stage 5 Check 8 mappings)",
     )
     init.add_argument(
         "--tracker",
         choices=["github", "local"],
         default=None,
         help=(
-            "issue tracker to scaffold in prerequisites.toml. Omit to infer from the "
-            "git remote: github (with repo pre-filled) when an origin/upstream github "
-            "remote is reachable, otherwise local."
+            "issue tracker to scaffold. Omit to infer from the git remote: github "
+            "(with repo pre-filled) when an origin/upstream github remote is "
+            "reachable, otherwise local."
         ),
     )
     init.add_argument(
@@ -514,8 +468,7 @@ def setup_init_parser(subparsers: argparse._SubParsersAction) -> None:  # type: 
         metavar="LANG",
         help=(
             "cartography language to compose into scripts/refresh-cartography "
-            "(repeatable). Writes [cartography].languages and composes the script. "
-            "Omit to fall back to an existing prerequisites.toml on re-run."
+            "(repeatable). Writes [cartography].languages and composes the script."
         ),
     )
     init.set_defaults(func=cmd_init)
@@ -524,84 +477,59 @@ def setup_init_parser(subparsers: argparse._SubParsersAction) -> None:  # type: 
 def run_init(
     project_root: Path,
     *,
+    project_key: str,
     force: bool = False,
     with_docs_paths: bool = False,
     tracker: str | None = None,
     languages: list[str] | None = None,
 ) -> InitResult:
-    woof_dir = project_root / ".woof"
-    woof_dir.mkdir(exist_ok=True)
-
     requested = _normalise_languages(languages)
     _validate_cartography_languages(requested)
 
     resolved_tracker, inferred_repo, tracker_inferred = _resolve_tracker(project_root, tracker)
 
-    files: list[FileAction] = []
-    prereq_path = woof_dir / "prerequisites.toml"
-    prereq_existed = prereq_path.is_file()
-    targets: list[tuple[str, str]] = [
-        ("policy.toml", POLICY_TEMPLATE),
-        ("prerequisites.toml", _prerequisites_template(resolved_tracker, requested, inferred_repo)),
-        ("agents.toml", AGENTS_TEMPLATE),
-        ("quality-gates.toml", QUALITY_GATES_TEMPLATE),
-        ("test-markers.toml", TEST_MARKERS_TEMPLATE),
-    ]
-    if with_docs_paths:
-        targets.append(("docs-paths.toml", DOCS_PATHS_TEMPLATE))
-
-    for name, content in targets:
-        target = woof_dir / name
-        relpath = f".woof/{name}"
-        if target.is_file() and not force:
-            files.append(FileAction(relpath=relpath, action="skipped", reason="already exists"))
-            continue
-        existed = target.is_file()
-        target.write_text(content)
-        files.append(
-            FileAction(relpath=relpath, action="updated" if existed else "created", reason=None)
+    config_path = project_config_path(project_key)
+    if config_path.is_file() and not force:
+        raise InitError(
+            f"{config_path} already exists; refusing to overwrite it. "
+            "Edit it, or re-run with --force to replace it."
         )
+    existed = config_path.is_file()
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        project_config_template(
+            project_key,
+            resolved_tracker,
+            requested,
+            inferred_repo,
+            with_docs_paths=with_docs_paths,
+        ),
+        encoding="utf-8",
+    )
+    config = FileAction(
+        relpath=str(config_path), action="updated" if existed else "created", reason=None
+    )
 
-    gitignore_changed = _update_gitignore(project_root)
-
-    effective, fallback = _effective_cartography_languages(requested, prereq_path)
     script: FileAction | None = None
     script_note: str | None = None
-    if effective:
-        script = _compose_refresh_script(project_root, effective)
-        if requested and prereq_existed and not force:
-            script_note = (
-                f"composed {REFRESH_SCRIPT_RELPATH} for {', '.join(effective)}; left "
-                ".woof/prerequisites.toml [cartography].languages unchanged "
-                "(re-run with --force to rewrite it)"
-            )
-        elif fallback:
-            script_note = (
-                f"composed {REFRESH_SCRIPT_RELPATH} from existing "
-                f".woof/prerequisites.toml [cartography].languages ({', '.join(effective)})"
-            )
+    if requested:
+        script = _compose_refresh_script(project_root, requested)
     else:
         script_note = (
             f"skipped {REFRESH_SCRIPT_RELPATH}: no cartography languages declared "
-            "(pass --language <lang> or set [cartography].languages in prerequisites.toml)"
+            "(pass --language <lang>)"
         )
-
-    # Only report inference when the prereq file was actually written with it;
-    # a skipped (pre-existing) prereq keeps the user's own values.
-    prereq_written = (not prereq_existed) or force
-    reported_repo = inferred_repo if (inferred_repo and prereq_written) else None
-    reported_tracker_inferred = tracker_inferred and prereq_written
 
     return InitResult(
         project_root=project_root,
-        files=files,
-        gitignore_changed=gitignore_changed,
+        project_key=project_key,
+        config=config,
         tracker=resolved_tracker,
         script=script,
         script_note=script_note,
-        languages=tuple(effective),
-        inferred_repo=reported_repo,
-        tracker_inferred=reported_tracker_inferred,
+        languages=tuple(requested),
+        inferred_repo=inferred_repo,
+        tracker_inferred=tracker_inferred,
     )
 
 
@@ -698,56 +626,14 @@ def _compose_refresh_script(project_root: Path, languages: list[str]) -> FileAct
     return FileAction(relpath=REFRESH_SCRIPT_RELPATH, action=action)
 
 
-def _effective_cartography_languages(
-    requested: list[str],
-    prereq_path: Path,
-) -> tuple[list[str], bool]:
-    """Resolve the languages to compose plus whether they came from a fallback.
-
-    Requested ``--language`` flags win; otherwise fall back to an existing
-    ``prerequisites.toml`` ``[cartography].languages`` (the re-run path).
-    """
-    if requested:
-        return requested, False
-    if not prereq_path.is_file():
-        return [], False
-    try:
-        with prereq_path.open("rb") as fh:
-            data = tomllib.load(fh)
-    except (OSError, tomllib.TOMLDecodeError):
-        return [], False
-    declared = (data.get("cartography") or {}).get("languages")
-    if not isinstance(declared, list):
-        return [], False
-    fallback = _normalise_languages([str(language) for language in declared])
-    return fallback, bool(fallback)
-
-
 def _resolve_project_root(project_root: str | None) -> Path:
     return Path(project_root or ".").resolve()
 
 
-def _update_gitignore(project_root: Path) -> bool:
-    path = project_root / ".gitignore"
-    existing = path.read_text() if path.is_file() else ""
-
-    if GITIGNORE_BLOCK_RE.search(existing):
-        updated = GITIGNORE_BLOCK_RE.sub(GITIGNORE_BLOCK + "\n", existing, count=1)
-    else:
-        separator = "" if existing == "" else ("\n" if existing.endswith("\n") else "\n\n")
-        updated = existing + separator + GITIGNORE_BLOCK + "\n"
-
-    if updated == existing:
-        return False
-    path.write_text(updated)
-    return True
-
-
 def _print_result(result: InitResult) -> None:
-    print(f"woof init: {result.project_root} (tracker: {result.tracker})")
-    for action in result.files:
-        suffix = f" ({action.reason})" if action.reason else ""
-        print(f"  {action.action:<8} {action.relpath}{suffix}")
+    print(f"woof init: project {result.project_key} (tracker: {result.tracker})")
+    suffix = f" ({result.config.reason})" if result.config.reason else ""
+    print(f"  {result.config.action:<8} {result.config.relpath}{suffix}")
     if result.tracker_inferred and result.tracker == "local":
         print(
             "  note     inferred tracker: local "
@@ -756,24 +642,17 @@ def _print_result(result: InitResult) -> None:
     if result.inferred_repo is not None:
         prefix = "inferred tracker: github, " if result.tracker_inferred else ""
         print(f"  note     {prefix}repo = {result.inferred_repo} (from git remote)")
-    if result.gitignore_changed:
-        print("  updated  .gitignore (woof block)")
-    else:
-        print("  current  .gitignore (woof block already present)")
     if result.script is not None:
         print(f"  {result.script.action:<8} {result.script.relpath}")
     if result.script_note:
         print(f"  note     {result.script_note}")
     print()
     print("Next steps:")
-    print(
-        "  1. Replace any remaining <replace> placeholders in .woof/*.toml "
-        "(for example the test command in quality-gates.toml)."
-    )
+    print(f"  1. Replace the <replace> placeholders in {result.config.relpath}.")
     print("  2. Authenticate the model CLIs once: `claude /login` and `codex login`.")
-    print("  3. Run `woof preflight` and resolve any remaining failures.")
+    print(f"  3. Run `woof preflight --project {result.project_key}` and resolve any failures.")
     print("  4. Run `woof hooks install` to enable the post-commit cartography hook.")
-    print('  5. Start your first epic: `woof wf new "<spark>"`.')
+    print(f'  5. Start your first epic: `woof wf new "<spark>" --project {result.project_key}`.')
     print("  6. Run the graph with the command printed by `woof wf new`.")
     print()
     print("See skills/woof/references/setup.md for the full first-run walkthrough.")

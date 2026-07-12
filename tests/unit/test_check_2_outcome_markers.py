@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from tests.support import seed_project_config
+
 if TYPE_CHECKING:
     from woof.checks import CheckContext
 
@@ -24,18 +26,19 @@ def _init_repo(root: Path) -> None:
 
 
 def _write_marker_config(
-    root: Path,
     marker_regex: str = r"(?<![A-Za-z0-9])O\d+(?![A-Za-z0-9])",
 ) -> None:
-    (root / ".woof" / "test-markers.toml").write_text(
-        f"""\
-[languages.python]
-test_paths = ["tests/"]
-marker_regex = '{marker_regex}'
-docstring_keyword = "outcomes:"
-comment_prefix = "#"
-context_lines = 3
-"""
+    seed_project_config(
+        {
+            "test_markers": {
+                "languages": {
+                    "python": {
+                        "test_paths": ["tests/"],
+                        "marker_regex": marker_regex,
+                    }
+                }
+            }
+        }
     )
 
 
@@ -88,7 +91,7 @@ def test_outcome_markers_present_in_staged_test_diff(tmp_path: Path) -> None:
     from woof.checks.runners.check_2_outcome_markers import check_2_outcome_markers_runner
 
     _init_repo(tmp_path)
-    _write_marker_config(tmp_path)
+    _write_marker_config()
     _stage(
         tmp_path,
         "tests/test_publish.py",
@@ -120,7 +123,7 @@ def test_missing_outcome_marker_fails(tmp_path: Path) -> None:
     from woof.checks.runners.check_2_outcome_markers import check_2_outcome_markers_runner
 
     _init_repo(tmp_path)
-    _write_marker_config(tmp_path)
+    _write_marker_config()
     _stage(
         tmp_path,
         "tests/test_publish.py",
@@ -147,7 +150,7 @@ def test_documentation_story_without_automated_tests_skips_marker_requirement(
     from woof.checks.runners.check_2_outcome_markers import check_2_outcome_markers_runner
 
     _init_repo(tmp_path)
-    _write_marker_config(tmp_path)
+    _write_marker_config()
     _stage(
         tmp_path,
         "README.md",
@@ -178,7 +181,7 @@ def test_markers_in_non_test_staged_files_do_not_count(tmp_path: Path) -> None:
     from woof.checks.runners.check_2_outcome_markers import check_2_outcome_markers_runner
 
     _init_repo(tmp_path)
-    _write_marker_config(tmp_path)
+    _write_marker_config()
     _stage(
         tmp_path,
         "src/app.py",
@@ -202,7 +205,7 @@ def test_malformed_marker_regex_fails(tmp_path: Path) -> None:
     from woof.checks.runners.check_2_outcome_markers import check_2_outcome_markers_runner
 
     _init_repo(tmp_path)
-    _write_marker_config(tmp_path, marker_regex="[")
+    _write_marker_config(marker_regex="[")
     _stage(
         tmp_path,
         "tests/test_publish.py",
@@ -217,7 +220,7 @@ def test_publish_comment_O1():
     assert not outcome.ok
     assert outcome.severity == "blocker"
     assert "marker_regex is invalid" in outcome.summary
-    assert outcome.paths == [".woof/test-markers.toml"]
+    assert outcome.paths == []
 
 
 def test_malformed_satisfies_fails(tmp_path: Path) -> None:
@@ -227,7 +230,7 @@ def test_malformed_satisfies_fails(tmp_path: Path) -> None:
     from woof.checks.runners.check_2_outcome_markers import check_2_outcome_markers_runner
 
     _init_repo(tmp_path)
-    _write_marker_config(tmp_path)
+    _write_marker_config()
     _stage(
         tmp_path,
         "tests/test_publish.py",

@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 
 import woof.trackers.github as github_module
+from tests.support import seed_project_config
 from woof.trackers import (
     CONFLICT_DECISIONS,
     GitHubTracker,
@@ -32,55 +33,33 @@ from woof.trackers.github import GITHUB_COMMAND_TIMEOUT_SECONDS, github_core_rem
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WOOF_BIN = REPO_ROOT / "bin" / "woof"
 
-PROFILE_A_POLICY = """\
-schema_version = 1
-default_run_profile = "default"
-
-[delivery]
-profile = "A"
-repo_root = "."
-toolchain_root = "."
-base_branch = "main"
-
-[profiles.A]
-github_repo = "example/project"
-ready_label = "ready"
-merge_path_groups = []
-
-[profiles.A.worktree]
-root = "worktrees"
-
-[verification]
-command = "just check"
-
-[run_profiles.default.producer]
-harness = "codex"
-model = "gpt-5.5"
-effort = "xhigh"
-
-[run_profiles.default.reviewer]
-harness = "claude"
-model = "claude-opus-4-7"
-effort = "max"
-
-[checks]
-floor = ["quality-gates"]
-
-[cartography]
-floor = "none"
-
-[drain]
-merge_after_ready_pr = true
-rerun_after_merge = true
-mark_unit_done_after_publish = true
-commit_backlog_state = true
-stop_when_no_eligible_units = true
-"""
+PROFILE_A_OVERRIDES: dict[str, Any] = {
+    "delivery": {"profile": "A"},
+    "profiles": {
+        "A": {
+            "github_repo": "example/project",
+            "ready_label": "ready",
+            "merge_path_groups": [],
+            "worktree": {"root": "worktrees"},
+        }
+    },
+    "cartography": {"floor": "none"},
+    "drain": {"merge_after_ready_pr": True},
+}
 
 
-def _write_prereq(project: Path, body: str) -> None:
-    (project / ".woof").mkdir(parents=True, exist_ok=True)
-    (project / ".woof" / "prerequisites.toml").write_text(body)
+def _seed_local_tracker(overrides: dict[str, Any] | None = None) -> None:
+    """Declare a local tracker in the operator-home project config."""
+
+    config: dict[str, Any] = {"tracker": {"kind": "local", "repo": None}}
+    for key, value in (overrides or {}).items():
+        config[key] = value
+    seed_project_config(config)
+
+
+def _git_init(project: Path) -> None:
+    project.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-q"], cwd=project, check=True)
 
 
 def _epic_front(epic_id: int = 1) -> dict[str, Any]:
@@ -343,7 +322,7 @@ def _prepare_contract_epic(
 
 
 def test_resolve_tracker_returns_github_adapter(tmp_path: Path) -> None:
-    _write_prereq(tmp_path, '[tracker]\nkind = "github"\nrepo = "acme/widgets"\n')
+    seed_project_config({"tracker": {"kind": "github", "repo": "acme/widgets"}})
     tracker = resolve_tracker(tmp_path)
     assert isinstance(tracker, GitHubTracker)
     assert tracker.kind == "github"
@@ -351,33 +330,33 @@ def test_resolve_tracker_returns_github_adapter(tmp_path: Path) -> None:
 
 
 def test_resolve_tracker_returns_local_adapter(tmp_path: Path) -> None:
-    _write_prereq(tmp_path, '[tracker]\nkind = "local"\n')
+    _seed_local_tracker()
     tracker = resolve_tracker(tmp_path)
     assert isinstance(tracker, LocalTracker)
     assert tracker.kind == "local"
 
 
 def test_resolve_tracker_rejects_missing_table(tmp_path: Path) -> None:
-    _write_prereq(tmp_path, '[infra]\njust = "any"\n')
-    with pytest.raises(TrackerError, match=r"missing \[tracker\]"):
+    seed_project_config({"tracker": None})
+    with pytest.raises(TrackerError, match=r"tracker\.kind must be one of"):
         resolve_tracker(tmp_path)
 
 
 def test_resolve_tracker_rejects_unknown_kind(tmp_path: Path) -> None:
-    _write_prereq(tmp_path, '[tracker]\nkind = "linear"\n')
+    seed_project_config({"tracker": {"kind": "linear", "repo": None}})
     with pytest.raises(TrackerError, match="kind must be one of"):
         resolve_tracker(tmp_path)
 
 
 def test_resolve_tracker_github_requires_repo(tmp_path: Path) -> None:
-    _write_prereq(tmp_path, '[tracker]\nkind = "github"\n')
+    seed_project_config({"tracker": {"kind": "github", "repo": None}})
     with pytest.raises(TrackerError, match="requires a non-empty repo"):
         resolve_tracker(tmp_path)
 
 
-def test_resolve_tracker_fails_without_prerequisites(tmp_path: Path) -> None:
-    with pytest.raises(TrackerError, match="not found"):
-        resolve_tracker(tmp_path)
+def test_resolve_tracker_fails_without_project_config(tmp_path: Path) -> None:
+    with pytest.raises(TrackerError, match="missing Woof project config"):
+        resolve_tracker(tmp_path, project_key="never-seeded")
 
 
 # ---------------------------------------------------------------------------
@@ -655,7 +634,7 @@ def test_close_not_delivered_idempotent_when_already_not_planned(
 
 
 def test_local_create_epic_assigns_first_id(tmp_path: Path) -> None:
-    _write_prereq(tmp_path, '[tracker]\nkind = "local"\n')
+    _seed_local_tracker()
     tracker = LocalTracker(tmp_path)
     result = tracker.create_epic("Build a thing\n\nMore detail.")
 
@@ -671,7 +650,7 @@ def test_local_create_epic_assigns_first_id(tmp_path: Path) -> None:
 
 
 def test_local_create_epic_increments_past_existing(tmp_path: Path) -> None:
-    _write_prereq(tmp_path, '[tracker]\nkind = "local"\n')
+    _seed_local_tracker()
     (tmp_path / ".woof" / "epics" / "E4").mkdir(parents=True)
     (tmp_path / ".woof" / "epics" / "E2").mkdir(parents=True)
     result = LocalTracker(tmp_path).create_epic("Another epic")
@@ -849,7 +828,8 @@ def test_github_create_epic_closes_created_issue_when_local_initialisation_fails
 def test_woof_wf_new_local_tracker_never_calls_gh(tmp_path: Path) -> None:
     """`woof wf new` with kind=local must create the epic without touching gh."""
     project = tmp_path / "project"
-    _write_prereq(project, '[tracker]\nkind = "local"\n')
+    _seed_local_tracker()
+    _git_init(project)
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     gh_stub = bin_dir / "gh"
@@ -860,6 +840,8 @@ def test_woof_wf_new_local_tracker_never_calls_gh(tmp_path: Path) -> None:
     env = {
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
         "HOME": os.environ.get("HOME", "/tmp"),
+        "WOOF_HOME": os.environ["WOOF_HOME"],
+        "WOOF_PROJECT": os.environ["WOOF_PROJECT"],
     }
 
     proc = subprocess.run(
@@ -890,8 +872,8 @@ def test_woof_wf_new_local_tracker_never_calls_gh(tmp_path: Path) -> None:
 
 def test_woof_wf_intake_predecomposed_work_units_without_epic(tmp_path: Path) -> None:
     project = tmp_path / "project"
-    _write_prereq(project, '[tracker]\nkind = "local"\n')
-    (project / ".woof" / "policy.toml").write_text(PROFILE_A_POLICY)
+    _seed_local_tracker(PROFILE_A_OVERRIDES)
+    _git_init(project)
     source = project / "backlog.md"
     source.write_text(
         textwrap.dedent(

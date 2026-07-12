@@ -1,7 +1,7 @@
 # Mapping the codebase (cartography)
 
 Woof consumer repos can carry a cartography artefact group at `.woof/codebase/` so dispatched
-nodes get prompt-ready repo context cheaply (ADR-004/ADR-013). `.woof/policy.toml`
+nodes get prompt-ready repo context cheaply (ADR-004/ADR-013). The project config
 `[cartography].floor` decides whether a run requires no cartography, design cartography,
 lexical cartography, or structural cartography. The `/woof` umbrella owns the map-codebase flow.
 It runs in three layers.

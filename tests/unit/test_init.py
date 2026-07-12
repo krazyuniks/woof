@@ -1,4 +1,8 @@
-"""Black-box tests for ``woof init``."""
+"""Black-box tests for ``woof init`` (ADR-017).
+
+Init writes exactly one file, and it writes it into the operator home:
+``~/.woof/config/projects/<key>.toml``. The driven repository is left alone.
+"""
 
 from __future__ import annotations
 
@@ -11,11 +15,15 @@ import pytest
 
 from woof.cli.init import (
     GITHUB_REPO_PLACEHOLDER,
+    InitError,
     _parse_github_repo,
     run_init,
 )
+from woof.paths import project_config_path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+PROJECT_KEY = "demo-project"
 
 _HAS_GIT = shutil.which("git") is not None
 
@@ -47,181 +55,154 @@ def _env() -> dict[str, str]:
     return env
 
 
-def test_init_creates_starter_config_and_gitignore_block(tmp_path: Path, run_woof) -> None:
-    proc = run_woof("init", "--project-root", str(tmp_path), env=_env())
+def _config_text(key: str = PROJECT_KEY) -> str:
+    return project_config_path(key).read_text()
+
+
+def _init(*args: str, run_woof, project: str = PROJECT_KEY, project_root: Path | None = None):
+    argv = ["init", "--project", project]
+    if project_root is not None:
+        argv += ["--project-root", str(project_root)]
+    return run_woof(*argv, *args, env=_env())
+
+
+def test_init_writes_one_config_into_the_operator_home(tmp_path: Path, run_woof) -> None:
+    proc = _init(run_woof=run_woof, project_root=tmp_path)
 
     assert proc.returncode == 0, proc.stderr + proc.stdout
-    woof_dir = tmp_path / ".woof"
-    assert (woof_dir / "policy.toml").is_file()
-    assert (woof_dir / "prerequisites.toml").is_file()
-    assert (woof_dir / "agents.toml").is_file()
-    assert (woof_dir / "quality-gates.toml").is_file()
-    assert (woof_dir / "test-markers.toml").is_file()
-    assert not (woof_dir / "docs-paths.toml").exists()
+    config_path = project_config_path(PROJECT_KEY)
+    assert config_path.is_file()
+    assert str(config_path) in proc.stdout
 
-    prereq = (woof_dir / "prerequisites.toml").read_text()
-    assert "[tracker]" in prereq
-    policy = (woof_dir / "policy.toml").read_text()
-    assert 'profile = "B"' in policy
-    assert "default_run_profile" in policy
-    assert 'model = "gpt-5.6-sol"' in policy
-    assert 'effort = "high"' in policy
-    agents = (woof_dir / "agents.toml").read_text()
-    assert "Runtime model: trusted-local automation" in agents
-
-    gitignore = (tmp_path / ".gitignore").read_text()
-    assert "# >>> woof" in gitignore
-    assert ".woof/.current-epic" in gitignore
-    assert ".woof/epics/*/executor_result.json" in gitignore
-    assert ".woof/epics/*/check-result.json" in gitignore
-    assert ".woof/.preflight-floor" in gitignore
-    assert ".woof/codebase/tags" in gitignore
-    assert "# <<< woof" in gitignore
+    body = config_path.read_text()
+    assert 'type = "woof_project"' in body
+    assert 'profile = "B"' in body
+    assert "default_run_profile" in body
+    assert 'model = "gpt-5.6-sol"' in body
+    assert 'effort = "high"' in body
+    assert "[tracker]" in body
+    assert "Runtime model: trusted-local automation" in body
 
 
-def test_init_is_idempotent(tmp_path: Path, run_woof) -> None:
-    first = run_woof("init", "--project-root", str(tmp_path), env=_env())
+def test_init_writes_nothing_into_the_repo(tmp_path: Path, run_woof) -> None:
+    """The driven repo carries no trace of the engine: no .woof/, no .gitignore edit."""
+
+    gitignore = tmp_path / ".gitignore"
+    gitignore.write_text("node_modules/\n.env\n")
+
+    proc = _init(run_woof=run_woof, project_root=tmp_path)
+
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert not (tmp_path / ".woof").exists()
+    assert gitignore.read_text() == "node_modules/\n.env\n"
+    assert [child.name for child in tmp_path.iterdir()] == [".gitignore"]
+
+
+def test_init_refuses_to_overwrite_an_existing_config(tmp_path: Path, run_woof) -> None:
+    first = _init(run_woof=run_woof, project_root=tmp_path)
     assert first.returncode == 0, first.stderr + first.stdout
+    config_path = project_config_path(PROJECT_KEY)
+    config_path.write_text("# user-edited\n")
 
-    prereq_path = tmp_path / ".woof" / "prerequisites.toml"
-    prereq_path.write_text('# user-edited\n[tracker]\nkind = "github"\nrepo = "example/project"\n')
-    gitignore_before = (tmp_path / ".gitignore").read_text()
+    second = _init(run_woof=run_woof, project_root=tmp_path)
 
-    second = run_woof("init", "--project-root", str(tmp_path), env=_env())
-    assert second.returncode == 0, second.stderr + second.stdout
-    assert prereq_path.read_text().startswith("# user-edited"), "user edits must be preserved"
-    assert (tmp_path / ".gitignore").read_text() == gitignore_before, (
-        "gitignore block must not duplicate"
-    )
-    assert "skipped" in second.stdout
+    assert second.returncode == 2
+    assert "already exists" in second.stderr
+    assert "--force" in second.stderr
+    assert config_path.read_text() == "# user-edited\n", "user edits must be preserved"
 
 
-def test_init_force_overwrites_existing_files(tmp_path: Path, run_woof) -> None:
-    first = run_woof("init", "--project-root", str(tmp_path), env=_env())
+def test_init_force_overwrites_the_existing_config(tmp_path: Path, run_woof) -> None:
+    first = _init(run_woof=run_woof, project_root=tmp_path)
     assert first.returncode == 0, first.stderr + first.stdout
-    prereq_path = tmp_path / ".woof" / "prerequisites.toml"
-    prereq_path.write_text("# user-edited\n")
+    config_path = project_config_path(PROJECT_KEY)
+    config_path.write_text("# user-edited\n")
 
     # Explicit --tracker github exercises the placeholder path (the test PATH has
     # no git, so no remote is reachable and the slug stays a placeholder).
-    forced = run_woof(
-        "init", "--project-root", str(tmp_path), "--tracker", "github", "--force", env=_env()
-    )
+    forced = _init("--tracker", "github", "--force", run_woof=run_woof, project_root=tmp_path)
+
     assert forced.returncode == 0, forced.stderr + forced.stdout
-    assert "<replace>/<replace>" in prereq_path.read_text()
+    assert GITHUB_REPO_PLACEHOLDER in config_path.read_text()
     assert "updated" in forced.stdout
 
 
-def test_init_with_docs_paths_scaffolds_optional_file(tmp_path: Path, run_woof) -> None:
-    proc = run_woof(
-        "init",
-        "--project-root",
-        str(tmp_path),
-        "--with-docs-paths",
-        env=_env(),
-    )
+def test_init_refuses_to_overwrite_from_the_python_api(tmp_path: Path) -> None:
+    run_init(tmp_path, project_key=PROJECT_KEY)
+
+    with pytest.raises(InitError) as excinfo:
+        run_init(tmp_path, project_key=PROJECT_KEY)
+
+    assert "already exists" in str(excinfo.value)
+    assert "--force" in str(excinfo.value)
+
+
+def test_init_with_docs_paths_scaffolds_the_optional_section(tmp_path: Path, run_woof) -> None:
+    proc = _init("--with-docs-paths", run_woof=run_woof, project_root=tmp_path)
+
     assert proc.returncode == 0, proc.stderr + proc.stdout
-    docs_paths = tmp_path / ".woof" / "docs-paths.toml"
-    assert docs_paths.is_file()
-    assert "code_pattern" in docs_paths.read_text()
+    body = _config_text()
+    assert "[[docs_paths.mappings]]" in body
+    assert "code_pattern" in body
+
+
+def test_init_omits_docs_paths_by_default(tmp_path: Path, run_woof) -> None:
+    proc = _init(run_woof=run_woof, project_root=tmp_path)
+
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    # The template documents the section in a comment; it must not declare one.
+    assert "[[docs_paths.mappings]]" not in _config_text()
 
 
 def test_init_default_infers_local_without_github_remote(tmp_path: Path, run_woof) -> None:
     # No --tracker and no reachable github remote (git is off the test PATH) -> local.
-    proc = run_woof("init", "--project-root", str(tmp_path), env=_env())
+    proc = _init(run_woof=run_woof, project_root=tmp_path)
+
     assert proc.returncode == 0, proc.stderr + proc.stdout
     assert "tracker: local" in proc.stdout
 
-    prereq = (tmp_path / ".woof" / "prerequisites.toml").read_text()
-    assert 'kind = "local"' in prereq
-    assert "repo =" not in prereq
-    assert "gh = " not in prereq
+    body = _config_text()
+    assert 'kind = "local"' in body
+    assert "repo =" not in body
+    assert "gh = " not in body
 
 
 def test_init_tracker_local_scaffolds_local_tracker(tmp_path: Path, run_woof) -> None:
-    proc = run_woof("init", "--project-root", str(tmp_path), "--tracker", "local", env=_env())
+    proc = _init("--tracker", "local", run_woof=run_woof, project_root=tmp_path)
+
     assert proc.returncode == 0, proc.stderr + proc.stdout
     assert "tracker: local" in proc.stdout
 
-    prereq = (tmp_path / ".woof" / "prerequisites.toml").read_text()
-    assert 'kind = "local"' in prereq
-    assert "repo =" not in prereq, "local tracker must not scaffold a repo line"
-    assert "gh = " not in prereq, "local tracker must not require the gh CLI"
+    body = _config_text()
+    assert 'kind = "local"' in body
+    assert "repo =" not in body, "local tracker must not scaffold a repo line"
+    assert "gh = " not in body, "local tracker must not require the gh CLI"
 
-    # The local tracker block carries no placeholder, so the scaffold validates
-    # as-is — unlike the github tracker, whose `repo` needs a real value first.
-    validate = run_woof(
-        "validate",
-        "--schema",
-        "prerequisites",
-        str(tmp_path / ".woof" / "prerequisites.toml"),
-        env=_env(),
+
+def test_init_config_validates_against_the_project_config_schema(tmp_path: Path, run_woof) -> None:
+    """The scaffolded config detects as project-config from its path and validates."""
+
+    proc = _init(
+        "--tracker", "local", "--with-docs-paths", run_woof=run_woof, project_root=tmp_path
     )
-    assert validate.returncode == 0, (
-        f"local prerequisites.toml did not validate: {validate.stderr + validate.stdout}"
-    )
-
-
-def test_init_preserves_existing_gitignore_content(tmp_path: Path, run_woof) -> None:
-    gitignore = tmp_path / ".gitignore"
-    gitignore.write_text("node_modules/\n.env\n")
-
-    proc = run_woof("init", "--project-root", str(tmp_path), env=_env())
     assert proc.returncode == 0, proc.stderr + proc.stdout
-    body = gitignore.read_text()
-    assert body.startswith("node_modules/\n.env\n")
-    assert "# >>> woof" in body
-    assert ".woof/.current-epic" in body
+
+    validate = run_woof("validate", str(project_config_path(PROJECT_KEY)), env=_env())
+
+    assert validate.returncode == 0, validate.stderr + validate.stdout
+    assert "valid (project-config)" in validate.stdout
 
 
-def test_init_updates_existing_managed_block(tmp_path: Path, run_woof) -> None:
-    gitignore = tmp_path / ".gitignore"
-    gitignore.write_text("node_modules/\n# >>> woof\n.woof/old-entry\n# <<< woof\n")
+def test_init_scaffolds_replace_placeholders(tmp_path: Path, run_woof) -> None:
+    """The scaffold ships explicit placeholders so preflight refuses unedited boilerplate."""
 
-    proc = run_woof("init", "--project-root", str(tmp_path), env=_env())
+    proc = _init("--tracker", "github", run_woof=run_woof, project_root=tmp_path)
     assert proc.returncode == 0, proc.stderr + proc.stdout
-    body = gitignore.read_text()
-    assert "node_modules/\n" in body
-    assert ".woof/old-entry" not in body
-    assert ".woof/.current-epic" in body
-    assert body.count("# >>> woof") == 1
 
-
-def test_init_templates_validate_against_schemas(tmp_path: Path, run_woof) -> None:
-    proc = run_woof("init", "--project-root", str(tmp_path), env=_env())
-    assert proc.returncode == 0, proc.stderr + proc.stdout
-    woof_dir = tmp_path / ".woof"
-
-    for filename, schema in (
-        ("policy.toml", "policy"),
-        ("agents.toml", "agents"),
-        ("test-markers.toml", "test-markers"),
-    ):
-        validate = run_woof(
-            "validate",
-            "--schema",
-            schema,
-            str(woof_dir / filename),
-            env=_env(),
-        )
-        assert validate.returncode == 0, (
-            f"{filename} did not validate against {schema}: {validate.stderr + validate.stdout}"
-        )
-
-    forced = run_woof(
-        "init", "--project-root", str(tmp_path), "--with-docs-paths", "--force", env=_env()
-    )
-    assert forced.returncode == 0, forced.stderr + forced.stdout
-    docs_validate = run_woof(
-        "validate",
-        "--schema",
-        "docs-paths",
-        str(woof_dir / "docs-paths.toml"),
-        env=_env(),
-    )
-    assert docs_validate.returncode == 0, (
-        f"docs-paths.toml did not validate: {docs_validate.stderr + docs_validate.stdout}"
-    )
+    body = _config_text()
+    assert "<replace project verification command" in body
+    assert "<replace project test command" in body
+    assert f'repo = "{GITHUB_REPO_PLACEHOLDER}"' in body
 
 
 def test_init_help_lists_command(run_woof) -> None:
@@ -231,12 +212,12 @@ def test_init_help_lists_command(run_woof) -> None:
 
 
 def test_init_outputs_next_steps(tmp_path: Path, run_woof) -> None:
-    proc = run_woof("init", "--project-root", str(tmp_path), env=_env())
+    proc = _init(run_woof=run_woof, project_root=tmp_path)
     assert proc.returncode == 0, proc.stderr + proc.stdout
     assert "Next steps" in proc.stdout
     assert "claude /login" in proc.stdout
     assert "codex login" in proc.stdout
-    assert "woof preflight" in proc.stdout
+    assert f"woof preflight --project {PROJECT_KEY}" in proc.stdout
     assert "woof wf new" in proc.stdout, "next steps must reach the first epic"
     assert "Run the graph with the command printed by `woof wf new`" in proc.stdout
     assert "skills/woof/references/setup.md" in proc.stdout, (
@@ -244,30 +225,19 @@ def test_init_outputs_next_steps(tmp_path: Path, run_woof) -> None:
     )
 
 
-def test_init_json_validate_quality_gates_placeholder_is_documented(
-    tmp_path: Path, run_woof
-) -> None:
-    """quality-gates.toml ships with a <replace> placeholder; validating it should fail loud."""
-
-    proc = run_woof("init", "--project-root", str(tmp_path), env=_env())
-    assert proc.returncode == 0, proc.stderr + proc.stdout
-    validate = run_woof(
-        "validate",
-        "--schema",
-        "quality-gates",
-        str(tmp_path / ".woof" / "quality-gates.toml"),
-        env=_env(),
-    )
-    assert validate.returncode == 0, validate.stdout
-    text = (tmp_path / ".woof" / "quality-gates.toml").read_text()
-    assert "<replace" in text
-
-
 def test_init_handles_missing_project_root_argument(tmp_path: Path, monkeypatch, run_woof) -> None:
     monkeypatch.chdir(tmp_path)
-    proc = run_woof("init", env=_env())
+    proc = _init(run_woof=run_woof)
     assert proc.returncode == 0, proc.stderr + proc.stdout
-    assert (tmp_path / ".woof" / "prerequisites.toml").is_file()
+    assert project_config_path(PROJECT_KEY).is_file()
+    assert not (tmp_path / ".woof").exists()
+
+
+def test_init_rejects_an_invalid_project_key(tmp_path: Path, run_woof) -> None:
+    proc = _init(run_woof=run_woof, project="Not/A Key", project_root=tmp_path)
+
+    assert proc.returncode == 2
+    assert "invalid project key" in proc.stderr
 
 
 @pytest.mark.parametrize(
@@ -296,26 +266,28 @@ def test_parse_github_repo(url: str, expected: str | None) -> None:
 def test_init_default_infers_github_and_slug_from_origin(tmp_path: Path) -> None:
     _git_init_repo(tmp_path, origin="git@github.com:acme/widgets.git")
 
-    result = run_init(tmp_path)
+    result = run_init(tmp_path, project_key=PROJECT_KEY)
 
-    prereq = (tmp_path / ".woof" / "prerequisites.toml").read_text()
-    assert 'kind = "github"' in prereq
-    assert 'repo = "acme/widgets"' in prereq
-    assert GITHUB_REPO_PLACEHOLDER not in prereq
+    body = _config_text()
+    assert 'kind = "github"' in body
+    assert 'repo = "acme/widgets"' in body
+    assert GITHUB_REPO_PLACEHOLDER not in body
     assert result.tracker == "github"
     assert result.tracker_inferred is True
     assert result.inferred_repo == "acme/widgets"
+    assert result.config.action == "created"
+    assert result.config.relpath == str(project_config_path(PROJECT_KEY))
 
 
 @pytest.mark.skipif(not _HAS_GIT, reason="git not available")
 def test_init_default_infers_local_when_no_remote(tmp_path: Path) -> None:
     _git_init_repo(tmp_path)  # a git repo, but no remote
 
-    result = run_init(tmp_path)
+    result = run_init(tmp_path, project_key=PROJECT_KEY)
 
-    prereq = (tmp_path / ".woof" / "prerequisites.toml").read_text()
-    assert 'kind = "local"' in prereq
-    assert "repo =" not in prereq
+    body = _config_text()
+    assert 'kind = "local"' in body
+    assert "repo =" not in body
     assert result.tracker == "local"
     assert result.tracker_inferred is True
     assert result.inferred_repo is None
@@ -323,10 +295,10 @@ def test_init_default_infers_local_when_no_remote(tmp_path: Path) -> None:
 
 def test_init_default_infers_local_outside_git_repo(tmp_path: Path) -> None:
     # tmp_path is not a git repo; inference finds no remote -> local default.
-    result = run_init(tmp_path)
+    result = run_init(tmp_path, project_key=PROJECT_KEY)
 
-    prereq = (tmp_path / ".woof" / "prerequisites.toml").read_text()
-    assert 'kind = "local"' in prereq
+    body = _config_text()
+    assert 'kind = "local"' in body
     assert result.tracker == "local"
     assert result.inferred_repo is None
 
@@ -335,11 +307,11 @@ def test_init_default_infers_local_outside_git_repo(tmp_path: Path) -> None:
 def test_init_explicit_github_infers_slug_from_origin(tmp_path: Path) -> None:
     _git_init_repo(tmp_path, origin="https://github.com/acme/widgets.git")
 
-    result = run_init(tmp_path, tracker="github")
+    result = run_init(tmp_path, project_key=PROJECT_KEY, tracker="github")
 
-    prereq = (tmp_path / ".woof" / "prerequisites.toml").read_text()
-    assert 'repo = "acme/widgets"' in prereq
-    assert GITHUB_REPO_PLACEHOLDER not in prereq
+    body = _config_text()
+    assert 'repo = "acme/widgets"' in body
+    assert GITHUB_REPO_PLACEHOLDER not in body
     assert result.tracker == "github"
     assert result.tracker_inferred is False
     assert result.inferred_repo == "acme/widgets"
@@ -349,10 +321,9 @@ def test_init_explicit_github_infers_slug_from_origin(tmp_path: Path) -> None:
 def test_init_explicit_github_without_remote_keeps_placeholder(tmp_path: Path) -> None:
     _git_init_repo(tmp_path)  # a git repo, but no remote
 
-    result = run_init(tmp_path, tracker="github")
+    result = run_init(tmp_path, project_key=PROJECT_KEY, tracker="github")
 
-    prereq = (tmp_path / ".woof" / "prerequisites.toml").read_text()
-    assert f'repo = "{GITHUB_REPO_PLACEHOLDER}"' in prereq
+    assert f'repo = "{GITHUB_REPO_PLACEHOLDER}"' in _config_text()
     assert result.tracker == "github"
     assert result.inferred_repo is None
 
@@ -362,11 +333,45 @@ def test_init_explicit_local_ignores_github_remote(tmp_path: Path) -> None:
     """`--tracker local` must not infer or scaffold a repo line even with a github remote."""
     _git_init_repo(tmp_path, origin="git@github.com:acme/widgets.git")
 
-    result = run_init(tmp_path, tracker="local")
+    result = run_init(tmp_path, project_key=PROJECT_KEY, tracker="local")
 
-    prereq = (tmp_path / ".woof" / "prerequisites.toml").read_text()
-    assert 'kind = "local"' in prereq
-    assert "repo =" not in prereq
+    body = _config_text()
+    assert 'kind = "local"' in body
+    assert "repo =" not in body
     assert result.tracker == "local"
     assert result.tracker_inferred is False
     assert result.inferred_repo is None
+
+
+def test_init_composes_the_refresh_script_for_declared_languages(tmp_path: Path) -> None:
+    """Cartography languages land in the config and compose the repo's refresh script."""
+
+    result = run_init(tmp_path, project_key=PROJECT_KEY, tracker="local", languages=["python"])
+
+    assert result.languages == ("python",)
+    assert 'languages = ["python"]' in _config_text()
+    assert result.script is not None
+    assert result.script.action == "created"
+    script = tmp_path / "scripts" / "refresh-cartography"
+    assert script.is_file()
+    assert os.access(script, os.X_OK)
+
+
+def test_init_skips_the_refresh_script_without_languages(tmp_path: Path) -> None:
+    result = run_init(tmp_path, project_key=PROJECT_KEY, tracker="local")
+
+    assert result.languages == ()
+    assert result.script is None
+    assert result.script_note is not None
+    assert "scripts/refresh-cartography" in result.script_note
+    assert not (tmp_path / "scripts").exists()
+
+
+def test_init_rejects_an_unknown_cartography_language(tmp_path: Path) -> None:
+    with pytest.raises(InitError) as excinfo:
+        run_init(tmp_path, project_key=PROJECT_KEY, tracker="local", languages=["cobol"])
+
+    assert "unknown cartography language" in str(excinfo.value)
+    assert not project_config_path(PROJECT_KEY).exists(), (
+        "a rejected language must not leave a config behind"
+    )

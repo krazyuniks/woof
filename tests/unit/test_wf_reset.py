@@ -12,6 +12,7 @@ import json
 import subprocess
 from pathlib import Path
 
+from tests.support import seed_project_config
 from woof.graph.transitions import (
     append_epic_event,
     epic_event_exists,
@@ -25,7 +26,8 @@ WOOF_BIN = REPO_ROOT / "bin" / "woof"
 def _local_project(tmp_path: Path) -> Path:
     project = tmp_path / "project"
     (project / ".woof").mkdir(parents=True)
-    (project / ".woof" / "prerequisites.toml").write_text('[tracker]\nkind = "local"\n')
+    subprocess.run(["git", "init", "-q"], cwd=project, check=True)
+    seed_project_config({"tracker": {"kind": "local", "repo": None}})
     return project
 
 

@@ -4,7 +4,7 @@ Subcommands:
     wf           Run the deterministic orchestration graph.
     observe      Inspect read-only workflow status, timeline, gate, and audit views.
     preflight    Validate local prerequisites for a Woof consumer checkout.
-    init         Scaffold a fresh .woof/ consumer config and .gitignore block.
+    init         Write a project config into the operator home.
     hooks        Manage Woof-owned git hook blocks.
     validate     Validate artefacts against woof JSON Schemas via ajv-cli.
     dispatch     Run a role through the configured tmux harness profile.
@@ -14,6 +14,10 @@ Subcommands:
     check-cd     Verify each contract_decision's referenced artefact exists
                  and resolves under its native tooling (Stage 5 Check 4).
 
+Every command takes ``--project <key>``, which selects the project config in
+the operator home; ``WOOF_PROJECT`` is the environment fallback so re-entrant
+subprocesses and dispatched workers inherit it.
+
 Schemas live at ``schemas/*.schema.json`` (JSON Schema 2020-12).
 Auto-detection maps filename to schema; ``--schema`` overrides.
 """
@@ -22,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import sys
@@ -31,7 +36,7 @@ from pathlib import Path
 import yaml
 
 from woof.checks.contract_refs import ContractRefUsageError, validate_contract_refs
-from woof.cli.dispatcher import NODE_GROUPS, cmd_dispatch, find_woof_root
+from woof.cli.dispatcher import NODE_GROUPS, cmd_dispatch
 from woof.cli.harness_registry import supported_harnesses
 from woof.lib.audit_bundle import (
     AuditBundleError,
@@ -39,7 +44,12 @@ from woof.lib.audit_bundle import (
     bundle_claude_transcripts,
 )
 from woof.lib.schema_validate import run_ajv
-from woof.paths import schema_dir
+from woof.paths import (
+    WOOF_PROJECT_ENV,
+    ProjectKeyError,
+    repo_root_from_git,
+    schema_dir,
+)
 from woof.trackers import TrackerError, resolve_tracker
 from woof.trackers.epic_body import render_epic_issue_body, split_epic_front_matter
 
@@ -54,15 +64,10 @@ SCHEMAS: dict[str, str] = {
     "critique": "critique.schema.json",
     "disposition": "disposition.schema.json",
     "jsonl-events": "jsonl-events.schema.json",
-    "policy": "policy.schema.json",
-    "prerequisites": "prerequisites.schema.json",
-    "agents": "agents.schema.json",
-    "test-markers": "test-markers.schema.json",
+    "project-config": "project-config.schema.json",
     "language-registry": "language-registry.schema.json",
     "freshness": "freshness.schema.json",
-    "quality-gates": "quality-gates.schema.json",
     "quality-gates-baseline": "quality-gates-baseline.schema.json",
-    "docs-paths": "docs-paths.schema.json",
     "check-result": "check-result.schema.json",
     "executor-result": "executor-result.schema.json",
     "readiness-result": "readiness-result.schema.json",
@@ -80,13 +85,7 @@ FILENAME_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^plan\.json$"), "plan"),
     (re.compile(r"^gate\.md$"), "gate"),
     (re.compile(r"^.+\.jsonl$"), "jsonl-events"),
-    (re.compile(r"^policy\.toml$"), "policy"),
-    (re.compile(r"^prerequisites\.toml$"), "prerequisites"),
-    (re.compile(r"^agents\.toml$"), "agents"),
-    (re.compile(r"^test-markers\.toml$"), "test-markers"),
-    (re.compile(r"^quality-gates\.toml$"), "quality-gates"),
     (re.compile(r"^quality-gates-baseline\.json$"), "quality-gates-baseline"),
-    (re.compile(r"^docs-paths\.toml$"), "docs-paths"),
     (re.compile(r"^check-result\.json$"), "check-result"),
     (re.compile(r"^executor-result\.json$"), "executor-result"),
     (re.compile(r"^readiness-result\.json$"), "readiness-result"),
@@ -103,6 +102,7 @@ PATH_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"(^|/)critique/[^/]+\.md$"), "critique"),
     (re.compile(r"(^|/)dispositions/[^/]+\.md$"), "disposition"),
     (re.compile(r"(^|/)languages/[^/]+\.toml$"), "language-registry"),
+    (re.compile(r"(^|/)config/projects/[^/]+\.toml$"), "project-config"),
 ]
 
 
@@ -152,15 +152,7 @@ def load_payload(path: Path, schema: str) -> object:
         "transaction-manifest",
     }:
         return json.loads(path.read_text())
-    if schema in {
-        "policy",
-        "prerequisites",
-        "agents",
-        "test-markers",
-        "language-registry",
-        "quality-gates",
-        "docs-paths",
-    }:
+    if schema in {"project-config", "language-registry"}:
         with path.open("rb") as fh:
             return tomllib.load(fh)
     raise ValueError(f"load_payload: unhandled schema '{schema}'")
@@ -247,7 +239,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 
 def cmd_audit_bundle(args: argparse.Namespace) -> int:
-    repo_root = find_woof_root(Path.cwd().resolve())
+    repo_root = repo_root_from_git()
     try:
         result = bundle_claude_transcripts(repo_root, args.epic)
     except NonPortableTranscriptError as exc:
@@ -288,7 +280,7 @@ def _display_path(repo_root: Path, path: Path) -> str:
 
 def cmd_render_epic(args: argparse.Namespace) -> int:
     ensure_ajv()
-    repo_root = find_woof_root(Path.cwd().resolve())
+    repo_root = repo_root_from_git()
     epic_dir = repo_root / ".woof" / "epics" / f"E{args.epic}"
     epic_md = epic_dir / "EPIC.md"
     if not epic_md.is_file():
@@ -316,7 +308,7 @@ def cmd_render_epic(args: argparse.Namespace) -> int:
         return 0
 
     try:
-        tracker = resolve_tracker(repo_root)
+        tracker = resolve_tracker(repo_root, args.project)
         result = tracker.push_epic_definition(args.epic, front, prose)
     except TrackerError as exc:
         message = str(exc)
@@ -391,14 +383,38 @@ def cmd_check_cd(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 
+def project_parser() -> argparse.ArgumentParser:
+    """The --project flag every command carries.
+
+    One parent parser rather than eight copies of the same argument: the key is
+    the same concept at every entry point, and declaring it once keeps it that
+    way. WOOF_PROJECT is the fallback, so a re-entrant subprocess or a
+    dispatched worker inherits the key it was launched under.
+    """
+
+    parent = argparse.ArgumentParser(add_help=False)
+    parent.add_argument(
+        "--project",
+        metavar="KEY",
+        help=(
+            "project key selecting the config under ~/.woof/config/projects/; "
+            f"defaults to ${WOOF_PROJECT_ENV}"
+        ),
+    )
+    return parent
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="woof",
         description="agentic software delivery graph CLI",
     )
+    project = project_parser()
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    validate = sub.add_parser("validate", help="validate woof artefacts against schemas")
+    validate = sub.add_parser(
+        "validate", help="validate woof artefacts against schemas", parents=[project]
+    )
     validate.add_argument("paths", nargs="+", help="paths to validate")
     validate.add_argument(
         "--schema",
@@ -410,12 +426,13 @@ def main() -> int:
     dispatch = sub.add_parser(
         "dispatch",
         help="dispatch a role through the configured tmux harness profile",
+        parents=[project],
     )
     dispatch.add_argument(
         "target",
         nargs="?",
         choices=supported_harnesses(),
-        help="deprecated harness target; role routes resolve from .woof/policy.toml",
+        help="deprecated harness target; role routes resolve from the project config",
     )
     dispatch.add_argument("--role", required=True, help="dispatch role name")
     dispatch.add_argument(
@@ -458,6 +475,7 @@ def main() -> int:
     audit_bundle = sub.add_parser(
         "audit-bundle",
         help="copy referenced Claude transcripts into an epic audit folder",
+        parents=[project],
     )
     audit_bundle.add_argument("epic", help="epic reference, e.g. E17 or 17")
     audit_bundle.set_defaults(func=cmd_audit_bundle)
@@ -466,6 +484,7 @@ def main() -> int:
         "render-epic",
         help="render EPIC.md front-matter into the managed tracker body",
         description="render EPIC.md front-matter into the managed tracker body",
+        parents=[project],
     )
     render.add_argument("--epic", type=int, required=True, help="tracker-assigned epic id")
     render.add_argument("--output", help="write rendered body to PATH instead of stdout")
@@ -481,6 +500,7 @@ def main() -> int:
     check_cd = sub.add_parser(
         "check-cd",
         help="verify each contract_decision's referenced artefact (Stage 5 Check 4)",
+        parents=[project],
     )
     check_cd.add_argument("epic_md", help="path to EPIC.md")
     check_cd.add_argument(
@@ -507,10 +527,11 @@ def main() -> int:
     preflight = sub.add_parser(
         "preflight",
         help="validate local prerequisites for a woof project",
+        parents=[project],
     )
     preflight.add_argument(
         "--project-root",
-        help="woof project root to check; defaults to the nearest ancestor containing .woof/",
+        help="delivery checkout to check; defaults to the git top level of the working directory",
     )
     preflight.add_argument(
         "--format",
@@ -525,15 +546,26 @@ def main() -> int:
     )
     preflight.set_defaults(func=cmd_preflight)
 
-    setup_hooks_parser(sub)
-    setup_init_parser(sub)
-    setup_observe_parser(sub)
-    setup_wf_parser(sub)
-    setup_check_parser(sub)
-    setup_baseline_parser(sub)
+    setup_hooks_parser(sub, project)
+    setup_init_parser(sub, project)
+    setup_observe_parser(sub, project)
+    setup_wf_parser(sub, project)
+    setup_check_parser(sub, project)
+    setup_baseline_parser(sub, project)
 
     args = parser.parse_args()
-    return args.func(args)
+
+    # Publish the resolved key so re-entrant `woof` subprocesses and dispatched
+    # worker sessions inherit it; the dispatcher already forwards WOOF_* into
+    # worker environments.
+    if getattr(args, "project", None):
+        os.environ[WOOF_PROJECT_ENV] = args.project
+
+    try:
+        return args.func(args)
+    except ProjectKeyError as exc:
+        sys.stderr.write(f"woof: {exc}\n")
+        return 2
 
 
 if __name__ == "__main__":

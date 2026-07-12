@@ -1,0 +1,138 @@
+# Woof's own project config (ADR-017).
+#
+# The live copy of this file is the operator's, at
+# ~/.woof/config/projects/woof.toml. Nothing engine-owned lives in the driven
+# repo, so this in-repo copy exists only so the shape stays reviewable: it is
+# an example, not a source the engine ever reads.
+#
+# Install it with:
+#   mkdir -p ~/.woof/config/projects
+#   cp examples/project-config/woof.toml ~/.woof/config/projects/woof.toml
+
+schema_version = 1
+type = "woof_project"
+default_run_profile = "woof-codex-high-produce-glm-max-review"
+
+[delivery]
+profile = "B"
+repo_root = "."
+toolchain_root = "."
+base_branch = "main"
+
+[profiles.A]
+github_repo = "krazyuniks/woof"
+ready_label = "ready"
+merge_path_groups = ["default"]
+terminal_deploy_checks = []
+mergeability_settle_timeout = 15
+deploy_wait_timeout = 300
+
+[profiles.A.worktree]
+root = ".vf-worktrees"
+
+[profiles.B]
+commit = true
+push = true
+
+[verification]
+command = "just check"
+timeout_seconds = 600
+
+[run_profiles.woof-codex-high-produce-glm-max-review.producer]
+harness = "codex"
+model = "gpt-5.5"
+effort = "high"
+
+[run_profiles.woof-codex-high-produce-glm-max-review.reviewer]
+harness = "glm"
+model = "glm-5.2"
+effort = "max"
+
+[checks]
+floor = [
+  "quality-gates",
+  "outcome-markers",
+  "scope",
+  "contract-refs",
+  "plan-crossrefs",
+  "critique-blocker",
+  "commit-transaction",
+  "docs-drift",
+  "review-valve",
+]
+
+[checks.review_size]
+max_non_generated_changed_lines = 500
+
+[cartography]
+floor = "structural"
+staleness_floor_hours = 168
+summary_min_chars = 200
+languages = ["python"]
+
+[drain]
+merge_after_ready_pr = false
+rerun_after_merge = true
+mark_unit_done_after_publish = true
+commit_backlog_state = true
+stop_when_no_eligible_units = true
+
+[dispatch.timeouts]
+default_minutes = 30
+
+[dispatch.audit]
+enabled = true
+max_bytes = 262144
+redact_patterns = []
+
+[review_valve]
+every_n_work_units = 5
+end_of_epic = true
+
+[fix_rounds]
+max_rounds_per_blocker = 2
+
+[gates.lint]
+command = "just lint"
+timeout_seconds = 120
+
+[gates.test]
+command = "just test"
+timeout_seconds = 360
+
+[prerequisites.infra]
+just = "any"
+git = "any"
+gh = "any"
+tmux = "any"
+
+[prerequisites.commands]
+claude = "any"
+codex = "any"
+
+[prerequisites.validators]
+ajv = "any"
+ajv-formats = "any"
+
+[prerequisites.lsp]
+languages = ["python"]
+
+[tracker]
+kind = "github"
+repo = "krazyuniks/woof"
+
+[test_markers.languages.python]
+test_paths = ["tests/", "src/**/test_*.py"]
+marker_regex = '(?<![A-Za-z0-9])O\d+(?![A-Za-z0-9])'
+cd_marker_regex = '(?<![A-Za-z0-9])CD\d+(?![A-Za-z0-9])'
+docstring_keyword = "outcomes:"
+comment_prefix = "#"
+context_lines = 3
+
+[test_markers.languages.typescript]
+test_paths = ["tests/", "src/**/*.test.ts"]
+marker_regex = '(?<![A-Za-z0-9])O\d+(?![A-Za-z0-9])'
+cd_marker_regex = '(?<![A-Za-z0-9])CD\d+(?![A-Za-z0-9])'
+docstring_keyword = "outcomes:"
+comment_prefix = "//"
+context_lines = 3

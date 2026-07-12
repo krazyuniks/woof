@@ -6,9 +6,10 @@ agent-skill ecosystem, shell wrappers, or host paths. It:
 
 1. builds a wheel from this checkout;
 2. installs it into an isolated virtual environment;
-3. runs ``woof init --tracker local`` in a throwaway consumer worktree;
-4. confirms the scaffolded ``.woof/`` config is shaped for the local tracker
-   and validates against the bundled schema;
+3. runs ``woof init --tracker local`` against a throwaway consumer worktree;
+4. confirms the project config written into the operator home is shaped for the
+   local tracker, validates against the bundled schema, and leaves the consumer
+   checkout untouched;
 5. confirms the Stage 1 Discovery producer nodes build self-contained dispatch
    prompts from the installed package - the building-block playbook menu (every
    technique's name, summary, and resolvable install path) is embedded, those
@@ -200,37 +201,44 @@ def test_release_smoke(tmp_path: Path) -> None:
             env=env,
         )
 
-    # 3. Scaffold a throwaway consumer worktree with the local tracker.
+    # 3. Scaffold a throwaway consumer worktree with the local tracker. The config
+    #    lands in the operator home, never in the consumer checkout (ADR-017).
     consumer = tmp_path / "consumer-repo"
     consumer.mkdir()
-    init = run_woof("init", "--tracker", "local", "--project-root", str(consumer))
+    project_key = "release-smoke"
+    init = run_woof(
+        "init",
+        "--tracker",
+        "local",
+        "--project",
+        project_key,
+        "--project-root",
+        str(consumer),
+    )
     assert init.returncode == 0, init.stdout + init.stderr
     assert "tracker: local" in init.stdout, init.stdout
 
-    # 4. The scaffold is complete and shaped for a no-remote tracker.
-    woof_dir = consumer / ".woof"
-    for name in (
-        "prerequisites.toml",
-        "agents.toml",
-        "quality-gates.toml",
-        "test-markers.toml",
-    ):
-        assert (woof_dir / name).is_file(), f"woof init did not scaffold {name}"
-    gitignore = (consumer / ".gitignore").read_text()
-    assert "# >>> woof" in gitignore, "woof init did not patch .gitignore"
+    # 4. The scaffold is complete, shaped for a no-remote tracker, and leaves no
+    #    trace of the engine in the driven repository.
+    config_path = Path(env["WOOF_HOME"]) / "config" / "projects" / f"{project_key}.toml"
+    assert config_path.is_file(), init.stdout + init.stderr
+    assert not (consumer / ".woof").exists(), "woof init must not write into the driven repo"
+    assert not (consumer / ".gitignore").exists(), "woof init must not patch the driven repo"
 
-    prerequisites = tomllib.loads((woof_dir / "prerequisites.toml").read_text())
-    assert prerequisites["tracker"]["kind"] == "local"
-    assert "repo" not in prerequisites["tracker"], "local tracker must not need a repo"
-    assert "gh" not in prerequisites.get("infra", {}), "local tracker must not require gh"
+    config = tomllib.loads(config_path.read_text())
+    assert config["tracker"]["kind"] == "local"
+    assert "repo" not in config["tracker"], "local tracker must not need a repo"
+    assert "gh" not in config.get("prerequisites", {}).get("infra", {}), (
+        "local tracker must not require gh"
+    )
 
     # 5. The wheel-bundled schema validates the wheel-scaffolded config.
     if shutil.which("ajv") is not None:
         validate = run_woof(
             "validate",
             "--schema",
-            "prerequisites",
-            str(woof_dir / "prerequisites.toml"),
+            "project-config",
+            str(config_path),
         )
         assert validate.returncode == 0, validate.stdout + validate.stderr
 

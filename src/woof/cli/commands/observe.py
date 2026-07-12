@@ -21,7 +21,6 @@ from woof.cli.harness_registry import (
     get_profile,
     resolve_harness_config,
 )
-from woof.cli.policy import load_policy, policy_path
 from woof.graph.dispositions import (
     critique_severity,
     read_markdown_front_matter,
@@ -42,8 +41,13 @@ from woof.graph.transitions import (
     plan_gate_resolved,
 )
 from woof.lib.audit import load_project_audit_config
-from woof.lib.audit_config import AuditConfig
-from woof.paths import find_project_root
+from woof.paths import ProjectKeyError, repo_root_from_git
+from woof.project_config import (
+    AuditConfig,
+    ProjectConfigError,
+    RunProfileSlot,
+    load_project_config,
+)
 
 TOKEN_FIELDS = ("tokens_in", "tokens_out", "cache_read_tokens", "cache_write_tokens")
 COST_FIELDS = (
@@ -82,7 +86,7 @@ class JsonlRecord:
 
 def cmd_observe(args: argparse.Namespace) -> int:
     try:
-        repo_root = find_project_root(Path.cwd())
+        repo_root = repo_root_from_git()
         report = build_observe_report(repo_root, args.epic)
     except (FileNotFoundError, ObserveError) as exc:
         sys.stderr.write(f"woof observe: {exc}\n")
@@ -96,10 +100,14 @@ def cmd_observe(args: argparse.Namespace) -> int:
     return 0
 
 
-def setup_observe_parser(sub: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
+def setup_observe_parser(
+    sub: argparse._SubParsersAction,  # type: ignore[type-arg]
+    project: argparse.ArgumentParser,
+) -> None:
     observe = sub.add_parser(
         "observe",
         help="inspect read-only workflow status, timeline, gate, and audit views",
+        parents=[project],
     )
     observe.add_argument("--epic", type=int, required=True, help="epic id to inspect")
     observe.add_argument(
@@ -456,153 +464,80 @@ def _current_epic_summary(
 
 
 def _dispatch_routes_summary(repo_root: Path) -> dict[str, Any]:
-    path = policy_path(repo_root)
     summary: dict[str, Any] = {
-        "path": _display_path(repo_root, path),
-        "exists": path.is_file(),
+        "path": None,
+        "exists": False,
         "roles": {},
         "timeout_min": None,
         "model_profile": None,
     }
-    if not path.is_file():
-        summary["error"] = f"{_display_path(repo_root, path)} not found"
-        for role_name in ("producer", "reviewer"):
-            summary["roles"][role_name] = {
-                "ok": False,
-                "role": role_name,
-                "errors": ["policy.toml not found"],
-            }
-        return summary
-
-    policy = load_policy(repo_root)
-    if not isinstance(policy, dict):
-        summary["error"] = policy
-        for role_name in ("producer", "reviewer"):
-            summary["roles"][role_name] = {"ok": False, "role": role_name, "errors": [policy]}
-        return summary
-
-    timeout_min = 30
-    timeout_error: str | None = None
-    agents_path = repo_root / ".woof" / "agents.toml"
-    loaded_agents: dict[str, Any] | str = {}
-    if agents_path.is_file():
-        loaded_agents = _load_toml(agents_path)
-    timeout_source = loaded_agents if isinstance(loaded_agents, dict) else {}
     try:
-        timeout_min = int((timeout_source.get("timeouts") or {}).get("default_minutes", 30))
-    except (TypeError, ValueError):
-        timeout_error = "timeouts.default_minutes must be an integer"
+        config = load_project_config()
+    except (ProjectConfigError, ProjectKeyError) as exc:
+        summary["error"] = str(exc)
+        for role_name in ("producer", "reviewer"):
+            summary["roles"][role_name] = {
+                "ok": False,
+                "role": role_name,
+                "errors": [str(exc)],
+            }
+        return summary
+
+    summary["path"] = str(config.source)
+    summary["exists"] = True
+    timeout_min = int(config.dispatch.timeouts.default_minutes)
     summary["timeout_min"] = timeout_min
-    default_profile = policy.get("default_run_profile")
-    summary["model_profile"] = default_profile if isinstance(default_profile, str) else None
-    profiles = policy.get("run_profiles") or {}
-    if not isinstance(default_profile, str) or not isinstance(profiles, dict):
-        summary["error"] = "default_run_profile and run_profiles must be declared"
-        for role_name in ("producer", "reviewer"):
-            summary["roles"][role_name] = {
-                "ok": False,
-                "role": role_name,
-                "errors": ["default_run_profile and run_profiles must be declared"],
-            }
-        return summary
-    selected = profiles.get(default_profile)
-    if not isinstance(selected, dict):
-        summary["error"] = f"default_run_profile {default_profile!r} is not declared"
-        for role_name in ("producer", "reviewer"):
-            summary["roles"][role_name] = {
-                "ok": False,
-                "role": role_name,
-                "errors": [str(summary["error"])],
-            }
-        return summary
+    summary["model_profile"] = config.run_profile.name
     for role_name in ("producer", "reviewer"):
-        route_summary = _dispatch_route_summary(
+        summary["roles"][role_name] = _dispatch_route_summary(
             role_name,
-            selected.get(role_name),
-            default_profile,
+            getattr(config.run_profile, role_name),
+            config.run_profile.name,
             timeout_min,
         )
-        if timeout_error:
-            route_summary["ok"] = False
-            route_summary["errors"].append(timeout_error)
-        summary["roles"][role_name] = route_summary
     return summary
 
 
 def _repo_policy_summary(repo_root: Path) -> dict[str, Any]:
-    path = policy_path(repo_root)
-    summary: dict[str, Any] = {
-        "path": _display_path(repo_root, path),
-        "exists": path.is_file(),
-        "ok": False,
+    try:
+        config = load_project_config()
+    except (ProjectConfigError, ProjectKeyError) as exc:
+        return {"path": None, "exists": False, "ok": False, "error": str(exc)}
+
+    return {
+        "path": str(config.source),
+        "exists": True,
+        "ok": True,
+        "delivery_profile": config.delivery.profile,
+        "base_branch": config.delivery.base_branch,
+        "toolchain_root": config.delivery.toolchain_root,
+        "default_run_profile": config.run_profile.name,
+        "run_profile_exists": True,
+        "cartography_floor": config.cartography.floor,
     }
-    loaded = load_policy(repo_root)
-    if not isinstance(loaded, dict):
-        summary["error"] = loaded
-        return summary
-    delivery = loaded.get("delivery") or {}
-    cartography = loaded.get("cartography") or {}
-    default_run_profile = loaded.get("default_run_profile")
-    run_profiles = loaded.get("run_profiles") or {}
-    summary.update(
-        {
-            "ok": True,
-            "delivery_profile": delivery.get("profile") if isinstance(delivery, dict) else None,
-            "base_branch": delivery.get("base_branch") if isinstance(delivery, dict) else None,
-            "toolchain_root": delivery.get("toolchain_root")
-            if isinstance(delivery, dict)
-            else None,
-            "default_run_profile": default_run_profile,
-            "run_profile_exists": isinstance(run_profiles, dict)
-            and isinstance(default_run_profile, str)
-            and default_run_profile in run_profiles,
-            "cartography_floor": cartography.get("floor")
-            if isinstance(cartography, dict)
-            else None,
-        }
-    )
-    return summary
 
 
 def _dispatch_route_summary(
     role_name: str,
-    slot: object,
+    slot: RunProfileSlot,
     profile_name: str,
     timeout_min: int,
 ) -> dict[str, Any]:
     errors: list[str] = []
-    slot_data: dict[str, Any]
-    if isinstance(slot, dict):
-        slot_data = slot
-    else:
-        slot_data = {}
-        errors.append(f"run_profiles.{profile_name}.{role_name} must be a table")
-
-    harness = slot_data.get("harness")
     profile = None
-    if not isinstance(harness, str) or not harness.strip():
-        errors.append("harness is not declared")
-    else:
-        try:
-            profile = get_profile(harness)
-        except HarnessError as exc:
-            errors.append(str(exc))
+    try:
+        profile = get_profile(slot.harness)
+    except HarnessError as exc:
+        errors.append(str(exc))
 
-    model = slot_data.get("model")
-    if model is not None and (not isinstance(model, str) or not model.strip()):
-        errors.append("model must be a non-empty string when declared")
-
-    effort = slot_data.get("effort")
-    if effort is not None and (not isinstance(effort, str) or not effort.strip()):
-        errors.append("effort must be a non-empty string when declared")
-    resolved_model = model
-    resolved_effort = effort
+    resolved_model = slot.model
+    resolved_effort = slot.effort
     if profile is not None:
         try:
             resolved = resolve_harness_config(
                 profile.name,
-                model=model if isinstance(model, str) else None,
-                effort=effort if isinstance(effort, str) else None,
+                model=slot.model,
+                effort=slot.effort,
             )
             resolved_model = resolved.model
             resolved_effort = resolved.effort
@@ -620,7 +555,7 @@ def _dispatch_route_summary(
         "config_role": role_name,
         "model_profile": profile_name,
         "profile_role": role_name,
-        "adapter": profile.name if profile is not None else harness,
+        "adapter": profile.name if profile is not None else slot.harness,
         "model": resolved_model,
         "effort": resolved_effort,
         "mcp": [],
@@ -838,7 +773,7 @@ def _latest_event_field(events: list[dict[str, Any]], field: str) -> Any:
 
 def _audit_config(repo_root: Path) -> tuple[AuditConfig, str | None]:
     try:
-        return load_project_audit_config(repo_root), None
+        return load_project_audit_config(), None
     except (OSError, tomllib.TOMLDecodeError, ValueError) as exc:
         return AuditConfig(), str(exc)
 

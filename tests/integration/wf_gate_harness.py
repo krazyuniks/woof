@@ -14,8 +14,26 @@ from typing import Any
 import pytest
 import yaml
 
+from tests.support import seed_project_config
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WOOF_BIN = REPO_ROOT / "bin" / "woof"
+
+# Engine runtime state a consumer checkout must never commit. `woof init` no
+# longer patches the driven repo's .gitignore (ADR-017: the engine leaves no
+# trace in the delivery repo), so the acceptance consumer declares it itself.
+WOOF_RUNTIME_IGNORES = [
+    ".woof/.current-epic",
+    ".woof/epics/*/gate.md",
+    ".woof/epics/*/.wf.lock",
+    ".woof/epics/*/.last-sync",
+    ".woof/epics/*/executor_result.json",
+    ".woof/epics/*/check-result.json",
+    ".woof/epics/*/audit/raw/",
+    ".woof/codebase/tags",
+    ".woof/codebase/files.txt",
+    ".woof/codebase/freshness.json",
+]
 
 PRIMARY_STUB = r'''#!/usr/bin/env python3
 from __future__ import annotations
@@ -518,86 +536,42 @@ def configure_consumer(
     assert_ok(run(["git", "init"], cwd=consumer, env=env))
     assert_ok(run(["git", "config", "user.email", "test@example.com"], cwd=consumer, env=env))
     assert_ok(run(["git", "config", "user.name", "Workflow Test"], cwd=consumer, env=env))
-    assert_ok(run([str(WOOF_BIN), "init", "--tracker", "local"], cwd=consumer, env=env))
+    assert_ok(run([str(WOOF_BIN), "init", "--tracker", "local", "--force"], cwd=consumer, env=env))
     gitignore = consumer / ".gitignore"
     gitignore.write_text(
-        gitignore.read_text(encoding="utf-8") + "\n.woof/gate-scenario\n__pycache__/\n*.pyc\n"
-    )
-
-    (consumer / ".woof" / "policy.toml").write_text(
-        """\
-schema_version = 1
-default_run_profile = "acceptance"
-
-[delivery]
-profile = "B"
-repo_root = "."
-toolchain_root = "."
-base_branch = "main"
-
-[profiles.B]
-commit = true
-push = false
-
-[verification]
-command = "python -m py_compile app.py tests/test_app.py"
-timeout_seconds = 30
-
-[run_profiles.acceptance.producer]
-harness = "codex"
-model = "gpt-5.5"
-effort = "xhigh"
-
-[run_profiles.acceptance.reviewer]
-harness = "claude"
-model = "claude-opus-4-7"
-effort = "max"
-
-[checks]
-floor = [
-  "quality-gates",
-  "outcome-markers",
-  "scope",
-  "contract-refs",
-  "plan-crossrefs",
-  "critique-blocker",
-  "commit-transaction",
-  "docs-drift",
-  "review-valve",
-]
-
-[cartography]
-floor = "structural"
-
-[drain]
-merge_after_ready_pr = true
-rerun_after_merge = true
-mark_unit_done_after_publish = true
-commit_backlog_state = true
-stop_when_no_eligible_units = true
-""",
+        "\n".join([*WOOF_RUNTIME_IGNORES, ".woof/gate-scenario", "__pycache__/", "*.pyc", ""]),
         encoding="utf-8",
     )
-    (consumer / ".woof" / "agents.toml").write_text(
-        """\
 
-[timeouts]
-default_minutes = 5
-
-[review_valve]
-every_n_work_units = 5
-end_of_epic = false
-
-[audit]
-enabled = true
-max_bytes = 262144
-redact_patterns = []
-""",
-        encoding="utf-8",
-    )
-    (consumer / ".woof" / "quality-gates.toml").write_text(
-        f"[gates.compile]\ncommand = {json.dumps(quality_gate_command)}\ntimeout_seconds = 30\n",
-        encoding="utf-8",
+    seed_project_config(
+        {
+            "default_run_profile": "acceptance",
+            "verification": {
+                "command": "python -m py_compile app.py tests/test_app.py",
+                "timeout_seconds": 30,
+            },
+            "run_profiles": {
+                "default": None,
+                "acceptance": {
+                    "producer": {"harness": "codex", "model": "gpt-5.5", "effort": "xhigh"},
+                    "reviewer": {
+                        "harness": "claude",
+                        "model": "claude-opus-4-7",
+                        "effort": "max",
+                    },
+                },
+            },
+            "cartography": {"floor": "structural"},
+            "dispatch": {"timeouts": {"default_minutes": 5}},
+            "review_valve": {"every_n_work_units": 5, "end_of_epic": False},
+            "drain": {"merge_after_ready_pr": True},
+            "gates": {
+                "lint": None,
+                "test": None,
+                "compile": {"command": quality_gate_command, "timeout_seconds": 30},
+            },
+            "tracker": {"kind": "local", "repo": None},
+        }
     )
     codebase_dir = consumer / ".woof" / "codebase"
     codebase_dir.mkdir(parents=True, exist_ok=True)

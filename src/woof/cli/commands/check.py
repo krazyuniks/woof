@@ -18,6 +18,8 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
+from woof.paths import repo_root_from_git
+
 
 def _load_plan(plan_path: Path) -> dict:
     from woof.graph.state import Plan
@@ -46,11 +48,10 @@ def _load_critique_fm(epic_dir: Path, work_unit_id: str) -> dict | None:
 def _cartography_context(
     repo_root: Path, plan: dict, work_unit_id: str
 ) -> tuple[str | None, list[str], list[str]]:
-    from woof.cli.policy import cartography_floor, load_policy
     from woof.graph.pathspec import PathspecEvaluationError, filter_paths_matching
+    from woof.project_config import load_project_config
 
-    policy = load_policy(repo_root)
-    floor = cartography_floor(policy) if isinstance(policy, dict) else None
+    floor = load_project_config().cartography.floor
     if floor == "none":
         return floor, [], []
 
@@ -220,19 +221,23 @@ def cmd_check_stage_5(args: argparse.Namespace) -> int:
 
 
 def _find_repo_root() -> Path:
-    """Walk up to the first directory containing a .woof/ directory."""
-    for candidate in [Path.cwd(), *Path.cwd().parents]:
-        if (candidate / ".woof").is_dir():
-            return candidate
-    # Fallback: assume cwd
-    return Path.cwd()
+    """Resolve the delivery checkout from git."""
+    try:
+        return repo_root_from_git()
+    except FileNotFoundError:
+        return Path.cwd()
 
 
-def setup_check_parser(sub: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
+def setup_check_parser(
+    sub: argparse._SubParsersAction,  # type: ignore[type-arg]
+    project: argparse.ArgumentParser,
+) -> None:
     check_p = sub.add_parser("check", help="run stage boundary checks")
     check_sub = check_p.add_subparsers(dest="check_stage", required=True)
 
-    stage5 = check_sub.add_parser("stage-5", help="run Stage-5 checks for a work unit")
+    stage5 = check_sub.add_parser(
+        "stage-5", help="run Stage-5 checks for a work unit", parents=[project]
+    )
     stage5.add_argument("--epic", type=int, help="tracker-assigned epic id")
     stage5.add_argument("--work-unit", dest="work_unit", help="work-unit id (e.g. S1)")
     stage5.add_argument(

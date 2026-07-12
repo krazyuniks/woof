@@ -4,6 +4,8 @@ import json
 import subprocess
 from pathlib import Path
 
+from tests.support import seed_project_config
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WOOF_BIN = REPO_ROOT / "bin" / "woof"
 
@@ -14,58 +16,28 @@ def _write_project(tmp_path: Path, *, with_usage: bool = True) -> Path:
     audit_dir = epic_dir / "audit"
     raw_dir = audit_dir / "raw"
     raw_dir.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q"], cwd=project, check=True)
     (project / ".woof" / ".current-epic").write_text("E5\n")
-    (project / ".woof" / "agents.toml").write_text(
-        """\
-[audit]
-max_bytes = 180
-
-[timeouts]
-default_minutes = 12
-"""
-    )
-    (project / ".woof" / "policy.toml").write_text(
-        """\
-schema_version = 1
-default_run_profile = "default"
-
-[delivery]
-profile = "B"
-repo_root = "."
-toolchain_root = "."
-base_branch = "main"
-
-[profiles.B]
-commit = true
-push = true
-
-[verification]
-command = "just check"
-timeout_seconds = 600
-
-[run_profiles.default.producer]
-harness = "codex"
-model = "gpt-5.5"
-effort = "xhigh"
-
-[run_profiles.default.reviewer]
-harness = "claude"
-model = "claude-opus-4-7"
-effort = "max"
-
-[checks]
-floor = ["quality-gates"]
-
-[cartography]
-floor = "none"
-
-[drain]
-merge_after_ready_pr = true
-rerun_after_merge = true
-mark_unit_done_after_publish = true
-commit_backlog_state = true
-stop_when_no_eligible_units = true
-"""
+    seed_project_config(
+        {
+            "run_profiles": {
+                "default": {
+                    "producer": {"harness": "codex", "model": "gpt-5.5", "effort": "xhigh"},
+                    "reviewer": {
+                        "harness": "claude",
+                        "model": "claude-opus-4-7",
+                        "effort": "max",
+                    },
+                }
+            },
+            "checks": {"floor": ["quality-gates"]},
+            "cartography": {"floor": "none"},
+            "dispatch": {
+                "timeouts": {"default_minutes": 12},
+                "audit": {"max_bytes": 180},
+            },
+            "drain": {"merge_after_ready_pr": True},
+        }
     )
     (epic_dir / "plan.json").write_text(
         json.dumps(

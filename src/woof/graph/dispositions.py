@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 import subprocess
-import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -12,6 +11,7 @@ from typing import Any
 import yaml
 
 from woof.graph.git import git
+from woof.project_config import ProjectConfigError, load_project_config
 
 # ---------------------------------------------------------------------------
 # Blocker-evidence resolution
@@ -48,7 +48,7 @@ def resolve_evidence_reference(
     - observable outcome id (O<n> present in EPIC.md)
     - contract-decision id (CD<n> present in EPIC.md)
     - schema ref (schemas/*.schema.json exists under repo_root)
-    - gate:<name> (explicit prefix; <name> present in .woof/quality-gates.toml)
+    - gate:<name> (explicit prefix; <name> present in the project config's [gates])
     """
     ev = evidence.strip()
     if not ev:
@@ -75,7 +75,7 @@ def resolve_evidence_reference(
     if _has_schema_ref(ev, repo_root):
         return True
 
-    gate_names = _quality_gate_names(repo_root)
+    gate_names = _quality_gate_names()
     return bool(_has_gate_ref(ev, gate_names))
 
 
@@ -141,17 +141,11 @@ def _epic_artefact_ids(epic_dir: Path) -> tuple[set[str], set[str]]:
     return outcome_ids, cd_ids
 
 
-def _quality_gate_names(repo_root: Path) -> set[str]:
-    toml_path = repo_root / ".woof" / "quality-gates.toml"
+def _quality_gate_names() -> set[str]:
     try:
-        with toml_path.open("rb") as fh:
-            data = tomllib.load(fh)
-    except (OSError, tomllib.TOMLDecodeError):
+        return load_project_config().gate_names
+    except ProjectConfigError:
         return set()
-    gates = data.get("gates")
-    if not isinstance(gates, dict):
-        return set()
-    return {str(name) for name in gates}
 
 
 def check_blocker_findings_evidence(

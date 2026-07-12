@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
+from typing import Any
 
+from tests.support import seed_project_config
 from woof.checks import CheckContext
 from woof.checks.runners.check_9_review_valve import (
     _is_end_of_epic,
@@ -31,27 +33,28 @@ def _ctx(repo_root: Path, stories: list[dict], work_unit_id: str = "S2") -> Chec
     )
 
 
-def _write_agents(repo_root: Path, *, every_n: int = 2, end_of_epic: bool = False) -> None:
-    woof_dir = repo_root / ".woof"
-    woof_dir.mkdir(exist_ok=True)
-    woof_dir.joinpath("agents.toml").write_text(
-        "[roles]\n"
-        "\n"
-        "[review_valve]\n"
-        f"every_n_work_units = {every_n}\n"
-        f"end_of_epic = {str(end_of_epic).lower()}\n"
+def _seed_config(
+    *,
+    every_n: int = 2,
+    end_of_epic: bool = False,
+    max_non_generated_changed_lines: int | None = None,
+) -> None:
+    """Declare the review valve, and the review-size guard only when asked for.
+
+    ``max_non_generated_changed_lines`` of None removes ``[checks.review_size]``,
+    which is how a project declares no review-size guard at all.
+    """
+
+    review_size: dict[str, Any] | None = (
+        None
+        if max_non_generated_changed_lines is None
+        else {"max_non_generated_changed_lines": max_non_generated_changed_lines}
     )
-
-
-def _write_policy(repo_root: Path, *, max_non_generated_changed_lines: int) -> None:
-    woof_dir = repo_root / ".woof"
-    woof_dir.mkdir(exist_ok=True)
-    woof_dir.joinpath("policy.toml").write_text(
-        "[checks]\n"
-        'floor = ["review-valve"]\n'
-        "\n"
-        "[checks.review_size]\n"
-        f"max_non_generated_changed_lines = {max_non_generated_changed_lines}\n"
+    seed_project_config(
+        {
+            "review_valve": {"every_n_work_units": every_n, "end_of_epic": end_of_epic},
+            "checks": {"floor": ["review-valve"], "review_size": review_size},
+        }
     )
 
 
@@ -89,7 +92,7 @@ def _stage_file(repo_root: Path, rel_path: str, text: str) -> None:
 
 
 def test_threshold_due_with_minor_findings_fails(tmp_path: Path) -> None:
-    _write_agents(tmp_path, every_n=2, end_of_epic=False)
+    _seed_config(every_n=2, end_of_epic=False)
     ctx = _ctx(tmp_path, [_work_unit("S1", "done"), _work_unit("S2", "in_progress")])
     _write_critique(
         ctx.epic_dir,
@@ -107,8 +110,7 @@ def test_threshold_due_with_minor_findings_fails(tmp_path: Path) -> None:
 
 def test_review_size_guard_counts_only_non_generated_changed_lines(tmp_path: Path) -> None:
     _init_git(tmp_path)
-    _write_agents(tmp_path, every_n=99, end_of_epic=False)
-    _write_policy(tmp_path, max_non_generated_changed_lines=2)
+    _seed_config(every_n=99, end_of_epic=False, max_non_generated_changed_lines=2)
     ctx = _ctx(tmp_path, [_work_unit("S1", "done"), _work_unit("S2", "in_progress")])
     _stage_file(tmp_path, "src/app.py", "one\ntwo\n")
     _stage_file(
@@ -129,8 +131,7 @@ def test_review_size_guard_fails_when_non_generated_changed_lines_exceed_policy(
     tmp_path: Path,
 ) -> None:
     _init_git(tmp_path)
-    _write_agents(tmp_path, every_n=99, end_of_epic=False)
-    _write_policy(tmp_path, max_non_generated_changed_lines=2)
+    _seed_config(every_n=99, end_of_epic=False, max_non_generated_changed_lines=2)
     ctx = _ctx(tmp_path, [_work_unit("S1", "done"), _work_unit("S2", "in_progress")])
     _stage_file(tmp_path, "src/app.py", "one\ntwo\nthree\n")
     _stage_file(
@@ -153,8 +154,7 @@ def test_review_size_guard_fails_when_non_generated_changed_lines_exceed_policy(
 def test_review_size_guard_reports_all_generated_file_classes(tmp_path: Path) -> None:
     _init_git(tmp_path)
     (tmp_path / ".gitattributes").write_text("linguist/*.json linguist-generated=true\n")
-    _write_agents(tmp_path, every_n=99, end_of_epic=False)
-    _write_policy(tmp_path, max_non_generated_changed_lines=1)
+    _seed_config(every_n=99, end_of_epic=False, max_non_generated_changed_lines=1)
     ctx = _ctx(tmp_path, [_work_unit("S1", "done"), _work_unit("S2", "in_progress")])
     _stage_file(tmp_path, "linguist/data.json", '{"generated": true}\n')
     _stage_file(tmp_path, ".woof/codebase/tags", "tag\tfile\tpattern\n")
@@ -178,7 +178,7 @@ def test_review_size_guard_reports_all_generated_file_classes(tmp_path: Path) ->
 
 
 def test_end_of_epic_due_with_minor_findings_fails(tmp_path: Path) -> None:
-    _write_agents(tmp_path, every_n=5, end_of_epic=True)
+    _seed_config(every_n=5, end_of_epic=True)
     ctx = _ctx(tmp_path, [_work_unit("S1", "done"), _work_unit("S2", "in_progress")])
     _write_critique(
         ctx.epic_dir,
@@ -198,7 +198,7 @@ def test_end_of_epic_due_when_only_later_stories_are_abandoned(tmp_path: Path) -
     # the current work unit is still end-of-epic. The valve must fire on its minor
     # findings rather than be suppressed by the abandoned tail. every_n is set
     # high so only the end-of-epic trigger can fire.
-    _write_agents(tmp_path, every_n=5, end_of_epic=True)
+    _seed_config(every_n=5, end_of_epic=True)
     ctx = _ctx(
         tmp_path,
         [
@@ -238,7 +238,7 @@ def test_is_end_of_epic_treats_abandoned_tail_as_terminal() -> None:
 
 
 def test_due_boundary_with_no_minor_findings_passes(tmp_path: Path) -> None:
-    _write_agents(tmp_path, every_n=2, end_of_epic=True)
+    _seed_config(every_n=2, end_of_epic=True)
     ctx = _ctx(tmp_path, [_work_unit("S1", "done"), _work_unit("S2", "in_progress")])
     _write_critique(ctx.epic_dir, "S2", [])
 
@@ -250,7 +250,7 @@ def test_due_boundary_with_no_minor_findings_passes(tmp_path: Path) -> None:
 
 
 def test_already_review_gated_boundary_passes(tmp_path: Path) -> None:
-    _write_agents(tmp_path, every_n=2, end_of_epic=False)
+    _seed_config(every_n=2, end_of_epic=False)
     ctx = _ctx(tmp_path, [_work_unit("S1", "done"), _work_unit("S2", "in_progress")])
     _write_critique(
         ctx.epic_dir,
@@ -275,7 +275,7 @@ def test_already_review_gated_boundary_passes(tmp_path: Path) -> None:
 
 
 def test_retried_boundary_re_arms_valve(tmp_path: Path) -> None:
-    _write_agents(tmp_path, every_n=2, end_of_epic=False)
+    _seed_config(every_n=2, end_of_epic=False)
     ctx = _ctx(tmp_path, [_work_unit("S1", "done"), _work_unit("S2", "in_progress")])
     _write_critique(
         ctx.epic_dir,
@@ -306,7 +306,7 @@ def test_retried_boundary_re_arms_valve(tmp_path: Path) -> None:
 
 
 def test_retried_boundary_keeps_prior_sibling_gated_when_clean(tmp_path: Path) -> None:
-    _write_agents(tmp_path, every_n=2, end_of_epic=False)
+    _seed_config(every_n=2, end_of_epic=False)
     ctx = _ctx(tmp_path, [_work_unit("S1", "done"), _work_unit("S2", "in_progress")])
     # The S2 review gate bundled S1's minor finding. retry_work_unit on S2 reset S2
     # and deleted its critique; the retried run produced a clean S2 critique. The
@@ -338,7 +338,7 @@ def test_retried_boundary_keeps_prior_sibling_gated_when_clean(tmp_path: Path) -
 
 
 def test_retried_boundary_gates_only_fresh_finding(tmp_path: Path) -> None:
-    _write_agents(tmp_path, every_n=2, end_of_epic=False)
+    _seed_config(every_n=2, end_of_epic=False)
     ctx = _ctx(tmp_path, [_work_unit("S1", "done"), _work_unit("S2", "in_progress")])
     # Same setup as above, but the retried S2 critique surfaces a new minor
     # finding. The new gate must carry only that fresh finding, not the S1 finding

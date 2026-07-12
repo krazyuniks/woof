@@ -21,9 +21,9 @@ from typing import cast
 import pytest
 import yaml
 
+from tests.support import seed_project_config
 from woof.cli.commands.wf import _resolve_gate
 from woof.graph import nodes, transitions
-from woof.graph.nodes import DEFAULT_READINESS_ESCALATION_THRESHOLD
 from woof.graph.readiness import (
     ACCEPTANCE_PROSE_CHECK_ID,
     ACCEPTANCE_SIGNAL_CHECK_ID,
@@ -38,6 +38,7 @@ from woof.graph.readiness import (
     has_concrete_signal,
 )
 from woof.graph.state import NodeInput, NodeStatus, NodeType
+from woof.project_config import DEFAULT_READINESS_ESCALATION_THRESHOLD
 from woof.trackers.base import LifecycleSyncResult, Tracker
 
 pytestmark = pytest.mark.host_only
@@ -895,18 +896,13 @@ def _append_gate_opened_event(directory: Path, epic_id: int) -> None:
     )
 
 
-def _write_prereqs(root: Path, escalation_threshold: int | None = None) -> None:
-    woof_dir = root / ".woof"
-    woof_dir.mkdir(parents=True, exist_ok=True)
-    lines = [
-        '[infra]\ngit = "any"\njust = "any"\n',
-        '[commands]\nclaude = "any"\ncodex = "any"\n',
-        '[validators]\najv = "any"\n"ajv-formats" = "any"\n',
-        '[tracker]\nkind = "local"\n',
-    ]
+def _seed_readiness_config(escalation_threshold: int | None = None) -> Path:
+    """Seed the operator-home project config, optionally overriding the threshold."""
+
+    overrides: dict[str, object] = {"tracker": {"kind": "local", "repo": None}}
     if escalation_threshold is not None:
-        lines.append(f"[readiness]\nescalation_threshold = {escalation_threshold}\n")
-    (woof_dir / "prerequisites.toml").write_text("\n".join(lines), encoding="utf-8")
+        overrides["readiness"] = {"escalation_threshold": escalation_threshold}
+    return seed_project_config(overrides)
 
 
 def test_failed_readiness_cycles_counts_gate_opened_events(tmp_path: Path) -> None:
@@ -1056,7 +1052,7 @@ def test_escalated_gate_resolves_through_same_verbs(tmp_path: Path) -> None:
 def test_threshold_from_config(tmp_path: Path) -> None:
     # A custom threshold of 1 escalates after just one prior failed cycle.
     directory = _setup_epic(tmp_path, UNREADY_EPIC)
-    _write_prereqs(tmp_path, escalation_threshold=1)
+    _seed_readiness_config(escalation_threshold=1)
     _append_gate_opened_event(directory, 1)
 
     output = nodes.contract_readiness_node(_readiness_input(tmp_path))
@@ -1067,7 +1063,7 @@ def test_threshold_from_config(tmp_path: Path) -> None:
 
 
 def test_default_threshold_when_config_absent(tmp_path: Path) -> None:
-    # No prerequisites.toml: default threshold applies.
+    # No threshold override in the project config: the default applies.
     directory = _setup_epic(tmp_path, UNREADY_EPIC)
     # With only 1 prior cycle and default=3, expect ordinary gate.
     _append_gate_opened_event(directory, 1)
@@ -1080,10 +1076,10 @@ def test_default_threshold_when_config_absent(tmp_path: Path) -> None:
 
 
 def test_config_threshold_is_valid_toml(tmp_path: Path) -> None:
-    # Smoke-test that a prerequisites.toml with [readiness].escalation_threshold
-    # is valid TOML and the value is read correctly.
-    _write_prereqs(tmp_path, escalation_threshold=5)
-    prereq_path = tmp_path / ".woof" / "prerequisites.toml"
-    with prereq_path.open("rb") as fh:
+    # Smoke-test that a project config carrying [readiness].escalation_threshold
+    # is valid TOML and the value is read back by the node helper.
+    config_path = _seed_readiness_config(escalation_threshold=5)
+    with config_path.open("rb") as fh:
         data = tomllib.load(fh)
     assert data["readiness"]["escalation_threshold"] == 5
+    assert nodes._readiness_escalation_threshold() == 5

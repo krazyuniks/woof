@@ -16,6 +16,7 @@ from typing import Any, Literal
 import pytest
 import yaml
 
+from tests.support import seed_project_config
 from woof.checks import CheckContext
 from woof.checks.registry import REGISTRY, STAGE_5_CHECK_IDS
 
@@ -66,10 +67,9 @@ def _python_command(source: str) -> str:
     return f"{shlex.quote(sys.executable)} -c {shlex.quote(source)}"
 
 
-def _write_quality_gates(repo_root: Path, command: str) -> None:
-    _write(
-        repo_root / ".woof" / "quality-gates.toml",
-        f"[gates.unit]\ncommand = {json.dumps(command)}\ntimeout_seconds = 5\n",
+def _write_quality_gates(command: str) -> None:
+    seed_project_config(
+        {"gates": {"lint": None, "test": None, "unit": {"command": command, "timeout_seconds": 5}}}
     )
 
 
@@ -118,18 +118,8 @@ def _ctx(
     )
 
 
-def _write_marker_config(repo_root: Path) -> None:
-    _write(
-        repo_root / ".woof" / "test-markers.toml",
-        """\
-[languages.python]
-test_paths = ["tests/"]
-marker_regex = '(?<![A-Za-z0-9])O\\d+(?![A-Za-z0-9])'
-docstring_keyword = "outcomes:"
-comment_prefix = "#"
-context_lines = 3
-""",
-    )
+def _write_marker_config() -> None:
+    seed_project_config({"test_markers": {"languages": {"python": {"test_paths": ["tests/"]}}}})
 
 
 def _write_epic(epic_dir: Path, *, outcomes: list[str], cds: list[str]) -> None:
@@ -242,18 +232,18 @@ def _copy_contract_fixture(repo_root: Path) -> Path:
 
 
 def _build_quality_gates_success(repo_root: Path) -> CheckContext:
-    _write_quality_gates(repo_root, _python_command("print('ok')"))
+    _write_quality_gates(_python_command("print('ok')"))
     return _ctx(repo_root)
 
 
 def _build_quality_gates_failure(repo_root: Path) -> CheckContext:
-    _write_quality_gates(repo_root, _python_command("import sys; print('fail'); sys.exit(7)"))
+    _write_quality_gates(_python_command("import sys; print('fail'); sys.exit(7)"))
     return _ctx(repo_root)
 
 
 def _build_outcome_markers_success(repo_root: Path) -> CheckContext:
     _init_repo(repo_root)
-    _write_marker_config(repo_root)
+    _write_marker_config()
     _write(
         repo_root / "tests" / "test_story.py",
         "def test_story_realises_O1():\n    assert True\n",
@@ -264,7 +254,7 @@ def _build_outcome_markers_success(repo_root: Path) -> CheckContext:
 
 def _build_outcome_markers_failure(repo_root: Path) -> CheckContext:
     _init_repo(repo_root)
-    _write_marker_config(repo_root)
+    _write_marker_config()
     _write(
         repo_root / "tests" / "test_story.py",
         "def test_story_mentions_O2_only():\n    assert True\n",
@@ -389,26 +379,29 @@ def _build_transaction_failure(repo_root: Path) -> CheckContext:
     return _ctx(repo_root, plan=plan)
 
 
-def _write_docs_paths(repo_root: Path) -> None:
-    _write(
-        repo_root / ".woof" / "docs-paths.toml",
-        """\
-[[mappings]]
-code_pattern = "src/**/*.py"
-doc_pattern = "docs/**/*.md"
-rationale = "public behaviour changed"
-""",
+def _write_docs_paths() -> None:
+    seed_project_config(
+        {
+            "docs_paths": {
+                "mappings": [
+                    {
+                        "code_pattern": "src/**/*.py",
+                        "doc_pattern": "docs/**/*.md",
+                        "rationale": "public behaviour changed",
+                    }
+                ]
+            }
+        }
     )
 
 
 def _build_docs_drift_success(repo_root: Path) -> CheckContext:
     _init_repo(repo_root)
-    _write_docs_paths(repo_root)
+    _write_docs_paths()
     _write(repo_root / "src" / "package" / "service.py")
     _write(repo_root / "docs" / "package" / "service.md")
     _stage(
         repo_root,
-        ".woof/docs-paths.toml",
         "src/package/service.py",
         "docs/package/service.md",
     )
@@ -417,16 +410,20 @@ def _build_docs_drift_success(repo_root: Path) -> CheckContext:
 
 def _build_docs_drift_failure(repo_root: Path) -> CheckContext:
     _init_repo(repo_root)
-    _write_docs_paths(repo_root)
+    _write_docs_paths()
     _write(repo_root / "src" / "package" / "service.py")
-    _stage(repo_root, ".woof/docs-paths.toml", "src/package/service.py")
+    _stage(repo_root, "src/package/service.py")
     return _ctx(repo_root)
 
 
-def _write_agents(repo_root: Path) -> None:
-    _write(
-        repo_root / ".woof" / "agents.toml",
-        "[review_valve]\nevery_n_work_units = 2\nend_of_epic = false\n",
+def _write_agents() -> None:
+    # The review-size guard stays undeclared: these cases exercise the valve's
+    # own cadence verdict, which the guard's verdict would otherwise replace.
+    seed_project_config(
+        {
+            "review_valve": {"every_n_work_units": 2, "end_of_epic": False},
+            "checks": {"review_size": None},
+        }
     )
 
 
@@ -438,7 +435,7 @@ def _review_valve_plan() -> dict[str, Any]:
 
 
 def _build_review_valve_success(repo_root: Path) -> CheckContext:
-    _write_agents(repo_root)
+    _write_agents()
     plan = _review_valve_plan()
     ctx = _ctx(repo_root, work_unit_id="S2", plan=plan)
     _write_critique(ctx.epic_dir, "S2", severity="info", findings=[])
@@ -446,7 +443,7 @@ def _build_review_valve_success(repo_root: Path) -> CheckContext:
 
 
 def _build_review_valve_failure(repo_root: Path) -> CheckContext:
-    _write_agents(repo_root)
+    _write_agents()
     plan = _review_valve_plan()
     ctx = _ctx(repo_root, work_unit_id="S2", plan=plan)
     _write_critique(

@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import json
 import re
-import tomllib
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from re import Pattern
 
-from woof.lib.audit_config import AuditConfig, load_audit_config
+from woof.project_config import AuditConfig, load_project_config
 
 SENSITIVE_KEY_RE = re.compile(
     r"(api[_-]?key|auth|bearer|credential|jwt|oauth|password|secret|token)", re.IGNORECASE
@@ -89,21 +88,16 @@ def scan_text_for_secrets(text: str) -> list[SecretHit]:
     return hits
 
 
-def load_project_audit_config(repo_root: Path) -> AuditConfig:
-    """Load the project audit policy, falling back to safe defaults."""
+def load_project_audit_config(project_key: str | None = None) -> AuditConfig:
+    """Return the ``[dispatch.audit]`` section of the project's config."""
 
-    agents_path = repo_root / ".woof" / "agents.toml"
-    if not agents_path.is_file():
-        return AuditConfig()
-    with agents_path.open("rb") as fh:
-        agents = tomllib.load(fh)
-    return load_audit_config(agents)
+    return load_project_config(project_key).dispatch.audit
 
 
 def prepare_commit_audit(repo_root: Path, epic_dir: Path) -> list[AuditFileSummary]:
     """Redact and cap audit files that may be included in a work-unit commit."""
 
-    config = load_project_audit_config(repo_root)
+    config = load_project_audit_config()
     audit_dir = epic_dir / "audit"
     if not config.enabled or not audit_dir.is_dir():
         return []

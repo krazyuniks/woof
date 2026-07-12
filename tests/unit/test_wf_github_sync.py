@@ -8,6 +8,8 @@ from pathlib import Path
 
 import yaml
 
+from tests.support import seed_project_config
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WOOF_BIN = REPO_ROOT / "bin" / "woof"
 
@@ -15,9 +17,8 @@ WOOF_BIN = REPO_ROOT / "bin" / "woof"
 def _project(tmp_path: Path) -> Path:
     project = tmp_path / "project"
     (project / ".woof").mkdir(parents=True)
-    (project / ".woof" / "prerequisites.toml").write_text(
-        '[tracker]\nkind = "github"\nrepo = "acme/widgets"\n'
-    )
+    subprocess.run(["git", "init", "-q"], cwd=project, check=True)
+    seed_project_config({"tracker": {"kind": "github", "repo": "acme/widgets"}})
     return project
 
 
@@ -34,10 +35,10 @@ def _run(
 
 
 def _stub_env(bin_dir: Path) -> dict[str, str]:
-    return {
-        "PATH": f"{bin_dir}:{os.environ['PATH']}",
-        "HOME": os.environ.get("HOME", "/tmp"),
-    }
+    """Put the stub ``gh`` first on PATH, keeping WOOF_HOME/WOOF_PROJECT inherited."""
+    env = os.environ.copy()
+    env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    return env
 
 
 def _make_gh_stub(

@@ -42,7 +42,7 @@ REGISTRY: dict[str, Check] = {
         id="check_1_quality_gates",
         stage=5,
         cost="expensive",
-        summary="Run each command in .woof/quality-gates.toml; each must exit 0",
+        summary="Run each command declared in the project config [gates]; each must exit 0",
         runner=check_1_quality_gates_runner,
     ),
     "check_2_outcome_markers": Check(
@@ -91,7 +91,7 @@ REGISTRY: dict[str, Check] = {
         id="check_8_docs_drift",
         stage=5,
         cost="cheap",
-        summary="Per .woof/docs-paths.toml mappings; no-op when file absent",
+        summary="Per the project config [docs_paths] mappings; no-op when the section is absent",
         runner=check_8_docs_drift_runner,
     ),
     "check_9_review_valve": Check(

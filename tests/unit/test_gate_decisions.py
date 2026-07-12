@@ -17,6 +17,7 @@ from typing import cast, get_args
 import pytest
 
 from woof.cli.commands.wf import _apply_gate_resolution_effects, _resolve_gate, setup_wf_parser
+from woof.cli.main import project_parser
 from woof.graph.decisions import (
     GATE_DECISIONS,
     all_decisions,
@@ -60,7 +61,7 @@ _SURVIVING_SETS = {
 def _resolve_action() -> argparse.Action:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="cmd")
-    setup_wf_parser(sub)
+    setup_wf_parser(sub, project_parser())
     wf = sub.choices["wf"]
     (action,) = [a for a in wf._actions if a.dest == "resolve"]
     return action
@@ -146,7 +147,7 @@ def test_split_story_rejected_everywhere() -> None:
 def test_split_story_is_rejected_by_argparse() -> None:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="cmd")
-    setup_wf_parser(sub)
+    setup_wf_parser(sub, project_parser())
     with pytest.raises(SystemExit):
         parser.parse_args(["wf", "--resolve", "split_story"])
 

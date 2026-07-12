@@ -11,9 +11,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol, Self
 
-from woof.cli.policy import load_policy
 from woof.gate.write import iso_utc, write_gate
 from woof.graph.git import git, git_env, head_sha
+from woof.project_config import load_project_config
 
 MergeAction = Literal[
     "merged",
@@ -304,65 +304,28 @@ class DefaultGithubMergeOps:
         return _check_run_states_from_json(proc.stdout, check_names)
 
 
-def profile_a_merge_policy_from_repo(repo_root: Path) -> ProfileAMergePolicy | None:
-    """Build Profile A merge settings from repo-local policy."""
+def profile_a_merge_policy() -> ProfileAMergePolicy | None:
+    """Build Profile A merge settings from the project's config."""
 
-    policy = load_policy(repo_root)
-    if not isinstance(policy, dict):
+    config = load_project_config()
+    if config.delivery.profile != "A":
         return None
-    delivery = policy.get("delivery")
-    profiles = policy.get("profiles")
-    if not isinstance(delivery, dict) or delivery.get("profile") != "A":
-        return None
-    profile_a = profiles.get("A") if isinstance(profiles, dict) else None
-    if not isinstance(profile_a, dict):
+    profile_a = config.profile_a
+    if profile_a is None:
         return None
 
-    github_repo = _required_string(profile_a, "profiles.A.github_repo")
-    ready_label = _required_string(profile_a, "profiles.A.ready_label")
-    base_branch = _required_string(delivery, "delivery.base_branch")
-    terminal_deploy_checks = tuple(
-        item.strip()
-        for item in profile_a.get("terminal_deploy_checks", [])
-        if isinstance(item, str) and item.strip()
-    )
     return ProfileAMergePolicy(
-        github_repo=github_repo,
-        ready_label=ready_label,
-        base_branch=base_branch,
-        terminal_deploy_checks=terminal_deploy_checks,
-        mergeability_settle_timeout_s=_positive_int(
-            profile_a, "mergeability_settle_timeout", default=15
+        github_repo=profile_a.github_repo.strip(),
+        ready_label=profile_a.ready_label.strip(),
+        base_branch=config.delivery.base_branch.strip(),
+        terminal_deploy_checks=tuple(
+            item.strip() for item in profile_a.terminal_deploy_checks if item.strip()
         ),
-        deploy_wait_timeout_s=_positive_int(profile_a, "deploy_wait_timeout", default=300),
-        merge_attempts=_positive_int(
-            profile_a, "merge_attempts", default=_MERGE_MATCH_HEAD_ATTEMPTS
-        ),
-        merge_interval_s=_positive_float(
-            profile_a, "merge_interval_s", default=_MERGE_MATCH_HEAD_INTERVAL_S
-        ),
+        mergeability_settle_timeout_s=profile_a.mergeability_settle_timeout or 15,
+        deploy_wait_timeout_s=profile_a.deploy_wait_timeout or 300,
+        merge_attempts=profile_a.merge_attempts or _MERGE_MATCH_HEAD_ATTEMPTS,
+        merge_interval_s=profile_a.merge_interval_s or _MERGE_MATCH_HEAD_INTERVAL_S,
     )
-
-
-def _required_string(table: dict[str, Any], dotted_key: str) -> str:
-    value = table.get(dotted_key.rsplit(".", 1)[-1])
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"{dotted_key} must be declared")
-    return value.strip()
-
-
-def _positive_int(table: dict[str, Any], key: str, *, default: int) -> int:
-    value = table.get(key, default)
-    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
-        raise ValueError(f"profiles.A.{key} must be a positive integer")
-    return value
-
-
-def _positive_float(table: dict[str, Any], key: str, *, default: float) -> float:
-    value = table.get(key, default)
-    if not isinstance(value, int | float) or isinstance(value, bool) or value <= 0:
-        raise ValueError(f"profiles.A.{key} must be a positive number")
-    return float(value)
 
 
 def _check_run_states_from_json(
@@ -522,7 +485,7 @@ class SerialMergeCoordinator:
         remote: str = "origin",
         sleep: Callable[[float], None] = time.sleep,
     ) -> Self:
-        policy = profile_a_merge_policy_from_repo(repo_root)
+        policy = profile_a_merge_policy()
         if policy is None:
             raise ValueError("Profile A merge coordinator requires delivery.profile=A policy")
         return cls(

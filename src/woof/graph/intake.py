@@ -13,6 +13,7 @@ from typing import Any
 import yaml
 
 from woof.graph.state import Plan, WorkUnitSetContext
+from woof.project_config import ProjectConfigError, load_project_config
 
 
 @dataclass(frozen=True)
@@ -63,7 +64,6 @@ def ingest_predecomposed_work_units(
     project_ref: str | None = None,
     set_id: str | None = None,
     source_ref: str | None = None,
-    worktree_policy: dict[str, Any] | None = None,
 ) -> IntakeResult:
     source_path = source_path.resolve()
     payload = _load_source_payload(source_path)
@@ -111,7 +111,7 @@ def ingest_predecomposed_work_units(
             {"context": context, "work_unit_id": unit.id} for unit in plan.work_units
         ],
     }
-    worktrees = _worktree_metadata(payload, plan, worktree_policy)
+    worktrees = _worktree_metadata(payload, plan)
     if worktrees is not None:
         metadata["worktrees"] = worktrees
     metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
@@ -215,26 +215,18 @@ def _load_mapping(path: Path) -> dict[str, str]:
 def _worktree_metadata(
     source_payload: dict[str, Any],
     plan: Plan,
-    policy: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
-    if not isinstance(policy, dict):
+    try:
+        config = load_project_config()
+    except ProjectConfigError:
         return None
-    delivery = policy.get("delivery")
-    profiles = policy.get("profiles")
-    if not isinstance(delivery, dict) or delivery.get("profile") != "A":
+    if config.delivery.profile != "A" or config.profile_a is None:
         return None
-    if not isinstance(profiles, dict):
+    worktree = config.profile_a.worktree
+    if worktree is None or not worktree.root:
         return None
-    profile_a = profiles.get("A")
-    if not isinstance(profile_a, dict):
-        return None
-    worktree = profile_a.get("worktree")
-    if not isinstance(worktree, dict):
-        return None
-    root = _string(worktree.get("root"))
-    if not root:
-        return None
-    derivation = _string(worktree.get("derivation")) or "unit_id"
+    root = worktree.root
+    derivation = worktree.derivation
     unit_ids = [unit.id for unit in plan.work_units]
     if derivation == "manifest_map":
         unit_paths = _source_worktree_paths(source_payload)

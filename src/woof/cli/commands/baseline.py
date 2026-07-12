@@ -1,8 +1,8 @@
 """woof baseline capture - explicit operator recapture of the quality-gates baseline.
 
-Runs every gate declared in .woof/quality-gates.toml, records their pass/fail state
-and command identity, and writes a fresh .woof/quality-gates-baseline.json with
-wall-clock freshness metadata.
+Runs every gate declared in the project config's [gates.*] sections, records
+their pass/fail state and command identity, and writes a fresh
+.woof/quality-gates-baseline.json with wall-clock freshness metadata.
 
 Recapture is NEVER implicit: this command is the ONLY path that writes the baseline.
 Any other mechanism that suppressed failures without explicit operator intent would be
@@ -15,14 +15,16 @@ import argparse
 import sys
 from pathlib import Path
 
+from woof.paths import repo_root_from_git
+
 DEFAULT_EXPIRY_DAYS = 30
 
 
 def _find_repo_root() -> Path:
-    for candidate in [Path.cwd(), *Path.cwd().parents]:
-        if (candidate / ".woof").is_dir():
-            return candidate
-    return Path.cwd()
+    try:
+        return repo_root_from_git()
+    except FileNotFoundError:
+        return Path.cwd()
 
 
 def cmd_baseline_capture(args: argparse.Namespace) -> int:
@@ -45,7 +47,10 @@ def cmd_baseline_capture(args: argparse.Namespace) -> int:
     return 0
 
 
-def setup_baseline_parser(sub: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
+def setup_baseline_parser(
+    sub: argparse._SubParsersAction,  # type: ignore[type-arg]
+    project: argparse.ArgumentParser,
+) -> None:
     baseline = sub.add_parser(
         "baseline",
         help="manage the quality-gates baseline record",
@@ -58,10 +63,11 @@ def setup_baseline_parser(sub: argparse._SubParsersAction) -> None:  # type: ign
             "run all quality gates and write a fresh baseline record; "
             "this is the ONLY path that recaptures the baseline"
         ),
+        parents=[project],
     )
     capture.add_argument(
         "--project-root",
-        help="woof project root; defaults to the nearest ancestor containing .woof/",
+        help="delivery checkout root; defaults to the git top level of the working directory",
     )
     capture.add_argument(
         "--expiry-days",

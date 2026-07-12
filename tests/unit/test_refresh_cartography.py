@@ -12,7 +12,11 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from woof.paths import project_config_path
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+PROJECT_KEY = "demo-project"
 
 LANGUAGES = ("python", "go", "typescript", "rust")
 FRAGMENT_MARKERS = {
@@ -78,8 +82,18 @@ def _script(path: Path) -> Path:
     return path / "scripts" / "refresh-cartography"
 
 
-def _init(tmp_path: Path, run_woof, *languages: str):
-    args = ["init", "--project-root", str(tmp_path), "--tracker", "local"]
+def _init(tmp_path: Path, run_woof, *languages: str, force: bool = False):
+    args = [
+        "init",
+        "--project",
+        PROJECT_KEY,
+        "--project-root",
+        str(tmp_path),
+        "--tracker",
+        "local",
+    ]
+    if force:
+        args.append("--force")
     for language in languages:
         args += ["--language", language]
     return run_woof(*args, env=_env())
@@ -100,8 +114,8 @@ def test_init_composes_executable_script_with_each_fragment(tmp_path: Path, run_
     for language in LANGUAGES:
         assert FRAGMENT_MARKERS[language] in body, language
 
-    prereq = (tmp_path / ".woof" / "prerequisites.toml").read_text()
-    assert 'languages = ["python", "go", "typescript", "rust"]' in prereq
+    config = project_config_path(PROJECT_KEY).read_text()
+    assert 'languages = ["python", "go", "typescript", "rust"]' in config
 
 
 def test_init_script_composition_is_idempotent(tmp_path: Path, run_woof) -> None:
@@ -109,7 +123,7 @@ def test_init_script_composition_is_idempotent(tmp_path: Path, run_woof) -> None
     assert _init(tmp_path, run_woof, "python").returncode == 0
     first = _script(tmp_path).read_text()
 
-    second = _init(tmp_path, run_woof, "python")
+    second = _init(tmp_path, run_woof, "python", force=True)
 
     assert second.returncode == 0, second.stderr + second.stdout
     assert _script(tmp_path).read_text() == first, "re-compose must be byte-identical"
@@ -121,7 +135,7 @@ def test_init_recomposes_when_language_set_changes(tmp_path: Path, run_woof) -> 
     assert _init(tmp_path, run_woof, "python").returncode == 0
     assert FRAGMENT_MARKERS["go"] not in _script(tmp_path).read_text()
 
-    changed = _init(tmp_path, run_woof, "python", "go")
+    changed = _init(tmp_path, run_woof, "python", "go", force=True)
 
     assert changed.returncode == 0, changed.stderr + changed.stdout
     body = _script(tmp_path).read_text()
@@ -130,23 +144,10 @@ def test_init_recomposes_when_language_set_changes(tmp_path: Path, run_woof) -> 
     assert "updated  scripts/refresh-cartography" in changed.stdout
 
 
-def test_init_composes_from_prerequisites_fallback(tmp_path: Path, run_woof) -> None:
-    _init_git_repo(tmp_path)
-    # First run records languages into [cartography].languages.
-    assert _init(tmp_path, run_woof, "python").returncode == 0
-
-    # Re-run with no --language: composition falls back to the existing file.
-    fallback = run_woof("init", "--project-root", str(tmp_path), "--tracker", "local", env=_env())
-
-    assert fallback.returncode == 0, fallback.stderr + fallback.stdout
-    assert FRAGMENT_MARKERS["python"] in _script(tmp_path).read_text()
-    assert "from existing" in fallback.stdout
-
-
 def test_init_skips_script_when_no_languages_declared(tmp_path: Path, run_woof) -> None:
     _init_git_repo(tmp_path)
 
-    proc = run_woof("init", "--project-root", str(tmp_path), "--tracker", "local", env=_env())
+    proc = _init(tmp_path, run_woof)
 
     assert proc.returncode == 0, proc.stderr + proc.stdout
     assert not _script(tmp_path).exists()
@@ -161,6 +162,7 @@ def test_init_rejects_unknown_cartography_language(tmp_path: Path, run_woof) -> 
     assert proc.returncode == 2
     assert "unknown cartography language" in proc.stderr
     assert not _script(tmp_path).exists()
+    assert not project_config_path(PROJECT_KEY).exists()
 
 
 def test_composed_script_emits_schema_valid_freshness(tmp_path: Path, run_woof) -> None:

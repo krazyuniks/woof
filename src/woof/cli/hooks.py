@@ -52,11 +52,16 @@ def cmd_hooks(args: argparse.Namespace) -> int:
     return 2
 
 
-def setup_hooks_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
+def setup_hooks_parser(
+    subparsers: argparse._SubParsersAction,  # type: ignore[type-arg]
+    project: argparse.ArgumentParser,
+) -> None:
     hooks = subparsers.add_parser("hooks", help="manage Woof-managed git hooks")
     hooks_sub = hooks.add_subparsers(dest="hooks_command", required=True)
 
-    install = hooks_sub.add_parser("install", help="install Woof-managed git hooks")
+    install = hooks_sub.add_parser(
+        "install", help="install Woof-managed git hooks", parents=[project]
+    )
     install.add_argument(
         "--project-root",
         help="git project root to install into; defaults to the current directory",

@@ -4,6 +4,7 @@ import json
 import subprocess
 from pathlib import Path
 
+from tests.support import seed_project_config
 from woof.lib.audit import prepare_commit_audit, scan_text_for_secrets
 from woof.lib.audit_bundle import NonPortableTranscriptError, bundle_claude_transcripts
 
@@ -14,12 +15,15 @@ WOOF_BIN = REPO_ROOT / "bin" / "woof"
 def test_prepare_commit_audit_redacts_known_and_custom_secrets(tmp_path: Path) -> None:
     woof_dir = tmp_path / ".woof"
     woof_dir.mkdir()
-    (woof_dir / "agents.toml").write_text(
-        """\
-[audit]
-max_bytes = 4096
-redact_patterns = ["PROJECT_SECRET_[A-Z]+"]
-"""
+    seed_project_config(
+        {
+            "dispatch": {
+                "audit": {
+                    "max_bytes": 4096,
+                    "redact_patterns": ["PROJECT_SECRET_[A-Z]+"],
+                }
+            }
+        }
     )
     (tmp_path / "env.local.sh").write_text(
         "export INTERNAL_API_TOKEN='env-token-value'\nPUBLIC_VALUE=left-visible\n"
@@ -64,12 +68,7 @@ redact_patterns = ["PROJECT_SECRET_[A-Z]+"]
 def test_prepare_commit_audit_caps_large_files_and_preserves_raw(tmp_path: Path) -> None:
     woof_dir = tmp_path / ".woof"
     woof_dir.mkdir()
-    (woof_dir / "agents.toml").write_text(
-        """\
-[audit]
-max_bytes = 180
-"""
-    )
+    seed_project_config({"dispatch": {"audit": {"max_bytes": 180}}})
     epic_dir = woof_dir / "epics" / "E2"
     audit_dir = epic_dir / "audit"
     audit_dir.mkdir(parents=True)
@@ -91,13 +90,7 @@ max_bytes = 180
 def test_prepare_commit_audit_honours_disabled_policy(tmp_path: Path) -> None:
     woof_dir = tmp_path / ".woof"
     woof_dir.mkdir()
-    (woof_dir / "agents.toml").write_text(
-        """\
-[audit]
-enabled = false
-max_bytes = 10
-"""
-    )
+    seed_project_config({"dispatch": {"audit": {"enabled": False, "max_bytes": 10}}})
     epic_dir = woof_dir / "epics" / "E3"
     audit_dir = epic_dir / "audit"
     audit_dir.mkdir(parents=True)
@@ -207,6 +200,7 @@ def test_audit_bundle_cli_copies_transcripts_without_absolute_output(
     repo = tmp_path / "project"
     epic_dir = repo / ".woof" / "epics" / "E10"
     epic_dir.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
     project_slug = "-tmp-project"
     session_id = "00000000-0000-0000-0000-000000000010"
     reference = f"~/.claude/projects/{project_slug}/{session_id}.jsonl"

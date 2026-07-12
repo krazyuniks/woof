@@ -6,12 +6,14 @@ import json
 import os
 import socket
 import subprocess
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
 import yaml
 
+from tests.support import seed_project_config
 from woof.cli.commands.wf import _resolve_gate
 from woof.graph import nodes, transitions
 from woof.graph.git import git_env
@@ -93,6 +95,33 @@ def _work_unit(
     }
 
 
+_CONFIG_OVERRIDES: dict[str, Any] = {}
+
+
+@pytest.fixture(autouse=True)
+def _reset_config_overrides() -> Iterator[None]:
+    """Each test starts from the default project config."""
+
+    _CONFIG_OVERRIDES.clear()
+    yield
+    _CONFIG_OVERRIDES.clear()
+
+
+def _merge_overrides(target: dict[str, Any], source: dict[str, Any]) -> None:
+    for key, value in source.items():
+        if isinstance(value, dict) and isinstance(target.get(key), dict):
+            _merge_overrides(target[key], value)
+        else:
+            target[key] = value
+
+
+def _seed_config(overrides: dict[str, Any]) -> None:
+    """Seed the project config, accumulating so successive helpers compose."""
+
+    _merge_overrides(_CONFIG_OVERRIDES, overrides)
+    seed_project_config(_CONFIG_OVERRIDES)
+
+
 def _write_plan_units(root: Path, epic_id: int, work_units: list[dict[str, Any]]) -> Path:
     directory = root / ".woof" / "epics" / f"E{epic_id}"
     directory.mkdir(parents=True)
@@ -104,11 +133,7 @@ def _write_plan_units(root: Path, epic_id: int, work_units: list[dict[str, Any]]
 
 
 def _write_tracker_prerequisites(root: Path) -> None:
-    woof_dir = root / ".woof"
-    woof_dir.mkdir(exist_ok=True)
-    (woof_dir / "prerequisites.toml").write_text(
-        '[tracker]\nkind = "github"\nrepo = "acme/widgets"\n'
-    )
+    _seed_config({"tracker": {"kind": "github", "repo": "acme/widgets"}})
 
 
 def test_mark_work_unit_state_raises_for_unknown_work_unit(tmp_path: Path) -> None:
@@ -138,27 +163,18 @@ def test_executor_dispatch_uses_portable_prompt_with_stub_adapter(
     directory = _write_plan(tmp_path, 1)
     _write_codebase_docs(tmp_path)
     (tmp_path / ".woof" / ".current-epic").write_text("E1")
-    (tmp_path / ".woof" / "agents.toml").write_text(
-        """\
-[timeouts]
-default_minutes = 15
-"""
-    )
-    (tmp_path / ".woof" / "policy.toml").write_text(
-        """\
-schema_version = 1
-default_run_profile = "test"
-
-[run_profiles.test.producer]
-harness = "claude"
-model = "sonnet"
-effort = "high"
-
-[run_profiles.test.reviewer]
-harness = "claude"
-model = "sonnet"
-effort = "high"
-"""
+    _seed_config(
+        {
+            "default_run_profile": "test",
+            "dispatch": {"timeouts": {"default_minutes": 15}},
+            "run_profiles": {
+                "default": None,
+                "test": {
+                    "producer": {"harness": "claude", "model": "sonnet", "effort": "high"},
+                    "reviewer": {"harness": "claude", "model": "sonnet", "effort": "high"},
+                },
+            },
+        }
     )
     (directory / "EPIC.md").write_text(
         "---\nepic_id: 1\n"
@@ -340,6 +356,8 @@ def _make_gh_rate_limit_stub(bin_dir: Path) -> dict[str, str]:
     return {
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
         "HOME": os.environ.get("HOME", "/tmp"),
+        "WOOF_HOME": os.environ["WOOF_HOME"],
+        "WOOF_PROJECT": os.environ["WOOF_PROJECT"],
     }
 
 
@@ -402,6 +420,12 @@ def _git(root: Path, *args: str, **kwargs: Any) -> subprocess.CompletedProcess[A
     return subprocess.run(["git", *args], cwd=root, env=git_env(), **kwargs)
 
 
+def _init_git_checkout(root: Path) -> None:
+    """Make ``root`` a git checkout: the CLI resolves the delivery root from git."""
+
+    _git(root, "init", check=True, capture_output=True)
+
+
 def _init_git_repo(root: Path) -> None:
     _git(root, "init", check=True, capture_output=True)
     _git(root, "config", "user.email", "test@example.com", check=True)
@@ -412,88 +436,32 @@ def _init_git_repo(root: Path) -> None:
 
 
 def _write_profile_b_policy(root: Path, *, base_branch: str, push: bool = True) -> None:
-    woof_dir = root / ".woof"
-    woof_dir.mkdir(parents=True, exist_ok=True)
-    (woof_dir / "policy.toml").write_text(
-        f"""\
-[delivery]
-profile = "B"
-repo_root = "."
-toolchain_root = "."
-base_branch = "{base_branch}"
-
-[profiles.B]
-commit = true
-push = {str(push).lower()}
-
-[run_profiles.default.producer]
-harness = "codex"
-model = "gpt-5.5"
-effort = "high"
-
-[run_profiles.default.reviewer]
-harness = "claude"
-model = "claude-opus-4-7"
-effort = "high"
-
-[checks]
-floor = []
-
-[cartography]
-floor = "none"
-
-[drain]
-merge_after_ready_pr = true
-rerun_after_merge = true
-mark_unit_done_after_publish = true
-commit_backlog_state = true
-stop_when_no_eligible_units = true
-"""
+    _seed_config(
+        {
+            "delivery": {"profile": "B", "base_branch": base_branch},
+            "profiles": {"B": {"commit": True, "push": push}},
+            "cartography": {"floor": "none"},
+            "drain": {"merge_after_ready_pr": True},
+        }
     )
 
 
 def _write_profile_a_policy(root: Path, *, base_branch: str, ready_label: str = "ready") -> None:
-    woof_dir = root / ".woof"
-    woof_dir.mkdir(parents=True, exist_ok=True)
-    (woof_dir / "policy.toml").write_text(
-        f"""\
-[delivery]
-profile = "A"
-repo_root = "."
-toolchain_root = "."
-base_branch = "{base_branch}"
-
-[profiles.A]
-github_repo = "example/project"
-ready_label = "{ready_label}"
-merge_path_groups = []
-
-[profiles.A.worktree]
-root = "worktrees"
-
-[run_profiles.default.producer]
-harness = "codex"
-model = "gpt-5.5"
-effort = "high"
-
-[run_profiles.default.reviewer]
-harness = "claude"
-model = "claude-opus-4-7"
-effort = "high"
-
-[checks]
-floor = []
-
-[cartography]
-floor = "none"
-
-[drain]
-merge_after_ready_pr = true
-rerun_after_merge = true
-mark_unit_done_after_publish = true
-commit_backlog_state = true
-stop_when_no_eligible_units = true
-"""
+    _seed_config(
+        {
+            "delivery": {"profile": "A", "base_branch": base_branch},
+            "profiles": {
+                "B": None,
+                "A": {
+                    "github_repo": "example/project",
+                    "ready_label": ready_label,
+                    "merge_path_groups": [],
+                    "worktree": {"root": "worktrees"},
+                },
+            },
+            "cartography": {"floor": "none"},
+            "drain": {"merge_after_ready_pr": True},
+        }
     )
 
 
@@ -516,11 +484,7 @@ def _write_codebase_docs(root: Path) -> None:
 
 
 def _write_fix_round_budget(root: Path, max_rounds: int) -> None:
-    woof_dir = root / ".woof"
-    woof_dir.mkdir(exist_ok=True)
-    agents = woof_dir / "agents.toml"
-    existing = agents.read_text(encoding="utf-8") if agents.exists() else ""
-    agents.write_text(existing + f"\n[fix_rounds]\nmax_rounds_per_blocker = {max_rounds}\n")
+    _seed_config({"fix_rounds": {"max_rounds_per_blocker": max_rounds}})
 
 
 def _read_gate_fm(gate_path: Path) -> dict:
@@ -740,6 +704,8 @@ def _make_gh_completion_stub(bin_dir: Path) -> dict[str, str]:
     return {
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
         "HOME": os.environ.get("HOME", "/tmp"),
+        "WOOF_HOME": os.environ["WOOF_HOME"],
+        "WOOF_PROJECT": os.environ["WOOF_PROJECT"],
     }
 
 
@@ -1166,46 +1132,7 @@ def test_profile_a_worktree_preflight_failure_blocks_dispatch_without_mutation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _write_plan_units(tmp_path, 27, [_work_unit("S1")])
-    (tmp_path / ".woof" / "policy.toml").write_text(
-        """\
-[delivery]
-profile = "A"
-repo_root = "."
-toolchain_root = "."
-base_branch = "main"
-
-[run_profiles.default.producer]
-harness = "claude"
-model = "sonnet"
-effort = "high"
-
-[run_profiles.default.reviewer]
-harness = "claude"
-model = "sonnet"
-effort = "high"
-
-[profiles.A]
-github_repo = "example/project"
-ready_label = "ready"
-merge_path_groups = []
-
-[profiles.A.worktree]
-root = "worktrees"
-
-[checks]
-floor = []
-
-[cartography]
-floor = "none"
-
-[drain]
-merge_after_ready_pr = true
-rerun_after_merge = true
-mark_unit_done_after_publish = true
-commit_backlog_state = true
-stop_when_no_eligible_units = true
-"""
-    )
+    _write_profile_a_policy(tmp_path, base_branch="main")
     dispatched = False
 
     def executor(inp: NodeInput) -> NodeOutput:
@@ -1236,6 +1163,7 @@ stop_when_no_eligible_units = true
 
 
 def test_wf_reports_live_workflow_lock(tmp_path: Path) -> None:
+    _init_git_checkout(tmp_path)
     _write_tracker_prerequisites(tmp_path)
     directory = _write_plan(tmp_path, 23)
     _write_last_sync(directory, 23)
@@ -2498,28 +2426,24 @@ def test_verification_stages_changed_work_unit_paths_before_stage5_checks(tmp_pa
         "tests/__pycache__/\n"
         "*.pyc\n"
     )
-    (woof_dir / "quality-gates.toml").write_text(
-        "[gates.compile]\n"
-        'command = "PYTHONDONTWRITEBYTECODE=1 python -m py_compile src/app.py tests/test_app.py"\n'
-        "timeout_seconds = 30\n"
+    _seed_config(
+        {
+            "cartography": {"floor": "none"},
+            "gates": {
+                "lint": None,
+                "test": None,
+                "compile": {
+                    "command": (
+                        "PYTHONDONTWRITEBYTECODE=1 python -m py_compile "
+                        "src/app.py tests/test_app.py"
+                    ),
+                    "timeout_seconds": 30,
+                },
+            },
+            "test_markers": {"languages": {"python": {"test_paths": ["tests/"]}}},
+        }
     )
-    (woof_dir / "test-markers.toml").write_text(
-        "[languages.python]\n"
-        'test_paths = ["tests/"]\n'
-        r"marker_regex = '(?<![A-Za-z0-9])O\d+(?![A-Za-z0-9])'" + "\n"
-        'docstring_keyword = "outcomes:"\n'
-        'comment_prefix = "#"\n'
-        "context_lines = 3\n"
-    )
-    _git(
-        tmp_path,
-        "add",
-        "--",
-        ".gitignore",
-        ".woof/quality-gates.toml",
-        ".woof/test-markers.toml",
-        check=True,
-    )
+    _git(tmp_path, "add", "--", ".gitignore", check=True)
     _git(tmp_path, "commit", "-m", "test: initialise consumer config", check=True)
 
     directory = _write_plan(tmp_path, 1)
@@ -2854,9 +2778,9 @@ def test_missing_executor_result_with_blocker_critique_resumes_fix_round(tmp_pat
 
 
 def test_fix_round_budget_defaults_to_two_and_can_be_disabled(tmp_path: Path) -> None:
-    assert nodes._fix_round_budget(tmp_path) == 2
+    assert nodes._fix_round_budget() == 2
     _write_fix_round_budget(tmp_path, 0)
-    assert nodes._fix_round_budget(tmp_path) == 0
+    assert nodes._fix_round_budget() == 0
 
 
 def test_reviewer_blocker_without_evidence_opens_incomplete_gate(tmp_path: Path) -> None:
@@ -3628,12 +3552,7 @@ def test_commit_uses_executor_commit_subject(tmp_path: Path) -> None:
 def test_commit_redacts_audit_before_staging_transaction(tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     directory = _write_ready_commit_state(tmp_path, 1)
-    (tmp_path / ".woof" / "agents.toml").write_text(
-        """\
-[audit]
-max_bytes = 4096
-"""
-    )
+    _seed_config({"dispatch": {"audit": {"max_bytes": 4096}}})
     audit_file = directory / "audit" / "cod-critiquer-1.prompt"
     audit_file.write_text("call API with Bearer live-oauth-token\n")
 
@@ -3921,10 +3840,8 @@ def test_empty_diff_executor_result_opens_review_gate(tmp_path: Path) -> None:
 
 
 def test_wf_epic_reports_complete_epic_as_json(tmp_path: Path) -> None:
-    (tmp_path / ".woof").mkdir(exist_ok=True)
-    (tmp_path / ".woof" / "prerequisites.toml").write_text(
-        '[tracker]\nkind = "github"\nrepo = "acme/widgets"\n'
-    )
+    _init_git_checkout(tmp_path)
+    _seed_config({"tracker": {"kind": "github", "repo": "acme/widgets"}})
     directory = _write_plan(tmp_path, 7)
     plan = json.loads((directory / "plan.json").read_text())
     plan["work_units"][0]["state"] = "done"
@@ -3956,6 +3873,7 @@ def test_wf_epic_reports_complete_epic_as_json(tmp_path: Path) -> None:
 
 
 def test_wf_opens_gate_for_recoverable_missing_plan_state(tmp_path: Path) -> None:
+    _init_git_checkout(tmp_path)
     _write_tracker_prerequisites(tmp_path)
     directory = tmp_path / ".woof" / "epics" / "E10"
     directory.mkdir(parents=True)
@@ -3976,6 +3894,7 @@ def test_wf_opens_gate_for_recoverable_missing_plan_state(tmp_path: Path) -> Non
 
 
 def test_wf_epic_halts_when_gate_is_open(tmp_path: Path) -> None:
+    _init_git_checkout(tmp_path)
     _write_tracker_prerequisites(tmp_path)
     directory = _write_plan(tmp_path, 8)
     _write_last_sync(directory, 8)
@@ -3989,7 +3908,9 @@ def test_wf_epic_halts_when_gate_is_open(tmp_path: Path) -> None:
 
 
 def test_wf_gate_case_reports_stable_json_contract(tmp_path: Path) -> None:
+    _seed_config({"cartography": {"floor": "none"}})
     _write_fix_round_budget(tmp_path, 0)
+    _init_git_checkout(tmp_path)
     _write_tracker_prerequisites(tmp_path)
     directory = _write_plan(tmp_path, 11)
     mark_work_unit_state(tmp_path, 11, "S1", "in_progress")
@@ -4073,6 +3994,7 @@ def test_wf_gate_case_reports_stable_json_contract(tmp_path: Path) -> None:
 
 
 def test_wf_resolve_records_gate_decision_and_removes_gate(tmp_path: Path) -> None:
+    _init_git_checkout(tmp_path)
     _write_tracker_prerequisites(tmp_path)
     directory = _write_plan(tmp_path, 9)
     _write_last_sync(directory, 9)
@@ -4093,8 +4015,8 @@ def test_wf_resolve_records_gate_decision_and_removes_gate(tmp_path: Path) -> No
 
 
 def test_wf_resolve_reviewer_blocker_approval_requeues_critique(tmp_path: Path) -> None:
-    (tmp_path / ".woof").mkdir(parents=True, exist_ok=True)
-    (tmp_path / ".woof" / "prerequisites.toml").write_text('[tracker]\nkind = "local"\n')
+    _init_git_checkout(tmp_path)
+    _seed_config({"tracker": {"kind": "local", "repo": None}})
     directory = _write_plan(tmp_path, 33)
     mark_work_unit_state(tmp_path, 33, "S1", "in_progress")
     (directory / "executor_result.json").write_text(
@@ -4171,8 +4093,7 @@ def test_wf_resolve_commit_transaction_gate_preserves_ok_check_result(
     tmp_path: Path,
 ) -> None:
     _init_git_repo(tmp_path)
-    (tmp_path / ".woof").mkdir(parents=True, exist_ok=True)
-    (tmp_path / ".woof" / "prerequisites.toml").write_text('[tracker]\nkind = "local"\n')
+    _seed_config({"tracker": {"kind": "local", "repo": None}})
     directory = _write_plan(tmp_path, 34)
     mark_work_unit_state(tmp_path, 34, "S1", "done")
     (directory / "executor_result.json").write_text(
@@ -4237,6 +4158,7 @@ def test_wf_resolve_commit_transaction_gate_preserves_ok_check_result(
 
 
 def test_wf_resolve_revise_plan_reenters_breakdown(tmp_path: Path) -> None:
+    _init_git_checkout(tmp_path)
     _write_tracker_prerequisites(tmp_path)
     directory = _write_spark(tmp_path, 31)
     _write_minimal_epic(directory, 31)
@@ -4305,6 +4227,7 @@ def test_wf_resolve_revise_plan_reenters_breakdown(tmp_path: Path) -> None:
 
 
 def test_wf_resolve_approve_clears_stale_failed_check_result(tmp_path: Path) -> None:
+    _init_git_checkout(tmp_path)
     _write_tracker_prerequisites(tmp_path)
     directory = _write_plan(tmp_path, 32)
     _write_last_sync(directory, 32)
@@ -4370,6 +4293,7 @@ def test_wf_resolve_approve_clears_stale_failed_check_result(tmp_path: Path) -> 
 
 
 def test_wf_resolve_revise_work_unit_scope_clears_stale_failed_check_result(tmp_path: Path) -> None:
+    _init_git_checkout(tmp_path)
     _write_tracker_prerequisites(tmp_path)
     directory = _write_plan(tmp_path, 33)
     _write_last_sync(directory, 33)
@@ -4419,6 +4343,7 @@ def test_wf_resolve_revise_work_unit_scope_clears_stale_failed_check_result(tmp_
 
 
 def test_wf_resolve_abandon_work_unit_skips_to_next_ready_work_unit(tmp_path: Path) -> None:
+    _init_git_checkout(tmp_path)
     _write_tracker_prerequisites(tmp_path)
     directory = _write_plan(tmp_path, 34)
     _write_last_sync(directory, 34)
@@ -4473,6 +4398,7 @@ def test_wf_resolve_abandon_work_unit_skips_to_next_ready_work_unit(tmp_path: Pa
 def test_wf_resolve_retry_work_unit_resets_and_re_dispatches_without_redoing_siblings(
     tmp_path: Path,
 ) -> None:
+    _init_git_checkout(tmp_path)
     _write_tracker_prerequisites(tmp_path)
     directory = _write_plan(tmp_path, 36)
     _write_last_sync(directory, 36)

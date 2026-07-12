@@ -32,7 +32,7 @@ Each call runs the graph from current state: synthesis, then Definition (locks t
 Breakdown (the work-unit plan), and per-work-unit execution (dispatch, critique, disposition, verification,
 commit). Re-run `woof wf --epic N` after each pause to continue.
 
-The graph dispatches producer and reviewer work to model CLIs via the roles in `.woof/agents.toml`.
+The graph dispatches producer and reviewer work to model CLIs via the run profile in the project config.
 Surface progress from the command output; inspect deeper with `woof observe` (see below).
 
 ## Resume after an interruption

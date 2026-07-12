@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.support import DEFAULT_PROJECT_KEY, MINIMAL_PROJECT_CONFIG
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -44,6 +46,25 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     for item in items:
         if "tmux_substrate" in item.keywords:
             item.add_marker(skip)
+
+
+@pytest.fixture(autouse=True)
+def woof_home(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Root every test's engine config and state in a throwaway WOOF_HOME.
+
+    Without this, any code path that resolves the operator home reads or writes
+    the operator's real ``~/.woof``. The default project key is seeded with a
+    working config so CLI tests resolve one; a key that was never written still
+    raises, which is what the missing-config tests assert.
+    """
+
+    home = tmp_path_factory.mktemp("woof-home")
+    monkeypatch.setenv("WOOF_HOME", str(home))
+    monkeypatch.setenv("WOOF_PROJECT", DEFAULT_PROJECT_KEY)
+    projects = home / "config" / "projects"
+    projects.mkdir(parents=True, exist_ok=True)
+    (projects / f"{DEFAULT_PROJECT_KEY}.toml").write_text(MINIMAL_PROJECT_CONFIG, encoding="utf-8")
+    return home
 
 
 @pytest.fixture(autouse=True)

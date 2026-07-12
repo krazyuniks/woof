@@ -18,6 +18,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.support import seed_project_config
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WOOF_BIN = REPO_ROOT / "bin" / "woof"
 
@@ -199,48 +201,7 @@ def test_stage_5_context_carries_declared_cartography_floor(
     (epic_dir / "plan.json").write_text(
         json.dumps({"epic_id": 1, "goal": "test", "work_units": []})
     )
-    (tmp_path / ".woof" / "policy.toml").write_text(
-        """\
-schema_version = 1
-default_run_profile = "default"
-
-[delivery]
-profile = "B"
-repo_root = "."
-toolchain_root = "."
-base_branch = "main"
-
-[profiles.B]
-commit = true
-push = true
-
-[verification]
-command = "just check"
-
-[run_profiles.default.producer]
-harness = "codex"
-model = "gpt-5.5"
-effort = "high"
-
-[run_profiles.default.reviewer]
-harness = "claude"
-model = "claude-opus-4-7"
-effort = "high"
-
-[checks]
-floor = ["quality-gates"]
-
-[cartography]
-floor = "none"
-
-[drain]
-merge_after_ready_pr = true
-rerun_after_merge = true
-mark_unit_done_after_publish = true
-commit_backlog_state = true
-stop_when_no_eligible_units = true
-"""
-    )
+    seed_project_config({"checks": {"floor": ["quality-gates"]}, "cartography": {"floor": "none"}})
     monkeypatch.chdir(tmp_path)
 
     exit_code = cmd_check_stage_5(
@@ -268,9 +229,7 @@ def test_check_stage_5_json_output_conforms_to_schema_O4(tmp_path: Path) -> None
     epic_dir = tmp_path / ".woof" / "epics" / "E999"
     critique_dir = epic_dir / "critique"
     critique_dir.mkdir(parents=True)
-    (tmp_path / ".woof" / "agents.toml").write_text(
-        "[review_valve]\nevery_n_work_units = 5\nend_of_epic = false\n"
-    )
+    seed_project_config({"review_valve": {"every_n_work_units": 5, "end_of_epic": False}})
     plan_path = epic_dir / "plan.json"
     plan_path.write_text(json.dumps({"epic_id": 999, "goal": "test", "work_units": []}))
     (critique_dir / "work-unit-S1.md").write_text(
@@ -278,12 +237,6 @@ def test_check_stage_5_json_output_conforms_to_schema_O4(tmp_path: Path) -> None
         "timestamp: '2026-01-01T00:00:00Z'\nharness: test\n"
         "findings:\n  - id: F1\n    severity: blocker\n    summary: test\n---\n"
     )
-
-    woof_root = tmp_path
-    (woof_root / ".woof").mkdir(exist_ok=True)
-    # Write a minimal .woof/quality-gates.toml so the woof find_repo_root works
-    # woof check stage-5 walks up to find .woof; tmp_path has one
-    # We need plan.json at the right path relative to .woof
 
     proc = subprocess.run(
         [
@@ -352,8 +305,13 @@ def test_check_stage_5_reports_review_valve_not_due_as_info(tmp_path: Path) -> N
     epic_dir = tmp_path / ".woof" / "epics" / "E999"
     critique_dir = epic_dir / "critique"
     critique_dir.mkdir(parents=True)
-    (tmp_path / ".woof" / "agents.toml").write_text(
-        "[review_valve]\nevery_n_work_units = 5\nend_of_epic = false\n"
+    # No review-size guard: this test asserts the valve's own "not due" verdict,
+    # which the guard's verdict would otherwise replace.
+    seed_project_config(
+        {
+            "review_valve": {"every_n_work_units": 5, "end_of_epic": False},
+            "checks": {"review_size": None},
+        }
     )
     plan_path = epic_dir / "plan.json"
     plan_path.write_text(

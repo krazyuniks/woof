@@ -38,7 +38,7 @@ packages = ["src/woof"]
 force-include = { "schemas" = "schemas", "playbooks" = "playbooks", "languages" = "languages", "skills" = "skills" }
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 testpaths = ["tests"]
 addopts = [
     "-ra",

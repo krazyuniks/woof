@@ -283,13 +283,14 @@ work_units:
     kind: build
     state: todo
     priority: medium
-    summary: Add deterministic diff checks over work-unit trace fields, epic contracts, repo policy, and cartography evidence.
+    summary: Add deterministic diff checks over work-unit trace fields, epic contracts, repo policy, and cartography evidence. The specification to generalise is the architecture-report-plus-gate-battery design proven in production on the Freeflo engagement (freeflo.freefloAgent wiki ADR-0025, delivered under epic freeflosg/freeflo.freefloAgent#892) - one measurement source read by both the report rendering and the gates; ordered gate battery (import contracts, AST-statement shrink ratchets, site-identity no-new-sites baselines, net-delta visibility); every gate documents the cheapest-compliant-path answer and lands with a planted-violation bite-proof.
     deps: [schema-unification, cartography-continuity]
     acceptance:
       - Audit findings are machine-readable and cite resolvable evidence.
       - Findings reference work units by qualified reference (aggregate context plus local id) so evidence resolves across aggregates.
       - Contract-trace checks no-op when trace fields are absent.
       - Cartography-dependent checks run only when policy requires the cartography floor.
+      - The audit reads one measurement source shared with any report rendering, per the ADR-0025 pattern.
   - id: eval-instrumentation
     title: Measure the merged execution shape
     kind: build

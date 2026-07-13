@@ -499,6 +499,42 @@ work_units:
       - The test asserts the property it exists to prove - that a stderr-heavy child cannot deadlock the supervisor - without depending on wall-clock timing that host load can perturb.
       - The test passes reliably on a machine under load.
       - No timing threshold is merely widened to make the flake rarer; if the test cannot be made deterministic, it is replaced by one that can, and the reasoning is recorded.
+  - id: herdr-backed-end-to-end-dispatch-tests
+    title: Give the end-to-end dispatch tests a disposable Woof-owned herdr server
+    kind: build
+    state: todo
+    priority: high
+    deps: [herdr-kept-alive-dispatch]
+    summary: "The end-to-end CLI dispatch tests put a stub interactive agent on `PATH` and rely on the dispatch client spawning it. That construction cannot work against a herdr backend at all: the herdr server spawns the worker, and it does not inherit the test process's `PATH`. These tests are inside the long-standing 23-failure set (whose original cause was the PEP-723 `bin/woof` script being unable to import `harness_core`), so the count never grew and nothing was skipped - but the engine's principal dispatch path now has no end-to-end coverage, and the failures no longer mean what the set's name says they mean. A dead test is worse than a missing one, because it reads as covered."
+    acceptance:
+      - A test fixture boots a disposable, Woof-owned herdr server per test on its own explicit socket, with the stub agent on the server's own `PATH`, and tears it down afterwards. The operator's live sessions are never a test target.
+      - The end-to-end dispatch tests pass against that fixture rather than failing at the declared-session guard, and the 23-failure set shrinks by the tests this unblocks.
+      - One live turn is driven end to end through a real herdr worker on the disposable session, proving the lifecycle contract against a real server rather than only against an injected client.
+      - The remaining members of the pre-existing failure set are named individually with their cause, so the set stops being a bucket that hides new failures.
+  - id: dispatch-start-is-serialised-per-worker
+    title: Two dispatches for one work unit cannot both start a worker
+    kind: build
+    state: todo
+    priority: medium
+    deps: [herdr-kept-alive-dispatch]
+    summary: "`run_turn` looks a worker up by name and starts one if it finds none, with nothing held between the lookup and the start. Two concurrent dispatches for the same project, epic, work unit and role can therefore both find no worker and both start one, putting two workers in one working tree - the 2026-07-12 failure reached by a third route. It is pre-existing rather than introduced by the retained-session work (the tmux path reattached by name with no lock either), and the engine serialises dispatch per epic in normal operation, so it is a latent hole rather than a live defect. It stops being latent the moment anything drives two dispatches at once, which an operator retrying a stalled unit will do."
+    acceptance:
+      - Starting a worker for a given project, epic, work unit and role is serialised, so a concurrent second dispatch adopts the first worker or waits, and never starts a second one.
+      - The lock is held across the name lookup and the start, not merely around the start, because the race is between them.
+      - A stale lock left by a killed dispatch does not wedge the unit; it is reclaimable without operator surgery.
+      - A test drives two concurrent dispatches for one unit and asserts exactly one worker is started.
+  - id: dispatch-fault-handler-tells-a-bug-from-a-transport-fault
+    title: Record the audit trail without swallowing programming errors
+    kind: build
+    state: todo
+    priority: medium
+    deps: [herdr-kept-alive-dispatch]
+    summary: "Both the warm-producer and one-shot dispatch paths catch a bare `Exception` so that a transport fault always leaves a durable audit record - the record must never be lost, which is the defect the handler exists to close. But the same handler catches a programming error (an `AttributeError`, a `TypeError` from a bug in the engine) and records it as `exit_type=nonzero`, indistinguishable from a socket that died. The fault text survives in stderr so a bug stays discoverable, but the audit trail cannot tell an engine defect from a transport failure, and the operator reaching for that record when a drain stalls is exactly the reader who needs the difference."
+    acceptance:
+      - A transport fault and an engine bug are recorded as distinguishable outcomes; the audit trail does not label a defect in the engine as a transport failure.
+      - The durable record is still written in both cases - the fix must not reintroduce the lost-record defect it replaces.
+      - An engine bug surfaces rather than being absorbed into a routine failure classification, after its record is written.
+      - Both the warm-producer and one-shot paths are covered, with a test for each of the two classes.
 ---
 
 # Woof Backlog

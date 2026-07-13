@@ -17,8 +17,11 @@ from pathlib import Path
 import pytest
 import yaml
 
+from tests.support import DEFAULT_PROJECT_KEY
+from woof import state
 from woof.gate import write as gate_write
 
+KEY = DEFAULT_PROJECT_KEY
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_DIR = REPO_ROOT / "tests" / "fixtures" / "woof" / "e181_s2"
 
@@ -26,8 +29,8 @@ pytestmark = pytest.mark.host_only
 
 
 def _setup_epic(tmp_path: Path, epic_id: int = 181, work_unit_id: str = "S2") -> tuple[Path, Path]:
-    """Create a minimal epic directory. Returns (tmp_path, epic_dir)."""
-    epic_dir = tmp_path / ".woof" / "epics" / f"E{epic_id}"
+    """Create a minimal epic directory in the operator home. Returns (tmp_path, epic_dir)."""
+    epic_dir = state.epic_dir(KEY, epic_id)
     epic_dir.mkdir(parents=True)
     (epic_dir / "epic.jsonl").touch()
     plan = {
@@ -68,7 +71,8 @@ def test_subprocess_crash_writes_gate_O8(tmp_path: Path) -> None:
 
     gate_write.write_gate_for_trigger(
         trigger="subprocess_crash",
-        epic_dir=epic_dir,
+        project_key=KEY,
+        epic_id=181,
         work_unit_id="S2",
         exit_code=1,
     )
@@ -89,7 +93,8 @@ def test_executor_aborted_writes_gate_O8(tmp_path: Path) -> None:
 
     gate_write.write_gate_for_trigger(
         trigger="executor_aborted",
-        epic_dir=epic_dir,
+        project_key=KEY,
+        epic_id=181,
         work_unit_id="S2",
         position_path=position,
     )
@@ -108,7 +113,8 @@ def test_empty_diff_writes_gate_O8(tmp_path: Path) -> None:
 
     gate_write.write_gate_for_trigger(
         trigger="empty_diff_review",
-        epic_dir=epic_dir,
+        project_key=KEY,
+        epic_id=181,
         work_unit_id="S2",
     )
 
@@ -134,7 +140,7 @@ def test_check_6_failure_writes_gate_not_commit_O1_O7(tmp_path: Path) -> None:
 
     sys.path.insert(0, str(REPO_ROOT))
 
-    _, epic_dir = _setup_epic(tmp_path, 181, "S2")
+    _, _epic_dir = _setup_epic(tmp_path, 181, "S2")
 
     # Simulate the check-result that would be produced when check_6 fires on E181 S2
     check_result = {
@@ -166,7 +172,8 @@ def test_check_6_failure_writes_gate_not_commit_O1_O7(tmp_path: Path) -> None:
     gate_path = write_gate_from_check_result(
         check_result_path=cr_file,
         position_path=pos_file,
-        epic_dir=epic_dir,
+        project_key=KEY,
+        epic_id=181,
         work_unit_id="S2",
         schema_path=None,  # skip ajv validation in unit test
     )

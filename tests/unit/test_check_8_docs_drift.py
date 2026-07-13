@@ -8,7 +8,8 @@ from typing import Any
 
 import pytest
 
-from tests.support import seed_project_config
+from tests.support import DEFAULT_PROJECT_KEY, seed_project_config
+from woof import state
 from woof.checks import CheckContext
 from woof.checks.runners.check_8_docs_drift import check_8_docs_drift_runner
 
@@ -34,8 +35,9 @@ def _ctx(repo_root: Path) -> CheckContext:
     return CheckContext(
         epic_id=7,
         work_unit_id="S1",
+        project_key=DEFAULT_PROJECT_KEY,
         repo_root=repo_root,
-        epic_dir=repo_root / ".woof" / "epics" / "E7",
+        epic_dir=state.epic_dir(DEFAULT_PROJECT_KEY, 7),
         plan={"epic_id": 7, "goal": "docs drift", "work_units": []},
         critique=None,
     )

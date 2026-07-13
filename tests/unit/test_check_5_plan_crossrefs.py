@@ -10,6 +10,8 @@ from typing import Any
 
 import pytest
 
+from tests.support import DEFAULT_PROJECT_KEY
+from woof import state
 from woof.checks import CheckContext
 from woof.checks.runners.check_5_plan_crossrefs import (
     check_5_plan_crossrefs_runner,
@@ -91,12 +93,13 @@ def _write_plan(epic_dir: Path, plan: dict[str, Any]) -> None:
 
 
 def _ctx(tmp_path: Path, plan: dict[str, Any], work_unit_id: str = "S2") -> CheckContext:
-    epic_dir = tmp_path / ".woof" / "epics" / "E42"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 42)
     _write_epic(epic_dir, _epic_front_matter())
     _write_plan(epic_dir, plan)
     return CheckContext(
         epic_id=42,
         work_unit_id=work_unit_id,
+        project_key=DEFAULT_PROJECT_KEY,
         repo_root=tmp_path,
         epic_dir=epic_dir,
         plan=plan,

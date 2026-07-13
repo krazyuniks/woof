@@ -12,6 +12,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from woof import state
 from woof.paths import project_config_path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -59,6 +60,9 @@ def _env_with_universal_ctags(tmp_path: Path) -> dict[str, str]:
     _make_universal_ctags_stub(stub_bin)
     env = os.environ.copy()
     env["PATH"] = str(stub_bin) + os.pathsep + env.get("PATH", "")
+    # Drop the ambient key so the run exercises the key `woof init` baked into
+    # the composed script, which is what a post-commit hook run actually uses.
+    env.pop("WOOF_PROJECT", None)
     return env
 
 
@@ -174,7 +178,7 @@ def test_composed_script_emits_schema_valid_freshness(tmp_path: Path, run_woof) 
         [str(_script(tmp_path))], cwd=tmp_path, env=env, capture_output=True, text=True
     )
 
-    codebase = tmp_path / ".woof" / "codebase"
+    codebase = state.codebase_dir(PROJECT_KEY)
 
     assert run.returncode == 0, run.stderr + run.stdout
     assert (codebase / "files.txt").read_text().strip() != ""
@@ -210,6 +214,7 @@ def _env_without_ctags(tmp_path: Path) -> dict[str, str]:
     path_dirs = env.get("PATH", "").split(os.pathsep)
     no_ctags_dirs = [d for d in path_dirs if not (Path(d) / "ctags").is_file()]
     env["PATH"] = str(shadow) + os.pathsep + os.pathsep.join(no_ctags_dirs)
+    env.pop("WOOF_PROJECT", None)
     return env
 
 
@@ -230,7 +235,7 @@ def test_refresh_exits_nonzero_when_ctags_absent(tmp_path: Path, run_woof) -> No
     assert "ctags not found" in run.stderr
     assert "universal-ctags" in run.stderr
     # freshness.json must NOT be written; an empty tags was never written either.
-    codebase = tmp_path / ".woof" / "codebase"
+    codebase = state.codebase_dir(PROJECT_KEY)
     assert not (codebase / "freshness.json").exists()
     assert not (codebase / "tags").exists()
 

@@ -21,7 +21,8 @@ from typing import cast
 import pytest
 import yaml
 
-from tests.support import seed_project_config
+from tests.support import DEFAULT_PROJECT_KEY, seed_project_config
+from woof import state
 from woof.cli.commands.wf import _resolve_gate
 from woof.graph import nodes, transitions
 from woof.graph.readiness import (
@@ -111,7 +112,7 @@ def _setup_epic(
     tracked_files: dict[str, str] | None = None,
 ) -> Path:
     _git_init(root)
-    directory = root / ".woof" / "epics" / f"E{epic_id}"
+    directory = state.epic_dir(DEFAULT_PROJECT_KEY, epic_id)
     directory.mkdir(parents=True)
     (directory / "EPIC.md").write_text(epic_md)
     (directory / "epic.jsonl").write_text(
@@ -127,6 +128,7 @@ def _readiness_input(root: Path, epic_id: int = 1) -> NodeInput:
     return NodeInput(
         node_type=NodeType.CONTRACT_READINESS,
         epic_id=epic_id,
+        project_key=DEFAULT_PROJECT_KEY,
         repo_root=root,
     )
 
@@ -151,7 +153,7 @@ def _epic_text(front: dict, body: str = "") -> str:
 
 
 def _evaluate(root: Path, front: dict, body: str = "", **kwargs) -> ReadinessResult:
-    epic_path = root / ".woof" / "epics" / "E1" / "EPIC.md"
+    epic_path = state.epic_contract_path(DEFAULT_PROJECT_KEY, 1)
     epic_path.parent.mkdir(parents=True, exist_ok=True)
     epic_path.write_text(_epic_text(front, body), encoding="utf-8")
     return evaluate_readiness(root, 1, epic_path, **kwargs)
@@ -189,7 +191,7 @@ def test_next_node_routes_definition_closed_to_readiness(tmp_path: Path) -> None
     """A closed definition with no readiness_passed yet routes to contract_readiness."""
     _setup_epic(tmp_path, READY_EPIC)
 
-    node, work_unit_id = transitions.next_node(tmp_path, 1)
+    node, work_unit_id = transitions.next_node(DEFAULT_PROJECT_KEY, tmp_path, 1)
 
     assert node == NodeType.CONTRACT_READINESS
     assert work_unit_id is None
@@ -217,7 +219,10 @@ def test_ready_epic_passes_and_advances_to_breakdown(tmp_path: Path) -> None:
     assert not (directory / "gate.md").exists()
 
     # The graph now advances past readiness.
-    assert transitions.next_node(tmp_path, 1) == (NodeType.BREAKDOWN_PLANNING, None)
+    assert transitions.next_node(DEFAULT_PROJECT_KEY, tmp_path, 1) == (
+        NodeType.BREAKDOWN_PLANNING,
+        None,
+    )
 
 
 def test_unready_epic_opens_readiness_gate(tmp_path: Path) -> None:
@@ -247,7 +252,7 @@ def test_unready_epic_opens_readiness_gate(tmp_path: Path) -> None:
     assert not any(e["event"] == "readiness_passed" for e in events)
 
     # An open gate halts the graph for the operator.
-    assert transitions.next_node(tmp_path, 1) == (NodeType.HUMAN_REVIEW, None)
+    assert transitions.next_node(DEFAULT_PROJECT_KEY, tmp_path, 1) == (NodeType.HUMAN_REVIEW, None)
 
 
 def test_readiness_result_conforms_to_schema(tmp_path: Path, run_woof) -> None:
@@ -267,6 +272,7 @@ def test_readiness_node_rejects_work_unit_id(tmp_path: Path) -> None:
                 node_type=NodeType.CONTRACT_READINESS,
                 epic_id=1,
                 work_unit_id="S1",
+                project_key=DEFAULT_PROJECT_KEY,
                 repo_root=tmp_path,
             )
         )
@@ -294,7 +300,7 @@ class _NoopTracker:
             epic_id=epic_id,
             body="",
             updated_at="2026-06-09T10:00:00Z",
-            last_sync_path=Path(f".woof/epics/E{epic_id}/.last-sync"),
+            last_sync_path=state.last_sync_path(DEFAULT_PROJECT_KEY, epic_id),
             changed=True,
             closed=True,
         )
@@ -312,7 +318,7 @@ def _open_readiness_gate(root: Path) -> Path:
 def test_approve_with_reason_advances_unready_epic_to_planning(tmp_path: Path) -> None:
     directory = _open_readiness_gate(tmp_path)
 
-    rc = _resolve_gate(tmp_path, 1, "approve_with_reason", cast(Tracker, _NoopTracker()))
+    rc = _resolve_gate(DEFAULT_PROJECT_KEY, 1, "approve_with_reason", cast(Tracker, _NoopTracker()))
     assert rc == 0
     assert not (directory / "gate.md").exists()
 
@@ -322,22 +328,30 @@ def test_approve_with_reason_advances_unready_epic_to_planning(tmp_path: Path) -
 
     # The unchanged contract is now readiness-satisfied and advances to planning
     # without re-running the readiness node (no re-gate).
-    assert transitions.readiness_satisfied(tmp_path, 1) is True
-    assert transitions.next_node(tmp_path, 1) == (NodeType.BREAKDOWN_PLANNING, None)
+    assert transitions.readiness_satisfied(DEFAULT_PROJECT_KEY, 1) is True
+    assert transitions.next_node(DEFAULT_PROJECT_KEY, tmp_path, 1) == (
+        NodeType.BREAKDOWN_PLANNING,
+        None,
+    )
 
 
 def test_reclosed_contract_rearms_readiness_after_approve_with_reason(tmp_path: Path) -> None:
     _open_readiness_gate(tmp_path)
-    _resolve_gate(tmp_path, 1, "approve_with_reason", cast(Tracker, _NoopTracker()))
-    assert transitions.readiness_satisfied(tmp_path, 1) is True
+    _resolve_gate(DEFAULT_PROJECT_KEY, 1, "approve_with_reason", cast(Tracker, _NoopTracker()))
+    assert transitions.readiness_satisfied(DEFAULT_PROJECT_KEY, 1) is True
 
     # A revised+re-closed contract appends a new definition_closed, which re-arms
     # readiness: the prior approval no longer counts and the graph re-runs the node.
     transitions.append_epic_event(
-        tmp_path, 1, {"event": "definition_closed", "at": "2026-06-09T11:00:00Z", "epic_id": 1}
+        DEFAULT_PROJECT_KEY,
+        1,
+        {"event": "definition_closed", "at": "2026-06-09T11:00:00Z", "epic_id": 1},
     )
-    assert transitions.readiness_satisfied(tmp_path, 1) is False
-    assert transitions.next_node(tmp_path, 1) == (NodeType.CONTRACT_READINESS, None)
+    assert transitions.readiness_satisfied(DEFAULT_PROJECT_KEY, 1) is False
+    assert transitions.next_node(DEFAULT_PROJECT_KEY, tmp_path, 1) == (
+        NodeType.CONTRACT_READINESS,
+        None,
+    )
 
 
 def test_readiness_abandon_epic_closes_tracker_and_is_terminal(tmp_path: Path) -> None:
@@ -347,7 +361,7 @@ def test_readiness_abandon_epic_closes_tracker_and_is_terminal(tmp_path: Path) -
     directory = _open_readiness_gate(tmp_path)
     tracker = _NoopTracker()
 
-    rc = _resolve_gate(tmp_path, 1, "abandon_epic", cast(Tracker, tracker))
+    rc = _resolve_gate(DEFAULT_PROJECT_KEY, 1, "abandon_epic", cast(Tracker, tracker))
     assert rc == 0
     assert not (directory / "gate.md").exists()
 
@@ -363,10 +377,13 @@ def test_readiness_abandon_epic_closes_tracker_and_is_terminal(tmp_path: Path) -
     )
 
     # abandon is not approval: readiness stays unsatisfied.
-    assert transitions.readiness_satisfied(tmp_path, 1) is False
+    assert transitions.readiness_satisfied(DEFAULT_PROJECT_KEY, 1) is False
     # next_node is terminal for the abandoned epic, distinct from EPIC_COMPLETE.
-    assert transitions.epic_abandoned(tmp_path, 1) is True
-    assert transitions.next_node(tmp_path, 1) == (NodeStatus.EPIC_ABANDONED, None)
+    assert transitions.epic_abandoned(DEFAULT_PROJECT_KEY, 1) is True
+    assert transitions.next_node(DEFAULT_PROJECT_KEY, tmp_path, 1) == (
+        NodeStatus.EPIC_ABANDONED,
+        None,
+    )
 
 
 def test_invalid_readiness_verb_resolution_errors_and_keeps_gate(tmp_path: Path) -> None:
@@ -374,7 +391,7 @@ def test_invalid_readiness_verb_resolution_errors_and_keeps_gate(tmp_path: Path)
 
     # `approve` is valid for the plan/story/review gates but not readiness; the
     # structured StageStateError maps to exit code 2 and the gate stays open.
-    rc = _resolve_gate(tmp_path, 1, "approve", cast(Tracker, _NoopTracker()))
+    rc = _resolve_gate(DEFAULT_PROJECT_KEY, 1, "approve", cast(Tracker, _NoopTracker()))
     assert rc == 2
     assert (directory / "gate.md").exists()
     assert not any(e["event"] == "readiness_gate_resolved" for e in _epic_events(directory))
@@ -386,7 +403,9 @@ def test_readiness_revise_epic_contract_archives_and_reenters_definition(tmp_pat
     # deleting plan files (there is no plan yet at Stage 2.5).
     directory = _open_readiness_gate(tmp_path)
 
-    rc = _resolve_gate(tmp_path, 1, "revise_epic_contract", cast(Tracker, _NoopTracker()))
+    rc = _resolve_gate(
+        DEFAULT_PROJECT_KEY, 1, "revise_epic_contract", cast(Tracker, _NoopTracker())
+    )
     assert rc == 0
     assert not (directory / "gate.md").exists()
 
@@ -404,9 +423,12 @@ def test_readiness_revise_epic_contract_archives_and_reenters_definition(tmp_pat
 
     # revise is not approval: readiness stays unsatisfied, and the graph re-enters
     # definition with the revision pending.
-    assert transitions.readiness_satisfied(tmp_path, 1) is False
-    assert transitions.definition_revision_requested(tmp_path, 1) is True
-    assert transitions.next_node(tmp_path, 1) == (NodeType.EPIC_DEFINITION, None)
+    assert transitions.readiness_satisfied(DEFAULT_PROJECT_KEY, 1) is False
+    assert transitions.definition_revision_requested(DEFAULT_PROJECT_KEY, 1) is True
+    assert transitions.next_node(DEFAULT_PROJECT_KEY, tmp_path, 1) == (
+        NodeType.EPIC_DEFINITION,
+        None,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -884,7 +906,7 @@ def test_has_concrete_signal(text: str, expected: bool) -> None:
 def _append_gate_opened_event(directory: Path, epic_id: int) -> None:
     """Simulate a prior failed readiness cycle by appending the gate event."""
     transitions.append_epic_event(
-        directory.parent.parent.parent,
+        DEFAULT_PROJECT_KEY,
         epic_id,
         {
             "event": "readiness_gate_opened",
@@ -907,13 +929,13 @@ def _seed_readiness_config(escalation_threshold: int | None = None) -> Path:
 
 def test_failed_readiness_cycles_counts_gate_opened_events(tmp_path: Path) -> None:
     directory = _setup_epic(tmp_path, UNREADY_EPIC)
-    assert transitions.failed_readiness_cycles(tmp_path, 1) == 0
+    assert transitions.failed_readiness_cycles(DEFAULT_PROJECT_KEY, 1) == 0
 
     _append_gate_opened_event(directory, 1)
-    assert transitions.failed_readiness_cycles(tmp_path, 1) == 1
+    assert transitions.failed_readiness_cycles(DEFAULT_PROJECT_KEY, 1) == 1
 
     _append_gate_opened_event(directory, 1)
-    assert transitions.failed_readiness_cycles(tmp_path, 1) == 2
+    assert transitions.failed_readiness_cycles(DEFAULT_PROJECT_KEY, 1) == 2
 
 
 def test_failed_readiness_cycles_does_not_reset_on_definition_closed(tmp_path: Path) -> None:
@@ -921,26 +943,26 @@ def test_failed_readiness_cycles_does_not_reset_on_definition_closed(tmp_path: P
     directory = _setup_epic(tmp_path, UNREADY_EPIC)
     _append_gate_opened_event(directory, 1)
     _append_gate_opened_event(directory, 1)
-    assert transitions.failed_readiness_cycles(tmp_path, 1) == 2
+    assert transitions.failed_readiness_cycles(DEFAULT_PROJECT_KEY, 1) == 2
 
     transitions.append_epic_event(
-        tmp_path,
+        DEFAULT_PROJECT_KEY,
         1,
         {"event": "definition_closed", "at": "2026-06-09T12:00:00Z", "epic_id": 1},
     )
-    assert transitions.failed_readiness_cycles(tmp_path, 1) == 2
+    assert transitions.failed_readiness_cycles(DEFAULT_PROJECT_KEY, 1) == 2
 
 
 def test_failed_readiness_cycles_resets_after_epic_reset(tmp_path: Path) -> None:
     directory = _setup_epic(tmp_path, UNREADY_EPIC)
     _append_gate_opened_event(directory, 1)
     _append_gate_opened_event(directory, 1)
-    assert transitions.failed_readiness_cycles(tmp_path, 1) == 2
+    assert transitions.failed_readiness_cycles(DEFAULT_PROJECT_KEY, 1) == 2
 
     transitions.append_epic_event(
-        tmp_path, 1, {"event": "epic_reset", "at": "2026-06-09T12:00:00Z", "epic_id": 1}
+        DEFAULT_PROJECT_KEY, 1, {"event": "epic_reset", "at": "2026-06-09T12:00:00Z", "epic_id": 1}
     )
-    assert transitions.failed_readiness_cycles(tmp_path, 1) == 0
+    assert transitions.failed_readiness_cycles(DEFAULT_PROJECT_KEY, 1) == 0
 
 
 def test_escalation_gate_event_not_counted(tmp_path: Path) -> None:
@@ -948,7 +970,7 @@ def test_escalation_gate_event_not_counted(tmp_path: Path) -> None:
     directory = _setup_epic(tmp_path, UNREADY_EPIC)
     _append_gate_opened_event(directory, 1)  # triggered_by: [readiness_unready]
     transitions.append_epic_event(
-        tmp_path,
+        DEFAULT_PROJECT_KEY,
         1,
         {
             "event": "readiness_gate_opened",
@@ -958,7 +980,7 @@ def test_escalation_gate_event_not_counted(tmp_path: Path) -> None:
             "triggered_by": ["readiness_escalation"],
         },
     )
-    assert transitions.failed_readiness_cycles(tmp_path, 1) == 1
+    assert transitions.failed_readiness_cycles(DEFAULT_PROJECT_KEY, 1) == 1
 
 
 def test_escalation_fires_across_revise_cycles(tmp_path: Path) -> None:
@@ -973,12 +995,12 @@ def test_escalation_fires_across_revise_cycles(tmp_path: Path) -> None:
     for _ in range(threshold):
         _append_gate_opened_event(directory, 1)
         transitions.append_epic_event(
-            tmp_path,
+            DEFAULT_PROJECT_KEY,
             1,
             {"event": "definition_closed", "at": "2026-06-09T12:00:00Z", "epic_id": 1},
         )
 
-    assert transitions.failed_readiness_cycles(tmp_path, 1) == threshold
+    assert transitions.failed_readiness_cycles(DEFAULT_PROJECT_KEY, 1) == threshold
 
     output = nodes.contract_readiness_node(_readiness_input(tmp_path))
 
@@ -1041,7 +1063,7 @@ def test_escalated_gate_resolves_through_same_verbs(tmp_path: Path) -> None:
     assert output.triggered_by == ["readiness_escalation"]
     assert (directory / "gate.md").exists()
 
-    rc = _resolve_gate(tmp_path, 1, "approve_with_reason", cast(Tracker, _NoopTracker()))
+    rc = _resolve_gate(DEFAULT_PROJECT_KEY, 1, "approve_with_reason", cast(Tracker, _NoopTracker()))
     assert rc == 0
     assert not (directory / "gate.md").exists()
 

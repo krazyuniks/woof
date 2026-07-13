@@ -15,6 +15,8 @@ import json
 import subprocess
 from pathlib import Path
 
+from tests.support import DEFAULT_PROJECT_KEY
+from woof import state
 from woof.graph.git import git_env, head_branch_drift_detected
 from woof.graph.nodes import commit_node
 from woof.graph.state import NodeInput, NodeOutput, NodeStatus, NodeType
@@ -37,7 +39,7 @@ def _init_repo(root: Path) -> None:
     _git(root, "init", check=True, capture_output=True)
     _git(root, "config", "user.email", "test@example.com", check=True)
     _git(root, "config", "user.name", "Test", check=True)
-    (root / ".gitignore").write_text(".woof/.current-epic\n")
+    (root / ".gitignore").write_text("*.tmp\n")
     _git(root, "add", ".gitignore", check=True, capture_output=True)
     _git(root, "commit", "-m", "chore: init", check=True, capture_output=True)
 
@@ -53,7 +55,7 @@ def _branch_name(root: Path) -> str:
 
 
 def _epic_dir(root: Path, epic_id: int = 1) -> Path:
-    d = root / ".woof" / "epics" / f"E{epic_id}"
+    d = state.epic_dir(DEFAULT_PROJECT_KEY, epic_id)
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -109,6 +111,7 @@ def _append_subprocess_returned(root: Path, epic_id: int = 1, **fields: object) 
 def _node_input(root: Path, epic_id: int = 1, work_unit_id: str = "S1") -> NodeInput:
     return NodeInput(
         node_type=NodeType.COMMIT,
+        project_key=DEFAULT_PROJECT_KEY,
         repo_root=root,
         epic_id=epic_id,
         work_unit_id=work_unit_id,
@@ -324,6 +327,7 @@ def test_prior_story_dispatch_event_does_not_trigger_drift(tmp_path: Path) -> No
     out: NodeOutput = commit_node(
         NodeInput(
             node_type=NodeType.COMMIT,
+            project_key=DEFAULT_PROJECT_KEY,
             repo_root=tmp_path,
             epic_id=1,
             work_unit_id="S2",

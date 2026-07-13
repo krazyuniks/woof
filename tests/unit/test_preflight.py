@@ -18,7 +18,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from tests.support import seed_project_config
+from tests.support import DEFAULT_PROJECT_KEY, seed_project_config
+from woof import state
 from woof.paths import project_state_root, resolve_project_key
 from woof.project_config import ProjectConfig, load_project_config
 
@@ -125,10 +126,15 @@ def _write_cartography(
     principles: str | None = DESIGN_DOC_BODY,
     mechanical: bool = True,
     script: bool = True,
+    key: str | None = None,
 ) -> None:
-    """Author a cartography artefact set under ``root`` for a declared contract."""
+    """Author a cartography artefact set for a declared contract.
 
-    codebase = root / ".woof" / "codebase"
+    The docs and the mechanical layer live in the operator home; only the
+    generator script stays in the driven repo (``root``).
+    """
+
+    codebase = state.codebase_dir(key or DEFAULT_PROJECT_KEY)
     codebase.mkdir(parents=True, exist_ok=True)
     if target is not None:
         (codebase / "TARGET-ARCHITECTURE.md").write_text(target)
@@ -205,10 +211,11 @@ exit 2
 
 
 def _write_current_epic_state(root: Path) -> None:
-    epic_dir = root / ".woof" / "epics" / "E5"
-    audit_dir = epic_dir / "audit"
+    key = DEFAULT_PROJECT_KEY
+    epic_dir = state.epic_dir(key, 5)
+    audit_dir = state.audit_dir(key, 5)
     audit_dir.mkdir(parents=True)
-    (root / ".woof" / ".current-epic").write_text("E5\n")
+    state.atomic_write_text(state.current_epic_path(key), "E5\n")
     (epic_dir / "plan.json").write_text(
         json.dumps(
             {
@@ -272,7 +279,7 @@ Quality failed.
                 "model": "gpt-5.5",
                 "effort": "xhigh",
                 "exit_code": 0,
-                "codex_audit_path": ".woof/epics/E5/audit/codex-primary-run",
+                "codex_audit_path": str(audit_dir / "codex-primary-run"),
             }
         )
         + "\n"
@@ -708,9 +715,9 @@ def test_preflight_reuses_floor_cache_until_forced(tmp_path: Path, run_woof) -> 
     )
 
     assert first.returncode == 0, first.stderr + first.stdout
-    assert (state_root / "preflight-floor").is_file()
-    assert (state_root / "preflight-runtime").is_file()
-    assert not (tmp_path / ".woof" / ".preflight-floor").exists()
+    assert (state_root / "cache" / "preflight-floor").is_file()
+    assert (state_root / "cache" / "preflight-runtime").is_file()
+    assert not (tmp_path / ".woof").exists()
 
     (bin_dir / "pyright").unlink()
     cached = run_woof(
@@ -777,7 +784,7 @@ def test_preflight_rechecks_stale_runtime_cache(tmp_path: Path, run_woof) -> Non
     )
 
     assert first.returncode == 0, first.stderr + first.stdout
-    runtime_cache = project_state_root(resolve_project_key()) / "preflight-runtime"
+    runtime_cache = project_state_root(resolve_project_key()) / "cache" / "preflight-runtime"
     runtime_payload = json.loads(runtime_cache.read_text())
     runtime_payload["verified_at"] = (datetime.now(UTC) - timedelta(minutes=10)).isoformat()
     runtime_cache.write_text(json.dumps(runtime_payload))
@@ -861,8 +868,8 @@ def test_profile_a_worktree_preflight_validates_ready_units(tmp_path: Path) -> N
     from woof.cli.preflight import _check_profile_a_worktrees
 
     _init_repo(tmp_path)
-    (tmp_path / ".woof" / "epics" / "E1").mkdir(parents=True)
-    (tmp_path / ".woof" / "epics" / "E1" / "plan.json").write_text(
+    state.epic_dir(DEFAULT_PROJECT_KEY, 1).mkdir(parents=True)
+    state.plan_path(DEFAULT_PROJECT_KEY, 1).write_text(
         json.dumps(
             {
                 "epic_id": 1,
@@ -895,7 +902,9 @@ def test_profile_a_worktree_preflight_validates_ready_units(tmp_path: Path) -> N
     worktree_root.mkdir()
     _git(tmp_path, "worktree", "add", "-b", "S1", str(worktree_root / "S1"), "main")
 
-    findings = _check_profile_a_worktrees(tmp_path, _seed_config(PROFILE_A_CONFIG))
+    findings = _check_profile_a_worktrees(
+        DEFAULT_PROJECT_KEY, tmp_path, _seed_config(PROFILE_A_CONFIG)
+    )
 
     assert [finding.as_dict() for finding in findings] == [
         {
@@ -912,7 +921,7 @@ def test_profile_a_worktree_preflight_fails_closed_on_anomalies(tmp_path: Path) 
     from woof.cli.preflight import _check_profile_a_worktrees
 
     _init_repo(tmp_path)
-    plan_dir = tmp_path / ".woof" / "work-unit-sets" / "set-a"
+    plan_dir = state.work_unit_set_dir(DEFAULT_PROJECT_KEY, "set-a")
     plan_dir.mkdir(parents=True)
     (plan_dir / "plan.json").write_text(
         json.dumps(
@@ -963,7 +972,7 @@ def test_profile_a_worktree_preflight_fails_closed_on_anomalies(tmp_path: Path) 
         {"profiles": {"A": {"worktree": {"derivation": "manifest_map"}}}},
     )
 
-    findings = _check_profile_a_worktrees(tmp_path, config)
+    findings = _check_profile_a_worktrees(DEFAULT_PROJECT_KEY, tmp_path, config)
 
     assert [finding.id for finding in findings] == [
         "profile_a.worktree.S1",
@@ -983,7 +992,7 @@ def test_profile_a_worktree_preflight_fails_closed_when_worktree_absent(
     from woof.cli.preflight import _check_profile_a_worktrees
 
     _init_repo(tmp_path)
-    plan_dir = tmp_path / ".woof" / "work-unit-sets" / "set-a"
+    plan_dir = state.work_unit_set_dir(DEFAULT_PROJECT_KEY, "set-a")
     plan_dir.mkdir(parents=True)
     (plan_dir / "plan.json").write_text(
         json.dumps(
@@ -1006,7 +1015,9 @@ def test_profile_a_worktree_preflight_fails_closed_when_worktree_absent(
         + "\n"
     )
 
-    findings = _check_profile_a_worktrees(tmp_path, _seed_config(PROFILE_A_CONFIG))
+    findings = _check_profile_a_worktrees(
+        DEFAULT_PROJECT_KEY, tmp_path, _seed_config(PROFILE_A_CONFIG)
+    )
 
     assert [finding.id for finding in findings] == ["profile_a.worktree.S1"]
     assert findings[0].ok is False
@@ -1022,7 +1033,7 @@ def test_profile_a_worktree_preflight_fails_closed_for_foreign_repo_worktree(
     foreign_repo = tmp_path / "foreign"
     foreign_repo.mkdir()
     _init_repo(foreign_repo)
-    plan_dir = tmp_path / ".woof" / "work-unit-sets" / "set-a"
+    plan_dir = state.work_unit_set_dir(DEFAULT_PROJECT_KEY, "set-a")
     plan_dir.mkdir(parents=True)
     (plan_dir / "plan.json").write_text(
         json.dumps(
@@ -1061,7 +1072,7 @@ def test_profile_a_worktree_preflight_fails_closed_for_foreign_repo_worktree(
         {"profiles": {"A": {"worktree": {"derivation": "manifest_map"}}}},
     )
 
-    findings = _check_profile_a_worktrees(tmp_path, config)
+    findings = _check_profile_a_worktrees(DEFAULT_PROJECT_KEY, tmp_path, config)
 
     assert [finding.id for finding in findings] == ["profile_a.worktree.S1"]
     assert findings[0].ok is False
@@ -1074,7 +1085,7 @@ def test_profile_a_worktree_preflight_fails_closed_for_dirty_linked_worktree(
     from woof.cli.preflight import _check_profile_a_worktrees
 
     _init_repo(tmp_path)
-    plan_dir = tmp_path / ".woof" / "work-unit-sets" / "set-a"
+    plan_dir = state.work_unit_set_dir(DEFAULT_PROJECT_KEY, "set-a")
     plan_dir.mkdir(parents=True)
     (plan_dir / "plan.json").write_text(
         json.dumps(
@@ -1102,7 +1113,9 @@ def test_profile_a_worktree_preflight_fails_closed_for_dirty_linked_worktree(
     _git(tmp_path, "worktree", "add", "-b", "S1", str(worktree_path), "main")
     (worktree_path / "untracked.txt").write_text("dirty\n")
 
-    findings = _check_profile_a_worktrees(tmp_path, _seed_config(PROFILE_A_CONFIG))
+    findings = _check_profile_a_worktrees(
+        DEFAULT_PROJECT_KEY, tmp_path, _seed_config(PROFILE_A_CONFIG)
+    )
 
     assert [finding.id for finding in findings] == ["profile_a.worktree.S1"]
     assert findings[0].ok is False
@@ -1451,7 +1464,7 @@ def test_preflight_fails_for_missing_mechanical_layer(tmp_path: Path, run_woof) 
 def _write_freshness(root: Path, payload: dict | str) -> None:
     """Overwrite the mechanical freshness.json with a chosen stamp (or raw text)."""
 
-    path = root / ".woof" / "codebase" / "freshness.json"
+    path = state.codebase_dir(DEFAULT_PROJECT_KEY) / "freshness.json"
     path.write_text(payload if isinstance(payload, str) else json.dumps(payload) + "\n")
 
 
@@ -1554,7 +1567,7 @@ def test_preflight_warns_for_malformed_cartography_freshness(tmp_path: Path, run
 def test_preflight_flags_secret_in_committed_cartography_doc(tmp_path: Path, run_woof) -> None:
     _seed()
     _write_cartography(tmp_path)
-    leaked = tmp_path / ".woof" / "codebase" / "CONCERNS.md"
+    leaked = state.codebase_dir(DEFAULT_PROJECT_KEY) / "CONCERNS.md"
     leaked.write_text(
         "# Concerns\n\nThe staging deploy hardcodes aws = AKIA1234567890ABCDEF in the script.\n"
     )
@@ -1608,20 +1621,22 @@ def test_preflight_json_reports_operator_state_for_current_epic(
 
     assert proc.returncode == 0, proc.stderr + proc.stdout
     payload = json.loads(proc.stdout)
-    state = payload["operator_state"]
-    assert state["current_epic"]["epic_id"] == 5
-    assert state["runtime_policy"]["mode"] == "trusted-local"
-    assert state["dispatch_routes"]["roles"]["producer"]["adapter"] == "codex"
-    assert state["epic"]["next"] == {
+    operator_state = payload["operator_state"]
+    assert operator_state["current_epic"]["epic_id"] == 5
+    assert operator_state["runtime_policy"]["mode"] == "trusted-local"
+    assert operator_state["dispatch_routes"]["roles"]["producer"]["adapter"] == "codex"
+    assert operator_state["epic"]["next"] == {
         "node": "human_review",
         "work_unit_id": None,
         "reason": "gate_open",
     }
-    assert state["epic"]["next_action"]["command"] == "woof wf --epic 5 --resolve <decision>"
-    assert state["epic"]["gate"]["cause"] == "check_1_quality_gates"
-    assert state["epic"]["checks"]["failed_checks"][0]["summary"] == "quality gate failed"
-    assert state["epic"]["audit_pointers"]["latest_codex_audit_path"] == (
-        ".woof/epics/E5/audit/codex-primary-run"
+    assert (
+        operator_state["epic"]["next_action"]["command"] == "woof wf --epic 5 --resolve <decision>"
+    )
+    assert operator_state["epic"]["gate"]["cause"] == "check_1_quality_gates"
+    assert operator_state["epic"]["checks"]["failed_checks"][0]["summary"] == "quality gate failed"
+    assert operator_state["epic"]["audit_pointers"]["latest_codex_audit_path"] == str(
+        state.audit_dir(DEFAULT_PROJECT_KEY, 5) / "codex-primary-run"
     )
 
 
@@ -1651,7 +1666,10 @@ def test_preflight_text_reports_operator_state_for_current_epic(
     assert "next_action: resolve_gate command=woof wf --epic 5 --resolve <decision>" in proc.stdout
     assert "gate: open type=work_unit_gate work_unit=S1 cause=check_1_quality_gates" in proc.stdout
     assert "checks: FAIL total=1 failed=1 triggered_by=check_1_quality_gates" in proc.stdout
-    assert "audit_pointers: epic_jsonl=.woof/epics/E5/epic.jsonl" in proc.stdout
+    assert (
+        f"audit_pointers: epic_jsonl={state.epic_events_path(DEFAULT_PROJECT_KEY, 5)}"
+        in proc.stdout
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -11,6 +11,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from tests.support import DEFAULT_PROJECT_KEY
+from woof import state
+
 if TYPE_CHECKING:
     from woof.checks import CheckContext
 
@@ -26,6 +29,7 @@ def _make_ctx(epic_dir: Path, work_unit_id: str = "S2") -> CheckContext:
     return CheckContext(
         epic_id=181,
         work_unit_id=work_unit_id,
+        project_key=DEFAULT_PROJECT_KEY,
         repo_root=REPO_ROOT,
         epic_dir=epic_dir,
         plan={},
@@ -55,7 +59,7 @@ def _write_disposition(epic_dir: Path, work_unit_id: str, *, severity: str = "in
         f"""---
 target: work_unit
 target_id: {work_unit_id}
-critique_path: .woof/epics/E181/critique/work-unit-{work_unit_id}.md
+critique_path: critique/work-unit-{work_unit_id}.md
 severity: {severity}
 timestamp: "2026-04-27T05:47:00Z"
 harness: test-primary
@@ -120,7 +124,7 @@ def test_blocker_critique_fails_O7(tmp_path: Path) -> None:
 
     from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
 
-    epic_dir = tmp_path / ".woof" / "epics" / "E181"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 181)
     _write_critique(epic_dir / "critique", "S2", _BLOCKER_CRITIQUE)
     ctx = _make_ctx(epic_dir, "S2")
 
@@ -142,9 +146,9 @@ def test_e181_s2_fixture_is_blocker_O7(tmp_path: Path) -> None:
 
     from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
 
-    epic_dir = tmp_path / ".woof" / "epics" / "E181"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 181)
     critique_dir = epic_dir / "critique"
-    critique_dir.mkdir(parents=True)
+    critique_dir.mkdir(parents=True, exist_ok=True)
     import shutil
 
     shutil.copy(FIXTURE_DIR / "critique" / "work-unit-2.md", critique_dir / "work-unit-2.md")
@@ -165,7 +169,7 @@ def test_minor_critique_passes(tmp_path: Path) -> None:
 
     from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
 
-    epic_dir = tmp_path / ".woof" / "epics" / "E181"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 181)
     _write_critique(epic_dir / "critique", "S2", _MINOR_CRITIQUE)
     _write_disposition(epic_dir, "S2", severity="minor")
     ctx = _make_ctx(epic_dir, "S2")
@@ -184,7 +188,7 @@ def test_info_critique_passes(tmp_path: Path) -> None:
 
     from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
 
-    epic_dir = tmp_path / ".woof" / "epics" / "E181"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 181)
     _write_critique(epic_dir / "critique", "S1", _INFO_CRITIQUE)
     _write_disposition(epic_dir, "S1", severity="info")
     ctx = _make_ctx(epic_dir, "S1")
@@ -202,7 +206,7 @@ def test_non_blocking_critique_requires_primary_disposition(tmp_path: Path) -> N
 
     from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
 
-    epic_dir = tmp_path / ".woof" / "epics" / "E181"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 181)
     _write_critique(epic_dir / "critique", "S2", _MINOR_CRITIQUE)
     ctx = _make_ctx(epic_dir, "S2")
 
@@ -221,8 +225,8 @@ def test_missing_critique_file_fails(tmp_path: Path) -> None:
 
     from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
 
-    epic_dir = tmp_path / ".woof" / "epics" / "E181"
-    epic_dir.mkdir(parents=True)
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 181)
+    epic_dir.mkdir(parents=True, exist_ok=True)
     ctx = _make_ctx(epic_dir, "S2")
 
     outcome = check_6_critique_blocker_runner(ctx)
@@ -244,6 +248,7 @@ def _make_ctx_with_plan(
     return CheckContext(
         epic_id=1,
         work_unit_id=work_unit_id,
+        project_key=DEFAULT_PROJECT_KEY,
         repo_root=REPO_ROOT,
         epic_dir=epic_dir,
         plan=plan or {"epic_id": 1, "goal": "test", "work_units": [{"id": work_unit_id}]},
@@ -283,7 +288,7 @@ def test_blocker_without_evidence_fails_O4(tmp_path: Path) -> None:
     sys.path.insert(0, str(REPO_ROOT))
     from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
 
-    epic_dir = tmp_path / ".woof" / "epics" / "E1"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 1)
     critique = (
         "---\ntarget: work_unit\ntarget_id: S1\nseverity: blocker\n"
         'timestamp: "2026-01-01T00:00:00Z"\nharness: test\n'
@@ -308,7 +313,7 @@ def test_blocker_with_unresolvable_evidence_fails_O4(tmp_path: Path) -> None:
     sys.path.insert(0, str(REPO_ROOT))
     from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
 
-    epic_dir = tmp_path / ".woof" / "epics" / "E1"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 1)
     _write_critique(
         epic_dir / "critique",
         "S1",
@@ -331,7 +336,7 @@ def test_blocker_with_file_line_evidence_passes_O4(tmp_path: Path) -> None:
     sys.path.insert(0, str(REPO_ROOT))
     from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
 
-    epic_dir = tmp_path / ".woof" / "epics" / "E1"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 1)
     _write_critique(
         epic_dir / "critique",
         "S1",
@@ -353,7 +358,7 @@ def test_blocker_with_work_unit_id_evidence_passes_O4(tmp_path: Path) -> None:
     sys.path.insert(0, str(REPO_ROOT))
     from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
 
-    epic_dir = tmp_path / ".woof" / "epics" / "E1"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 1)
     _write_critique(
         epic_dir / "critique",
         "S1",
@@ -375,7 +380,7 @@ def test_blocker_with_outcome_id_evidence_passes_O4(tmp_path: Path) -> None:
     sys.path.insert(0, str(REPO_ROOT))
     from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
 
-    epic_dir = tmp_path / ".woof" / "epics" / "E1"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 1)
     _write_epic_md(epic_dir, outcomes=["O1"], cds=["CD1"])
     _write_critique(
         epic_dir / "critique",
@@ -398,7 +403,7 @@ def test_blocker_with_cd_id_evidence_passes_O4(tmp_path: Path) -> None:
     sys.path.insert(0, str(REPO_ROOT))
     from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
 
-    epic_dir = tmp_path / ".woof" / "epics" / "E1"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 1)
     _write_epic_md(epic_dir, outcomes=["O1"], cds=["CD1"])
     _write_critique(
         epic_dir / "critique",
@@ -421,7 +426,7 @@ def test_blocker_with_schema_ref_evidence_passes_O4(tmp_path: Path) -> None:
     sys.path.insert(0, str(REPO_ROOT))
     from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
 
-    epic_dir = tmp_path / ".woof" / "epics" / "E1"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 1)
     _write_critique(
         epic_dir / "critique",
         "S1",
@@ -443,7 +448,7 @@ def test_blocker_with_quality_gate_id_evidence_passes_O4(tmp_path: Path) -> None
     sys.path.insert(0, str(REPO_ROOT))
     from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
 
-    epic_dir = tmp_path / ".woof" / "epics" / "E1"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 1)
     _write_critique(
         epic_dir / "critique",
         "S1",
@@ -465,7 +470,7 @@ def test_non_blocking_findings_unaffected_by_evidence_rule_O4(tmp_path: Path) ->
     sys.path.insert(0, str(REPO_ROOT))
     from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
 
-    epic_dir = tmp_path / ".woof" / "epics" / "E181"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 181)
     _write_critique(epic_dir / "critique", "S2", _MINOR_CRITIQUE)
     _write_disposition(epic_dir, "S2", severity="minor")
     ctx = _make_ctx(epic_dir, "S2")
@@ -488,7 +493,7 @@ def test_blocker_with_extensionless_file_line_evidence_passes_R1(tmp_path: Path)
     sys.path.insert(0, str(REPO_ROOT))
     from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
 
-    epic_dir = tmp_path / ".woof" / "epics" / "E1"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 1)
     _write_critique(
         epic_dir / "critique",
         "S1",
@@ -510,7 +515,7 @@ def test_blocker_with_dotfile_line_evidence_passes_R1(tmp_path: Path) -> None:
     sys.path.insert(0, str(REPO_ROOT))
     from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
 
-    epic_dir = tmp_path / ".woof" / "epics" / "E1"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 1)
     _write_critique(
         epic_dir / "critique",
         "S1",
@@ -532,7 +537,7 @@ def test_blocker_with_untracked_path_line_still_fails_R1(tmp_path: Path) -> None
     sys.path.insert(0, str(REPO_ROOT))
     from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
 
-    epic_dir = tmp_path / ".woof" / "epics" / "E1"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 1)
     _write_critique(
         epic_dir / "critique",
         "S1",
@@ -559,7 +564,7 @@ def test_blocker_with_backtick_wrapped_file_line_resolves_R2(tmp_path: Path) -> 
     sys.path.insert(0, str(REPO_ROOT))
     from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
 
-    epic_dir = tmp_path / ".woof" / "epics" / "E1"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 1)
     _write_critique(
         epic_dir / "critique",
         "S1",
@@ -581,7 +586,7 @@ def test_blocker_with_paren_wrapped_file_line_resolves_R2(tmp_path: Path) -> Non
     sys.path.insert(0, str(REPO_ROOT))
     from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
 
-    epic_dir = tmp_path / ".woof" / "epics" / "E1"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 1)
     _write_critique(
         epic_dir / "critique",
         "S1",
@@ -618,7 +623,7 @@ def test_rollup_mismatch_minor_top_blocker_finding_fails_R5(tmp_path: Path) -> N
     sys.path.insert(0, str(REPO_ROOT))
     from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
 
-    epic_dir = tmp_path / ".woof" / "epics" / "E1"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 1)
     _write_critique(
         epic_dir / "critique",
         "S1",
@@ -641,7 +646,7 @@ def test_rollup_mismatch_info_top_blocker_finding_fails_R5(tmp_path: Path) -> No
     sys.path.insert(0, str(REPO_ROOT))
     from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
 
-    epic_dir = tmp_path / ".woof" / "epics" / "E1"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 1)
     critique = (
         "---\ntarget: work_unit\ntarget_id: S1\nseverity: info\n"
         'timestamp: "2026-01-01T00:00:00Z"\nharness: test-reviewer\n'
@@ -663,7 +668,7 @@ def test_rollup_mismatch_blocker_finding_bad_evidence_also_fails_R5(tmp_path: Pa
     sys.path.insert(0, str(REPO_ROOT))
     from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
 
-    epic_dir = tmp_path / ".woof" / "epics" / "E1"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 1)
     _write_critique(
         epic_dir / "critique",
         "S1",
@@ -689,7 +694,7 @@ def test_bare_gate_name_in_prose_does_not_resolve_R6(tmp_path: Path) -> None:
     sys.path.insert(0, str(REPO_ROOT))
     from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
 
-    epic_dir = tmp_path / ".woof" / "epics" / "E1"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 1)
     # 'test' is a real gate name but cited without the gate: prefix — must fail
     _write_critique(
         epic_dir / "critique",
@@ -712,7 +717,7 @@ def test_gate_explicit_prefix_resolves_R6(tmp_path: Path) -> None:
     sys.path.insert(0, str(REPO_ROOT))
     from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
 
-    epic_dir = tmp_path / ".woof" / "epics" / "E1"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 1)
     _write_critique(
         epic_dir / "critique",
         "S1",
@@ -734,7 +739,7 @@ def test_blocker_with_no_findings_fails_rollup_R6(tmp_path: Path) -> None:
     sys.path.insert(0, str(REPO_ROOT))
     from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
 
-    epic_dir = tmp_path / ".woof" / "epics" / "E1"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 1)
     critique = (
         "---\ntarget: work_unit\ntarget_id: S1\nseverity: blocker\n"
         'timestamp: "2026-01-01T00:00:00Z"\nharness: test\n'
@@ -757,7 +762,7 @@ def test_nonexistent_gate_name_with_prefix_does_not_resolve_R6(tmp_path: Path) -
     sys.path.insert(0, str(REPO_ROOT))
     from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
 
-    epic_dir = tmp_path / ".woof" / "epics" / "E1"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 1)
     _write_critique(
         epic_dir / "critique",
         "S1",
@@ -779,7 +784,7 @@ def test_honest_blocker_critique_still_reported_as_blocker_R5(tmp_path: Path) ->
     sys.path.insert(0, str(REPO_ROOT))
     from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocker_runner
 
-    epic_dir = tmp_path / ".woof" / "epics" / "E1"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 1)
     _write_critique(
         epic_dir / "critique",
         "S1",

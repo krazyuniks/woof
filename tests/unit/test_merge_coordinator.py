@@ -7,7 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from tests.support import seed_project_config
+from tests.support import DEFAULT_PROJECT_KEY, seed_project_config
+from woof import state
 from woof.graph.merge import (
     CheckRunState,
     MergeQueueHalt,
@@ -17,6 +18,8 @@ from woof.graph.merge import (
     _classify_check_runs,
     profile_a_merge_policy,
 )
+
+KEY = DEFAULT_PROJECT_KEY
 
 
 @dataclass
@@ -139,8 +142,8 @@ def _ready(
     )
 
 
-def _sibling_conflict_events(repo_root: Path) -> list[dict[str, object]]:
-    corpus = repo_root / ".woof" / "sibling-conflicts.jsonl"
+def _sibling_conflict_events() -> list[dict[str, object]]:
+    corpus = state.sibling_conflicts_path(KEY)
     if not corpus.exists():
         return []
     return [json.loads(line) for line in corpus.read_text().splitlines() if line.strip()]
@@ -155,7 +158,7 @@ def test_ready_queue_rebases_gates_merges_and_marks_done_in_fifo_order(tmp_path:
     marked_done: list[str] = []
 
     coordinator = SerialMergeCoordinator(
-        repo_root=tmp_path,
+        project_key=KEY,
         epic_id=5,
         repo_slug="example/project",
         base_branch="main",
@@ -226,7 +229,7 @@ def test_profile_a_merge_policy_reads_deploy_aware_knobs(tmp_path: Path) -> None
     assert policy.mergeability_attempts == 7
 
     coordinator = SerialMergeCoordinator.from_policy(
-        repo_root=tmp_path,
+        project_key=KEY,
         epic_id=5,
         git=FakeGit({}),
         github=FakeGithub({}),
@@ -266,7 +269,7 @@ def test_per_pr_mark_done_reconciles_before_deploy_halt(tmp_path: Path) -> None:
     marked_done: list[str] = []
 
     coordinator = SerialMergeCoordinator(
-        repo_root=tmp_path,
+        project_key=KEY,
         epic_id=5,
         repo_slug="example/project",
         base_branch="main",
@@ -316,7 +319,7 @@ def test_proved_terraform_state_lock_contention_halts_before_next_merge(
     marked_done: list[str] = []
 
     coordinator = SerialMergeCoordinator(
-        repo_root=tmp_path,
+        project_key=KEY,
         epic_id=5,
         repo_slug="example/project",
         base_branch="main",
@@ -389,7 +392,7 @@ def test_terminal_ci_waits_before_next_deploy_triggering_merge(tmp_path: Path) -
     sleeps: list[float] = []
 
     coordinator = SerialMergeCoordinator(
-        repo_root=tmp_path,
+        project_key=KEY,
         epic_id=5,
         repo_slug="example/project",
         base_branch="main",
@@ -429,7 +432,7 @@ def test_coordinator_waits_for_recomputed_checks_after_force_push_before_merge(
     sleeps: list[float] = []
 
     coordinator = SerialMergeCoordinator(
-        repo_root=tmp_path,
+        project_key=KEY,
         epic_id=5,
         repo_slug="example/project",
         base_branch="main",
@@ -465,7 +468,7 @@ def test_merge_body_closes_issue_and_records_artefact_lineage(tmp_path: Path) ->
     github = FakeGithub({10: ["MERGEABLE"]})
 
     coordinator = SerialMergeCoordinator(
-        repo_root=tmp_path,
+        project_key=KEY,
         epic_id=5,
         repo_slug="example/project",
         base_branch="main",
@@ -500,7 +503,7 @@ def test_partial_merge_reconciliation_marks_prior_merged_units_before_terminal_h
     marked_done: list[str] = []
 
     coordinator = SerialMergeCoordinator(
-        repo_root=tmp_path,
+        project_key=KEY,
         epic_id=5,
         repo_slug="example/project",
         base_branch="main",
@@ -547,7 +550,7 @@ def test_partial_merge_reconciliation_runs_before_each_terminal_halt(
     marked_done: list[str] = []
 
     coordinator = SerialMergeCoordinator(
-        repo_root=tmp_path,
+        project_key=KEY,
         epic_id=5,
         repo_slug="example/project",
         base_branch="main",
@@ -577,7 +580,7 @@ def test_rebase_conflict_halts_without_gate_head_or_force_push(tmp_path: Path) -
     gate = FakeGate()
 
     coordinator = SerialMergeCoordinator(
-        repo_root=tmp_path,
+        project_key=KEY,
         epic_id=5,
         repo_slug="example/project",
         base_branch="main",
@@ -607,7 +610,7 @@ def test_rebase_conflict_opens_durable_sibling_gate_and_is_idempotent(
 
     for _ in range(2):
         coordinator = SerialMergeCoordinator(
-            repo_root=tmp_path,
+            project_key=KEY,
             epic_id=5,
             repo_slug="example/project",
             base_branch="main",
@@ -621,7 +624,7 @@ def test_rebase_conflict_opens_durable_sibling_gate_and_is_idempotent(
         with pytest.raises(MergeQueueHalt):
             coordinator.process([pr])
 
-    gate_path = tmp_path / ".woof" / "epics" / "E5" / "gate.md"
+    gate_path = state.gate_path(KEY, 5)
     assert gate_path.exists()
     gate_text = gate_path.read_text()
     assert "sibling_conflict" in gate_text
@@ -629,12 +632,12 @@ def test_rebase_conflict_opens_durable_sibling_gate_and_is_idempotent(
 
     epic_events = [
         json.loads(line)
-        for line in (tmp_path / ".woof" / "epics" / "E5" / "epic.jsonl").read_text().splitlines()
+        for line in state.epic_events_path(KEY, 5).read_text().splitlines()
         if line.strip()
     ]
     assert [event["event"] for event in epic_events] == ["work_unit_gate_opened"]
 
-    events = _sibling_conflict_events(tmp_path)
+    events = _sibling_conflict_events()
     assert len(events) == 1
     assert events[0]["detection_trigger"] == "rebase_conflict"
     assert events[0]["resolution_outcome"] == "human_gate_opened"
@@ -651,7 +654,7 @@ def test_conflicting_mergeability_restores_branch_and_opens_sibling_gate(
     marked_done: list[str] = []
 
     coordinator = SerialMergeCoordinator(
-        repo_root=tmp_path,
+        project_key=KEY,
         epic_id=5,
         repo_slug="example/project",
         base_branch="main",
@@ -671,9 +674,7 @@ def test_conflicting_mergeability_restores_branch_and_opens_sibling_gate(
     assert excinfo.value.outcome.action == "mergeability_failed"
     assert "restore-branch:S2:old-11:rebased-11" in git.calls
     assert "merge:11:rebased-11" not in github.calls
-    assert _sibling_conflict_events(tmp_path)[0]["detection_trigger"] == (
-        "mergeability_conflicting"
-    )
+    assert _sibling_conflict_events()[0]["detection_trigger"] == ("mergeability_conflicting")
 
 
 def test_gate_failure_with_merged_sibling_path_overlap_opens_sibling_gate(
@@ -695,7 +696,7 @@ def test_gate_failure_with_merged_sibling_path_overlap_opens_sibling_gate(
     github = FakeGithub({11: ["MERGEABLE"]}, already_merged={10})
 
     coordinator = SerialMergeCoordinator(
-        repo_root=tmp_path,
+        project_key=KEY,
         epic_id=5,
         repo_slug="example/project",
         base_branch="main",
@@ -713,7 +714,7 @@ def test_gate_failure_with_merged_sibling_path_overlap_opens_sibling_gate(
     assert excinfo.value.outcome.action == "gate_failed"
     assert "restore-head:S2:old-11" in git.calls
     assert "push:S2:old-11" not in git.calls
-    event = _sibling_conflict_events(tmp_path)[0]
+    event = _sibling_conflict_events()[0]
     assert event["detection_trigger"] == "gate_failed_after_rebase"
     assert event["overlapping_paths"] == ["src/shared.py"]
     assert event["merged_siblings"] == [{"work_unit_id": "S1", "pr_number": 10}]
@@ -736,7 +737,7 @@ def test_queued_sibling_path_overlap_does_not_preempt_merge(tmp_path: Path) -> N
     github = FakeGithub({10: ["MERGEABLE"], 11: ["MERGEABLE"]})
 
     coordinator = SerialMergeCoordinator(
-        repo_root=tmp_path,
+        project_key=KEY,
         epic_id=5,
         repo_slug="example/project",
         base_branch="main",
@@ -751,7 +752,7 @@ def test_queued_sibling_path_overlap_does_not_preempt_merge(tmp_path: Path) -> N
     result = coordinator.process([second, first])
 
     assert [outcome.action for outcome in result.outcomes] == ["merged", "merged"]
-    assert not _sibling_conflict_events(tmp_path)
+    assert not _sibling_conflict_events()
 
 
 def test_unknown_and_unstable_mergeability_settle_with_bounded_retry(tmp_path: Path) -> None:
@@ -762,7 +763,7 @@ def test_unknown_and_unstable_mergeability_settle_with_bounded_retry(tmp_path: P
     sleeps: list[float] = []
 
     coordinator = SerialMergeCoordinator(
-        repo_root=tmp_path,
+        project_key=KEY,
         epic_id=5,
         repo_slug="example/project",
         base_branch="main",
@@ -792,7 +793,7 @@ def test_mergeability_command_failure_consumes_retry_budget_then_merges(
     sleeps: list[float] = []
 
     coordinator = SerialMergeCoordinator(
-        repo_root=tmp_path,
+        project_key=KEY,
         epic_id=5,
         repo_slug="example/project",
         base_branch="main",
@@ -823,7 +824,7 @@ def test_persistent_mergeability_command_failure_waits_after_reconciling_prior_m
     marked_done: list[str] = []
 
     coordinator = SerialMergeCoordinator(
-        repo_root=tmp_path,
+        project_key=KEY,
         epic_id=5,
         repo_slug="example/project",
         base_branch="main",
@@ -854,7 +855,7 @@ def test_unsettled_transient_mergeability_waits_without_halt_or_deploy_pacing(
     marked_done: list[str] = []
 
     coordinator = SerialMergeCoordinator(
-        repo_root=tmp_path,
+        project_key=KEY,
         epic_id=5,
         repo_slug="example/project",
         base_branch="main",
@@ -883,7 +884,7 @@ def test_transient_squash_merge_refusal_retries_then_merges(tmp_path: Path) -> N
     marked_done: list[str] = []
 
     coordinator = SerialMergeCoordinator(
-        repo_root=tmp_path,
+        project_key=KEY,
         epic_id=5,
         repo_slug="example/project",
         base_branch="main",
@@ -914,7 +915,7 @@ def test_persistent_squash_merge_refusal_halts_after_retry_budget(tmp_path: Path
     marked_done: list[str] = []
 
     coordinator = SerialMergeCoordinator(
-        repo_root=tmp_path,
+        project_key=KEY,
         epic_id=5,
         repo_slug="example/project",
         base_branch="main",

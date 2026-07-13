@@ -10,7 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from tests.support import seed_project_config
+from tests.support import DEFAULT_PROJECT_KEY, seed_project_config
+from woof import state
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WOOF_BIN = REPO_ROOT / "bin" / "woof"
@@ -21,8 +22,7 @@ pytestmark = [pytest.mark.host_only, pytest.mark.tmux_substrate]
 
 def _write_project(tmp_path: Path, *, default_minutes: float = 0.05) -> Path:
     project = tmp_path / "project"
-    woof_dir = project / ".woof"
-    woof_dir.mkdir(parents=True)
+    project.mkdir(parents=True)
     subprocess.run(["git", "init", "-q"], cwd=project, check=True)
     seed_project_config(
         {
@@ -62,12 +62,14 @@ def _env(bin_dir: Path) -> dict[str, str]:
 
 
 def _events(project: Path, epic: int) -> list[dict]:
-    jsonl = project / ".woof" / "epics" / f"E{epic}" / "dispatch.jsonl"
+    """Dispatch events, read from the operator home where the engine records them."""
+
+    jsonl = state.dispatch_events_path(DEFAULT_PROJECT_KEY, epic)
     return [json.loads(line) for line in jsonl.read_text(encoding="utf-8").splitlines()]
 
 
 def _meta(project: Path, epic: int) -> dict:
-    audit_dir = project / ".woof" / "epics" / f"E{epic}" / "audit"
+    audit_dir = state.audit_dir(DEFAULT_PROJECT_KEY, epic)
     return json.loads(next(audit_dir.glob("*.meta")).read_text(encoding="utf-8"))
 
 
@@ -131,7 +133,7 @@ def test_tmux_dispatch_captures_structured_result_and_prompt_file(tmp_path: Path
     assert _meta(project, 1)["tmux_transport"] == "tmux:codex"
 
     validate = subprocess.run(
-        [*WOOF_VALIDATE, str(project / ".woof" / "epics" / "E1" / "dispatch.jsonl")],
+        [*WOOF_VALIDATE, str(state.dispatch_events_path(DEFAULT_PROJECT_KEY, 1))],
         capture_output=True,
         text=True,
     )

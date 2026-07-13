@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-import json
 import subprocess
 from pathlib import Path
 
 import pytest
 
+from tests.support import DEFAULT_PROJECT_KEY
+from woof import state
 from woof.checks import CheckContext
 from woof.checks.runners.check_3_scope import check_3_scope_runner
 
@@ -55,74 +56,39 @@ def _ctx(root: Path, paths: list[str], work_unit_id: str = "S1") -> CheckContext
     return CheckContext(
         epic_id=7,
         work_unit_id=work_unit_id,
+        project_key=DEFAULT_PROJECT_KEY,
         repo_root=root,
-        epic_dir=root / ".woof" / "epics" / "E7",
+        epic_dir=state.epic_dir(DEFAULT_PROJECT_KEY, 7),
         plan=plan,
         critique=None,
     )
 
 
-def test_allowed_work_unit_paths_and_durable_woof_paths_pass(tmp_path: Path) -> None:
+def test_staged_paths_within_work_unit_scope_pass(tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     _write(tmp_path / "src/app.py")
     _write(tmp_path / "tests/test_app.py")
-    _write(tmp_path / ".woof/epics/E7/plan.json", json.dumps({"ok": True}))
-    _write(tmp_path / ".woof/epics/E7/epic.jsonl", "{}\n")
-    _write(tmp_path / ".woof/epics/E7/dispatch.jsonl", "{}\n")
-    _write(tmp_path / ".woof/epics/E7/critique/work-unit-S1.md", "---\nseverity: info\n---\n")
-    _write(tmp_path / ".woof/epics/E7/audit/codex-story.output")
-    _git_add(
-        tmp_path,
-        "src/app.py",
-        "tests/test_app.py",
-        ".woof/epics/E7/plan.json",
-        ".woof/epics/E7/epic.jsonl",
-        ".woof/epics/E7/dispatch.jsonl",
-        ".woof/epics/E7/critique/work-unit-S1.md",
-        ".woof/epics/E7/audit/codex-story.output",
-    )
+    _git_add(tmp_path, "src/app.py", "tests/test_app.py")
 
     outcome = check_3_scope_runner(_ctx(tmp_path, ["src/", "tests/test_app.py"]))
 
     assert outcome.ok
     assert outcome.severity is None
-    assert outcome.paths == [
-        ".woof/epics/E7/audit/codex-story.output",
-        ".woof/epics/E7/critique/work-unit-S1.md",
-        ".woof/epics/E7/dispatch.jsonl",
-        ".woof/epics/E7/epic.jsonl",
-        ".woof/epics/E7/plan.json",
-        "src/app.py",
-        "tests/test_app.py",
-    ]
+    assert outcome.paths == ["src/app.py", "tests/test_app.py"]
 
 
-def test_forbidden_work_unit_and_woof_paths_fail(tmp_path: Path) -> None:
+def test_staged_paths_outside_work_unit_scope_fail(tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     _write(tmp_path / "src/app.py")
     _write(tmp_path / "docs/notes.md")
-    _write(tmp_path / ".woof/epics/E7/executor_result.json", "{}\n")
-    _write(tmp_path / ".woof/epics/E8/plan.json", "{}\n")
-    _write(tmp_path / ".woof/epics/E7/audit/raw/full-output.txt")
-    _git_add(
-        tmp_path,
-        "src/app.py",
-        "docs/notes.md",
-        ".woof/epics/E7/executor_result.json",
-        ".woof/epics/E8/plan.json",
-        ".woof/epics/E7/audit/raw/full-output.txt",
-    )
+    _write(tmp_path / "scripts/tool.sh")
+    _git_add(tmp_path, "src/app.py", "docs/notes.md", "scripts/tool.sh")
 
     outcome = check_3_scope_runner(_ctx(tmp_path, ["src/"]))
 
     assert not outcome.ok
     assert outcome.severity == "blocker"
-    assert outcome.paths == [
-        ".woof/epics/E7/audit/raw/full-output.txt",
-        ".woof/epics/E7/executor_result.json",
-        ".woof/epics/E8/plan.json",
-        "docs/notes.md",
-    ]
+    assert outcome.paths == ["docs/notes.md", "scripts/tool.sh"]
     assert "outside work unit S1 scope" in outcome.summary
 
 
@@ -158,31 +124,6 @@ def test_git_pathspec_edge_cases_use_git_matching(tmp_path: Path) -> None:
     assert outcome.paths == ["src/package/data.json"]
 
 
-def test_staged_disposition_file_is_allowed_durable_woof_path(tmp_path: Path) -> None:
-    _init_git_repo(tmp_path)
-    _write(tmp_path / "src/app.py")
-    _write(tmp_path / ".woof/epics/E7/plan.json", json.dumps({"ok": True}))
-    _write(tmp_path / ".woof/epics/E7/epic.jsonl", "{}\n")
-    _write(tmp_path / ".woof/epics/E7/dispatch.jsonl", "{}\n")
-    _write(tmp_path / ".woof/epics/E7/critique/work-unit-S1.md", "---\nseverity: info\n---\n")
-    _write(tmp_path / ".woof/epics/E7/dispositions/work-unit-S1.md", "---\nseverity: info\n---\n")
-    _git_add(
-        tmp_path,
-        "src/app.py",
-        ".woof/epics/E7/plan.json",
-        ".woof/epics/E7/epic.jsonl",
-        ".woof/epics/E7/dispatch.jsonl",
-        ".woof/epics/E7/critique/work-unit-S1.md",
-        ".woof/epics/E7/dispositions/work-unit-S1.md",
-    )
-
-    outcome = check_3_scope_runner(_ctx(tmp_path, ["src/"]))
-
-    assert outcome.ok
-    assert outcome.severity is None
-    assert ".woof/epics/E7/dispositions/work-unit-S1.md" in outcome.paths
-
-
 def test_recursive_glob_pathspec_matches_via_git_engine(tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     _write(tmp_path / "src/pkg/subpkg/deep.py")
@@ -206,3 +147,13 @@ def test_missing_story_fails_with_structured_outcome(tmp_path: Path) -> None:
     assert outcome.severity == "blocker"
     assert outcome.paths == []
     assert "not found" in outcome.summary
+
+
+def test_malformed_paths_fail(tmp_path: Path) -> None:
+    _init_git_repo(tmp_path)
+
+    outcome = check_3_scope_runner(_ctx(tmp_path, [""]))
+
+    assert not outcome.ok
+    assert outcome.severity == "blocker"
+    assert "malformed paths[]" in outcome.summary

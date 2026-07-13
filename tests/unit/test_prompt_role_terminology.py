@@ -20,66 +20,66 @@ ARCHITECTURE_DOC = REPO_ROOT / "docs" / "architecture.md"
 # table must be updated to match.
 PLAYBOOK_CARTOGRAPHY_DOCS: dict[str, list[str]] = {
     "playbooks/discovery/research.md": [
-        ".woof/codebase/STACK.md",
-        ".woof/codebase/INTEGRATIONS.md",
-        ".woof/codebase/CONCERNS.md",
+        "STACK.md",
+        "INTEGRATIONS.md",
+        "CONCERNS.md",
     ],
     "playbooks/discovery/thinking.md": [
-        ".woof/codebase/CURRENT-ARCHITECTURE.md",
-        ".woof/codebase/STRUCTURE.md",
+        "CURRENT-ARCHITECTURE.md",
+        "STRUCTURE.md",
     ],
     "playbooks/discovery/ideate.md": [
-        ".woof/codebase/CURRENT-ARCHITECTURE.md",
-        ".woof/codebase/STACK.md",
-        ".woof/codebase/INTEGRATIONS.md",
-        ".woof/codebase/STRUCTURE.md",
-        ".woof/codebase/CONVENTIONS.md",
-        ".woof/codebase/TESTING.md",
-        ".woof/codebase/CONCERNS.md",
-        ".woof/codebase/TARGET-ARCHITECTURE.md",
-        ".woof/codebase/PRINCIPLES.md",
+        "CURRENT-ARCHITECTURE.md",
+        "STACK.md",
+        "INTEGRATIONS.md",
+        "STRUCTURE.md",
+        "CONVENTIONS.md",
+        "TESTING.md",
+        "CONCERNS.md",
+        "TARGET-ARCHITECTURE.md",
+        "PRINCIPLES.md",
     ],
     "playbooks/discovery/synthesis.md": [
-        ".woof/codebase/CURRENT-ARCHITECTURE.md",
-        ".woof/codebase/STACK.md",
-        ".woof/codebase/INTEGRATIONS.md",
-        ".woof/codebase/STRUCTURE.md",
-        ".woof/codebase/CONVENTIONS.md",
-        ".woof/codebase/TESTING.md",
-        ".woof/codebase/CONCERNS.md",
-        ".woof/codebase/TARGET-ARCHITECTURE.md",
-        ".woof/codebase/PRINCIPLES.md",
+        "CURRENT-ARCHITECTURE.md",
+        "STACK.md",
+        "INTEGRATIONS.md",
+        "STRUCTURE.md",
+        "CONVENTIONS.md",
+        "TESTING.md",
+        "CONCERNS.md",
+        "TARGET-ARCHITECTURE.md",
+        "PRINCIPLES.md",
     ],
     "playbooks/discovery/definition.md": [
-        ".woof/codebase/CURRENT-ARCHITECTURE.md",
-        ".woof/codebase/STRUCTURE.md",
-        ".woof/codebase/CONCERNS.md",
-        ".woof/codebase/TARGET-ARCHITECTURE.md",
-        ".woof/codebase/PRINCIPLES.md",
+        "CURRENT-ARCHITECTURE.md",
+        "STRUCTURE.md",
+        "CONCERNS.md",
+        "TARGET-ARCHITECTURE.md",
+        "PRINCIPLES.md",
     ],
     "playbooks/planning/breakdown.md": [
-        ".woof/codebase/CURRENT-ARCHITECTURE.md",
-        ".woof/codebase/STRUCTURE.md",
-        ".woof/codebase/TARGET-ARCHITECTURE.md",
-        ".woof/codebase/PRINCIPLES.md",
+        "CURRENT-ARCHITECTURE.md",
+        "STRUCTURE.md",
+        "TARGET-ARCHITECTURE.md",
+        "PRINCIPLES.md",
     ],
     "playbooks/execution/work-unit.md": [
-        ".woof/codebase/STRUCTURE.md",
-        ".woof/codebase/CONVENTIONS.md",
-        ".woof/codebase/TARGET-ARCHITECTURE.md",
-        ".woof/codebase/PRINCIPLES.md",
-        ".woof/codebase/files.txt",
+        "STRUCTURE.md",
+        "CONVENTIONS.md",
+        "TARGET-ARCHITECTURE.md",
+        "PRINCIPLES.md",
+        "files.txt",
     ],
     "playbooks/critique/plan.md": [
-        ".woof/codebase/CURRENT-ARCHITECTURE.md",
-        ".woof/codebase/STRUCTURE.md",
-        ".woof/codebase/CONCERNS.md",
-        ".woof/codebase/TARGET-ARCHITECTURE.md",
+        "CURRENT-ARCHITECTURE.md",
+        "STRUCTURE.md",
+        "CONCERNS.md",
+        "TARGET-ARCHITECTURE.md",
     ],
     "playbooks/critique/work-unit.md": [
-        ".woof/codebase/CONVENTIONS.md",
-        ".woof/codebase/TESTING.md",
-        ".woof/codebase/CONCERNS.md",
+        "CONVENTIONS.md",
+        "TESTING.md",
+        "CONCERNS.md",
     ],
 }
 FORBIDDEN_PATTERNS = {
@@ -224,8 +224,8 @@ def test_discovery_building_block_playbooks_are_portable() -> None:
                 failures.append(f"{rel}: missing `type: discovery-playbook` frontmatter")
             if "bucket:" not in text:
                 failures.append(f"{rel}: missing `bucket:` frontmatter")
-            if ".woof/epics/E<N>/discovery/" not in text:
-                failures.append(f"{rel}: must direct output into a .woof/epics discovery bucket")
+            if not re.search(r"`discovery/[a-z-]+/` bucket directory", text):
+                failures.append(f"{rel}: must direct output into a declared discovery bucket")
 
     assert not failures, "\n".join(failures)
 

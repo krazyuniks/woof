@@ -16,7 +16,8 @@ from typing import Any, Literal
 import pytest
 import yaml
 
-from tests.support import seed_project_config
+from tests.support import DEFAULT_PROJECT_KEY, seed_project_config
+from woof import state
 from woof.checks import CheckContext
 from woof.checks.registry import REGISTRY, STAGE_5_CHECK_IDS
 
@@ -106,11 +107,13 @@ def _ctx(
     plan: dict[str, Any] | None = None,
     epic_dir: Path | None = None,
 ) -> CheckContext:
-    resolved_epic_dir = epic_dir or repo_root / ".woof" / "epics" / f"E{epic_id}"
+    repo_root.mkdir(parents=True, exist_ok=True)
+    resolved_epic_dir = epic_dir or state.epic_dir(DEFAULT_PROJECT_KEY, epic_id)
     resolved_epic_dir.mkdir(parents=True, exist_ok=True)
     return CheckContext(
         epic_id=epic_id,
         work_unit_id=work_unit_id,
+        project_key=DEFAULT_PROJECT_KEY,
         repo_root=repo_root,
         epic_dir=resolved_epic_dir,
         plan=plan or _plan(epic_id=epic_id),
@@ -175,7 +178,6 @@ def _write_critique(
 
 def _write_disposition(
     epic_dir: Path,
-    epic_id: int,
     work_unit_id: str,
     *,
     severity: str,
@@ -194,7 +196,7 @@ def _write_disposition(
         "---\n"
         "target: work_unit\n"
         f"target_id: {work_unit_id}\n"
-        f"critique_path: .woof/epics/E{epic_id}/critique/work-unit-{work_unit_id}.md\n"
+        f"critique_path: critique/work-unit-{work_unit_id}.md\n"
         f"severity: {severity}\n"
         "timestamp: '2026-01-01T00:00:00Z'\n"
         "harness: test-primary\n"
@@ -202,22 +204,6 @@ def _write_disposition(
         "---\n"
         "Primary disposition.\n",
     )
-
-
-def _write_required_durable(repo_root: Path, plan: dict[str, Any]) -> list[str]:
-    epic_dir = repo_root / ".woof" / "epics" / "E1"
-    _write_plan(epic_dir, plan)
-    _write(epic_dir / "epic.jsonl", "{}\n")
-    _write(epic_dir / "dispatch.jsonl", "{}\n")
-    _write_critique(epic_dir, "S1", severity="info", findings=[])
-    _write_disposition(epic_dir, 1, "S1", severity="info", finding_ids=[])
-    return [
-        ".woof/epics/E1/plan.json",
-        ".woof/epics/E1/epic.jsonl",
-        ".woof/epics/E1/dispatch.jsonl",
-        ".woof/epics/E1/critique/work-unit-S1.md",
-        ".woof/epics/E1/dispositions/work-unit-S1.md",
-    ]
 
 
 def _copy_contract_fixture(repo_root: Path) -> Path:
@@ -266,9 +252,8 @@ def _build_outcome_markers_failure(repo_root: Path) -> CheckContext:
 def _build_scope_success(repo_root: Path) -> CheckContext:
     _init_repo(repo_root)
     plan = _plan(_work_unit(paths=["src/"]))
-    required = _write_required_durable(repo_root, plan)
     _write(repo_root / "src" / "app.py", "print('O1')\n")
-    _stage(repo_root, "src/app.py", *required)
+    _stage(repo_root, "src/app.py")
     return _ctx(repo_root, plan=plan)
 
 
@@ -306,7 +291,7 @@ def _build_contract_refs_failure(repo_root: Path) -> CheckContext:
 
 
 def _build_plan_crossrefs_success(repo_root: Path) -> CheckContext:
-    epic_dir = repo_root / ".woof" / "epics" / "E1"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 1)
     plan = _plan(_work_unit(implements_contract_decisions=["CD1"]))
     _write_epic(epic_dir, outcomes=["O1"], cds=["CD1"])
     _write_plan(epic_dir, plan)
@@ -314,33 +299,37 @@ def _build_plan_crossrefs_success(repo_root: Path) -> CheckContext:
 
 
 def _build_plan_crossrefs_failure(repo_root: Path) -> CheckContext:
-    epic_dir = repo_root / ".woof" / "epics" / "E1"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 1)
     plan = _plan(_work_unit(satisfies=["O404"], implements_contract_decisions=[]))
     _write_epic(epic_dir, outcomes=["O1"], cds=["CD1"])
     _write_plan(epic_dir, plan)
     return _ctx(repo_root, plan=plan, epic_dir=epic_dir)
 
 
-def _write_cartography_doc(repo_root: Path, name: str) -> str:
-    path = repo_root / ".woof" / "codebase" / name
-    _write(path, f"# {name}\n\nDeclared cartography context.\n")
-    return path.relative_to(repo_root).as_posix()
+def _write_cartography_doc(name: str) -> str:
+    """Write a cartography document in the operator home and return its bare name."""
+
+    _write(
+        state.codebase_dir(DEFAULT_PROJECT_KEY) / name,
+        f"# {name}\n\nDeclared cartography context.\n",
+    )
+    return name
 
 
 def _build_critique_success(repo_root: Path) -> CheckContext:
-    epic_dir = repo_root / ".woof" / "epics" / "E1"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 1)
     _write_critique(
         epic_dir,
         "S1",
         severity="minor",
         findings=[{"id": "F1", "severity": "minor", "summary": "Disposition required"}],
     )
-    _write_disposition(epic_dir, 1, "S1", severity="minor", finding_ids=["F1"])
+    _write_disposition(epic_dir, "S1", severity="minor", finding_ids=["F1"])
     return _ctx(repo_root, epic_dir=epic_dir)
 
 
 def _build_critique_failure(repo_root: Path) -> CheckContext:
-    epic_dir = repo_root / ".woof" / "epics" / "E1"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 1)
     _write_critique(
         epic_dir,
         "S1",
@@ -360,22 +349,17 @@ def _build_critique_failure(repo_root: Path) -> CheckContext:
 def _build_transaction_success(repo_root: Path) -> CheckContext:
     _init_repo(repo_root)
     plan = _plan(_work_unit(paths=["src/*.py"]))
-    required = _write_required_durable(repo_root, plan)
     _write(repo_root / "src" / "app.py", "print('O1')\n")
-    _stage(repo_root, "src/app.py", *required)
+    _stage(repo_root, "src/app.py")
     return _ctx(repo_root, plan=plan)
 
 
 def _build_transaction_failure(repo_root: Path) -> CheckContext:
     _init_repo(repo_root)
     plan = _plan(_work_unit(paths=["src/*.py"]))
-    required = [
-        path
-        for path in _write_required_durable(repo_root, plan)
-        if path != ".woof/epics/E1/dispatch.jsonl"
-    ]
     _write(repo_root / "src" / "app.py", "print('O1')\n")
-    _stage(repo_root, "src/app.py", *required)
+    _write(repo_root / "extra.txt", "outside work-unit scope\n")
+    _stage(repo_root, "src/app.py", "extra.txt")
     return _ctx(repo_root, plan=plan)
 
 
@@ -504,12 +488,12 @@ STAGE5_CONFORMANCE_FIXTURES = [
         case_id="check_3_success",
         check_id="check_3_scope",
         kind="success",
-        contract="staged work-unit paths and durable epic artefacts are within scope",
+        contract="every staged path matches the work unit's paths[]",
         build=_build_scope_success,
         expected_ok=True,
         expected_severity=None,
         summary_contains="within work unit S1 scope",
-        path_contains=".woof/epics/E1/critique/work-unit-S1.md",
+        path_contains="src/app.py",
     ),
     Stage5ConformanceFixture(
         case_id="check_3_failure",
@@ -591,24 +575,24 @@ STAGE5_CONFORMANCE_FIXTURES = [
         case_id="check_7_success",
         check_id="check_7_commit_transaction",
         kind="success",
-        contract="work-unit paths plus required durable .woof artefacts are staged and clean",
+        contract="the staged delivery diff is exactly the work unit's paths and nothing else",
         build=_build_transaction_success,
         expected_ok=True,
         expected_severity="info",
-        summary_contains="required durable artefacts are commit-ready",
-        path_contains=".woof/epics/E1/dispatch.jsonl",
+        summary_contains="staged work-unit path(s) are commit-ready",
+        path_contains="src/app.py",
     ),
     Stage5ConformanceFixture(
         case_id="check_7_failure",
         check_id="check_7_commit_transaction",
         kind="failure",
-        contract="missing required durable transaction files block commit readiness",
+        contract="a staged path outside the work unit's paths[] blocks commit readiness",
         build=_build_transaction_failure,
         expected_ok=False,
         expected_severity="blocker",
         summary_contains="commit transaction is not ready",
-        evidence_contains="missing required staged paths",
-        path_contains=".woof/epics/E1/dispatch.jsonl",
+        evidence_contains="foreign staged paths",
+        path_contains="extra.txt",
     ),
     Stage5ConformanceFixture(
         case_id="check_8_success",
@@ -653,7 +637,7 @@ STAGE5_CONFORMANCE_FIXTURES = [
         expected_severity="minor",
         summary_contains="minor finding(s) require review",
         evidence_contains="S2/F1: Review cumulative risk",
-        path_contains=".woof/epics/E1/critique/work-unit-S2.md",
+        path_contains="critique/work-unit-S2.md",
     ),
 ]
 
@@ -686,32 +670,31 @@ def test_stage_5_check_runner_conformance_matrix(
     if fixture.evidence_contains is not None:
         assert fixture.evidence_contains in (outcome.evidence or "")
     if fixture.path_contains is not None:
-        assert fixture.path_contains in outcome.paths
+        assert any(fixture.path_contains in path for path in outcome.paths)
 
 
 def test_plan_crossrefs_fails_when_design_cartography_context_is_incomplete(
     tmp_path: Path,
 ) -> None:
     ctx = _build_plan_crossrefs_success(tmp_path)
-    target = _write_cartography_doc(tmp_path, "TARGET-ARCHITECTURE.md")
     ctx.cartography_floor = "design"
-    ctx.cartography_paths = [target]
+    ctx.cartography_paths = [_write_cartography_doc("TARGET-ARCHITECTURE.md")]
 
     outcome = REGISTRY["check_5_plan_crossrefs"].runner(ctx)
 
     assert outcome.ok is False
     assert outcome.severity == "blocker"
     assert "cartography context validation failed" in outcome.summary
-    assert ".woof/codebase/PRINCIPLES.md" in (outcome.evidence or "")
+    assert "PRINCIPLES.md" in (outcome.evidence or "")
 
 
 def test_plan_crossrefs_consumes_declared_lexical_cartography_context(tmp_path: Path) -> None:
     ctx = _build_plan_crossrefs_success(tmp_path)
     ctx.cartography_floor = "lexical"
     ctx.cartography_paths = [
-        _write_cartography_doc(tmp_path, "TARGET-ARCHITECTURE.md"),
-        _write_cartography_doc(tmp_path, "PRINCIPLES.md"),
-        _write_cartography_doc(tmp_path, "STRUCTURE.md"),
+        _write_cartography_doc("TARGET-ARCHITECTURE.md"),
+        _write_cartography_doc("PRINCIPLES.md"),
+        _write_cartography_doc("STRUCTURE.md"),
     ]
     ctx.files_txt_slice = ["src/app.py"]
 

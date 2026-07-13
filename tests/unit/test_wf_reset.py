@@ -12,7 +12,8 @@ import json
 import subprocess
 from pathlib import Path
 
-from tests.support import seed_project_config
+from tests.support import DEFAULT_PROJECT_KEY, seed_project_config
+from woof import state
 from woof.graph.transitions import (
     append_epic_event,
     epic_event_exists,
@@ -25,7 +26,7 @@ WOOF_BIN = REPO_ROOT / "bin" / "woof"
 
 def _local_project(tmp_path: Path) -> Path:
     project = tmp_path / "project"
-    (project / ".woof").mkdir(parents=True)
+    project.mkdir(parents=True)
     subprocess.run(["git", "init", "-q"], cwd=project, check=True)
     seed_project_config({"tracker": {"kind": "local", "repo": None}})
     return project
@@ -33,7 +34,7 @@ def _local_project(tmp_path: Path) -> Path:
 
 def _seed_epic(project: Path, epic_id: int) -> Path:
     """Create an epic that has run well past spark, with kept and derived state."""
-    epic_dir = project / ".woof" / "epics" / f"E{epic_id}"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, epic_id)
     epic_dir.mkdir(parents=True)
 
     # Kept: inputs and lineage only.
@@ -191,21 +192,21 @@ def test_reset_is_idempotent_at_spark(tmp_path: Path) -> None:
 
 def test_iter_epic_events_scopes_to_after_last_reset(tmp_path: Path) -> None:
     """State-derivation readers ignore events from before an epic_reset."""
-    repo_root = tmp_path
-    (repo_root / ".woof" / "epics" / "E1").mkdir(parents=True)
+    key = DEFAULT_PROJECT_KEY
+    state.epic_dir(key, 1).mkdir(parents=True)
 
-    append_epic_event(repo_root, 1, {"event": "plan_gate_resolved", "decision": "approve"})
-    append_epic_event(repo_root, 1, {"event": "breakdown_planned"})
-    assert epic_event_exists(repo_root, 1, event="plan_gate_resolved")
+    append_epic_event(key, 1, {"event": "plan_gate_resolved", "decision": "approve"})
+    append_epic_event(key, 1, {"event": "breakdown_planned"})
+    assert epic_event_exists(key, 1, event="plan_gate_resolved")
 
-    append_epic_event(repo_root, 1, {"event": "epic_reset", "epic_id": 1})
+    append_epic_event(key, 1, {"event": "epic_reset", "epic_id": 1})
 
     # Pre-reset events are now invisible to the state readers...
-    assert iter_epic_events(repo_root, 1) == []
-    assert not epic_event_exists(repo_root, 1, event="plan_gate_resolved")
-    assert not epic_event_exists(repo_root, 1, event="breakdown_planned")
+    assert iter_epic_events(key, 1) == []
+    assert not epic_event_exists(key, 1, event="plan_gate_resolved")
+    assert not epic_event_exists(key, 1, event="breakdown_planned")
 
     # ...but a fresh event after the reset is seen.
-    append_epic_event(repo_root, 1, {"event": "breakdown_planned"})
-    assert epic_event_exists(repo_root, 1, event="breakdown_planned")
-    assert [event["event"] for event in iter_epic_events(repo_root, 1)] == ["breakdown_planned"]
+    append_epic_event(key, 1, {"event": "breakdown_planned"})
+    assert epic_event_exists(key, 1, event="breakdown_planned")
+    assert [event["event"] for event in iter_epic_events(key, 1)] == ["breakdown_planned"]

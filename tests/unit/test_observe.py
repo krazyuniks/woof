@@ -4,20 +4,24 @@ import json
 import subprocess
 from pathlib import Path
 
-from tests.support import seed_project_config
+from tests.support import DEFAULT_PROJECT_KEY, seed_project_config
+from woof import state
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WOOF_BIN = REPO_ROOT / "bin" / "woof"
+KEY = DEFAULT_PROJECT_KEY
+EPIC_ID = 5
 
 
 def _write_project(tmp_path: Path, *, with_usage: bool = True) -> Path:
     project = tmp_path / "project"
-    epic_dir = project / ".woof" / "epics" / "E5"
-    audit_dir = epic_dir / "audit"
-    raw_dir = audit_dir / "raw"
+    project.mkdir(parents=True, exist_ok=True)
+    epic_dir = state.epic_dir(KEY, EPIC_ID)
+    audit_dir = state.audit_dir(KEY, EPIC_ID)
+    raw_dir = state.audit_raw_dir(KEY, EPIC_ID)
     raw_dir.mkdir(parents=True)
     subprocess.run(["git", "init", "-q"], cwd=project, check=True)
-    (project / ".woof" / ".current-epic").write_text("E5\n")
+    state.atomic_write_text(state.current_epic_path(KEY), "E5\n")
     seed_project_config(
         {
             "run_profiles": {
@@ -125,8 +129,8 @@ No separate reviewer position was available.
         "exit_type": "clean",
         "exit_code": 0,
         "duration_ms": 1400,
-        "codex_audit_path": ".woof/epics/E5/audit/codex-primary-run",
-        "artefacts_loaded": [".woof/epics/E5/plan.json"],
+        "codex_audit_path": str(audit_dir / "codex-primary-run"),
+        "artefacts_loaded": [str(state.plan_path(KEY, EPIC_ID))],
     }
     if with_usage:
         returned.update(
@@ -215,7 +219,7 @@ No separate reviewer position was available.
     )
     (audit_dir / "codex-primary-run.prompt").write_text(
         "Bearer [REDACTED:bearer_token]\n"
-        "... [truncated, full output at .woof/epics/E5/audit/raw/codex-primary-run.prompt]\n"
+        f"... [truncated, full output at {raw_dir / 'codex-primary-run.prompt'}]\n"
     )
     (raw_dir / "codex-primary-run.prompt").write_text("full raw output\n")
     return project
@@ -238,11 +242,11 @@ def test_observe_all_json_reports_status_gate_timeline_and_audit(tmp_path: Path)
     assert proc.returncode == 0, proc.stderr
     payload = json.loads(proc.stdout)
     assert payload["current_epic"] == {
-        "path": ".woof/.current-epic",
+        "path": str(state.current_epic_path(KEY)),
         "exists": True,
         "value": "E5",
         "epic_id": 5,
-        "epic_dir": ".woof/epics/E5",
+        "epic_dir": str(state.epic_dir(KEY, EPIC_ID)),
         "epic_dir_exists": True,
         "selected": True,
         "valid": True,
@@ -283,11 +287,11 @@ def test_observe_all_json_reports_status_gate_timeline_and_audit(tmp_path: Path)
     assert payload["checks"]["failed"] == 1
     assert payload["checks"]["failed_checks"][0]["id"] == "check_1_quality_gates"
     assert payload["status"]["audit_pointers"] == {
-        "epic_jsonl": ".woof/epics/E5/epic.jsonl",
-        "dispatch_jsonl": ".woof/epics/E5/dispatch.jsonl",
-        "audit_dir": ".woof/epics/E5/audit",
-        "raw_overflow_dir": ".woof/epics/E5/audit/raw",
-        "latest_codex_audit_path": ".woof/epics/E5/audit/codex-primary-run",
+        "epic_jsonl": str(state.epic_events_path(KEY, EPIC_ID)),
+        "dispatch_jsonl": str(state.dispatch_events_path(KEY, EPIC_ID)),
+        "audit_dir": str(state.audit_dir(KEY, EPIC_ID)),
+        "raw_overflow_dir": str(state.audit_raw_dir(KEY, EPIC_ID)),
+        "latest_codex_audit_path": str(state.audit_dir(KEY, EPIC_ID) / "codex-primary-run"),
         "latest_claude_transcript_path": (
             "~/.claude/projects/-tmp-project/00000000-0000-0000-0000-000000000001.jsonl"
         ),
@@ -344,7 +348,7 @@ def test_observe_all_json_reports_status_gate_timeline_and_audit(tmp_path: Path)
 
 def test_observe_counts_completed_lingering_as_success(tmp_path: Path) -> None:
     project = _write_project(tmp_path, with_usage=False)
-    dispatch_jsonl = project / ".woof" / "epics" / "E5" / "dispatch.jsonl"
+    dispatch_jsonl = state.dispatch_events_path(KEY, EPIC_ID)
     dispatch_jsonl.write_text(
         "\n".join(
             json.dumps(event)
@@ -445,15 +449,15 @@ def test_observe_status_text_reports_operator_state(tmp_path: Path) -> None:
     assert "checks: FAIL stage=5 work_unit=S1 total=2 failed=1" in proc.stdout
     assert "FAIL check_1_quality_gates: lint failed" in proc.stdout
     assert (
-        "audit_pointers: epic_jsonl=.woof/epics/E5/epic.jsonl "
-        "dispatch_jsonl=.woof/epics/E5/dispatch.jsonl "
-        "audit_dir=.woof/epics/E5/audit"
+        f"audit_pointers: epic_jsonl={state.epic_events_path(KEY, EPIC_ID)} "
+        f"dispatch_jsonl={state.dispatch_events_path(KEY, EPIC_ID)} "
+        f"audit_dir={state.audit_dir(KEY, EPIC_ID)}"
     ) in proc.stdout
     assert "producer: adapter=codex model=gpt-5.5 effort=xhigh" in proc.stdout
 
 
 def _write_plan_stories(epic_dir: Path, stories: list[tuple[str, str]]) -> None:
-    (epic_dir / "plan.json").write_text(
+    state.plan_path(KEY, EPIC_ID).write_text(
         json.dumps(
             {
                 "epic_id": 5,
@@ -479,13 +483,12 @@ def _write_plan_stories(epic_dir: Path, stories: list[tuple[str, str]]) -> None:
 
 
 def _append_epic_event(epic_dir: Path, event: dict[str, object]) -> None:
-    with (epic_dir / "epic.jsonl").open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(event) + "\n")
+    state.append_jsonl(state.epic_events_path(KEY, EPIC_ID), event)
 
 
 def test_observe_plan_summary_counts_abandoned_stories(tmp_path: Path) -> None:
     project = _write_project(tmp_path, with_usage=False)
-    epic_dir = project / ".woof" / "epics" / "E5"
+    epic_dir = state.epic_dir(KEY, EPIC_ID)
     _write_plan_stories(epic_dir, [("S1", "done"), ("S2", "abandoned"), ("S3", "in_progress")])
 
     proc = _run_observe(project, "--view", "status", "--format", "json")
@@ -507,7 +510,7 @@ def test_observe_plan_summary_counts_abandoned_stories(tmp_path: Path) -> None:
 
 def test_observe_next_step_is_epic_complete_when_all_stories_terminal(tmp_path: Path) -> None:
     project = _write_project(tmp_path, with_usage=False)
-    epic_dir = project / ".woof" / "epics" / "E5"
+    epic_dir = state.epic_dir(KEY, EPIC_ID)
     (epic_dir / "gate.md").unlink()
     _write_plan_stories(epic_dir, [("S1", "done"), ("S2", "abandoned")])
 
@@ -522,7 +525,7 @@ def test_observe_next_step_is_epic_complete_when_all_stories_terminal(tmp_path: 
 
 def test_observe_next_step_reports_epic_abandoned_terminal(tmp_path: Path) -> None:
     project = _write_project(tmp_path, with_usage=False)
-    epic_dir = project / ".woof" / "epics" / "E5"
+    epic_dir = state.epic_dir(KEY, EPIC_ID)
     (epic_dir / "gate.md").unlink()
     _append_epic_event(
         epic_dir, {"event": "epic_abandoned", "at": "2026-05-23T10:05:00Z", "epic_id": 5}

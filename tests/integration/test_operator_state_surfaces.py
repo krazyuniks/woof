@@ -10,7 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from tests.support import seed_project_config
+from tests.support import DEFAULT_PROJECT_KEY, seed_project_config
+from woof import state
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WOOF_BIN = REPO_ROOT / "bin" / "woof"
@@ -58,7 +59,9 @@ echo "ajv 8.0.0"
 
 
 def _write_consumer(root: Path) -> None:
-    epic_dir = root / ".woof" / "epics" / "E5"
+    """Seed a driven checkout plus its engine state, which lives in the operator home."""
+
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 5)
     epic_dir.mkdir(parents=True)
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
     seed_project_config(
@@ -81,8 +84,8 @@ def _write_consumer(root: Path) -> None:
             "tracker": {"kind": "local", "repo": None},
         }
     )
-    codebase = root / ".woof" / "codebase"
-    codebase.mkdir()
+    codebase = state.codebase_dir(DEFAULT_PROJECT_KEY)
+    codebase.mkdir(parents=True)
     design_doc = (
         "# Target Architecture\n\n"
         "The consumer keeps operator state on disk, exposes the current gate "
@@ -98,7 +101,7 @@ def _write_consumer(root: Path) -> None:
     scripts = root / "scripts"
     scripts.mkdir()
     _write_exe(scripts / "refresh-cartography", "echo refresh\n")
-    (root / ".woof" / ".current-epic").write_text("E5\n")
+    state.current_epic_path(DEFAULT_PROJECT_KEY).write_text("E5\n")
     (epic_dir / "plan.json").write_text(
         json.dumps(
             {
@@ -162,7 +165,9 @@ Quality failed.
                 "model": "gpt-5.5",
                 "effort": "xhigh",
                 "exit_code": 0,
-                "codex_audit_path": ".woof/epics/E5/audit/codex-primary-run",
+                "codex_audit_path": str(
+                    state.audit_dir(DEFAULT_PROJECT_KEY, 5) / "codex-primary-run"
+                ),
             }
         )
         + "\n"
@@ -212,8 +217,8 @@ def test_observe_json_and_preflight_text_expose_resume_state(tmp_path: Path) -> 
     assert status["dispatch_routes"]["roles"]["producer"]["adapter"] == "codex"
     assert status["runtime_policy"]["mode"] == "trusted-local"
     assert status["checks"]["failed_checks"][0]["summary"] == "quality gate failed"
-    assert status["audit_pointers"]["latest_codex_audit_path"] == (
-        ".woof/epics/E5/audit/codex-primary-run"
+    assert status["audit_pointers"]["latest_codex_audit_path"] == str(
+        state.audit_dir(DEFAULT_PROJECT_KEY, 5) / "codex-primary-run"
     )
 
     preflight = subprocess.run(

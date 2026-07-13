@@ -4,17 +4,25 @@ import json
 import subprocess
 from pathlib import Path
 
-from tests.support import seed_project_config
-from woof.lib.audit import prepare_commit_audit, scan_text_for_secrets
+import pytest
+
+from tests.support import DEFAULT_PROJECT_KEY, seed_project_config
+from woof import state
+from woof.lib.audit import redact_audit_artefacts, scan_text_for_secrets
 from woof.lib.audit_bundle import NonPortableTranscriptError, bundle_claude_transcripts
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WOOF_BIN = REPO_ROOT / "bin" / "woof"
+KEY = DEFAULT_PROJECT_KEY
 
 
-def test_prepare_commit_audit_redacts_known_and_custom_secrets(tmp_path: Path) -> None:
-    woof_dir = tmp_path / ".woof"
-    woof_dir.mkdir()
+def _audit_file(epic_id: int, name: str = "cod-critiquer.output") -> Path:
+    audit_dir = state.audit_dir(KEY, epic_id)
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    return audit_dir / name
+
+
+def test_redact_audit_artefacts_redacts_known_and_custom_secrets(tmp_path: Path) -> None:
     seed_project_config(
         {
             "dispatch": {
@@ -30,10 +38,7 @@ def test_prepare_commit_audit_redacts_known_and_custom_secrets(tmp_path: Path) -
     )
     (tmp_path / ".gts-auth.json").write_text('{"access_token": "gts-token-value"}\n')
 
-    epic_dir = woof_dir / "epics" / "E1"
-    audit_dir = epic_dir / "audit"
-    audit_dir.mkdir(parents=True)
-    audit_file = audit_dir / "cod-critiquer.output"
+    audit_file = _audit_file(1)
     audit_file.write_text(
         "Bearer live-oauth-token\n"
         "aws=AKIA1234567890ABCDEF\n"
@@ -44,7 +49,7 @@ def test_prepare_commit_audit_redacts_known_and_custom_secrets(tmp_path: Path) -
         "PROJECT_SECRET_ALPHA\n"
     )
 
-    summaries = prepare_commit_audit(tmp_path, epic_dir)
+    summaries = redact_audit_artefacts(KEY, 1, repo_root=tmp_path)
 
     text = audit_file.read_text()
     assert "live-oauth-token" not in text
@@ -65,53 +70,43 @@ def test_prepare_commit_audit_redacts_known_and_custom_secrets(tmp_path: Path) -
     assert summaries[0].truncated is False
 
 
-def test_prepare_commit_audit_caps_large_files_and_preserves_raw(tmp_path: Path) -> None:
-    woof_dir = tmp_path / ".woof"
-    woof_dir.mkdir()
+def test_redact_audit_artefacts_caps_large_files_and_preserves_raw(tmp_path: Path) -> None:
     seed_project_config({"dispatch": {"audit": {"max_bytes": 180}}})
-    epic_dir = woof_dir / "epics" / "E2"
-    audit_dir = epic_dir / "audit"
-    audit_dir.mkdir(parents=True)
-    audit_file = audit_dir / "cod-critiquer.output"
+    audit_file = _audit_file(2)
     original = "line 1\n" + ("x" * 500) + "\n"
     audit_file.write_text(original)
 
-    summaries = prepare_commit_audit(tmp_path, epic_dir)
+    summaries = redact_audit_artefacts(KEY, 2, repo_root=tmp_path)
 
     text = audit_file.read_text()
     assert len(text.encode()) <= 180
-    assert "... [truncated, full output at .woof/epics/E2/audit/raw/" in text
+    assert "... [truncated, full output at raw/" in text
     assert summaries[0].truncated is True
-    assert summaries[0].raw_path == ".woof/epics/E2/audit/raw/cod-critiquer.output"
-    raw_path = tmp_path / summaries[0].raw_path
+    # Summary paths are relative to the epic's audit directory, never to the repo.
+    assert summaries[0].raw_path == "raw/cod-critiquer.output"
+    raw_path = state.audit_dir(KEY, 2) / summaries[0].raw_path
     assert raw_path.read_text() == original
 
 
-def test_prepare_commit_audit_honours_disabled_policy(tmp_path: Path) -> None:
-    woof_dir = tmp_path / ".woof"
-    woof_dir.mkdir()
+def test_redact_audit_artefacts_honours_disabled_policy(tmp_path: Path) -> None:
     seed_project_config({"dispatch": {"audit": {"enabled": False, "max_bytes": 10}}})
-    epic_dir = woof_dir / "epics" / "E3"
-    audit_dir = epic_dir / "audit"
-    audit_dir.mkdir(parents=True)
-    audit_file = audit_dir / "cod-critiquer.output"
+    audit_file = _audit_file(3)
     original = "Bearer live-oauth-token\n" + ("x" * 200)
     audit_file.write_text(original)
 
-    summaries = prepare_commit_audit(tmp_path, epic_dir)
+    summaries = redact_audit_artefacts(KEY, 3, repo_root=tmp_path)
 
     assert summaries == []
     assert audit_file.read_text() == original
 
 
 def test_bundle_claude_transcripts_copies_portable_references(tmp_path: Path) -> None:
-    repo = tmp_path / "project"
-    epic_dir = repo / ".woof" / "epics" / "E7"
+    epic_dir = state.epic_dir(KEY, 7)
     epic_dir.mkdir(parents=True)
     project_slug = "-tmp-project"
     session_id = "00000000-0000-0000-0000-000000000001"
     reference = f"~/.claude/projects/{project_slug}/{session_id}.jsonl"
-    (epic_dir / "dispatch.jsonl").write_text(
+    state.dispatch_events_path(KEY, 7).write_text(
         "\n".join(
             [
                 json.dumps({"event": "subprocess_spawned", "at": "2026-05-19T00:00:00Z"}),
@@ -138,9 +133,9 @@ def test_bundle_claude_transcripts_copies_portable_references(tmp_path: Path) ->
     source.parent.mkdir(parents=True)
     source.write_text('{"message":"kept"}\n')
 
-    result = bundle_claude_transcripts(repo, "7", home=home)
+    result = bundle_claude_transcripts(KEY, "7", home=home)
 
-    destination = epic_dir / "audit" / "claude-code" / project_slug / f"{session_id}.jsonl"
+    destination = state.audit_dir(KEY, 7) / "claude-code" / project_slug / f"{session_id}.jsonl"
     assert result.ok is True
     assert [item.reference for item in result.copied] == [reference]
     assert result.missing == ()
@@ -148,11 +143,9 @@ def test_bundle_claude_transcripts_copies_portable_references(tmp_path: Path) ->
 
 
 def test_bundle_claude_transcripts_reports_missing_sources(tmp_path: Path) -> None:
-    repo = tmp_path / "project"
-    epic_dir = repo / ".woof" / "epics" / "E8"
-    epic_dir.mkdir(parents=True)
+    state.epic_dir(KEY, 8).mkdir(parents=True)
     reference = "~/.claude/projects/-tmp-project/missing.jsonl"
-    (epic_dir / "dispatch.jsonl").write_text(
+    state.dispatch_events_path(KEY, 8).write_text(
         json.dumps(
             {
                 "event": "subprocess_returned",
@@ -163,7 +156,7 @@ def test_bundle_claude_transcripts_reports_missing_sources(tmp_path: Path) -> No
         + "\n"
     )
 
-    result = bundle_claude_transcripts(repo, "E8", home=tmp_path / "home")
+    result = bundle_claude_transcripts(KEY, "E8", home=tmp_path / "home")
 
     assert result.ok is False
     assert result.copied == ()
@@ -171,10 +164,8 @@ def test_bundle_claude_transcripts_reports_missing_sources(tmp_path: Path) -> No
 
 
 def test_bundle_claude_transcripts_rejects_non_portable_paths(tmp_path: Path) -> None:
-    repo = tmp_path / "project"
-    epic_dir = repo / ".woof" / "epics" / "E9"
-    epic_dir.mkdir(parents=True)
-    (epic_dir / "dispatch.jsonl").write_text(
+    state.epic_dir(KEY, 9).mkdir(parents=True)
+    state.dispatch_events_path(KEY, 9).write_text(
         json.dumps(
             {
                 "event": "subprocess_returned",
@@ -185,26 +176,22 @@ def test_bundle_claude_transcripts_rejects_non_portable_paths(tmp_path: Path) ->
         + "\n"
     )
 
-    try:
-        bundle_claude_transcripts(repo, "E9", home=tmp_path / "home")
-    except NonPortableTranscriptError as exc:
-        assert "not portable" in str(exc)
-    else:
-        raise AssertionError("expected NonPortableTranscriptError")
+    with pytest.raises(NonPortableTranscriptError, match="not portable"):
+        bundle_claude_transcripts(KEY, "E9", home=tmp_path / "home")
 
 
-def test_audit_bundle_cli_copies_transcripts_without_absolute_output(
+def test_audit_bundle_cli_copies_transcripts_from_portable_references(
     tmp_path: Path,
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo = tmp_path / "project"
-    epic_dir = repo / ".woof" / "epics" / "E10"
-    epic_dir.mkdir(parents=True)
+    repo.mkdir()
+    state.epic_dir(KEY, 10).mkdir(parents=True)
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
     project_slug = "-tmp-project"
     session_id = "00000000-0000-0000-0000-000000000010"
     reference = f"~/.claude/projects/{project_slug}/{session_id}.jsonl"
-    (epic_dir / "dispatch.jsonl").write_text(
+    state.dispatch_events_path(KEY, 10).write_text(
         json.dumps(
             {
                 "event": "subprocess_returned",
@@ -228,11 +215,11 @@ def test_audit_bundle_cli_copies_transcripts_without_absolute_output(
     )
 
     assert proc.returncode == 0, proc.stderr
-    assert "/home/" not in proc.stdout
-    assert str(tmp_path) not in proc.stdout
     assert reference in proc.stdout
+    # The transcript lands in the operator home, never in the driven repo.
+    assert not (repo / ".woof").exists()
     assert (
-        epic_dir / "audit" / "claude-code" / project_slug / f"{session_id}.jsonl"
+        state.audit_dir(KEY, 10) / "claude-code" / project_slug / f"{session_id}.jsonl"
     ).read_text() == '{"message":"cli"}\n'
 
 

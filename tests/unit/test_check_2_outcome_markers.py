@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from tests.support import seed_project_config
+from tests.support import DEFAULT_PROJECT_KEY, seed_project_config
+from woof import state
 
 if TYPE_CHECKING:
     from woof.checks import CheckContext
@@ -22,7 +23,6 @@ def _init_repo(root: Path) -> None:
     subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True)
     subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=root, check=True)
     subprocess.run(["git", "config", "user.name", "Test"], cwd=root, check=True)
-    (root / ".woof").mkdir()
 
 
 def _write_marker_config(
@@ -60,8 +60,9 @@ def _make_ctx(
     return CheckContext(
         epic_id=1,
         work_unit_id=work_unit_id,
+        project_key=DEFAULT_PROJECT_KEY,
         repo_root=root,
-        epic_dir=root / ".woof" / "epics" / "E1",
+        epic_dir=state.epic_dir(DEFAULT_PROJECT_KEY, 1),
         plan={
             "epic_id": 1,
             "goal": "test",

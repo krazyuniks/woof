@@ -14,26 +14,16 @@ from typing import Any
 import pytest
 import yaml
 
-from tests.support import seed_project_config
+from tests.support import DEFAULT_PROJECT_KEY, seed_project_config
+from woof import state
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WOOF_BIN = REPO_ROOT / "bin" / "woof"
 
-# Engine runtime state a consumer checkout must never commit. `woof init` no
-# longer patches the driven repo's .gitignore (ADR-017: the engine leaves no
-# trace in the delivery repo), so the acceptance consumer declares it itself.
-WOOF_RUNTIME_IGNORES = [
-    ".woof/.current-epic",
-    ".woof/epics/*/gate.md",
-    ".woof/epics/*/.wf.lock",
-    ".woof/epics/*/.last-sync",
-    ".woof/epics/*/executor_result.json",
-    ".woof/epics/*/check-result.json",
-    ".woof/epics/*/audit/raw/",
-    ".woof/codebase/tags",
-    ".woof/codebase/files.txt",
-    ".woof/codebase/freshness.json",
-]
+# The scenario marker steers the stub harnesses. It is a test fixture, not
+# engine state, so it sits in the consumer checkout under its own name and is
+# git-ignored: nothing the engine owns may appear in the delivery repo (ADR-017).
+SCENARIO_FILE = ".gate-scenario"
 
 PRIMARY_STUB = r'''#!/usr/bin/env python3
 from __future__ import annotations
@@ -49,14 +39,22 @@ from pathlib import Path
 NOW = "2026-05-23T00:00:00Z"
 
 
+def epic_dir(prompt: str) -> Path:
+    """The epic's state directory, always an absolute operator-home path."""
+    match = re.search(r'"epic_dir":\s*"([^"]+)"', prompt)
+    if match:
+        return Path(match.group(1))
+    match = re.search(r'"(/[^"\s]+/epics/E\d+)/', prompt)
+    if match:
+        return Path(match.group(1))
+    raise SystemExit("epic dir not found in prompt")
+
+
 def epic_id(prompt: str) -> int:
     match = re.search(r'"epic_id":\s*(\d+)', prompt)
     if match:
         return int(match.group(1))
-    match = re.search(r"\.woof/epics/E(\d+)/", prompt)
-    if match:
-        return int(match.group(1))
-    raise SystemExit("epic id not found in prompt")
+    return int(epic_dir(prompt).name[1:])
 
 
 def work_unit_id(prompt: str) -> str:
@@ -106,9 +104,6 @@ def repo_root(prompt: str) -> str | None:
     match = re.search(r'"repo_root":\s*"([^"]+)"', prompt)
     if match:
         return match.group(1)
-    match = re.search(r"(/[^\"'\s]+?)/\.woof/epics/E\d+/", prompt)
-    if match:
-        return match.group(1)
     return None
 
 
@@ -124,14 +119,13 @@ def write_discovery_bucket(prompt: str) -> None:
     bucket = discovery_bucket(prompt)
     assert bucket is not None
     write(
-        Path(f".woof/epics/E{eid}/discovery/{bucket}/{bucket}.md"),
+        epic_dir(prompt) / "discovery" / bucket / f"{bucket}.md",
         f"# {bucket.title()}\n\nGate acceptance input for E{eid}.\n",
     )
 
 
 def write_synthesis(prompt: str) -> None:
-    eid = epic_id(prompt)
-    base = Path(f".woof/epics/E{eid}/discovery/synthesis")
+    base = epic_dir(prompt) / "discovery" / "synthesis"
     write(base / "CONCEPT.md", "# Concept\n\n## Problem Framing\n\nProve gate recovery.\n")
     write(base / "PRINCIPLES.md", "# Principles\n\n- Keep gate recovery deterministic.\n")
     write(base / "ARCHITECTURE.md", "# Architecture\n\nA single work unit exercises gates.\n")
@@ -141,7 +135,7 @@ def write_synthesis(prompt: str) -> None:
 def write_epic(prompt: str) -> None:
     eid = epic_id(prompt)
     write(
-        Path(f".woof/epics/E{eid}/EPIC.md"),
+        epic_dir(prompt) / "EPIC.md",
         f"""---
 epic_id: {eid}
 title: Gate recovery acceptance
@@ -187,7 +181,7 @@ def write_plan(prompt: str) -> None:
             }
         ],
     }
-    write(Path(f".woof/epics/E{eid}/plan.json"), json.dumps(plan, indent=2) + "\n")
+    write(epic_dir(prompt) / "plan.json", json.dumps(plan, indent=2) + "\n")
 
 
 def write_work_unit_files() -> None:
@@ -221,7 +215,7 @@ def write_work_unit_files() -> None:
 
 
 def execute_work_unit(prompt: str) -> int:
-    scenario_path = Path(".woof/gate-scenario")
+    scenario_path = Path(".gate-scenario")
     scenario = (
         scenario_path.read_text(encoding="utf-8").strip()
         if scenario_path.exists()
@@ -233,11 +227,11 @@ def execute_work_unit(prompt: str) -> int:
         sys.stderr.write("executor exploded before writing a result\n")
         return 42
     if scenario == "malformed_state":
-        write(Path(f".woof/epics/E{eid}/executor_result.json"), "{")
+        write(epic_dir(prompt) / "executor_result.json", "{")
         return 0
     if scenario == "empty_diff":
         write(
-            Path(f".woof/epics/E{eid}/executor_result.json"),
+            epic_dir(prompt) / "executor_result.json",
             json.dumps(
                 {
                     "epic_id": eid,
@@ -254,7 +248,7 @@ def execute_work_unit(prompt: str) -> int:
 
     write_work_unit_files()
     write(
-        Path(f".woof/epics/E{eid}/executor_result.json"),
+        epic_dir(prompt) / "executor_result.json",
         json.dumps(
             {
                 "epic_id": eid,
@@ -272,14 +266,13 @@ def execute_work_unit(prompt: str) -> int:
 
 
 def write_disposition(prompt: str) -> None:
-    eid = epic_id(prompt)
     sid = work_unit_id(prompt)
     write(
-        Path(f".woof/epics/E{eid}/dispositions/work-unit-{sid}.md"),
+        epic_dir(prompt) / "dispositions" / f"work-unit-{sid}.md",
         f"""---
 target: work_unit
 target_id: {sid}
-critique_path: .woof/epics/E{eid}/critique/work-unit-{sid}.md
+critique_path: critique/work-unit-{sid}.md
 severity: info
 timestamp: "{NOW}"
 harness: gate-primary
@@ -348,11 +341,22 @@ from pathlib import Path
 NOW = "2026-05-23T00:00:00Z"
 
 
+def epic_dir(prompt: str) -> Path:
+    """The epic's state directory, always an absolute operator-home path."""
+    match = re.search(r'"epic_dir":\s*"([^"]+)"', prompt)
+    if match:
+        return Path(match.group(1))
+    match = re.search(r'"(/[^"\s]+/epics/E\d+)/', prompt)
+    if match:
+        return Path(match.group(1))
+    raise SystemExit("epic dir not found in prompt")
+
+
 def epic_id(prompt: str) -> int:
     match = re.search(r'"epic_id":\s*(\d+)', prompt)
     if match:
         return int(match.group(1))
-    raise SystemExit("epic id not found in prompt")
+    return int(epic_dir(prompt).name[1:])
 
 
 def work_unit_id(prompt: str) -> str:
@@ -395,16 +399,12 @@ def repo_root(prompt: str) -> str | None:
     match = re.search(r'"repo_root":\s*"([^"]+)"', prompt)
     if match:
         return match.group(1)
-    match = re.search(r"(/[^\"'\s]+?)/\.woof/epics/E\d+/", prompt)
-    if match:
-        return match.group(1)
     return None
 
 
 def write_plan_critique(prompt: str) -> None:
-    eid = epic_id(prompt)
     write(
-        Path(f".woof/epics/E{eid}/critique/plan.md"),
+        epic_dir(prompt) / "critique" / "plan.md",
         f"""---
 target: plan
 target_id: null
@@ -420,9 +420,8 @@ Plan is executable.
 
 
 def write_work_unit_critique(prompt: str) -> None:
-    eid = epic_id(prompt)
     sid = work_unit_id(prompt)
-    scenario_path = Path(".woof/gate-scenario")
+    scenario_path = Path(".gate-scenario")
     scenario = (
         scenario_path.read_text(encoding="utf-8").strip()
         if scenario_path.exists()
@@ -443,7 +442,7 @@ def write_work_unit_critique(prompt: str) -> None:
         findings = "findings: []\n"
         body = "Work unit is ready."
     write(
-        Path(f".woof/epics/E{eid}/critique/work-unit-{sid}.md"),
+        epic_dir(prompt) / "critique" / f"work-unit-{sid}.md",
         f"""---
 target: work_unit
 target_id: {sid}
@@ -516,10 +515,20 @@ def write_cli_stubs(bin_dir: Path) -> None:
     write_executable(bin_dir / "cld", REVIEWER_STUB)
 
 
-def acceptance_env(tmp_path: Path, scenario: str) -> dict[str, str]:
+def acceptance_env(tmp_path: Path, scenario: str, *, isolated: bool = False) -> dict[str, str]:
     stub_bin = tmp_path / "bin"
     write_cli_stubs(stub_bin)
     env = os.environ.copy()
+    if isolated:
+        # The installed-package run must not see the source checkout at all: no
+        # PYTHONPATH, no tool root, no active venv, and its own HOME. WOOF_HOME
+        # still points at the test's throwaway operator home, which is where the
+        # engine's config and state belong.
+        for key in ("PYTHONPATH", "WOOF_TOOL_ROOT", "VIRTUAL_ENV"):
+            env.pop(key, None)
+        env["HOME"] = str(tmp_path / "home")
+        Path(env["HOME"]).mkdir(parents=True, exist_ok=True)
+        env.setdefault("UV_CACHE_DIR", str(tmp_path / "uv-cache"))
     env["PATH"] = f"{stub_bin}{os.pathsep}{env['PATH']}"
     env["WOOF_GATE_SCENARIO"] = scenario
     env.pop("GIT_DIR", None)
@@ -532,16 +541,15 @@ def configure_consumer(
     env: dict[str, str],
     *,
     quality_gate_command: str = "python -m py_compile app.py tests/test_app.py",
+    woof_cmd: list[str] | None = None,
 ) -> None:
+    woof_cmd = woof_cmd or [str(WOOF_BIN)]
     assert_ok(run(["git", "init"], cwd=consumer, env=env))
     assert_ok(run(["git", "config", "user.email", "test@example.com"], cwd=consumer, env=env))
     assert_ok(run(["git", "config", "user.name", "Workflow Test"], cwd=consumer, env=env))
-    assert_ok(run([str(WOOF_BIN), "init", "--tracker", "local", "--force"], cwd=consumer, env=env))
+    assert_ok(run([*woof_cmd, "init", "--tracker", "local", "--force"], cwd=consumer, env=env))
     gitignore = consumer / ".gitignore"
-    gitignore.write_text(
-        "\n".join([*WOOF_RUNTIME_IGNORES, ".woof/gate-scenario", "__pycache__/", "*.pyc", ""]),
-        encoding="utf-8",
-    )
+    gitignore.write_text("\n".join([SCENARIO_FILE, "__pycache__/", "*.pyc", ""]), encoding="utf-8")
 
     seed_project_config(
         {
@@ -573,7 +581,7 @@ def configure_consumer(
             "tracker": {"kind": "local", "repo": None},
         }
     )
-    codebase_dir = consumer / ".woof" / "codebase"
+    codebase_dir = state.codebase_dir(DEFAULT_PROJECT_KEY)
     codebase_dir.mkdir(parents=True, exist_ok=True)
     for _doc in [
         "CURRENT-ARCHITECTURE.md",
@@ -590,7 +598,7 @@ def configure_consumer(
             f"# {_doc}\n\nStub for integration test.\n", encoding="utf-8"
         )
     (codebase_dir / "files.txt").write_text("")
-    assert_ok(run(["git", "add", ".gitignore", ".woof"], cwd=consumer, env=env))
+    assert_ok(run(["git", "add", ".gitignore"], cwd=consumer, env=env))
     assert_ok(run(["git", "commit", "-m", "chore: bootstrap woof"], cwd=consumer, env=env))
 
 
@@ -605,7 +613,7 @@ def create_stage5_consumer(
     consumer = tmp_path / "consumer"
     consumer.mkdir()
     configure_consumer(consumer, env, quality_gate_command=quality_gate_command)
-    (consumer / ".woof" / "gate-scenario").write_text(scenario + "\n", encoding="utf-8")
+    (consumer / SCENARIO_FILE).write_text(scenario + "\n", encoding="utf-8")
 
     created = run(
         [str(WOOF_BIN), "wf", "new", "ship gate acceptance artefact", "--format", "json"],
@@ -639,7 +647,7 @@ def jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def gate_front(consumer: Path, epic_id: int = 1) -> dict[str, object]:
-    gate = consumer / ".woof" / "epics" / f"E{epic_id}" / "gate.md"
+    gate = state.gate_path(DEFAULT_PROJECT_KEY, epic_id)
     text = gate.read_text(encoding="utf-8")
     assert text.startswith("---\n")
     end = text.find("\n---\n", 4)
@@ -650,7 +658,9 @@ def gate_front(consumer: Path, epic_id: int = 1) -> dict[str, object]:
 
 
 def epic_dir(consumer: Path, epic_id: int = 1) -> Path:
-    return consumer / ".woof" / "epics" / f"E{epic_id}"
+    """The epic's state directory: the operator home, not the driven checkout."""
+
+    return state.epic_dir(DEFAULT_PROJECT_KEY, epic_id)
 
 
 def assert_gate(

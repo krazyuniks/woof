@@ -16,6 +16,8 @@ from typing import cast, get_args
 
 import pytest
 
+from tests.support import DEFAULT_PROJECT_KEY
+from woof import state
 from woof.cli.commands.wf import _apply_gate_resolution_effects, _resolve_gate, setup_wf_parser
 from woof.cli.main import project_parser
 from woof.graph.decisions import (
@@ -31,6 +33,7 @@ from woof.trackers.base import CONFLICT_DECISIONS, ConflictResolutionResult, Tra
 pytestmark = pytest.mark.host_only
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+KEY = DEFAULT_PROJECT_KEY
 
 # The canonical verb sets per gate type. E17 P1 dropped split_story; E17 P2 added
 # the readiness_gate row and its approve_with_reason verb (D-RA); E17 P3 added
@@ -195,8 +198,8 @@ def test_invalid_readiness_verb_names_valid_set() -> None:
         assert verb in message
 
 
-def _write_epic(root: Path, epic_id: int, *, work_unit_state: str = "in_progress") -> Path:
-    directory = root / ".woof" / "epics" / f"E{epic_id}"
+def _write_epic(epic_id: int, *, work_unit_state: str = "in_progress") -> Path:
+    directory = state.epic_dir(KEY, epic_id)
     directory.mkdir(parents=True)
     plan = {
         "epic_id": epic_id,
@@ -243,12 +246,12 @@ class _RecordingTracker:
         )
 
 
-def test_plan_gate_approve_effect_unchanged(tmp_path: Path) -> None:
-    directory = _write_epic(tmp_path, 51)
+def test_plan_gate_approve_effect_unchanged() -> None:
+    directory = _write_epic(51)
     tracker = _RecordingTracker(directory)
 
     changed = _apply_gate_resolution_effects(
-        tmp_path,
+        KEY,
         51,
         decision="approve",
         gate_type="plan_gate",
@@ -261,13 +264,13 @@ def test_plan_gate_approve_effect_unchanged(tmp_path: Path) -> None:
     assert tracker.pushed == [51]
 
 
-def test_work_unit_gate_revise_work_unit_scope_effect_unchanged(tmp_path: Path) -> None:
-    directory = _write_epic(tmp_path, 52)
+def test_work_unit_gate_revise_work_unit_scope_effect_unchanged() -> None:
+    directory = _write_epic(52)
     (directory / "check-result.json").write_text(json.dumps({"ok": False}))
     tracker = _RecordingTracker(directory)
 
     changed = _apply_gate_resolution_effects(
-        tmp_path,
+        KEY,
         52,
         decision="revise_work_unit_scope",
         gate_type="work_unit_gate",
@@ -281,14 +284,14 @@ def test_work_unit_gate_revise_work_unit_scope_effect_unchanged(tmp_path: Path) 
     assert tracker.pushed == []  # no tracker interaction for work-unit-scope revision
 
 
-def test_abandon_work_unit_marks_abandoned_and_records_work_unit_abandoned(tmp_path: Path) -> None:
+def test_abandon_work_unit_marks_abandoned_and_records_work_unit_abandoned() -> None:
     # E17 P4 / D-AB: abandon_work_unit is now honest - it marks the work unit "abandoned"
     # (not "done") and appends work_unit_abandoned, never work_unit_completed.
-    directory = _write_epic(tmp_path, 53)
+    directory = _write_epic(53)
     tracker = _RecordingTracker(directory)
 
     _apply_gate_resolution_effects(
-        tmp_path,
+        KEY,
         53,
         decision="abandon_work_unit",
         gate_type="work_unit_gate",
@@ -308,12 +311,12 @@ def test_abandon_work_unit_marks_abandoned_and_records_work_unit_abandoned(tmp_p
     assert tracker.pushed == []  # work-unit-level abandon touches no tracker method
 
 
-def test_tracker_conflict_keep_local_validates_through_table(tmp_path: Path) -> None:
-    directory = _write_epic(tmp_path, 54)
+def test_tracker_conflict_keep_local_validates_through_table() -> None:
+    directory = _write_epic(54)
     tracker = _RecordingTracker(directory)
 
     changed = _apply_gate_resolution_effects(
-        tmp_path,
+        KEY,
         54,
         decision="keep_local",
         gate_type="plan_gate",  # conflict gates carry plan_gate type + conflict trigger
@@ -326,13 +329,13 @@ def test_tracker_conflict_keep_local_validates_through_table(tmp_path: Path) -> 
     assert any(".last-sync" in path for path in changed)
 
 
-def test_tracker_conflict_rejects_non_conflict_verb_naming_valid_set(tmp_path: Path) -> None:
-    directory = _write_epic(tmp_path, 55)
+def test_tracker_conflict_rejects_non_conflict_verb_naming_valid_set() -> None:
+    directory = _write_epic(55)
     tracker = _RecordingTracker(directory)
 
     with pytest.raises(StageStateError) as excinfo:
         _apply_gate_resolution_effects(
-            tmp_path,
+            KEY,
             55,
             decision="approve",
             gate_type="plan_gate",
@@ -346,14 +349,14 @@ def test_tracker_conflict_rejects_non_conflict_verb_naming_valid_set(tmp_path: P
         assert verb in message
 
 
-def test_readiness_approve_with_reason_applies_no_file_effects(tmp_path: Path) -> None:
+def test_readiness_approve_with_reason_applies_no_file_effects() -> None:
     # The readiness branch validates and applies no file effects at Stage 2.5; the
     # readiness_gate_resolved event _resolve_gate appends is what advances the epic.
-    directory = _write_epic(tmp_path, 56)
+    directory = _write_epic(56)
     tracker = _RecordingTracker(directory)
 
     changed = _apply_gate_resolution_effects(
-        tmp_path,
+        KEY,
         56,
         decision="approve_with_reason",
         gate_type="readiness_gate",
@@ -367,13 +370,13 @@ def test_readiness_approve_with_reason_applies_no_file_effects(tmp_path: Path) -
     assert tracker.conflicts == []
 
 
-def test_readiness_gate_rejects_verb_invalid_for_its_type(tmp_path: Path) -> None:
-    directory = _write_epic(tmp_path, 57)
+def test_readiness_gate_rejects_verb_invalid_for_its_type() -> None:
+    directory = _write_epic(57)
     tracker = _RecordingTracker(directory)
 
     with pytest.raises(StageStateError) as excinfo:
         _apply_gate_resolution_effects(
-            tmp_path,
+            KEY,
             57,
             decision="abandon_work_unit",  # valid for work-unit/review gates, not readiness
             gate_type="readiness_gate",
@@ -412,13 +415,13 @@ def _write_work_unit_artefacts(directory: Path, work_unit_id: str) -> dict[str, 
     }
 
 
-def test_retry_work_unit_resets_to_pending_and_clears_artefacts(tmp_path: Path) -> None:
-    directory = _write_epic(tmp_path, 60, work_unit_state="in_progress")
+def test_retry_work_unit_resets_to_pending_and_clears_artefacts() -> None:
+    directory = _write_epic(60, work_unit_state="in_progress")
     artefacts = _write_work_unit_artefacts(directory, "S1")
     tracker = _RecordingTracker(directory)
 
     changed = _apply_gate_resolution_effects(
-        tmp_path,
+        KEY,
         60,
         decision="retry_work_unit",
         gate_type="work_unit_gate",
@@ -438,13 +441,13 @@ def test_retry_work_unit_resets_to_pending_and_clears_artefacts(tmp_path: Path) 
     assert tracker.pushed == []  # retry never touches the tracker
 
 
-def test_retry_work_unit_audits_the_reset(tmp_path: Path) -> None:
-    directory = _write_epic(tmp_path, 61, work_unit_state="in_progress")
+def test_retry_work_unit_audits_the_reset() -> None:
+    directory = _write_epic(61, work_unit_state="in_progress")
     _write_work_unit_artefacts(directory, "S1")
     tracker = _RecordingTracker(directory)
 
     _apply_gate_resolution_effects(
-        tmp_path,
+        KEY,
         61,
         decision="retry_work_unit",
         gate_type="review_gate",
@@ -461,9 +464,9 @@ def test_retry_work_unit_audits_the_reset(tmp_path: Path) -> None:
     assert retried[-1]["epic_id"] == 61
 
 
-def test_retry_work_unit_leaves_sibling_work_units_untouched(tmp_path: Path) -> None:
+def test_retry_work_unit_leaves_sibling_work_units_untouched() -> None:
     epic_id = 62
-    directory = tmp_path / ".woof" / "epics" / f"E{epic_id}"
+    directory = state.epic_dir(KEY, epic_id)
     directory.mkdir(parents=True)
 
     def _work_unit(work_unit_id: str, state: str, deps: list[str]) -> dict:
@@ -492,7 +495,7 @@ def test_retry_work_unit_leaves_sibling_work_units_untouched(tmp_path: Path) -> 
     tracker = _RecordingTracker(directory)
 
     _apply_gate_resolution_effects(
-        tmp_path,
+        KEY,
         epic_id,
         decision="retry_work_unit",
         gate_type="review_gate",
@@ -511,16 +514,16 @@ def test_retry_work_unit_leaves_sibling_work_units_untouched(tmp_path: Path) -> 
     assert sibling["disposition"].exists()
 
 
-def test_retry_work_unit_without_work_unit_id_is_rejected(tmp_path: Path) -> None:
+def test_retry_work_unit_without_work_unit_id_is_rejected() -> None:
     # End-of-epic review_gates carry work_unit_id: null (the schema permits it), yet
     # retry_work_unit is a valid review_gate verb. With no work unit to target it must be a
     # structured error, not a silent successful retry that mutates nothing.
-    directory = _write_epic(tmp_path, 63, work_unit_state="in_progress")
+    directory = _write_epic(63, work_unit_state="in_progress")
     tracker = _RecordingTracker(directory)
 
     with pytest.raises(StageStateError, match="retry_work_unit requires a targeted work unit"):
         _apply_gate_resolution_effects(
-            tmp_path,
+            KEY,
             63,
             decision="retry_work_unit",
             gate_type="review_gate",
@@ -538,11 +541,11 @@ def test_retry_work_unit_without_work_unit_id_is_rejected(tmp_path: Path) -> Non
     assert not any(e["event"] == "work_unit_retried" for e in events)
 
 
-def test_resolve_gate_retry_work_unit_without_work_unit_keeps_gate(tmp_path: Path) -> None:
+def test_resolve_gate_retry_work_unit_without_work_unit_keeps_gate() -> None:
     # End-to-end through _resolve_gate: a work-unit-less review_gate resolved with
     # retry_work_unit exits 2, the gate stays open on disk, and neither a work_unit_retried
     # nor a gate-resolved event is written.
-    directory = _write_epic(tmp_path, 64, work_unit_state="in_progress")
+    directory = _write_epic(64, work_unit_state="in_progress")
     gate = directory / "gate.md"
     gate.write_text(
         "---\ntype: review_gate\ntriggered_by:\n- epic_review\n---\n\nReview gate body.\n",
@@ -550,7 +553,7 @@ def test_resolve_gate_retry_work_unit_without_work_unit_keeps_gate(tmp_path: Pat
     )
     tracker = _RecordingTracker(directory)
 
-    rc = _resolve_gate(tmp_path, 64, "retry_work_unit", cast(Tracker, tracker))
+    rc = _resolve_gate(KEY, 64, "retry_work_unit", cast(Tracker, tracker))
 
     assert rc == 2
     assert gate.exists()  # the gate stays open and unresolved
@@ -561,19 +564,19 @@ def test_resolve_gate_retry_work_unit_without_work_unit_keeps_gate(tmp_path: Pat
     assert not any(e["event"] in {"gate_resolved", "review_gate_resolved"} for e in events)
 
 
-def test_retry_work_unit_on_done_work_unit_is_rejected(tmp_path: Path) -> None:
+def test_retry_work_unit_on_done_work_unit_is_rejected() -> None:
     # A work-unit/review gate can open after the commit node already marked the work unit
     # done (e.g. a post-staging check-7 gate). retry_work_unit recovers crashed/aborted
     # executors, not completed work units: resetting a done work unit to pending would
     # strand its prior work_unit_completed event (the rerun's re-emission is deduped).
     # So a done target is a structured error, not a silent reset.
-    directory = _write_epic(tmp_path, 65, work_unit_state="done")
+    directory = _write_epic(65, work_unit_state="done")
     artefacts = _write_work_unit_artefacts(directory, "S1")
     tracker = _RecordingTracker(directory)
 
     with pytest.raises(StageStateError, match=r"S1.*already done"):
         _apply_gate_resolution_effects(
-            tmp_path,
+            KEY,
             65,
             decision="retry_work_unit",
             gate_type="review_gate",
@@ -594,18 +597,18 @@ def test_retry_work_unit_on_done_work_unit_is_rejected(tmp_path: Path) -> None:
         assert path.exists()
 
 
-def test_retry_work_unit_on_abandoned_work_unit_is_rejected(tmp_path: Path) -> None:
+def test_retry_work_unit_on_abandoned_work_unit_is_rejected() -> None:
     # abandoned is the other terminal state (E17 P4): like done, it is out of the
     # crashed/aborted-executor domain retry_work_unit recovers. Resetting it to pending
     # would strand its prior work_unit_abandoned event, so an abandoned target is a
     # structured error naming the actual terminal state, not a silent reset.
-    directory = _write_epic(tmp_path, 67, work_unit_state="abandoned")
+    directory = _write_epic(67, work_unit_state="abandoned")
     artefacts = _write_work_unit_artefacts(directory, "S1")
     tracker = _RecordingTracker(directory)
 
     with pytest.raises(StageStateError, match=r"S1.*already abandoned"):
         _apply_gate_resolution_effects(
-            tmp_path,
+            KEY,
             67,
             decision="retry_work_unit",
             gate_type="review_gate",
@@ -626,11 +629,11 @@ def test_retry_work_unit_on_abandoned_work_unit_is_rejected(tmp_path: Path) -> N
         assert path.exists()
 
 
-def test_resolve_gate_retry_work_unit_on_done_work_unit_keeps_gate(tmp_path: Path) -> None:
+def test_resolve_gate_retry_work_unit_on_done_work_unit_keeps_gate() -> None:
     # End-to-end through _resolve_gate: retrying a done work unit exits 2, the gate
     # stays open on disk, and neither a work_unit_retried nor a gate-resolved event is
     # written - identical contract to the work-unit-less guard.
-    directory = _write_epic(tmp_path, 66, work_unit_state="done")
+    directory = _write_epic(66, work_unit_state="done")
     _write_work_unit_artefacts(directory, "S1")
     gate = directory / "gate.md"
     gate.write_text(
@@ -640,7 +643,7 @@ def test_resolve_gate_retry_work_unit_on_done_work_unit_keeps_gate(tmp_path: Pat
     )
     tracker = _RecordingTracker(directory)
 
-    rc = _resolve_gate(tmp_path, 66, "retry_work_unit", cast(Tracker, tracker))
+    rc = _resolve_gate(KEY, 66, "retry_work_unit", cast(Tracker, tracker))
 
     assert rc == 2
     assert gate.exists()  # the gate stays open and unresolved
@@ -665,11 +668,11 @@ def _write_epic_md(directory: Path, epic_id: int) -> Path:
     return epic_path
 
 
-def test_plan_gate_revise_epic_contract_archives_and_clears_plan(tmp_path: Path) -> None:
+def test_plan_gate_revise_epic_contract_archives_and_clears_plan() -> None:
     # The plan-gate revise_epic_contract channel archives the prior EPIC.md to
     # definition/EPIC.1.archived.md, snapshots the gate findings, and still clears
     # the now-stale plan artefacts.
-    directory = _write_epic(tmp_path, 70)
+    directory = _write_epic(70)
     epic_path = _write_epic_md(directory, 70)
     (directory / "PLAN.md").write_text("# Plan\n")
     critique = directory / "critique" / "plan.md"
@@ -683,7 +686,7 @@ def test_plan_gate_revise_epic_contract_archives_and_clears_plan(tmp_path: Path)
     tracker = _RecordingTracker(directory)
 
     changed = _apply_gate_resolution_effects(
-        tmp_path,
+        KEY,
         70,
         decision="revise_epic_contract",
         gate_type="plan_gate",
@@ -712,10 +715,10 @@ def test_plan_gate_revise_epic_contract_archives_and_clears_plan(tmp_path: Path)
     assert tracker.pushed == []  # contract revision touches no tracker method
 
 
-def test_readiness_gate_revise_epic_contract_archives_prior_contract(tmp_path: Path) -> None:
+def test_readiness_gate_revise_epic_contract_archives_prior_contract() -> None:
     # The readiness-gate revise_epic_contract channel archives the prior EPIC.md and
     # snapshots the readiness findings; there is no plan to clear pre-planning.
-    directory = _write_epic(tmp_path, 71)
+    directory = _write_epic(71)
     epic_path = _write_epic_md(directory, 71)
     (directory / "readiness-result.json").write_text(json.dumps({"ok": False}))
     (directory / "gate.md").write_text(
@@ -726,7 +729,7 @@ def test_readiness_gate_revise_epic_contract_archives_prior_contract(tmp_path: P
     tracker = _RecordingTracker(directory)
 
     changed = _apply_gate_resolution_effects(
-        tmp_path,
+        KEY,
         71,
         decision="revise_epic_contract",
         gate_type="readiness_gate",
@@ -748,10 +751,10 @@ def test_readiness_gate_revise_epic_contract_archives_prior_contract(tmp_path: P
     assert tracker.pushed == []
 
 
-def test_revise_epic_contract_increments_archive_index(tmp_path: Path) -> None:
+def test_revise_epic_contract_increments_archive_index() -> None:
     # A second revision archives to definition/EPIC.2.archived.md, never clobbering
     # the first archived contract.
-    directory = _write_epic(tmp_path, 72)
+    directory = _write_epic(72)
     archived_dir = directory / "definition"
     archived_dir.mkdir()
     (archived_dir / "EPIC.1.archived.md").write_text("first archive\n")
@@ -764,7 +767,7 @@ def test_revise_epic_contract_increments_archive_index(tmp_path: Path) -> None:
     tracker = _RecordingTracker(directory)
 
     _apply_gate_resolution_effects(
-        tmp_path,
+        KEY,
         72,
         decision="revise_epic_contract",
         gate_type="readiness_gate",

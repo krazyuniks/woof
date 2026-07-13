@@ -15,6 +15,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from tests.support import DEFAULT_PROJECT_KEY
+from woof import state
 from woof.gate import write as gate_write
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -55,16 +57,16 @@ def _validate_gate_fm(gate_path: Path) -> tuple[bool, str]:
     return proc.returncode == 0, (proc.stdout + proc.stderr).strip()
 
 
-def _setup_epic_dir(tmp_path: Path, epic_id: int = 999) -> Path:
-    epic_dir = tmp_path / ".woof" / "epics" / f"E{epic_id}"
+def _setup_epic_dir(epic_id: int = 999) -> Path:
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, epic_id)
     epic_dir.mkdir(parents=True)
-    (epic_dir / "epic.jsonl").touch()
+    state.epic_events_path(DEFAULT_PROJECT_KEY, epic_id).touch()
     return epic_dir
 
 
 def test_gate_write_from_check_result_validates(tmp_path: Path) -> None:
     """write_gate_from_check_result produces schema-valid gate.md."""
-    epic_dir = _setup_epic_dir(tmp_path, 181)
+    epic_dir = _setup_epic_dir(181)
 
     check_result = {
         "ok": False,
@@ -94,7 +96,8 @@ def test_gate_write_from_check_result_validates(tmp_path: Path) -> None:
     gate_write.write_gate_from_check_result(
         check_result_path=cr_file,
         position_path=position_file,
-        epic_dir=epic_dir,
+        project_key=DEFAULT_PROJECT_KEY,
+        epic_id=181,
         work_unit_id="S2",
         schema_path=GATE_SCHEMA,
     )
@@ -121,13 +124,14 @@ def test_gate_write_from_check_result_validates(tmp_path: Path) -> None:
     assert "## Reviewer position" in text
 
 
-def test_gate_write_for_subprocess_crash(tmp_path: Path) -> None:
+def test_gate_write_for_subprocess_crash() -> None:
     """write_gate_for_trigger with subprocess_crash writes valid gate.md."""
-    epic_dir = _setup_epic_dir(tmp_path, 182)
+    epic_dir = _setup_epic_dir(182)
 
     gate_write.write_gate_for_trigger(
         trigger="subprocess_crash",
-        epic_dir=epic_dir,
+        project_key=DEFAULT_PROJECT_KEY,
+        epic_id=182,
         work_unit_id="S1",
         exit_code=1,
         schema_path=GATE_SCHEMA,
@@ -147,12 +151,13 @@ def test_gate_write_for_subprocess_crash(tmp_path: Path) -> None:
     assert "## Primary position" in text
 
 
-def test_gate_write_for_tracker_sync_conflict_is_epic_level_gate(tmp_path: Path) -> None:
-    epic_dir = _setup_epic_dir(tmp_path, 184)
+def test_gate_write_for_tracker_sync_conflict_is_epic_level_gate() -> None:
+    epic_dir = _setup_epic_dir(184)
 
     gate_write.write_gate_for_trigger(
         trigger="tracker_sync_conflict",
-        epic_dir=epic_dir,
+        project_key=DEFAULT_PROJECT_KEY,
+        epic_id=184,
         work_unit_id=None,
         schema_path=GATE_SCHEMA,
     )
@@ -169,13 +174,14 @@ def test_gate_write_for_tracker_sync_conflict_is_epic_level_gate(tmp_path: Path)
     assert "## Reviewer position" in gate_text
 
 
-def test_gate_write_appends_epic_jsonl(tmp_path: Path) -> None:
+def test_gate_write_appends_epic_jsonl() -> None:
     """gate write appends work_unit_gate_opened event to epic.jsonl."""
-    epic_dir = _setup_epic_dir(tmp_path, 183)
+    epic_dir = _setup_epic_dir(183)
 
     gate_write.write_gate_for_trigger(
         trigger="executor_aborted",
-        epic_dir=epic_dir,
+        project_key=DEFAULT_PROJECT_KEY,
+        epic_id=183,
         work_unit_id="S1",
         schema_path=GATE_SCHEMA,
     )
@@ -190,7 +196,7 @@ def test_gate_write_appends_epic_jsonl(tmp_path: Path) -> None:
 def test_gate_write_schema_failure_is_loud_and_rolls_back(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    epic_dir = _setup_epic_dir(tmp_path, 185)
+    epic_dir = _setup_epic_dir(185)
     schema_path = tmp_path / "gate.schema.json"
     schema_path.write_text("{}")
 
@@ -198,7 +204,8 @@ def test_gate_write_schema_failure_is_loud_and_rolls_back(
 
     with pytest.raises(ValueError, match=r"gate\.md front-matter failed schema validation"):
         gate_write.write_gate(
-            epic_dir=epic_dir,
+            project_key=DEFAULT_PROJECT_KEY,
+            epic_id=185,
             work_unit_id="S1",
             triggered_by=["manual"],
             position_text="Manual gate.",

@@ -12,7 +12,8 @@ from typing import Any
 
 import pytest
 
-from tests.support import seed_project_config
+from tests.support import DEFAULT_PROJECT_KEY, seed_project_config
+from woof import state
 from woof.checks import CheckContext
 from woof.checks.runners.check_1_quality_gates import capture_baseline, check_1_quality_gates_runner
 
@@ -26,12 +27,17 @@ BASELINE_SCHEMA = REPO_ROOT / "schemas" / "quality-gates-baseline.schema.json"
 DEFAULT_GATE_NAMES = ("lint", "test")
 
 
+def _baseline_path() -> Path:
+    return state.quality_gates_baseline_path(DEFAULT_PROJECT_KEY)
+
+
 def _make_ctx(repo_root: Path) -> CheckContext:
-    epic_dir = repo_root / ".woof" / "epics" / "E999"
-    epic_dir.mkdir(parents=True)
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 999)
+    epic_dir.mkdir(parents=True, exist_ok=True)
     return CheckContext(
         epic_id=999,
         work_unit_id="S1",
+        project_key=DEFAULT_PROJECT_KEY,
         repo_root=repo_root,
         epic_dir=epic_dir,
         plan={},
@@ -47,14 +53,12 @@ def _seed_gates(gates: dict[str, Any]) -> None:
     seed_project_config({"gates": override})
 
 
-def _write_baseline(repo_root: Path, gates: dict) -> None:
-    woof_dir = repo_root / ".woof"
-    woof_dir.mkdir(exist_ok=True)
+def _write_baseline(gates: dict) -> None:
     record = {
         "captured_at": "2026-06-16T00:00:00Z",
         "gates": gates,
     }
-    (woof_dir / "quality-gates-baseline.json").write_text(json.dumps(record))
+    state.atomic_write_json(_baseline_path(), record)
 
 
 def _python_command(source: str) -> str:
@@ -160,7 +164,7 @@ def test_default_mode_is_strict_blocks_on_failure(tmp_path: Path) -> None:
     fail_cmd = _python_command("import sys; sys.exit(1)")
     _seed_gates({"lint": {"command": fail_cmd, "timeout_seconds": 5}})
     # Provide a baseline that marks lint as red, but the gate has no mode set.
-    _write_baseline(tmp_path, {"lint": {"command": fail_cmd, "passed": False}})
+    _write_baseline({"lint": {"command": fail_cmd, "passed": False}})
 
     outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
 
@@ -177,7 +181,7 @@ def test_baseline_suppresses_pre_existing_red(tmp_path: Path) -> None:
     """A baseline-mode gate that was red at capture is reported but does not block."""
     fail_cmd = _python_command("import sys; sys.exit(2)")
     _seed_gates({"lint": {"command": fail_cmd, "timeout_seconds": 5, "mode": "baseline"}})
-    _write_baseline(tmp_path, {"lint": {"command": fail_cmd, "passed": False}})
+    _write_baseline({"lint": {"command": fail_cmd, "passed": False}})
 
     outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
 
@@ -196,7 +200,7 @@ def test_declared_baseline_mode_suppresses_pre_existing_red(tmp_path: Path) -> N
     """
     fail_cmd = _python_command("import sys; sys.exit(2)")
     _seed_gates({"lint": {"command": fail_cmd, "timeout_seconds": 5, "mode": "baseline"}})
-    _write_baseline(tmp_path, {"lint": {"command": fail_cmd, "passed": False}})
+    _write_baseline({"lint": {"command": fail_cmd, "passed": False}})
 
     outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
 
@@ -234,7 +238,7 @@ def test_identity_change_rearms_blocking(tmp_path: Path) -> None:
     changed_cmd = _python_command("import sys; sys.exit(2)")
     _seed_gates({"lint": {"command": changed_cmd, "timeout_seconds": 5, "mode": "baseline"}})
     # Baseline captured with original_cmd, but gate now runs changed_cmd.
-    _write_baseline(tmp_path, {"lint": {"command": original_cmd, "passed": False}})
+    _write_baseline({"lint": {"command": original_cmd, "passed": False}})
 
     outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
 
@@ -252,7 +256,7 @@ def test_green_at_capture_going_red_blocks(tmp_path: Path) -> None:
     fail_cmd = _python_command("import sys; sys.exit(1)")
     _seed_gates({"test": {"command": fail_cmd, "timeout_seconds": 5, "mode": "baseline"}})
     # Baseline says the gate was passing (green).
-    _write_baseline(tmp_path, {"test": {"command": fail_cmd, "passed": True}})
+    _write_baseline({"test": {"command": fail_cmd, "passed": True}})
 
     outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
 
@@ -271,7 +275,6 @@ def test_mixed_baseline_blocks_on_new_failure(tmp_path: Path) -> None:
         }
     )
     _write_baseline(
-        tmp_path,
         {
             "lint": {"command": suppressed_cmd, "passed": False},  # red at capture → suppressed
             "test": {"command": regressed_cmd, "passed": True},  # green at capture → regression
@@ -351,7 +354,7 @@ def test_baseline_mode_gate_timeout_blocks(tmp_path: Path) -> None:
     slow_cmd = _python_command("import time; time.sleep(5)")
     _seed_gates({"slow": {"command": slow_cmd, "timeout_seconds": 1, "mode": "baseline"}})
     # Provide a baseline that marks slow as red — baseline suppression must not apply to timeouts.
-    _write_baseline(tmp_path, {"slow": {"command": slow_cmd, "passed": False}})
+    _write_baseline({"slow": {"command": slow_cmd, "passed": False}})
 
     outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
 
@@ -391,13 +394,9 @@ def test_non_string_per_command_mode_returns_config_error(tmp_path: Path) -> Non
 # Non-object baseline JSON fails closed — R2 fix
 # ---------------------------------------------------------------------------
 
-BASELINE_PATH = ".woof/quality-gates-baseline.json"
 
-
-def _write_raw_baseline(repo_root: Path, content: str) -> None:
-    woof_dir = repo_root / ".woof"
-    woof_dir.mkdir(exist_ok=True)
-    (woof_dir / "quality-gates-baseline.json").write_text(content)
+def _write_raw_baseline(content: str) -> None:
+    state.atomic_write_text(_baseline_path(), content)
 
 
 def _write_failing_gate() -> str:
@@ -413,7 +412,7 @@ def test_non_object_baseline_fails_closed(tmp_path: Path, raw: str) -> None:
     It should degrade to 'no baseline' — no suppression, so a red gate still blocks.
     """
     _write_failing_gate()
-    _write_raw_baseline(tmp_path, raw)
+    _write_raw_baseline(raw)
 
     outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
 
@@ -425,7 +424,7 @@ def test_well_formed_baseline_still_suppresses(tmp_path: Path) -> None:
     """Regression guard: a valid baseline object continues to suppress pre-existing red gates."""
     fail_cmd = _python_command("raise SystemExit(1)")
     _seed_gates({"lint": {"command": fail_cmd, "timeout_seconds": 5, "mode": "baseline"}})
-    _write_baseline(tmp_path, {"lint": {"command": fail_cmd, "passed": False}})
+    _write_baseline({"lint": {"command": fail_cmd, "passed": False}})
 
     outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
 
@@ -442,10 +441,8 @@ def test_baseline_missing_captured_at_fails_closed(tmp_path: Path) -> None:
     """A baseline missing required captured_at suppresses nothing; the gate blocks."""
     fail_cmd = _python_command("raise SystemExit(1)")
     _seed_gates({"lint": {"command": fail_cmd, "timeout_seconds": 5, "mode": "baseline"}})
-    woof_dir = tmp_path / ".woof"
-    woof_dir.mkdir(exist_ok=True)
-    (woof_dir / "quality-gates-baseline.json").write_text(
-        json.dumps({"gates": {"lint": {"command": fail_cmd, "passed": False}}})
+    state.atomic_write_json(
+        _baseline_path(), {"gates": {"lint": {"command": fail_cmd, "passed": False}}}
     )
 
     outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
@@ -460,15 +457,12 @@ def test_baseline_gate_missing_passed_field_fails_closed(tmp_path: Path) -> None
     """A baseline where a gate entry is missing the required 'passed' field suppresses nothing."""
     fail_cmd = _python_command("raise SystemExit(1)")
     _seed_gates({"lint": {"command": fail_cmd, "timeout_seconds": 5, "mode": "baseline"}})
-    woof_dir = tmp_path / ".woof"
-    woof_dir.mkdir(exist_ok=True)
-    (woof_dir / "quality-gates-baseline.json").write_text(
-        json.dumps(
-            {
-                "captured_at": "2026-06-16T00:00:00Z",
-                "gates": {"lint": {"command": fail_cmd}},  # missing 'passed'
-            }
-        )
+    state.atomic_write_json(
+        _baseline_path(),
+        {
+            "captured_at": "2026-06-16T00:00:00Z",
+            "gates": {"lint": {"command": fail_cmd}},  # missing 'passed'
+        },
     )
 
     outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
@@ -484,7 +478,7 @@ def test_schema_valid_baseline_with_captured_at_suppresses(tmp_path: Path) -> No
     fail_cmd = _python_command("raise SystemExit(1)")
     _seed_gates({"lint": {"command": fail_cmd, "timeout_seconds": 5, "mode": "baseline"}})
     # _write_baseline always writes a captured_at field — this is the schema-valid form.
-    _write_baseline(tmp_path, {"lint": {"command": fail_cmd, "passed": False}})
+    _write_baseline({"lint": {"command": fail_cmd, "passed": False}})
 
     outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
 
@@ -567,7 +561,7 @@ def test_schema_invalid_baseline_fails_closed_and_warns(
     """Any baseline that woof-validate rejects suppresses nothing and warns 'ignored'."""
     fail_cmd = _python_command("raise SystemExit(1)")
     _seed_gates({"lint": {"command": fail_cmd, "timeout_seconds": 5, "mode": "baseline"}})
-    _write_raw_baseline(tmp_path, json.dumps(payload))
+    _write_raw_baseline(json.dumps(payload))
 
     # Confirm ajv also rejects this payload (runtime strictness == schema).
     assert _ajv_rejects(payload, tmp_path), f"expected ajv to reject payload for case {label!r}"
@@ -588,7 +582,7 @@ def test_schema_valid_baseline_suppresses_and_runtime_matches_ajv(tmp_path: Path
         "captured_at": "2026-06-16T00:00:00Z",
         "gates": {"lint": {"command": fail_cmd, "passed": False}},
     }
-    _write_raw_baseline(tmp_path, json.dumps(valid_payload))
+    _write_raw_baseline(json.dumps(valid_payload))
 
     # Confirm ajv accepts the payload too.
     assert not _ajv_rejects(valid_payload, tmp_path), "expected ajv to accept the valid payload"
@@ -615,7 +609,7 @@ def test_ajv_absent_from_path_fails_closed_without_crashing(
         "captured_at": "2026-06-16T00:00:00Z",
         "gates": {"lint": {"command": fail_cmd, "passed": False}},
     }
-    _write_raw_baseline(tmp_path, json.dumps(valid_payload))
+    _write_raw_baseline(json.dumps(valid_payload))
 
     # Strip ajv from PATH; Python gate commands use a full path so gates still execute.
     monkeypatch.setenv("PATH", str(tmp_path / "empty_bin"))
@@ -638,24 +632,22 @@ def test_ajv_absent_from_path_fails_closed_without_crashing(
 # ---------------------------------------------------------------------------
 
 
-def _write_fresh_baseline(repo_root: Path, gates: dict, *, expiry_seconds: int = 86400) -> None:
+def _write_fresh_baseline(gates: dict, *, expiry_seconds: int = 86400) -> None:
     """Write a baseline with wall-clock freshness metadata and a future expiry."""
-    woof_dir = repo_root / ".woof"
-    woof_dir.mkdir(exist_ok=True)
     captured_at = (datetime.now(UTC) - timedelta(seconds=60)).strftime("%Y-%m-%dT%H:%M:%SZ")
     record = {
         "captured_at": captured_at,
         "expiry_seconds": expiry_seconds,
         "gates": gates,
     }
-    (woof_dir / "quality-gates-baseline.json").write_text(json.dumps(record))
+    state.atomic_write_json(_baseline_path(), record)
 
 
 def test_fresh_baseline_suppresses_pre_existing_red(tmp_path: Path) -> None:
     """O1 A fresh baseline (within wall-clock expiry) suppresses a gate that was red at capture."""
     fail_cmd = _python_command("import sys; sys.exit(2)")
     _seed_gates({"lint": {"command": fail_cmd, "timeout_seconds": 5, "mode": "baseline"}})
-    _write_fresh_baseline(tmp_path, {"lint": {"command": fail_cmd, "passed": False}})
+    _write_fresh_baseline({"lint": {"command": fail_cmd, "passed": False}})
 
     outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
 
@@ -668,14 +660,14 @@ def test_wall_clock_expired_baseline_blocks(tmp_path: Path) -> None:
     fail_cmd = _python_command("import sys; sys.exit(2)")
     _seed_gates({"lint": {"command": fail_cmd, "timeout_seconds": 5, "mode": "baseline"}})
     # expiry_seconds = 1: captured in 2020 means it's long expired
-    woof_dir = tmp_path / ".woof"
-    woof_dir.mkdir(exist_ok=True)
-    record = {
-        "captured_at": "2020-01-01T00:00:00Z",
-        "expiry_seconds": 1,
-        "gates": {"lint": {"command": fail_cmd, "passed": False}},
-    }
-    (woof_dir / "quality-gates-baseline.json").write_text(json.dumps(record))
+    state.atomic_write_json(
+        _baseline_path(),
+        {
+            "captured_at": "2020-01-01T00:00:00Z",
+            "expiry_seconds": 1,
+            "gates": {"lint": {"command": fail_cmd, "passed": False}},
+        },
+    )
 
     outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
 
@@ -692,14 +684,14 @@ def test_lowercase_z_captured_at_treats_as_expired(tmp_path: Path) -> None:
     _seed_gates({"lint": {"command": fail_cmd, "timeout_seconds": 5, "mode": "baseline"}})
     # ajv accepts lowercase 'z' as a valid date-time; Python's fromisoformat does not without
     # normalisation. Captured in 2020 with expiry_seconds=1 so it is long expired.
-    woof_dir = tmp_path / ".woof"
-    woof_dir.mkdir(exist_ok=True)
-    record = {
-        "captured_at": "2020-01-01T00:00:00z",
-        "expiry_seconds": 1,
-        "gates": {"lint": {"command": fail_cmd, "passed": False}},
-    }
-    (woof_dir / "quality-gates-baseline.json").write_text(json.dumps(record))
+    state.atomic_write_json(
+        _baseline_path(),
+        {
+            "captured_at": "2020-01-01T00:00:00z",
+            "expiry_seconds": 1,
+            "gates": {"lint": {"command": fail_cmd, "passed": False}},
+        },
+    )
 
     outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
 
@@ -714,17 +706,17 @@ def test_garbage_captured_at_treats_as_expired(tmp_path: Path) -> None:
     """R3 An unparseable captured_at fails closed: the baseline is treated as expired."""
     fail_cmd = _python_command("import sys; sys.exit(2)")
     _seed_gates({"lint": {"command": fail_cmd, "timeout_seconds": 5, "mode": "baseline"}})
-    woof_dir = tmp_path / ".woof"
-    woof_dir.mkdir(exist_ok=True)
     # captured_at passes schema validation (any string satisfying date-time format would be caught
     # by ajv, but we write it raw here to test the Python parse path directly).
     # A completely garbage string cannot be parsed; the baseline must be treated as expired.
-    record = {
-        "captured_at": "not-a-date",
-        "expiry_seconds": 86400,
-        "gates": {"lint": {"command": fail_cmd, "passed": False}},
-    }
-    (woof_dir / "quality-gates-baseline.json").write_text(json.dumps(record))
+    state.atomic_write_json(
+        _baseline_path(),
+        {
+            "captured_at": "not-a-date",
+            "expiry_seconds": 86400,
+            "gates": {"lint": {"command": fail_cmd, "passed": False}},
+        },
+    )
 
     outcome = check_1_quality_gates_runner(_make_ctx(tmp_path))
 
@@ -747,7 +739,7 @@ def test_capture_baseline_writes_freshness_metadata(tmp_path: Path) -> None:
         }
     )
 
-    result, error = capture_baseline(tmp_path, expiry_seconds=86400)
+    result, error = capture_baseline(DEFAULT_PROJECT_KEY, tmp_path, expiry_seconds=86400)
 
     assert error is None
     assert result.gate_count == 2
@@ -766,7 +758,7 @@ def test_captured_baseline_validates_against_schema(tmp_path: Path) -> None:
     pass_cmd = _python_command("print('ok')")
     _seed_gates({"lint": {"command": pass_cmd, "timeout_seconds": 5}})
 
-    result, error = capture_baseline(tmp_path, expiry_seconds=86400)
+    result, error = capture_baseline(DEFAULT_PROJECT_KEY, tmp_path, expiry_seconds=86400)
     assert error is None
 
     proc = subprocess.run(
@@ -792,11 +784,10 @@ def test_recapture_only_via_explicit_action(tmp_path: Path) -> None:
     fail_cmd = _python_command("import sys; sys.exit(1)")
     _seed_gates({"lint": {"command": fail_cmd, "timeout_seconds": 5, "mode": "baseline"}})
     # Write a fresh baseline that suppresses the failure
-    _write_fresh_baseline(tmp_path, {"lint": {"command": fail_cmd, "passed": False}})
-    original_content = (tmp_path / ".woof" / "quality-gates-baseline.json").read_text()
+    _write_fresh_baseline({"lint": {"command": fail_cmd, "passed": False}})
+    original_content = _baseline_path().read_text()
 
     check_1_quality_gates_runner(_make_ctx(tmp_path))
 
     # Baseline must be unchanged — the runner never rewrites it
-    current_content = (tmp_path / ".woof" / "quality-gates-baseline.json").read_text()
-    assert current_content == original_content
+    assert _baseline_path().read_text() == original_content

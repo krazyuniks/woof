@@ -13,7 +13,8 @@ from typing import Any
 import pytest
 
 import woof.trackers.github as github_module
-from tests.support import seed_project_config
+from tests.support import DEFAULT_PROJECT_KEY, seed_project_config
+from woof import state
 from woof.trackers import (
     CONFLICT_DECISIONS,
     GitHubTracker,
@@ -134,26 +135,23 @@ def _plan_payload(epic_id: int = 1, *, done: bool = False) -> dict[str, Any]:
     }
 
 
-def _write_epic_contract_files(project: Path, epic_id: int, *, done: bool = False) -> Path:
-    epic_dir = project / ".woof" / "epics" / f"E{epic_id}"
+def _write_epic_contract_files(project_key: str, epic_id: int, *, done: bool = False) -> Path:
+    epic_dir = state.epic_dir(project_key, epic_id)
     epic_dir.mkdir(parents=True, exist_ok=True)
-    (epic_dir / "EPIC.md").write_text(_epic_md(epic_id), encoding="utf-8")
-    (epic_dir / "plan.json").write_text(json.dumps(_plan_payload(epic_id, done=done)))
+    state.epic_contract_path(project_key, epic_id).write_text(_epic_md(epic_id), encoding="utf-8")
+    state.plan_path(project_key, epic_id).write_text(json.dumps(_plan_payload(epic_id, done=done)))
     return epic_dir
 
 
-def _write_last_sync(epic_dir: Path, epic_id: int, *, updated_at: str, body: str) -> None:
-    (epic_dir / ".last-sync").write_text(
-        json.dumps(
-            {
-                "issue_number": epic_id,
-                "updated_at": updated_at,
-                "body_sha256": sha256_text(body),
-                "body": body,
-            }
-        )
-        + "\n",
-        encoding="utf-8",
+def _write_last_sync(project_key: str, epic_id: int, *, updated_at: str, body: str) -> None:
+    state.atomic_write_json(
+        state.last_sync_path(project_key, epic_id),
+        {
+            "issue_number": epic_id,
+            "updated_at": updated_at,
+            "body_sha256": sha256_text(body),
+            "body": body,
+        },
     )
 
 
@@ -270,29 +268,28 @@ class GhCommandStub:
 class TrackerContractCase:
     kind: str
     tracker: Tracker
-    repo_root: Path
+    project_key: str
     gh: GhCommandStub | None = None
 
 
 @pytest.fixture(params=("local", "github"))
 def tracker_contract(
     request: pytest.FixtureRequest,
-    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> TrackerContractCase:
     if request.param == "local":
         return TrackerContractCase(
             kind="local",
-            tracker=LocalTracker(tmp_path),
-            repo_root=tmp_path,
+            tracker=LocalTracker(DEFAULT_PROJECT_KEY),
+            project_key=DEFAULT_PROJECT_KEY,
         )
 
     gh = GhCommandStub()
     monkeypatch.setattr(github_module.subprocess, "run", gh.run)
     return TrackerContractCase(
         kind="github",
-        tracker=GitHubTracker(tmp_path, gh.repo),
-        repo_root=tmp_path,
+        tracker=GitHubTracker(DEFAULT_PROJECT_KEY, gh.repo),
+        project_key=DEFAULT_PROJECT_KEY,
         gh=gh,
     )
 
@@ -304,11 +301,11 @@ def _prepare_contract_epic(
     remote_body: str = "Remote intent.\n\n## Observable Outcomes\n\n- stale\n",
 ) -> int:
     epic_id = case.gh.issue_number if case.gh else 1
-    epic_dir = _write_epic_contract_files(case.repo_root, epic_id, done=done)
+    _write_epic_contract_files(case.project_key, epic_id, done=done)
     if case.gh is not None:
         case.gh.set_remote(body=remote_body, updated_at="2026-01-01T00:00:00Z")
         _write_last_sync(
-            epic_dir,
+            case.project_key,
             epic_id,
             updated_at="2026-01-01T00:00:00Z",
             body=remote_body,
@@ -321,42 +318,44 @@ def _prepare_contract_epic(
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_tracker_returns_github_adapter(tmp_path: Path) -> None:
+def test_resolve_tracker_returns_github_adapter() -> None:
     seed_project_config({"tracker": {"kind": "github", "repo": "acme/widgets"}})
-    tracker = resolve_tracker(tmp_path)
+    tracker = resolve_tracker()
     assert isinstance(tracker, GitHubTracker)
     assert tracker.kind == "github"
     assert tracker.repo == "acme/widgets"
+    assert tracker.project_key == DEFAULT_PROJECT_KEY
 
 
-def test_resolve_tracker_returns_local_adapter(tmp_path: Path) -> None:
+def test_resolve_tracker_returns_local_adapter() -> None:
     _seed_local_tracker()
-    tracker = resolve_tracker(tmp_path)
+    tracker = resolve_tracker()
     assert isinstance(tracker, LocalTracker)
     assert tracker.kind == "local"
+    assert tracker.project_key == DEFAULT_PROJECT_KEY
 
 
-def test_resolve_tracker_rejects_missing_table(tmp_path: Path) -> None:
+def test_resolve_tracker_rejects_missing_table() -> None:
     seed_project_config({"tracker": None})
     with pytest.raises(TrackerError, match=r"tracker\.kind must be one of"):
-        resolve_tracker(tmp_path)
+        resolve_tracker()
 
 
-def test_resolve_tracker_rejects_unknown_kind(tmp_path: Path) -> None:
+def test_resolve_tracker_rejects_unknown_kind() -> None:
     seed_project_config({"tracker": {"kind": "linear", "repo": None}})
     with pytest.raises(TrackerError, match="kind must be one of"):
-        resolve_tracker(tmp_path)
+        resolve_tracker()
 
 
-def test_resolve_tracker_github_requires_repo(tmp_path: Path) -> None:
+def test_resolve_tracker_github_requires_repo() -> None:
     seed_project_config({"tracker": {"kind": "github", "repo": None}})
     with pytest.raises(TrackerError, match="requires a non-empty repo"):
-        resolve_tracker(tmp_path)
+        resolve_tracker()
 
 
-def test_resolve_tracker_fails_without_project_config(tmp_path: Path) -> None:
+def test_resolve_tracker_fails_without_project_config() -> None:
     with pytest.raises(TrackerError, match="missing Woof project config"):
-        resolve_tracker(tmp_path, project_key="never-seeded")
+        resolve_tracker("never-seeded")
 
 
 # ---------------------------------------------------------------------------
@@ -366,7 +365,7 @@ def test_resolve_tracker_fails_without_project_config(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     "tracker",
-    [GitHubTracker(Path("/tmp/x"), "acme/widgets"), LocalTracker(Path("/tmp/x"))],
+    [GitHubTracker("test-project", "acme/widgets"), LocalTracker("test-project")],
 )
 def test_adapters_satisfy_tracker_protocol(tracker: Tracker) -> None:
     assert isinstance(tracker, Tracker)
@@ -380,9 +379,9 @@ def test_tracker_contract_create_epic_initialises_runtime_state(
 
     result = tracker_contract.tracker.create_epic("Contract matrix\n\nShared create behaviour.")
 
-    assert result.epic_dir == tracker_contract.repo_root / ".woof" / "epics" / f"E{result.epic_id}"
+    assert result.epic_dir == state.epic_dir(tracker_contract.project_key, result.epic_id)
     assert result.spark_path == result.epic_dir / "spark.md"
-    assert result.current_epic_path == tracker_contract.repo_root / ".woof" / ".current-epic"
+    assert result.current_epic_path == state.current_epic_path(tracker_contract.project_key)
     assert result.current_epic_path.read_text(encoding="utf-8") == f"E{result.epic_id}\n"
     assert result.spark_path.read_text(encoding="utf-8").startswith("# Contract matrix\n\n")
     assert tracker_contract.tracker.has_sync_state(result.epic_id) is True
@@ -399,7 +398,7 @@ def test_tracker_contract_create_epic_initialises_runtime_state(
         assert result.epic_ref == "https://github.com/acme/widgets/issues/7"
         assert result.last_sync_path.is_file()
     else:
-        assert result.epic_ref == ".woof/epics/E1"
+        assert result.epic_ref == result.epic_dir.as_posix()
         assert not result.last_sync_path.exists()
 
 
@@ -414,7 +413,7 @@ def test_tracker_contract_fetch_epic_cold_start(
     result = tracker_contract.tracker.fetch_epic(7)
 
     assert result.epic_id == 7
-    assert result.epic_dir == tracker_contract.repo_root / ".woof" / "epics" / "E7"
+    assert result.epic_dir == state.epic_dir(tracker_contract.project_key, 7)
     assert result.spark_path.read_text(encoding="utf-8").startswith("# Tracker contract\n\n")
     assert result.last_sync_path.is_file()
     assert tracker_contract.tracker.has_sync_state(7) is True
@@ -424,7 +423,7 @@ def test_tracker_contract_authority_checks(
     tracker_contract: TrackerContractCase,
 ) -> None:
     if tracker_contract.kind == "local":
-        _write_epic_contract_files(tracker_contract.repo_root, 1)
+        _write_epic_contract_files(tracker_contract.project_key, 1)
         tracker_contract.tracker.assert_epic_authority(1)
         assert tracker_contract.tracker.has_sync_state(1) is True
         assert tracker_contract.tracker.has_sync_state(99) is False
@@ -449,13 +448,13 @@ def test_tracker_contract_conflict_resolution_decisions(
     decision: str,
 ) -> None:
     if tracker_contract.kind == "local":
-        _write_epic_contract_files(tracker_contract.repo_root, 1)
+        _write_epic_contract_files(tracker_contract.project_key, 1)
         with pytest.raises(TrackerError, match="no remote"):
             tracker_contract.tracker.resolve_conflict(1, decision)
         return
 
     epic_id = 7
-    epic_dir = tracker_contract.repo_root / ".woof" / "epics" / "E7"
+    epic_dir = state.epic_dir(tracker_contract.project_key, epic_id)
     epic_dir.mkdir(parents=True)
     assert tracker_contract.gh is not None
     remote_body = render_epic_issue_body(
@@ -572,23 +571,21 @@ def test_tracker_contract_close_not_delivered_abandons_without_done_guard(
         assert not result.last_sync_path.exists()
 
 
-def _github_close_tracker(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, gh: GhCommandStub
-) -> GitHubTracker:
+def _github_close_tracker(monkeypatch: pytest.MonkeyPatch, gh: GhCommandStub) -> GitHubTracker:
     monkeypatch.setattr(github_module.subprocess, "run", gh.run)
-    (tmp_path / ".woof" / "epics" / f"E{gh.issue_number}").mkdir(parents=True)
-    return GitHubTracker(tmp_path, gh.repo)
+    state.epic_dir(DEFAULT_PROJECT_KEY, gh.issue_number).mkdir(parents=True)
+    return GitHubTracker(DEFAULT_PROJECT_KEY, gh.repo)
 
 
 def test_close_not_delivered_corrects_already_closed_wrong_reason(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # An epic issue already closed as "completed" must be re-closed as
     # not-planned so the tracker stops reading as delivered once the local
     # epic_abandoned terminal is recorded.
     gh = GhCommandStub()
     gh.set_remote(body="Remote body.\n", state="closed", state_reason="completed")
-    tracker = _github_close_tracker(tmp_path, monkeypatch, gh)
+    tracker = _github_close_tracker(monkeypatch, gh)
 
     result = tracker.close_not_delivered(gh.issue_number)
 
@@ -602,13 +599,13 @@ def test_close_not_delivered_corrects_already_closed_wrong_reason(
 
 
 def test_close_not_delivered_idempotent_when_already_not_planned(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Already closed as not-planned: no redundant API write, but the local
     # not-delivered sync is still recorded.
     gh = GhCommandStub()
     gh.set_remote(body="Remote body.\n", state="closed", state_reason="not_planned")
-    tracker = _github_close_tracker(tmp_path, monkeypatch, gh)
+    tracker = _github_close_tracker(monkeypatch, gh)
 
     result = tracker.close_not_delivered(gh.issue_number)
 
@@ -620,7 +617,7 @@ def test_close_not_delivered_idempotent_when_already_not_planned(
     assert result.last_sync_path.is_file()
     events = [
         json.loads(line)
-        for line in (tmp_path / ".woof" / "epics" / f"E{gh.issue_number}" / "epic.jsonl")
+        for line in state.epic_events_path(DEFAULT_PROJECT_KEY, gh.issue_number)
         .read_text(encoding="utf-8")
         .splitlines()
     ]
@@ -633,56 +630,56 @@ def test_close_not_delivered_idempotent_when_already_not_planned(
 # ---------------------------------------------------------------------------
 
 
-def test_local_create_epic_assigns_first_id(tmp_path: Path) -> None:
+def test_local_create_epic_assigns_first_id() -> None:
     _seed_local_tracker()
-    tracker = LocalTracker(tmp_path)
+    tracker = LocalTracker(DEFAULT_PROJECT_KEY)
     result = tracker.create_epic("Build a thing\n\nMore detail.")
 
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 1)
     assert result.epic_id == 1
-    assert result.epic_ref == ".woof/epics/E1"
-    epic_dir = tmp_path / ".woof" / "epics" / "E1"
+    assert result.epic_ref == epic_dir.as_posix()
     assert (epic_dir / "spark.md").read_text() == "# Build a thing\n\nMore detail.\n"
-    assert (tmp_path / ".woof" / ".current-epic").read_text() == "E1\n"
-    assert not (epic_dir / ".last-sync").exists()
+    assert state.current_epic_path(DEFAULT_PROJECT_KEY).read_text() == "E1\n"
+    assert not state.last_sync_path(DEFAULT_PROJECT_KEY, 1).exists()
     events = [json.loads(line) for line in (epic_dir / "epic.jsonl").read_text().splitlines()]
     assert [event["event"] for event in events] == ["spark_created", "current_epic_selected"]
     assert events[0]["source"] == "local"
 
 
-def test_local_create_epic_increments_past_existing(tmp_path: Path) -> None:
+def test_local_create_epic_increments_past_existing() -> None:
     _seed_local_tracker()
-    (tmp_path / ".woof" / "epics" / "E4").mkdir(parents=True)
-    (tmp_path / ".woof" / "epics" / "E2").mkdir(parents=True)
-    result = LocalTracker(tmp_path).create_epic("Another epic")
+    state.epic_dir(DEFAULT_PROJECT_KEY, 4).mkdir(parents=True)
+    state.epic_dir(DEFAULT_PROJECT_KEY, 2).mkdir(parents=True)
+    result = LocalTracker(DEFAULT_PROJECT_KEY).create_epic("Another epic")
     assert result.epic_id == 5
 
 
-def test_local_fetch_epic_fails_loud(tmp_path: Path) -> None:
+def test_local_fetch_epic_fails_loud() -> None:
     with pytest.raises(TrackerError, match="no remote"):
-        LocalTracker(tmp_path).fetch_epic(7)
+        LocalTracker(DEFAULT_PROJECT_KEY).fetch_epic(7)
 
 
-def test_local_resolve_conflict_fails_loud(tmp_path: Path) -> None:
+def test_local_resolve_conflict_fails_loud() -> None:
     with pytest.raises(TrackerError, match="no remote"):
-        LocalTracker(tmp_path).resolve_conflict(1, "keep_local")
+        LocalTracker(DEFAULT_PROJECT_KEY).resolve_conflict(1, "keep_local")
 
 
-def test_local_runtime_check_noop_and_authority_uses_epic_directory(tmp_path: Path) -> None:
-    tracker = LocalTracker(tmp_path)
+def test_local_runtime_check_noop_and_authority_uses_epic_directory() -> None:
+    tracker = LocalTracker(DEFAULT_PROJECT_KEY)
     tracker.assert_runtime_reachable()
-    _write_epic_contract_files(tmp_path, 1)
+    _write_epic_contract_files(DEFAULT_PROJECT_KEY, 1)
     tracker.assert_epic_authority(1)
     assert tracker.has_sync_state(1) is True
     assert tracker.has_sync_state(2) is False
 
 
-def test_local_push_operations_keep_everything_local(tmp_path: Path) -> None:
-    tracker = LocalTracker(tmp_path)
+def test_local_push_operations_keep_everything_local() -> None:
+    tracker = LocalTracker(DEFAULT_PROJECT_KEY)
     definition = tracker.push_epic_definition(1, _epic_front(), "Intent prose.\n")
     assert definition.changed is False
     assert "## Observable Outcomes" in definition.body
 
-    _write_epic_contract_files(tmp_path, 1, done=True)
+    _write_epic_contract_files(DEFAULT_PROJECT_KEY, 1, done=True)
     plan_summary = tracker.push_plan_summary(1)
     assert plan_summary.changed is False
     assert plan_summary.closed is False
@@ -727,9 +724,7 @@ def test_github_core_remaining_parses_rate_limit() -> None:
     assert github_core_remaining("not json") is None
 
 
-def test_github_tracker_gh_helpers_use_timeouts(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_github_tracker_gh_helpers_use_timeouts(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[tuple[list[str], dict[str, object]]] = []
 
     def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -764,7 +759,7 @@ def test_github_tracker_gh_helpers_use_timeouts(
         raise AssertionError(f"unexpected gh argv: {argv}")
 
     monkeypatch.setattr(github_module.subprocess, "run", fake_run)
-    tracker = GitHubTracker(tmp_path, "acme/widgets")
+    tracker = GitHubTracker(DEFAULT_PROJECT_KEY, "acme/widgets")
 
     assert tracker._fetch_issue(3)["number"] == 3
     assert tracker._create_issue(title="Title", body="Body\n").endswith("/issues/3")
@@ -779,21 +774,21 @@ def test_github_tracker_gh_helpers_use_timeouts(
     ]
 
 
-def test_github_tracker_timeout_fails_loud(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_github_tracker_timeout_fails_loud(monkeypatch: pytest.MonkeyPatch) -> None:
     def timeout_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
 
     monkeypatch.setattr(github_module.subprocess, "run", timeout_run)
 
     with pytest.raises(TrackerError, match="timed out after 20s"):
-        GitHubTracker(tmp_path, "acme/widgets")._fetch_issue(3)
+        GitHubTracker(DEFAULT_PROJECT_KEY, "acme/widgets")._fetch_issue(3)
 
 
 def test_github_create_epic_closes_created_issue_when_local_initialisation_fails(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    (tmp_path / ".woof" / "epics" / "E88").mkdir(parents=True)
-    tracker = GitHubTracker(tmp_path, "acme/widgets")
+    state.epic_dir(DEFAULT_PROJECT_KEY, 88).mkdir(parents=True)
+    tracker = GitHubTracker(DEFAULT_PROJECT_KEY, "acme/widgets")
     closed: list[int] = []
 
     monkeypatch.setattr(
@@ -817,7 +812,7 @@ def test_github_create_epic_closes_created_issue_when_local_initialisation_fails
         tracker.create_epic("New keyboard flow")
 
     assert closed == [88]
-    assert not (tmp_path / ".woof" / ".current-epic").exists()
+    assert not state.current_epic_path(DEFAULT_PROJECT_KEY).exists()
 
 
 # ---------------------------------------------------------------------------
@@ -863,11 +858,13 @@ def test_woof_wf_new_local_tracker_never_calls_gh(tmp_path: Path) -> None:
     payload = json.loads(proc.stdout)
     assert payload["status"] == "created"
     assert payload["epic_id"] == 1
-    assert payload["epic_ref"] == ".woof/epics/E1"
     assert payload["next_command"] == "woof wf --epic 1"
-    epic_dir = project / ".woof" / "epics" / "E1"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 1)
+    assert payload["epic_ref"] == epic_dir.as_posix()
     assert (epic_dir / "spark.md").read_text() == "# Portable epic\n\nRuns without GitHub.\n"
-    assert (project / ".woof" / ".current-epic").read_text() == "E1\n"
+    assert state.current_epic_path(DEFAULT_PROJECT_KEY).read_text() == "E1\n"
+    # The engine leaves no trace in the driven repo.
+    assert not (project / ".woof").exists()
 
 
 def test_woof_wf_intake_predecomposed_work_units_without_epic(tmp_path: Path) -> None:
@@ -927,16 +924,18 @@ def test_woof_wf_intake_predecomposed_work_units_without_epic(tmp_path: Path) ->
     assert first_payload["context"]["kind"] == "work_unit_set"
     assert first_payload["context"]["project_ref"] == "woof"
     assert first_payload["work_unit_count"] == 2
-    assert not (project / first_payload["directory"] / "EPIC.md").exists()
+    directory = Path(first_payload["directory"])
+    assert directory.is_relative_to(state.project_state_root(DEFAULT_PROJECT_KEY))
+    assert not (directory / "EPIC.md").exists()
 
-    plan = json.loads((project / first_payload["paths"][0]).read_text())
+    plan = json.loads(Path(first_payload["paths"][0]).read_text())
     assert "epic_id" not in plan
     assert plan["context"] == first_payload["context"]
     assert [unit["id"] for unit in plan["work_units"]] == ["foundation", "follow-up"]
     assert plan["work_units"][0]["state"] == "pending"
     assert plan["work_units"][0]["paths"] == ["**/*"]
 
-    metadata = json.loads((project / first_payload["paths"][2]).read_text())
+    metadata = json.loads(Path(first_payload["paths"][2]).read_text())
     assert metadata["kind"] == "pre_decomposed_work_units"
     assert metadata["qualified_work_unit_refs"][1] == {
         "context": first_payload["context"],

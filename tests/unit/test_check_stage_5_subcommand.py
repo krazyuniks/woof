@@ -18,7 +18,8 @@ from pathlib import Path
 
 import pytest
 
-from tests.support import seed_project_config
+from tests.support import DEFAULT_PROJECT_KEY, seed_project_config
+from woof import state
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WOOF_BIN = REPO_ROOT / "bin" / "woof"
@@ -132,10 +133,9 @@ def test_stage_5_fails_closed_when_runner_not_implemented(
             ),
         )
 
-    epic_dir = tmp_path / ".woof" / "epics" / "E1"
-    epic_dir.mkdir(parents=True)
-    (epic_dir / "plan.json").write_text(
-        json.dumps({"epic_id": 1, "goal": "test", "work_units": []})
+    state.atomic_write_json(
+        state.plan_path(DEFAULT_PROJECT_KEY, 1),
+        {"epic_id": 1, "goal": "test", "work_units": []},
     )
     monkeypatch.chdir(tmp_path)
 
@@ -196,10 +196,9 @@ def test_stage_5_context_carries_declared_cartography_floor(
             ),
         )
 
-    epic_dir = tmp_path / ".woof" / "epics" / "E1"
-    epic_dir.mkdir(parents=True)
-    (epic_dir / "plan.json").write_text(
-        json.dumps({"epic_id": 1, "goal": "test", "work_units": []})
+    state.atomic_write_json(
+        state.plan_path(DEFAULT_PROJECT_KEY, 1),
+        {"epic_id": 1, "goal": "test", "work_units": []},
     )
     seed_project_config({"checks": {"floor": ["quality-gates"]}, "cartography": {"floor": "none"}})
     monkeypatch.chdir(tmp_path)
@@ -225,13 +224,14 @@ def test_check_stage_5_json_output_conforms_to_schema_O4(tmp_path: Path) -> None
 
     subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True, text=True)
 
-    # Create a minimal epic dir with a blocker critique so check_6 fires
-    epic_dir = tmp_path / ".woof" / "epics" / "E999"
-    critique_dir = epic_dir / "critique"
-    critique_dir.mkdir(parents=True)
+    # Seed engine state with a blocker critique so check_6 fires
+    critique_dir = state.critique_dir(DEFAULT_PROJECT_KEY, 999)
+    critique_dir.mkdir(parents=True, exist_ok=True)
     seed_project_config({"review_valve": {"every_n_work_units": 5, "end_of_epic": False}})
-    plan_path = epic_dir / "plan.json"
-    plan_path.write_text(json.dumps({"epic_id": 999, "goal": "test", "work_units": []}))
+    state.atomic_write_json(
+        state.plan_path(DEFAULT_PROJECT_KEY, 999),
+        {"epic_id": 999, "goal": "test", "work_units": []},
+    )
     (critique_dir / "work-unit-S1.md").write_text(
         "---\ntarget: work_unit\ntarget_id: S1\nseverity: blocker\n"
         "timestamp: '2026-01-01T00:00:00Z'\nharness: test\n"
@@ -302,9 +302,8 @@ def test_check_stage_5_json_output_conforms_to_schema_O4(tmp_path: Path) -> None
 def test_check_stage_5_reports_review_valve_not_due_as_info(tmp_path: Path) -> None:
     """Check 9 is a real runner and reports ok=true severity=info when no review is due."""
     subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True, text=True)
-    epic_dir = tmp_path / ".woof" / "epics" / "E999"
-    critique_dir = epic_dir / "critique"
-    critique_dir.mkdir(parents=True)
+    critique_dir = state.critique_dir(DEFAULT_PROJECT_KEY, 999)
+    critique_dir.mkdir(parents=True, exist_ok=True)
     # No review-size guard: this test asserts the valve's own "not due" verdict,
     # which the guard's verdict would otherwise replace.
     seed_project_config(
@@ -313,28 +312,26 @@ def test_check_stage_5_reports_review_valve_not_due_as_info(tmp_path: Path) -> N
             "checks": {"review_size": None},
         }
     )
-    plan_path = epic_dir / "plan.json"
-    plan_path.write_text(
-        json.dumps(
-            {
-                "epic_id": 999,
-                "goal": "test",
-                "work_units": [
-                    {
-                        "id": "S1",
-                        "title": "test",
-                        "summary": "test",
-                        "paths": ["src/**"],
-                        "satisfies": ["O1"],
-                        "implements_contract_decisions": [],
-                        "uses_contract_decisions": [],
-                        "deps": [],
-                        "tests": {"count": 1, "types": ["unit"]},
-                        "state": "in_progress",
-                    }
-                ],
-            }
-        )
+    state.atomic_write_json(
+        state.plan_path(DEFAULT_PROJECT_KEY, 999),
+        {
+            "epic_id": 999,
+            "goal": "test",
+            "work_units": [
+                {
+                    "id": "S1",
+                    "title": "test",
+                    "summary": "test",
+                    "paths": ["src/**"],
+                    "satisfies": ["O1"],
+                    "implements_contract_decisions": [],
+                    "uses_contract_decisions": [],
+                    "deps": [],
+                    "tests": {"count": 1, "types": ["unit"]},
+                    "state": "in_progress",
+                }
+            ],
+        },
     )
     # Critique with severity=info so check_6 does not flag this run
     (critique_dir / "work-unit-S1.md").write_text(
@@ -342,11 +339,11 @@ def test_check_stage_5_reports_review_valve_not_due_as_info(tmp_path: Path) -> N
         "timestamp: '2026-01-01T00:00:00Z'\nharness: test\n"
         "findings: []\n---\n"
     )
-    disposition_dir = epic_dir / "dispositions"
-    disposition_dir.mkdir()
+    disposition_dir = state.dispositions_dir(DEFAULT_PROJECT_KEY, 999)
+    disposition_dir.mkdir(parents=True, exist_ok=True)
     (disposition_dir / "work-unit-S1.md").write_text(
         "---\ntarget: work_unit\ntarget_id: S1\n"
-        "critique_path: .woof/epics/E999/critique/work-unit-S1.md\n"
+        "critique_path: critique/work-unit-S1.md\n"
         "severity: info\n"
         "timestamp: '2026-01-01T00:00:00Z'\nharness: test-primary\n"
         "dispositions: []\n---\n"

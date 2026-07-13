@@ -7,7 +7,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from tests.support import seed_project_config
+from tests.support import DEFAULT_PROJECT_KEY, seed_project_config
+from woof import state
 from woof.checks import CheckContext
 from woof.checks.runners.check_9_review_valve import (
     _is_end_of_epic,
@@ -21,11 +22,12 @@ def _work_unit(work_unit_id: str, state: str) -> dict:
 
 
 def _ctx(repo_root: Path, stories: list[dict], work_unit_id: str = "S2") -> CheckContext:
-    epic_dir = repo_root / ".woof" / "epics" / "E1"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 1)
     epic_dir.mkdir(parents=True, exist_ok=True)
     return CheckContext(
         epic_id=1,
         work_unit_id=work_unit_id,
+        project_key=DEFAULT_PROJECT_KEY,
         repo_root=repo_root,
         epic_dir=epic_dir,
         plan={"epic_id": 1, "goal": "test", "work_units": stories},
@@ -136,8 +138,8 @@ def test_review_size_guard_fails_when_non_generated_changed_lines_exceed_policy(
     _stage_file(tmp_path, "src/app.py", "one\ntwo\nthree\n")
     _stage_file(
         tmp_path,
-        ".woof/codebase/files.txt",
-        "\n".join(f"generated-{i}.py" for i in range(20)),
+        "generated/files.py",
+        "# @generated\n" + "\n".join(f"generated_{i} = 1" for i in range(19)),
     )
 
     outcome = check_9_review_valve_runner(ctx)
@@ -146,9 +148,7 @@ def test_review_size_guard_fails_when_non_generated_changed_lines_exceed_policy(
     assert outcome.severity == "minor"
     assert "3 non-generated changed line(s) exceed policy threshold 2" in outcome.summary
     assert "src/app.py: 3 non-generated changed line(s)" in (outcome.evidence or "")
-    assert ".woof/codebase/files.txt: 20 generated changed line(s) excluded" in (
-        outcome.evidence or ""
-    )
+    assert "generated/files.py: 20 generated changed line(s) excluded" in (outcome.evidence or "")
 
 
 def test_review_size_guard_reports_all_generated_file_classes(tmp_path: Path) -> None:
@@ -157,7 +157,6 @@ def test_review_size_guard_reports_all_generated_file_classes(tmp_path: Path) ->
     _seed_config(every_n=99, end_of_epic=False, max_non_generated_changed_lines=1)
     ctx = _ctx(tmp_path, [_work_unit("S1", "done"), _work_unit("S2", "in_progress")])
     _stage_file(tmp_path, "linguist/data.json", '{"generated": true}\n')
-    _stage_file(tmp_path, ".woof/codebase/tags", "tag\tfile\tpattern\n")
     _stage_file(tmp_path, "src/generated_client.py", "# @generated\nvalue = 1\n")
 
     outcome = check_9_review_valve_runner(ctx)
@@ -166,10 +165,6 @@ def test_review_size_guard_reports_all_generated_file_classes(tmp_path: Path) ->
     evidence = outcome.evidence or ""
     assert (
         "linguist/data.json: 1 generated changed line(s) excluded (linguist-generated)" in evidence
-    )
-    assert (
-        ".woof/codebase/tags: 1 generated changed line(s) excluded (known generated artefact)"
-        in evidence
     )
     assert (
         "src/generated_client.py: 2 generated changed line(s) excluded (generated header)"
@@ -376,9 +371,9 @@ def test_retried_boundary_gates_only_fresh_finding(tmp_path: Path) -> None:
 
 
 def test_check_9_gate_is_written_as_review_gate(tmp_path: Path) -> None:
-    epic_dir = tmp_path / ".woof" / "epics" / "E1"
-    epic_dir.mkdir(parents=True)
-    check_result = epic_dir / "check-result.json"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 1)
+    epic_dir.mkdir(parents=True, exist_ok=True)
+    check_result = state.check_result_path(DEFAULT_PROJECT_KEY, 1)
     check_result.write_text(
         json.dumps(
             {
@@ -403,7 +398,7 @@ def test_check_9_gate_is_written_as_review_gate(tmp_path: Path) -> None:
         )
     )
 
-    gate_path = write_gate_from_check_result(check_result, None, epic_dir, "S2")
+    gate_path = write_gate_from_check_result(check_result, None, DEFAULT_PROJECT_KEY, 1, "S2")
 
     gate_text = gate_path.read_text()
     assert "type: review_gate" in gate_text

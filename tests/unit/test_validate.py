@@ -23,6 +23,12 @@ WOOF_BIN = REPO_ROOT / "bin" / "woof"
 SCHEMA_DIR = REPO_ROOT / "schemas"
 SCHEMA_FILES = sorted(SCHEMA_DIR.glob("*.schema.json"))
 
+# Engine state lives in the operator home (ADR-017), so node contracts and event
+# payloads carry absolute state paths, never a path inside the delivery checkout.
+STATE_ROOT = "/home/operator/woof-home/state/projects/demo"
+E1_DIR = f"{STATE_ROOT}/epics/E1"
+E7_DIR = f"{STATE_ROOT}/epics/E7"
+
 
 pytestmark = pytest.mark.host_only
 
@@ -409,7 +415,7 @@ def _base_planning_input(node_type: str, inputs: dict) -> dict:
         "node_type": node_type,
         "epic_id": 7,
         "repo_root": "/tmp/consumer",
-        "epic_dir": ".woof/epics/E7",
+        "epic_dir": f"{E7_DIR}",
         "inputs": inputs,
     }
 
@@ -451,9 +457,9 @@ def _base_planning_output(
             _base_planning_input(
                 "discovery_research",
                 {
-                    "spark_path": ".woof/epics/E7/spark.md",
-                    "discovery_dir": ".woof/epics/E7/discovery",
-                    "bucket_dir": ".woof/epics/E7/discovery/research",
+                    "spark_path": f"{E7_DIR}/spark.md",
+                    "discovery_dir": f"{E7_DIR}/discovery",
+                    "bucket_dir": f"{E7_DIR}/discovery/research",
                 },
             ),
             "planning-node-input",
@@ -462,10 +468,10 @@ def _base_planning_output(
             _base_planning_input(
                 "discovery_thinking",
                 {
-                    "spark_path": ".woof/epics/E7/spark.md",
-                    "discovery_dir": ".woof/epics/E7/discovery",
-                    "bucket_dir": ".woof/epics/E7/discovery/thinking",
-                    "source_paths": [".woof/epics/E7/discovery/research/landscape.md"],
+                    "spark_path": f"{E7_DIR}/spark.md",
+                    "discovery_dir": f"{E7_DIR}/discovery",
+                    "bucket_dir": f"{E7_DIR}/discovery/thinking",
+                    "source_paths": [f"{E7_DIR}/discovery/research/landscape.md"],
                 },
             ),
             "planning-node-input",
@@ -474,10 +480,10 @@ def _base_planning_output(
             _base_planning_input(
                 "discovery_synthesis",
                 {
-                    "spark_path": ".woof/epics/E7/spark.md",
-                    "discovery_dir": ".woof/epics/E7/discovery",
-                    "synthesis_dir": ".woof/epics/E7/discovery/synthesis",
-                    "source_paths": [".woof/epics/E7/discovery/research/options.md"],
+                    "spark_path": f"{E7_DIR}/spark.md",
+                    "discovery_dir": f"{E7_DIR}/discovery",
+                    "synthesis_dir": f"{E7_DIR}/discovery/synthesis",
+                    "source_paths": [f"{E7_DIR}/discovery/research/options.md"],
                 },
             ),
             "planning-node-input",
@@ -486,8 +492,8 @@ def _base_planning_output(
             _base_planning_input(
                 "epic_definition",
                 {
-                    "synthesis_dir": ".woof/epics/E7/discovery/synthesis",
-                    "epic_path": ".woof/epics/E7/EPIC.md",
+                    "synthesis_dir": f"{E7_DIR}/discovery/synthesis",
+                    "epic_path": f"{E7_DIR}/EPIC.md",
                     "carried_open_questions": ["OQ1"],
                 },
             ),
@@ -497,9 +503,9 @@ def _base_planning_output(
             _base_planning_input(
                 "breakdown_planning",
                 {
-                    "epic_path": ".woof/epics/E7/EPIC.md",
-                    "plan_path": ".woof/epics/E7/plan.json",
-                    "plan_markdown_path": ".woof/epics/E7/PLAN.md",
+                    "epic_path": f"{E7_DIR}/EPIC.md",
+                    "plan_path": f"{E7_DIR}/plan.json",
+                    "plan_markdown_path": f"{E7_DIR}/PLAN.md",
                 },
             ),
             "planning-node-input",
@@ -508,10 +514,10 @@ def _base_planning_output(
             _base_planning_input(
                 "plan_critique",
                 {
-                    "epic_path": ".woof/epics/E7/EPIC.md",
-                    "plan_path": ".woof/epics/E7/plan.json",
-                    "plan_markdown_path": ".woof/epics/E7/PLAN.md",
-                    "critique_path": ".woof/epics/E7/critique/plan.md",
+                    "epic_path": f"{E7_DIR}/EPIC.md",
+                    "plan_path": f"{E7_DIR}/plan.json",
+                    "plan_markdown_path": f"{E7_DIR}/PLAN.md",
+                    "critique_path": f"{E7_DIR}/critique/plan.md",
                 },
             ),
             "planning-node-input",
@@ -520,10 +526,10 @@ def _base_planning_output(
             _base_planning_input(
                 "plan_gate_open",
                 {
-                    "plan_path": ".woof/epics/E7/plan.json",
-                    "plan_markdown_path": ".woof/epics/E7/PLAN.md",
-                    "critique_path": ".woof/epics/E7/critique/plan.md",
-                    "gate_path": ".woof/epics/E7/gate.md",
+                    "plan_path": f"{E7_DIR}/plan.json",
+                    "plan_markdown_path": f"{E7_DIR}/PLAN.md",
+                    "critique_path": f"{E7_DIR}/critique/plan.md",
+                    "gate_path": f"{E7_DIR}/gate.md",
                     "triggered_by": ["plan_review"],
                 },
             ),
@@ -533,7 +539,7 @@ def _base_planning_output(
             _base_planning_input(
                 "plan_gate_resolve",
                 {
-                    "gate_path": ".woof/epics/E7/gate.md",
+                    "gate_path": f"{E7_DIR}/gate.md",
                     "decision": "approve",
                 },
             ),
@@ -542,7 +548,7 @@ def _base_planning_output(
         (
             _base_planning_output(
                 "discovery_research",
-                paths=[".woof/epics/E7/discovery/research/landscape.md"],
+                paths=[f"{E7_DIR}/discovery/research/landscape.md"],
                 next_node="discovery_thinking",
                 stage=1,
             ),
@@ -551,7 +557,7 @@ def _base_planning_output(
         (
             _base_planning_output(
                 "discovery_ideate",
-                paths=[".woof/epics/E7/discovery/ideate/options.md"],
+                paths=[f"{E7_DIR}/discovery/ideate/options.md"],
                 next_node="discovery_synthesis",
                 stage=1,
             ),
@@ -561,10 +567,10 @@ def _base_planning_output(
             _base_planning_output(
                 "discovery_synthesis",
                 paths=[
-                    ".woof/epics/E7/discovery/synthesis/CONCEPT.md",
-                    ".woof/epics/E7/discovery/synthesis/PRINCIPLES.md",
-                    ".woof/epics/E7/discovery/synthesis/ARCHITECTURE.md",
-                    ".woof/epics/E7/discovery/synthesis/OPEN_QUESTIONS.md",
+                    f"{E7_DIR}/discovery/synthesis/CONCEPT.md",
+                    f"{E7_DIR}/discovery/synthesis/PRINCIPLES.md",
+                    f"{E7_DIR}/discovery/synthesis/ARCHITECTURE.md",
+                    f"{E7_DIR}/discovery/synthesis/OPEN_QUESTIONS.md",
                 ],
                 next_node="epic_definition",
                 stage=1,
@@ -574,7 +580,7 @@ def _base_planning_output(
         (
             _base_planning_output(
                 "epic_definition",
-                paths=[".woof/epics/E7/EPIC.md"],
+                paths=[f"{E7_DIR}/EPIC.md"],
                 next_node="breakdown_planning",
                 stage=2,
             ),
@@ -583,7 +589,7 @@ def _base_planning_output(
         (
             _base_planning_output(
                 "breakdown_planning",
-                paths=[".woof/epics/E7/plan.json", ".woof/epics/E7/PLAN.md"],
+                paths=[f"{E7_DIR}/plan.json", f"{E7_DIR}/PLAN.md"],
                 next_node="plan_critique",
                 stage=3,
             ),
@@ -592,7 +598,7 @@ def _base_planning_output(
         (
             _base_planning_output(
                 "plan_critique",
-                paths=[".woof/epics/E7/critique/plan.md"],
+                paths=[f"{E7_DIR}/critique/plan.md"],
                 next_node="plan_gate_open",
                 stage=3,
             ),
@@ -604,12 +610,12 @@ def _base_planning_output(
                 next_node=None,
                 stage=4,
                 status="gate_opened",
-                gate_path=".woof/epics/E7/gate.md",
+                gate_path=f"{E7_DIR}/gate.md",
                 paths=[
-                    ".woof/epics/E7/plan.json",
-                    ".woof/epics/E7/PLAN.md",
-                    ".woof/epics/E7/critique/plan.md",
-                    ".woof/epics/E7/gate.md",
+                    f"{E7_DIR}/plan.json",
+                    f"{E7_DIR}/PLAN.md",
+                    f"{E7_DIR}/critique/plan.md",
+                    f"{E7_DIR}/gate.md",
                 ],
                 triggered_by=["plan_review"],
             ),
@@ -620,7 +626,7 @@ def _base_planning_output(
                 "plan_gate_resolve",
                 next_node=None,
                 stage=4,
-                paths=[".woof/epics/E7/epic.jsonl"],
+                paths=[f"{E7_DIR}/epic.jsonl"],
             ),
             "planning-node-output",
         ),
@@ -640,7 +646,7 @@ def test_validate_planning_node_rejects_wrong_input_for_node_type(tmp_path: Path
     payload = _base_planning_input(
         "plan_gate_resolve",
         {
-            "gate_path": ".woof/epics/E7/gate.md",
+            "gate_path": f"{E7_DIR}/gate.md",
             "triggered_by": ["plan_review"],
         },
     )
@@ -766,7 +772,7 @@ VALID_DISPOSITION = """\
 ---
 target: work_unit
 target_id: S1
-critique_path: .woof/epics/E7/critique/work-unit-S1.md
+critique_path: critique/work-unit-S1.md
 severity: minor
 timestamp: "2026-01-01T00:00:00Z"
 harness: test-primary
@@ -785,7 +791,7 @@ Disposition body.
 
 
 def test_validate_disposition_via_path(tmp_path: Path, run_woof) -> None:
-    disposition_dir = tmp_path / ".woof" / "epics" / "E7" / "dispositions"
+    disposition_dir = tmp_path / "dispositions"
     disposition_dir.mkdir(parents=True)
     path = disposition_dir / "work-unit-1.md"
     path.write_text(VALID_DISPOSITION)
@@ -939,14 +945,14 @@ def test_validate_jsonl_per_line(tmp_path: Path, run_woof) -> None:
             "event": "breakdown_planned",
             "at": "2026-04-26T11:00:00Z",
             "epic_id": 1,
-            "paths": [".woof/epics/E1/plan.json", ".woof/epics/E1/PLAN.md"],
+            "paths": [f"{E1_DIR}/plan.json", f"{E1_DIR}/PLAN.md"],
         },
         {
             "event": "transaction_manifest_verified",
             "at": "2026-04-26T12:00:00Z",
             "epic_id": 1,
             "work_unit_id": "S1",
-            "manifest": {"expected_paths": [".woof/epics/E1/plan.json"]},
+            "manifest": {"expected_paths": ["src/app.py"]},
         },
         {
             "event": "wf_lock_stale_removed",
@@ -955,7 +961,7 @@ def test_validate_jsonl_per_line(tmp_path: Path, run_woof) -> None:
             "pid": 4242,
             "reason": "pid_not_running",
             "hostname": "build-host",
-            "paths": [".woof/epics/E1/.wf.lock"],
+            "paths": [f"{E1_DIR}/.wf.lock"],
         },
     ]
     path.write_text("\n".join(json.dumps(line) for line in lines) + "\n")

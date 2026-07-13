@@ -8,7 +8,8 @@ from pathlib import Path
 
 import yaml
 
-from tests.support import seed_project_config
+from tests.support import DEFAULT_PROJECT_KEY, seed_project_config
+from woof import state
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WOOF_BIN = REPO_ROOT / "bin" / "woof"
@@ -16,7 +17,7 @@ WOOF_BIN = REPO_ROOT / "bin" / "woof"
 
 def _project(tmp_path: Path) -> Path:
     project = tmp_path / "project"
-    (project / ".woof").mkdir(parents=True)
+    project.mkdir(parents=True)
     subprocess.run(["git", "init", "-q"], cwd=project, check=True)
     seed_project_config({"tracker": {"kind": "github", "repo": "acme/widgets"}})
     return project
@@ -170,7 +171,7 @@ def test_wf_cold_start_initialises_epic_from_structured_issue(tmp_path: Path) ->
 
     assert proc.returncode == 0, proc.stderr
     assert "initialised E42 from the tracker with spark.md and EPIC.md" in proc.stdout
-    epic_dir = project / ".woof" / "epics" / "E42"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 42)
     assert (
         (epic_dir / "spark.md")
         .read_text()
@@ -227,7 +228,7 @@ def test_wf_cold_start_without_structured_sections_seeds_only_spark(
     assert proc.returncode == 0, proc.stderr
     payload = json.loads(proc.stdout)
     assert payload["status"] == "initialised"
-    epic_dir = project / ".woof" / "epics" / "E7"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 7)
     assert (epic_dir / "spark.md").is_file()
     assert not (epic_dir / "EPIC.md").exists()
 
@@ -241,12 +242,12 @@ def test_wf_cold_start_fails_loud_when_issue_fetch_fails(tmp_path: Path) -> None
 
     assert proc.returncode == 2
     assert "E404 not found" in proc.stderr
-    assert not (project / ".woof" / "epics" / "E404").exists()
+    assert not (state.epic_dir(DEFAULT_PROJECT_KEY, 404)).exists()
 
 
 def test_wf_runtime_check_fails_before_gate_mutation(tmp_path: Path) -> None:
     project = _project(tmp_path)
-    epic_dir = project / ".woof" / "epics" / "E3"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 3)
     epic_dir.mkdir(parents=True)
     (epic_dir / "gate.md").write_text("---\ntype: work_unit_gate\n---\n")
     (epic_dir / "epic.jsonl").write_text("")
@@ -264,7 +265,7 @@ def test_wf_runtime_check_fails_before_gate_mutation(tmp_path: Path) -> None:
 
 def test_wf_runtime_check_rejects_exhausted_core_quota(tmp_path: Path) -> None:
     project = _project(tmp_path)
-    epic_dir = project / ".woof" / "epics" / "E4"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 4)
     epic_dir.mkdir(parents=True)
     (epic_dir / "gate.md").write_text("---\ntype: work_unit_gate\n---\n")
     bin_dir = tmp_path / "bin"
@@ -279,7 +280,7 @@ def test_wf_runtime_check_rejects_exhausted_core_quota(tmp_path: Path) -> None:
 
 def test_wf_existing_local_epic_requires_last_sync(tmp_path: Path) -> None:
     project = _project(tmp_path)
-    epic_dir = project / ".woof" / "epics" / "E77"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 77)
     epic_dir.mkdir(parents=True)
     (epic_dir / "plan.json").write_text('{"epic_id":77,"goal":"x","work_units":[]}\n')
     bin_dir = tmp_path / "bin"
@@ -297,7 +298,7 @@ def test_wf_existing_local_epic_requires_last_sync(tmp_path: Path) -> None:
 
 def test_wf_existing_local_epic_verifies_issue_exists(tmp_path: Path) -> None:
     project = _project(tmp_path)
-    epic_dir = project / ".woof" / "epics" / "E78"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 78)
     epic_dir.mkdir(parents=True)
     (epic_dir / ".last-sync").write_text(
         json.dumps(
@@ -346,8 +347,8 @@ def test_wf_new_creates_issue_and_initialises_current_epic(tmp_path: Path) -> No
         in (bin_dir / "_args").read_text()
     )
 
-    epic_dir = project / ".woof" / "epics" / "E88"
-    assert (project / ".woof" / ".current-epic").read_text() == "E88\n"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 88)
+    assert state.current_epic_path(DEFAULT_PROJECT_KEY).read_text() == "E88\n"
     assert (epic_dir / "spark.md").read_text() == (
         "# New keyboard flow\n\nMake the inner loop easier to start.\n"
     )
@@ -382,8 +383,9 @@ def test_wf_new_fails_loud_when_issue_create_fails(tmp_path: Path) -> None:
 
     assert proc.returncode == 2
     assert "gh issue create --repo acme/widgets failed" in proc.stderr
-    assert not (project / ".woof" / ".current-epic").exists()
-    assert not (project / ".woof" / "epics").exists()
+    assert not state.current_epic_path(DEFAULT_PROJECT_KEY).exists()
+    assert not state.epics_root(DEFAULT_PROJECT_KEY).exists()
+    assert not (project / ".woof").exists()
 
 
 def test_wf_new_rejects_caller_supplied_epic_id(tmp_path: Path) -> None:
@@ -393,4 +395,4 @@ def test_wf_new_rejects_caller_supplied_epic_id(tmp_path: Path) -> None:
 
     assert proc.returncode == 2
     assert "--epic is assigned by the tracker" in proc.stderr
-    assert not (project / ".woof" / ".current-epic").exists()
+    assert not state.current_epic_path(DEFAULT_PROJECT_KEY).exists()

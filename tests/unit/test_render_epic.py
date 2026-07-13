@@ -16,7 +16,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from tests.support import seed_project_config
+from tests.support import DEFAULT_PROJECT_KEY, seed_project_config
+from woof import state
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WOOF_BIN = REPO_ROOT / "bin" / "woof"
@@ -76,7 +77,7 @@ def _write_last_sync(
     updated_at: str = "2026-01-01T00:00:00Z",
     body: str = "<previous>",
 ) -> None:
-    (epic_project / ".woof" / "epics" / "E42" / ".last-sync").write_text(
+    state.last_sync_path(DEFAULT_PROJECT_KEY, 42).write_text(
         json.dumps(
             {
                 "issue_number": 42,
@@ -93,7 +94,8 @@ def _write_last_sync(
 def epic_project(tmp_path: Path) -> Path:
     """Skeleton git checkout with a GitHub-tracker project config and a sample EPIC.md."""
     project = tmp_path / "proj"
-    epic_dir = project / ".woof" / "epics" / "E42"
+    project.mkdir(parents=True)
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 42)
     epic_dir.mkdir(parents=True)
     subprocess.run(["git", "init", "-q"], cwd=project, check=True)
     seed_project_config({"tracker": {"kind": "github", "repo": "acme/widgets"}})
@@ -183,7 +185,7 @@ def test_render_full_body(epic_project: Path) -> None:
 
 
 def test_render_uses_front_matter_intent_before_body_prose(epic_project: Path) -> None:
-    epic_md = epic_project / ".woof" / "epics" / "E42" / "EPIC.md"
+    epic_md = state.epic_dir(DEFAULT_PROJECT_KEY, 42) / "EPIC.md"
     text = epic_md.read_text()
     epic_md.write_text(
         text.replace(
@@ -214,7 +216,8 @@ def test_missing_epic_md(epic_project: Path) -> None:
 
 def test_invalid_front_matter(tmp_path: Path) -> None:
     project = tmp_path / "p"
-    epic_dir = project / ".woof" / "epics" / "E1"
+    project.mkdir(parents=True)
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 1)
     epic_dir.mkdir(parents=True)
     subprocess.run(["git", "init", "-q"], cwd=project, check=True)
     seed_project_config({"tracker": {"kind": "github", "repo": "x/y"}})
@@ -371,19 +374,19 @@ def test_sync_first_push_writes_last_sync(epic_project: Path, tmp_path: Path) ->
     proc = _run(epic_project, "render-epic", "--epic", "42", "--sync", env=_stub_env(bin_dir))
     assert proc.returncode == 0, proc.stderr
 
-    last_sync_path = epic_project / ".woof" / "epics" / "E42" / ".last-sync"
+    last_sync_path = state.epic_dir(DEFAULT_PROJECT_KEY, 42) / ".last-sync"
     last_sync = json.loads(last_sync_path.read_text())
     assert last_sync["issue_number"] == 42
     assert last_sync["updated_at"] == "2026-01-02T12:34:56Z"
     assert len(last_sync["body_sha256"]) == 64
 
-    jsonl = (epic_project / ".woof" / "epics" / "E42" / "epic.jsonl").read_text()
+    jsonl = (state.epic_dir(DEFAULT_PROJECT_KEY, 42) / "epic.jsonl").read_text()
     events = [json.loads(ln) for ln in jsonl.splitlines() if ln.strip()]
     assert any(e["event"] == "tracker_synced" for e in events)
 
 
 def test_wf_plan_gate_approval_syncs_plan_summary(epic_project: Path, tmp_path: Path) -> None:
-    epic_dir = epic_project / ".woof" / "epics" / "E42"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 42)
     (epic_dir / "plan.json").write_text(_plan_json())
     (epic_dir / "gate.md").write_text(
         "---\ntype: plan_gate\nstage: 4\nwork_unit_id: null\ntriggered_by: [plan_review]\n---\n"
@@ -422,7 +425,7 @@ def test_wf_plan_gate_approval_syncs_plan_summary(epic_project: Path, tmp_path: 
 def test_wf_epic_completion_syncs_closing_summary_and_closes_issue(
     epic_project: Path, tmp_path: Path
 ) -> None:
-    epic_dir = epic_project / ".woof" / "epics" / "E42"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 42)
     (epic_dir / "plan.json").write_text(_plan_json(done=True))
     remote_body = "Remote intent.\n\n## Observable Outcomes\n\n- stale\n"
     _write_last_sync(epic_project, body=remote_body)
@@ -473,7 +476,7 @@ def test_wf_epic_completion_syncs_closing_summary_and_closes_issue(
 
 def test_sync_conflict_detected(epic_project: Path, tmp_path: Path) -> None:
     """If remote updated_at differs from .last-sync, push is aborted."""
-    epic_dir = epic_project / ".woof" / "epics" / "E42"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 42)
     _write_last_sync(epic_project, updated_at="2025-12-01T00:00:00Z", body="<old>")
 
     bin_dir = tmp_path / "bin"
@@ -516,7 +519,7 @@ def test_sync_conflict_detected_when_remote_body_hash_diverges(
     epic_project: Path, tmp_path: Path
 ) -> None:
     """If remote body hash differs from .last-sync, push is aborted."""
-    epic_dir = epic_project / ".woof" / "epics" / "E42"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 42)
     _write_last_sync(epic_project, updated_at="2026-04-01T00:00:00Z", body="<old>")
 
     bin_dir = tmp_path / "bin"
@@ -533,7 +536,7 @@ def test_sync_conflict_detected_when_remote_body_hash_diverges(
 
 
 def test_wf_plan_gate_approval_opens_sync_conflict_gate(epic_project: Path, tmp_path: Path) -> None:
-    epic_dir = epic_project / ".woof" / "epics" / "E42"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 42)
     (epic_dir / "plan.json").write_text(_plan_json())
     (epic_dir / "gate.md").write_text(
         "---\ntype: plan_gate\nstage: 4\nwork_unit_id: null\ntriggered_by: [plan_review]\n---\n"
@@ -564,7 +567,7 @@ def test_wf_plan_gate_approval_opens_sync_conflict_gate(epic_project: Path, tmp_
 def test_wf_resolve_sync_conflict_keep_local_updates_last_sync_baseline(
     epic_project: Path, tmp_path: Path
 ) -> None:
-    epic_dir = epic_project / ".woof" / "epics" / "E42"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 42)
     _write_last_sync(epic_project, updated_at="2025-12-01T00:00:00Z", body="<old>")
     (epic_dir / "gate.md").write_text(
         "---\n"
@@ -614,7 +617,7 @@ def test_wf_resolve_sync_conflict_keep_local_updates_last_sync_baseline(
 def test_wf_resolve_sync_conflict_accept_remote_updates_epic_md(
     epic_project: Path, tmp_path: Path
 ) -> None:
-    epic_dir = epic_project / ".woof" / "epics" / "E42"
+    epic_dir = state.epic_dir(DEFAULT_PROJECT_KEY, 42)
     _write_last_sync(epic_project, updated_at="2025-12-01T00:00:00Z", body="<old>")
     (epic_dir / "gate.md").write_text(
         "---\n"

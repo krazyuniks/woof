@@ -10,12 +10,16 @@ import json
 import subprocess
 from pathlib import Path
 
+from tests.support import DEFAULT_PROJECT_KEY
+from woof import state
 from woof.graph.git import git_env
 from woof.graph.resilience import (
     NO_PROGRESS_THRESHOLD,
     SAME_ERROR_THRESHOLD,
     detect_resilience_gate,
 )
+
+KEY = DEFAULT_PROJECT_KEY
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -35,20 +39,20 @@ def _init_repo(root: Path) -> None:
     _git(root, "init", check=True, capture_output=True)
     _git(root, "config", "user.email", "test@example.com", check=True, capture_output=True)
     _git(root, "config", "user.name", "Test", check=True, capture_output=True)
-    (root / ".gitignore").write_text(".woof/.current-epic\n")
+    (root / ".gitignore").write_text("*.tmp\n")
     _git(root, "add", ".gitignore", check=True, capture_output=True)
     _git(root, "commit", "-m", "chore: init", check=True, capture_output=True)
 
 
-def _epic_dir(root: Path, epic_id: int = 1) -> Path:
-    d = root / ".woof" / "epics" / f"E{epic_id}"
+def _epic_dir(epic_id: int = 1) -> Path:
+    d = state.epic_dir(KEY, epic_id)
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
-def _write_plan(root: Path, epic_id: int = 1, story_paths: list[str] | None = None) -> None:
-    d = _epic_dir(root, epic_id)
-    (d / "plan.json").write_text(
+def _write_plan(epic_id: int = 1, story_paths: list[str] | None = None) -> None:
+    _epic_dir(epic_id)
+    state.plan_path(KEY, epic_id).write_text(
         json.dumps(
             {
                 "epic_id": epic_id,
@@ -73,20 +77,18 @@ def _write_plan(root: Path, epic_id: int = 1, story_paths: list[str] | None = No
 
 
 def _append_subprocess_returned(
-    root: Path,
     epic_id: int = 1,
     work_unit_id: str = "S1",
     **fields: object,
 ) -> None:
-    d = _epic_dir(root, epic_id)
+    _epic_dir(epic_id)
     event = {
         "event": "subprocess_returned",
         "epic_id": epic_id,
         "work_unit_id": work_unit_id,
         **fields,
     }
-    with (d / "dispatch.jsonl").open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(event) + "\n")
+    state.append_jsonl(state.dispatch_events_path(KEY, epic_id), event)
 
 
 # ---------------------------------------------------------------------------
@@ -97,12 +99,12 @@ def _append_subprocess_returned(
 def test_same_error_threshold_opens_course_correction(tmp_path: Path) -> None:
     """SAME_ERROR_THRESHOLD consecutive events with the same error_signature → course_correction."""
     _init_repo(tmp_path)
-    _write_plan(tmp_path)
+    _write_plan()
 
     for _ in range(SAME_ERROR_THRESHOLD):
-        _append_subprocess_returned(tmp_path, error_signature="same_error_A")
+        _append_subprocess_returned(error_signature="same_error_A")
 
-    result = detect_resilience_gate(tmp_path, 1, "S1")
+    result = detect_resilience_gate(KEY, tmp_path, 1, "S1")
     assert result == "course_correction"
 
 
@@ -114,12 +116,12 @@ def test_same_error_threshold_opens_course_correction(tmp_path: Path) -> None:
 def test_different_errors_no_progress_opens_run_resilience(tmp_path: Path) -> None:
     """NO_PROGRESS_THRESHOLD events with distinct errors (no staged files) → run_resilience."""
     _init_repo(tmp_path)
-    _write_plan(tmp_path)
+    _write_plan()
 
     for i in range(NO_PROGRESS_THRESHOLD):
-        _append_subprocess_returned(tmp_path, error_signature=f"unique_error_{i}")
+        _append_subprocess_returned(error_signature=f"unique_error_{i}")
 
-    result = detect_resilience_gate(tmp_path, 1, "S1")
+    result = detect_resilience_gate(KEY, tmp_path, 1, "S1")
     assert result == "run_resilience"
 
 
@@ -131,10 +133,10 @@ def test_different_errors_no_progress_opens_run_resilience(tmp_path: Path) -> No
 def test_progress_resets_counters_no_gate(tmp_path: Path) -> None:
     """After SAME_ERROR_THRESHOLD same-error events, staged files reset counters → no gate."""
     _init_repo(tmp_path)
-    _write_plan(tmp_path, story_paths=["src/**"])
+    _write_plan(story_paths=["src/**"])
 
     for _ in range(SAME_ERROR_THRESHOLD):
-        _append_subprocess_returned(tmp_path, error_signature="repeated_error")
+        _append_subprocess_returned(error_signature="repeated_error")
 
     # Stage a file matching the story's "src/**" pathspec.
     src_dir = tmp_path / "src"
@@ -142,7 +144,7 @@ def test_progress_resets_counters_no_gate(tmp_path: Path) -> None:
     (src_dir / "foo.py").write_text("x = 1\n")
     _git(tmp_path, "add", "src/foo.py", check=True, capture_output=True)
 
-    result = detect_resilience_gate(tmp_path, 1, "S1")
+    result = detect_resilience_gate(KEY, tmp_path, 1, "S1")
     assert result is None
 
 
@@ -154,20 +156,20 @@ def test_progress_resets_counters_no_gate(tmp_path: Path) -> None:
 def test_rate_limit_event_skipped_does_not_increment_or_reset(tmp_path: Path) -> None:
     """A rate_limited subprocess_returned is skipped: neither counter incremented nor reset."""
     _init_repo(tmp_path)
-    _write_plan(tmp_path)
+    _write_plan()
 
     # One same-error event, then rate-limited, then same-error again — only 2 real events.
-    _append_subprocess_returned(tmp_path, error_signature="error_X")
-    _append_subprocess_returned(tmp_path, error_signature="any", rate_limit="rate_limited")
-    _append_subprocess_returned(tmp_path, error_signature="error_X")
+    _append_subprocess_returned(error_signature="error_X")
+    _append_subprocess_returned(error_signature="any", rate_limit="rate_limited")
+    _append_subprocess_returned(error_signature="error_X")
 
     # Only 2 non-rate-limited events → below threshold of 3.
-    result = detect_resilience_gate(tmp_path, 1, "S1")
+    result = detect_resilience_gate(KEY, tmp_path, 1, "S1")
     assert result is None
 
     # Add one more same-error event → 3 non-rate-limited same-error events → course_correction.
-    _append_subprocess_returned(tmp_path, error_signature="error_X")
-    result2 = detect_resilience_gate(tmp_path, 1, "S1")
+    _append_subprocess_returned(error_signature="error_X")
+    result2 = detect_resilience_gate(KEY, tmp_path, 1, "S1")
     assert result2 == "course_correction"
 
 
@@ -179,13 +181,13 @@ def test_rate_limit_event_skipped_does_not_increment_or_reset(tmp_path: Path) ->
 def test_both_thresholds_hit_course_correction_wins(tmp_path: Path) -> None:
     """When same-error and no-progress both hit threshold, course_correction takes priority."""
     _init_repo(tmp_path)
-    _write_plan(tmp_path)
+    _write_plan()
 
     # Same error every time → both counters hit threshold simultaneously.
     for _ in range(max(SAME_ERROR_THRESHOLD, NO_PROGRESS_THRESHOLD)):
-        _append_subprocess_returned(tmp_path, error_signature="persistent_error")
+        _append_subprocess_returned(error_signature="persistent_error")
 
-    result = detect_resilience_gate(tmp_path, 1, "S1")
+    result = detect_resilience_gate(KEY, tmp_path, 1, "S1")
     assert result == "course_correction"
 
 
@@ -197,9 +199,9 @@ def test_both_thresholds_hit_course_correction_wins(tmp_path: Path) -> None:
 def test_empty_event_log_no_gate(tmp_path: Path) -> None:
     """No events in dispatch.jsonl → detect_resilience_gate returns None."""
     _init_repo(tmp_path)
-    _epic_dir(tmp_path)  # create dir so load_plan call doesn't create it
+    _epic_dir()  # create dir so load_plan call doesn't create it
 
-    result = detect_resilience_gate(tmp_path, 1, "S1")
+    result = detect_resilience_gate(KEY, tmp_path, 1, "S1")
     assert result is None
 
 
@@ -211,11 +213,11 @@ def test_empty_event_log_no_gate(tmp_path: Path) -> None:
 def test_below_threshold_no_gate(tmp_path: Path) -> None:
     """Fewer consecutive events than either threshold → no gate."""
     _init_repo(tmp_path)
-    _write_plan(tmp_path)
+    _write_plan()
 
     # Write one fewer event than would trigger either counter.
     for _ in range(min(SAME_ERROR_THRESHOLD, NO_PROGRESS_THRESHOLD) - 1):
-        _append_subprocess_returned(tmp_path, error_signature="same_error")
+        _append_subprocess_returned(error_signature="same_error")
 
-    result = detect_resilience_gate(tmp_path, 1, "S1")
+    result = detect_resilience_gate(KEY, tmp_path, 1, "S1")
     assert result is None

@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+from tests.support import DEFAULT_PROJECT_KEY
 from woof.checks import CheckContext
 from woof.checks import contract_refs as contract_refs_module
 from woof.checks.runners.check_4_contract_refs import check_4_contract_refs_runner
@@ -27,6 +28,7 @@ def _ctx(
     return CheckContext(
         epic_id=146,
         work_unit_id=work_unit_id,
+        project_key=DEFAULT_PROJECT_KEY,
         repo_root=repo_root,
         epic_dir=epic_dir,
         plan={

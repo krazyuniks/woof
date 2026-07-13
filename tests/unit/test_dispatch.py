@@ -16,10 +16,12 @@ from typing import Any
 
 import pytest
 
-from tests.support import seed_project_config
+from tests.support import DEFAULT_PROJECT_KEY, seed_project_config
+from woof import state
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WOOF_BIN = REPO_ROOT / "bin" / "woof"
+KEY = DEFAULT_PROJECT_KEY
 EXPECTED_TRUSTED_RUNTIME_POLICY = {
     "mode": "trusted-local",
     "woof_runtime_constraints": [],
@@ -81,7 +83,7 @@ def _dispatch_env(bin_dir: Path, home: Path | None = None) -> dict[str, str]:
 def woof_project(tmp_path: Path) -> Path:
     """Delivery checkout plus the operator-home config the dispatcher reads."""
     project = tmp_path / "proj"
-    (project / ".woof").mkdir(parents=True)
+    project.mkdir(parents=True)
     subprocess.run(["git", "init", "-q"], cwd=project, check=True)
     _write_policy(project)
     return project
@@ -144,11 +146,10 @@ def run_dispatch(
     )
 
 
-def test_profile_a_run_metadata_records_worktree_derivation(tmp_path: Path) -> None:
+def test_profile_a_run_metadata_records_worktree_derivation() -> None:
     from woof.cli.dispatcher import ensure_run_metadata
 
-    epic_dir = tmp_path / ".woof" / "epics" / "E7"
-    epic_dir.mkdir(parents=True)
+    state.epic_dir(KEY, 7).mkdir(parents=True)
     _seed_config(
         {
             "delivery": {"profile": "A"},
@@ -164,7 +165,7 @@ def test_profile_a_run_metadata_records_worktree_derivation(tmp_path: Path) -> N
             "cartography": {"floor": "none"},
         }
     )
-    (epic_dir / "plan.json").write_text(
+    state.plan_path(KEY, 7).write_text(
         json.dumps(
             {
                 "epic_id": 7,
@@ -194,9 +195,9 @@ def test_profile_a_run_metadata_records_worktree_derivation(tmp_path: Path) -> N
         + "\n"
     )
 
-    run_id = ensure_run_metadata(epic_dir, 7, datetime(2026, 7, 7, tzinfo=UTC))
+    run_id = ensure_run_metadata(KEY, 7, datetime(2026, 7, 7, tzinfo=UTC))
 
-    payload = json.loads((epic_dir / "run.json").read_text())
+    payload = json.loads((state.runs_root(KEY, 7) / "run.json").read_text())
     assert payload["run_id"] == run_id
     assert payload["worktrees"] == {
         "derivation": "unit_id",
@@ -509,10 +510,10 @@ def test_prompt_file_overrides_stdin(woof_project: Path, tmp_path: Path) -> None
 
 
 def test_dry_run_records_repo_relative_artefacts(woof_project: Path) -> None:
-    epic_dir = woof_project / ".woof" / "epics" / "E1"
-    epic_dir.mkdir(parents=True)
-    (epic_dir / "EPIC.md").write_text("contract\n")
-    (epic_dir / "plan.json").write_text("{}\n")
+    docs = woof_project / "docs"
+    docs.mkdir()
+    (docs / "contract.md").write_text("contract\n")
+    (docs / "notes.json").write_text("{}\n")
 
     proc = run_dispatch(
         woof_project,
@@ -521,19 +522,19 @@ def test_dry_run_records_repo_relative_artefacts(woof_project: Path) -> None:
         "--epic",
         "1",
         "--artefact",
-        ".woof/epics/E1/EPIC.md",
+        "docs/contract.md",
         "--artefact-loaded",
-        ".woof/epics/E1/plan.json",
+        "docs/notes.json",
         "--artefact",
-        ".woof/epics/E1/EPIC.md",
+        "docs/contract.md",
         "--dry-run",
     )
 
     assert proc.returncode == 0, proc.stderr
     payload = json.loads(proc.stdout)
     assert payload["artefacts_loaded"] == [
-        ".woof/epics/E1/EPIC.md",
-        ".woof/epics/E1/plan.json",
+        "docs/contract.md",
+        "docs/notes.json",
     ]
     assert payload["prompt_bytes"] == len(b"do the thing\n")
     assert payload["artefact_bytes"] == len(b"contract\n") + len(b"{}\n")
@@ -567,7 +568,7 @@ def test_dispatch_rejects_missing_artefact(woof_project: Path) -> None:
         "--epic",
         "1",
         "--artefact",
-        ".woof/epics/E1/missing.md",
+        "docs/missing.md",
         "--dry-run",
     )
 
@@ -889,9 +890,7 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
     claude_response = _structured_payload(session_id="worker-session-claude")
     stdin_path = tmp_path / "claude.stdin"
     _make_stub(bin_dir, "claude", claude_response, stdin_path=stdin_path)
-    epic_dir = woof_project / ".woof" / "epics" / "E7"
-    epic_dir.mkdir(parents=True)
-    (epic_dir / "EPIC.md").write_text("contract\n")
+    (woof_project / "CONTRACT.md").write_text("contract\n")
     env = _dispatch_env(bin_dir, tmp_path)
 
     proc = subprocess.run(
@@ -905,7 +904,7 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
             "--work-unit",
             "S2",
             "--artefact",
-            ".woof/epics/E7/EPIC.md",
+            "CONTRACT.md",
         ],
         capture_output=True,
         text=True,
@@ -917,7 +916,7 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
     assert stdin_path.read_text() == "run the story\n"
 
     # Audit artefacts written
-    audit_dir = woof_project / ".woof" / "epics" / "E7" / "audit"
+    audit_dir = state.audit_dir(KEY, 7)
     files = sorted(p.name for p in audit_dir.iterdir())
     suffixes = {Path(f).suffix for f in files}
     assert {".prompt", ".output", ".stderr", ".meta"} <= suffixes
@@ -930,7 +929,7 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
     assert meta["effort"] == "max"
     assert meta["epic_id"] == 7
     assert meta["work_unit_id"] == "S2"
-    assert meta["artefacts_loaded"] == [".woof/epics/E7/EPIC.md"]
+    assert meta["artefacts_loaded"] == ["CONTRACT.md"]
     assert meta["runtime_policy"] == EXPECTED_TRUSTED_RUNTIME_POLICY
     assert meta["exit_type"] == "clean"
     assert meta["exit_code"] == 0
@@ -955,10 +954,10 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
     assert meta["attempt_id"]
     assert meta["prompt_hash"]
     assert meta["prompt_version"] == f"sha256:{meta['prompt_hash']}"
-    assert meta["attempt_path"].startswith(".woof/epics/E7/attempts/")
+    assert Path(meta["attempt_path"]).parent == state.runs_root(KEY, 7) / "attempts"
 
     # dispatch.jsonl events validate against the shipped schema
-    jsonl = woof_project / ".woof" / "epics" / "E7" / "dispatch.jsonl"
+    jsonl = state.dispatch_events_path(KEY, 7)
     lines = [ln for ln in jsonl.read_text().splitlines() if ln.strip()]
     assert len(lines) == 2
     events = [json.loads(ln) for ln in lines]
@@ -970,13 +969,13 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
     assert events[0]["argv"][0] == "cld"
     assert events[0]["prompt_transport"] == "tmux_harness_prompt_file"
     assert events[0]["runtime_policy"] == EXPECTED_TRUSTED_RUNTIME_POLICY
-    assert events[0]["artefacts_loaded"] == [".woof/epics/E7/EPIC.md"]
+    assert events[0]["artefacts_loaded"] == ["CONTRACT.md"]
     assert events[0]["prompt_bytes"] == len(b"run the story\n")
     assert events[0]["artefact_bytes"] == len(b"contract\n")
     assert events[0]["run_id"] == meta["run_id"]
     assert events[0]["work_unit_id"] == "S2"
     assert events[0]["attempt_id"] == meta["attempt_id"]
-    assert events[1]["artefacts_loaded"] == [".woof/epics/E7/EPIC.md"]
+    assert events[1]["artefacts_loaded"] == ["CONTRACT.md"]
     assert events[1]["prompt_transport"] == "tmux_harness_prompt_file"
     assert "runtime_policy" not in events[1]
     assert events[1]["exit_type"] == "clean"
@@ -994,8 +993,7 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
     assert events[1]["work_unit_id"] == "S2"
     assert events[1]["attempt_id"] == meta["attempt_id"]
 
-    attempt_path = woof_project / meta["attempt_path"]
-    attempt = json.loads(attempt_path.read_text())
+    attempt = json.loads(Path(meta["attempt_path"]).read_text())
     assert attempt["attempt_kind"] == "dispatch"
     assert attempt["run_id"] == meta["run_id"]
     assert attempt["work_unit_id"] == "S2"
@@ -1056,7 +1054,7 @@ def test_repeated_review_uses_cached_verdict(git_woof_project: Path, tmp_path: P
     )
     assert proc2.returncode == 0, proc2.stderr
 
-    jsonl = git_woof_project / ".woof" / "epics" / "E35" / "dispatch.jsonl"
+    jsonl = state.dispatch_events_path(KEY, 35)
     events = [json.loads(ln) for ln in jsonl.read_text().splitlines() if ln.strip()]
     cache_hit = next(e for e in events if e["event"] == "review_cache_hit")
     returned = next(e for e in events if e["event"] == "subprocess_returned")
@@ -1089,7 +1087,7 @@ def test_conflicting_review_verdict_records_instability(
     review_cache_key = _review_key(
         work_unit_id="S1", diff_hash=diff_hash, prompt_version=prompt_version
     )
-    attempts_dir = git_woof_project / ".woof" / "epics" / "E36" / "reviews" / "attempts"
+    attempts_dir = state.review_cache_dir(KEY, 36) / "attempts"
     attempts_dir.mkdir(parents=True)
     (attempts_dir / "prior.json").write_text(
         json.dumps(
@@ -1126,10 +1124,10 @@ def test_conflicting_review_verdict_records_instability(
     )
     assert proc.returncode == 0, proc.stderr
 
-    jsonl = git_woof_project / ".woof" / "epics" / "E36" / "dispatch.jsonl"
+    jsonl = state.dispatch_events_path(KEY, 36)
     events = [json.loads(ln) for ln in jsonl.read_text().splitlines() if ln.strip()]
     returned = next(e for e in events if e["event"] == "subprocess_returned")
-    instability_path = git_woof_project / returned["review_instability_path"]
+    instability_path = Path(returned["review_instability_path"])
     record = json.loads(instability_path.read_text().splitlines()[0])
     assert record["review_cache_key"] == review_cache_key
     assert record["prior_verdicts"] == ["pass"]
@@ -1225,7 +1223,7 @@ def test_subprocess_returned_records_head_branch_fields(
     )
     assert proc.returncode == 0, proc.stderr
 
-    jsonl = git_woof_project / ".woof" / "epics" / "E20" / "dispatch.jsonl"
+    jsonl = state.dispatch_events_path(KEY, 20)
     events = [json.loads(ln) for ln in jsonl.read_text().splitlines() if ln.strip()]
     returned = next(e for e in events if e["event"] == "subprocess_returned")
 
@@ -1277,7 +1275,7 @@ def test_subprocess_returned_records_error_signature_from_stderr(
     )
     assert proc.returncode == 1, proc.stderr
 
-    jsonl = git_woof_project / ".woof" / "epics" / "E21" / "dispatch.jsonl"
+    jsonl = state.dispatch_events_path(KEY, 21)
     events = [json.loads(ln) for ln in jsonl.read_text().splitlines() if ln.strip()]
     returned = next(e for e in events if e["event"] == "subprocess_returned")
 
@@ -1316,7 +1314,7 @@ def test_subprocess_returned_records_rate_limit_when_detected(
     )
     assert proc.returncode == 0, proc.stderr
 
-    jsonl = git_woof_project / ".woof" / "epics" / "E22" / "dispatch.jsonl"
+    jsonl = state.dispatch_events_path(KEY, 22)
     events = [json.loads(ln) for ln in jsonl.read_text().splitlines() if ln.strip()]
     returned = next(e for e in events if e["event"] == "subprocess_returned")
 
@@ -1358,7 +1356,7 @@ def test_subprocess_returned_no_rate_limit_field_on_clean_run(
     )
     assert proc.returncode == 0, proc.stderr
 
-    jsonl = git_woof_project / ".woof" / "epics" / "E23" / "dispatch.jsonl"
+    jsonl = state.dispatch_events_path(KEY, 23)
     events = [json.loads(ln) for ln in jsonl.read_text().splitlines() if ln.strip()]
     returned = next(e for e in events if e["event"] == "subprocess_returned")
 
@@ -1448,7 +1446,7 @@ def test_end_to_end_tmux_sentinel_completion_counts_as_success(
 
     assert proc.returncode == 0, proc.stderr
     assert stdin_path.read_text() == "finish then linger\n"
-    jsonl = woof_project / ".woof" / "epics" / "E8" / "dispatch.jsonl"
+    jsonl = state.dispatch_events_path(KEY, 8)
     events = [json.loads(ln) for ln in jsonl.read_text().splitlines() if ln.strip()]
     assert [event["event"] for event in events] == [
         "subprocess_spawned",
@@ -1459,7 +1457,7 @@ def test_end_to_end_tmux_sentinel_completion_counts_as_success(
     assert events[1]["tokens_out"] == 2
     assert events[1]["worker_session_id"] == "worker-session-sentinel"
 
-    meta_file = next((woof_project / ".woof" / "epics" / "E8" / "audit").glob("*.meta"))
+    meta_file = next(state.audit_dir(KEY, 8).glob("*.meta"))
     meta = json.loads(meta_file.read_text())
     assert meta["exit_type"] == "clean"
     assert meta["timed_out"] is False
@@ -1506,7 +1504,7 @@ def test_end_to_end_codex_records_thread_and_audit_path(woof_project: Path, tmp_
     assert proc.returncode == 0, proc.stderr
     assert stdin_path.read_text() == "critique me\n"
 
-    jsonl = woof_project / ".woof" / "epics" / "E9" / "dispatch.jsonl"
+    jsonl = state.dispatch_events_path(KEY, 9)
     events = [json.loads(ln) for ln in jsonl.read_text().splitlines() if ln.strip()]
     returned = events[1]
     assert returned["effort"] == "xhigh"
@@ -1525,7 +1523,7 @@ def test_end_to_end_codex_records_thread_and_audit_path(woof_project: Path, tmp_
     assert returned["verdict"] == "pass"
     assert returned["worker_session_thread_id"] == "thr-1"
 
-    meta_file = next((woof_project / ".woof" / "epics" / "E9" / "audit").glob("*.meta"))
+    meta_file = next(state.audit_dir(KEY, 9).glob("*.meta"))
     meta = json.loads(meta_file.read_text())
     assert meta["exit_type"] == "clean"
     assert meta["prompt_bytes"] == len(b"critique me\n")
@@ -1582,14 +1580,14 @@ def test_end_to_end_records_route_key_in_jsonl_and_meta(woof_project: Path, tmp_
     )
     assert proc.returncode == 0, proc.stderr
 
-    jsonl = woof_project / ".woof" / "epics" / "E11" / "dispatch.jsonl"
+    jsonl = state.dispatch_events_path(KEY, 11)
     events = [json.loads(ln) for ln in jsonl.read_text().splitlines() if ln.strip()]
     assert events[0]["event"] == "subprocess_spawned"
     assert events[0]["route_key"] == "execution"
     assert events[1]["event"] == "subprocess_returned"
     assert events[1]["route_key"] == "execution"
 
-    meta_file = next((woof_project / ".woof" / "epics" / "E11" / "audit").glob("*.meta"))
+    meta_file = next(state.audit_dir(KEY, 11).glob("*.meta"))
     meta = json.loads(meta_file.read_text())
     assert meta["route_key"] == "execution"
 
@@ -1642,7 +1640,7 @@ def test_config_schema_cache_hit_on_second_dispatch(woof_project: Path, tmp_path
     assert proc2.returncode == 0, proc2.stderr
 
     def _spawned_event(epic: int) -> dict:
-        jsonl = woof_project / ".woof" / "epics" / f"E{epic}" / "dispatch.jsonl"
+        jsonl = state.dispatch_events_path(KEY, epic)
         events = [json.loads(ln) for ln in jsonl.read_text().splitlines() if ln.strip()]
         return next(e for e in events if e["event"] == "subprocess_spawned")
 
@@ -1676,7 +1674,7 @@ def test_config_schema_cache_miss_after_content_change(woof_project: Path, tmp_p
     assert proc2.returncode == 0, proc2.stderr
 
     def _spawned_event(epic: int) -> dict:
-        jsonl = woof_project / ".woof" / "epics" / f"E{epic}" / "dispatch.jsonl"
+        jsonl = state.dispatch_events_path(KEY, epic)
         events = [json.loads(ln) for ln in jsonl.read_text().splitlines() if ln.strip()]
         return next(e for e in events if e["event"] == "subprocess_spawned")
 
@@ -1717,7 +1715,7 @@ def test_runtime_policy_in_spawned_not_in_returned(woof_project: Path, tmp_path:
     )
     assert proc.returncode == 0, proc.stderr
 
-    jsonl = woof_project / ".woof" / "epics" / "E34" / "dispatch.jsonl"
+    jsonl = state.dispatch_events_path(KEY, 34)
     events = [json.loads(ln) for ln in jsonl.read_text().splitlines() if ln.strip()]
     spawned = next(e for e in events if e["event"] == "subprocess_spawned")
     returned = next(e for e in events if e["event"] == "subprocess_returned")

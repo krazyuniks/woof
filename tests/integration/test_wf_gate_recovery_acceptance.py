@@ -206,13 +206,9 @@ def test_interrupted_commit_resume_commits_existing_transaction(tmp_path: Path) 
             )
             + "\n"
         )
-    assert_ok(
-        run(
-            ["git", "add", ".woof/epics/E1/plan.json", ".woof/epics/E1/epic.jsonl"],
-            cwd=consumer,
-            env=env,
-        )
-    )
+    # Engine state is not staged, because it is not in the repository at all
+    # (ADR-017). The interrupted commit leaves only the work unit's delivery
+    # paths in the index, and that is what the resumed commit node must land.
 
     resumed = _run_epic_json(consumer, env)
 

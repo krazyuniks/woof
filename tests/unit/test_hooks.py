@@ -8,6 +8,8 @@ import stat
 import subprocess
 from pathlib import Path
 
+from tests.support import DEFAULT_PROJECT_KEY as PROJECT_KEY
+from woof import state
 from woof.cli.hooks import HOOK_BEGIN, HOOK_BODY, install_woof_hooks
 from woof.cli.init import run_init
 
@@ -174,7 +176,7 @@ def test_post_commit_hook_regenerates_cartography_mechanical_layer(tmp_path: Pat
     )
 
     assert commit.returncode == 0, commit.stderr + commit.stdout
-    codebase = tmp_path / ".woof" / "codebase"
+    codebase = state.codebase_dir(PROJECT_KEY)
     assert "app.py" in (codebase / "files.txt").read_text()
     assert (codebase / "tags").is_file()
     freshness = json.loads((codebase / "freshness.json").read_text())

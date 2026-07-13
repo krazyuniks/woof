@@ -8,6 +8,7 @@ import tomllib
 from datetime import UTC, datetime
 from pathlib import Path
 
+from woof import state
 from woof.bench.efficiency import (
     TERMINAL_STATUSES,
     _quality_outcome,
@@ -104,7 +105,7 @@ def test_manifest_aggregation_and_comparison(tmp_path: Path) -> None:
     base_sha = _init_repo(repo)
     epic_fixture = _epic_fixture(tmp_path / "EPIC.md")
     epic_id = seed_epic_fixture(repo, epic_fixture=epic_fixture, stub_models=True)
-    epic_dir = repo / ".woof" / "epics" / "E1"
+    epic_dir = state.epic_dir(resolve_project_key(), epic_id)
 
     _write_json(
         epic_dir / "plan.json",
@@ -254,7 +255,6 @@ Looks fine.
             [
                 "git",
                 "add",
-                ".woof",
                 "bench_note.py",
                 "tests/test_bench_note.py",
                 "schemas/bench-note.schema.json",
@@ -314,7 +314,9 @@ Looks fine.
     assert manifest["dispatch"]["events"][0]["exit_type"] == "completed_lingering"
     assert manifest["dispatch"]["events"][0]["tokens"]["tokens_in"] == 10
     assert manifest["dispatch"]["by_route"][0]["model_profile"] == "stub"
-    assert manifest["diff"]["committed"]["file_count"] >= 4
+    # The delivery commit carries only the work unit's delivery paths: no engine
+    # artefacts reach the driven repo any more (ADR-017).
+    assert manifest["diff"]["committed"]["file_count"] == 3
     assert manifest["diff"]["pathscope"]["ok"] is True
     assert manifest["quality_outcome"]["status"] == "passed"
     assert "live-token" not in json.dumps(manifest)
@@ -333,14 +335,23 @@ Looks fine.
     assert "| small-valid-epic | stub-b | stub | passed | epic_complete | 2 | 99 |" in table
 
 
-def test_throwaway_worktrees_start_from_same_base_and_do_not_share_woof_state(
+def test_throwaway_worktrees_start_from_same_base_and_carry_no_engine_state(
     tmp_path: Path,
 ) -> None:
+    """Two variant worktrees share a base commit and hold no engine state.
+
+    Engine state is keyed by the project, not by the checkout (ADR-017), so a
+    seeded epic lands in the operator home and a variant worktree stays a plain
+    delivery checkout. Re-seeding resets that epic's derived state, which is how
+    a second variant starts from the same epic contract as the first.
+    """
+
     repo = tmp_path / "consumer"
     base_sha = _init_repo(repo)
     fixture = _epic_fixture(tmp_path / "EPIC.md")
     parent = tmp_path / "worktrees"
     worktrees = []
+    project_key = resolve_project_key()
 
     try:
         first = create_worktree(
@@ -361,18 +372,21 @@ def test_throwaway_worktrees_start_from_same_base_and_do_not_share_woof_state(
         )
         worktrees.extend([first, second])
 
-        seed_epic_fixture(first.path, epic_fixture=fixture, stub_models=True)
-        dirty = first.path / ".woof" / "epics" / "E1" / "audit" / "dirty.txt"
-        dirty.parent.mkdir(parents=True)
-        dirty.write_text("variant-local runtime state\n", encoding="utf-8")
+        epic_id = seed_epic_fixture(first.path, epic_fixture=fixture, stub_models=True)
+        stale = state.audit_dir(project_key, epic_id) / "stale.txt"
+        stale.parent.mkdir(parents=True)
+        stale.write_text("derived state from the first variant\n", encoding="utf-8")
 
         seed_epic_fixture(second.path, epic_fixture=fixture, stub_models=True)
 
         assert _git(first.path, "rev-parse", "--verify", "HEAD") == base_sha
         assert _git(second.path, "rev-parse", "--verify", "HEAD") == base_sha
-        assert dirty.is_file()
-        assert not (second.path / ".woof" / "epics" / "E1" / "audit" / "dirty.txt").exists()
-        assert (second.path / ".woof" / "epics" / "E1" / "EPIC.md").read_text(
+        # Neither worktree carries engine state.
+        assert not (first.path / ".woof").exists()
+        assert not (second.path / ".woof").exists()
+        # Re-seeding cleared the first variant's derived state and re-laid the contract.
+        assert not stale.exists()
+        assert state.epic_contract_path(project_key, epic_id).read_text(
             encoding="utf-8"
         ) == fixture.read_text(encoding="utf-8")
     finally:
@@ -439,7 +453,7 @@ def test_epic_abandoned_final_state_is_terminal_and_classified(tmp_path: Path) -
         diff={},
         run_exit_code=0,
         epic_events=[],
-        repo_root=tmp_path,
+        project_key=resolve_project_key(),
         epic_id=1,
         operator_notes=None,
     )
@@ -460,7 +474,7 @@ def test_epic_abandoned_final_state_is_terminal_and_classified(tmp_path: Path) -
         diff={},
         run_exit_code=0,
         epic_events=[],
-        repo_root=tmp_path,
+        project_key=resolve_project_key(),
         epic_id=1,
         operator_notes=None,
     )

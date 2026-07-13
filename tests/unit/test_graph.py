@@ -101,6 +101,40 @@ def _work_unit(
 _CONFIG_OVERRIDES: dict[str, Any] = {}
 
 
+def _state_path(epic_id: int, *parts: str) -> str:
+    """The path the engine records for an epic artefact: absolute, in the operator home.
+
+    Engine state left the driven repo (ADR-017), so there is no repo root to make
+    these relative to. The engine records them as absolute paths and so do we.
+    """
+
+    return str(state.epic_dir(KEY, epic_id).joinpath(*parts))
+
+
+def _codebase_path(*parts: str) -> str:
+    """The path the engine records for a cartography document."""
+
+    return str(state.codebase_dir(KEY).joinpath(*parts))
+
+
+def _engine_paths_in_head(repo_root: Path) -> list[str]:
+    """Engine-owned paths present in the delivery repo's HEAD commit.
+
+    Always empty since ADR-017: the engine writes no artefact into the driven
+    repo, so a delivery commit can only carry delivery paths.
+    """
+
+    tracked = subprocess.run(
+        ["git", "ls-tree", "-r", "--name-only", "HEAD"],
+        cwd=repo_root,
+        env=git_env(),
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.splitlines()
+    return [path for path in tracked if path == ".woof" or path.startswith(".woof/")]
+
+
 @pytest.fixture(autouse=True)
 def _reset_config_overrides() -> Iterator[None]:
     """Each test starts from the default project config."""
@@ -267,7 +301,7 @@ def test_executor_dispatch_completed_lingering_advances(
         assert '"node_type": "executor_dispatch"' in prompt
         assert session_mode == "warm-producer"
         assert artefacts_loaded == [
-            ".woof/epics/E1/plan.json",
+            _state_path(1, "plan.json"),
             "STRUCTURE.md",
             "CONVENTIONS.md",
             "TARGET-ARCHITECTURE.md",
@@ -728,6 +762,14 @@ def _make_gh_completion_stub(bin_dir: Path) -> dict[str, str]:
 def _write_ready_commit_state(
     root: Path, epic_id: int = 1, commit_subject: str | None = None
 ) -> Path:
+    """Seed a work unit that is staged and ready to commit.
+
+    The engine stages nothing of its own since ADR-017, so the only thing a
+    commit can contain is the work unit's delivery change. A work unit whose
+    outcome is ``staged_for_verification`` must therefore have changed one of
+    its own paths, or there is no commit to make.
+    """
+
     directory = _write_plan(epic_id)
     plan = json.loads((directory / "plan.json").read_text())
     plan["work_units"][0]["state"] = "done"
@@ -967,7 +1009,7 @@ def test_run_graph_removes_stale_workflow_lock_and_records_event(tmp_path: Path)
     assert events[0]["epic_id"] == 22
     assert events[0]["pid"] == dead_process.pid
     assert events[0]["reason"] == "pid_not_running"
-    assert events[0]["paths"] == [".woof/epics/E22/.wf.lock"]
+    assert events[0]["paths"] == [_state_path(22, ".wf.lock")]
 
 
 def test_run_graph_drains_one_work_unit_per_cycle_in_topological_order(tmp_path: Path) -> None:
@@ -1054,7 +1096,7 @@ def test_run_graph_drains_one_work_unit_per_cycle_in_topological_order(tmp_path:
     ]
     assert outputs[-1].node_type == NodeType.COMMIT
     assert outputs[-1].work_unit_id == "S1"
-    plan = json.loads((tmp_path / ".woof" / "epics" / "E24" / "plan.json").read_text())
+    plan = json.loads((state.epic_dir(KEY, 24) / "plan.json").read_text())
     assert [(unit["id"], unit["state"]) for unit in plan["work_units"]] == [
         ("S1", "done"),
         ("S2", "pending"),
@@ -1214,7 +1256,7 @@ def test_profile_a_worktree_preflight_failure_blocks_dispatch_without_mutation(
     assert outputs[0].work_unit_id == "S1"
     assert outputs[0].triggered_by == ["incomplete_stage_state"]
     assert "does not exist; Woof will not create it" in outputs[0].message
-    plan = json.loads((tmp_path / ".woof" / "epics" / "E27" / "plan.json").read_text())
+    plan = json.loads((state.epic_dir(KEY, 27) / "plan.json").read_text())
     assert plan["work_units"][0]["state"] == "pending"
 
 
@@ -1266,7 +1308,7 @@ def test_dispatch_helper_uses_role_route_without_provider_target(
         captured["env"] = env
         captured["capture_output"] = capture_output
         captured["text"] = text
-        dispatch_jsonl = cwd / ".woof" / "epics" / "E1" / "dispatch.jsonl"
+        dispatch_jsonl = state.dispatch_events_path(KEY, 1)
         dispatch_jsonl.parent.mkdir(parents=True, exist_ok=True)
         dispatch_jsonl.write_text(
             json.dumps(
@@ -1293,7 +1335,7 @@ def test_dispatch_helper_uses_role_route_without_provider_target(
         epic_id=1,
         work_unit_id="S1",
         prompt="do work",
-        artefacts_loaded=[".woof/epics/E1/plan.json"],
+        artefacts_loaded=[_state_path(1, "plan.json")],
     )
 
     args = captured["args"]
@@ -1302,7 +1344,7 @@ def test_dispatch_helper_uses_role_route_without_provider_target(
     assert args[3:6] == ["dispatch", "--role", "primary"]
     assert "claude" not in args[:6]
     assert "codex" not in args[:6]
-    assert args[-2:] == ["--artefact", ".woof/epics/E1/plan.json"]
+    assert args[-2:] == ["--artefact", _state_path(1, "plan.json")]
     assert captured["cwd"] == tmp_path
     env = captured["env"]
     assert env is not None
@@ -1326,7 +1368,7 @@ def test_run_dispatch_appends_route_key_to_argv(
         text: bool,
     ) -> subprocess.CompletedProcess[str]:
         captured["args"] = args
-        dispatch_jsonl = cwd / ".woof" / "epics" / "E1" / "dispatch.jsonl"
+        dispatch_jsonl = state.dispatch_events_path(KEY, 1)
         dispatch_jsonl.parent.mkdir(parents=True, exist_ok=True)
         dispatch_jsonl.write_text(
             json.dumps(
@@ -1375,7 +1417,7 @@ def test_run_dispatch_appends_session_mode_to_argv(
         text: bool,
     ) -> subprocess.CompletedProcess[str]:
         captured["args"] = args
-        dispatch_jsonl = cwd / ".woof" / "epics" / "E1" / "dispatch.jsonl"
+        dispatch_jsonl = state.dispatch_events_path(KEY, 1)
         dispatch_jsonl.parent.mkdir(parents=True, exist_ok=True)
         dispatch_jsonl.write_text(
             json.dumps(
@@ -1425,7 +1467,7 @@ def test_run_dispatch_omits_route_key_from_argv_when_none(
         text: bool,
     ) -> subprocess.CompletedProcess[str]:
         captured["args"] = args
-        dispatch_jsonl = cwd / ".woof" / "epics" / "E1" / "dispatch.jsonl"
+        dispatch_jsonl = state.dispatch_events_path(KEY, 1)
         dispatch_jsonl.parent.mkdir(parents=True, exist_ok=True)
         dispatch_jsonl.write_text(
             json.dumps(
@@ -1632,7 +1674,7 @@ def test_discovery_research_node_dispatches_primary_and_bundles_playbooks(
     assert "playbooks/discovery/research/landscape.md" in captured["prompt"]
     assert "AskUserQuestion" not in captured["prompt"]
     assert captured["artefacts_loaded"] == [
-        ".woof/epics/E220/spark.md",
+        _state_path(220, "spark.md"),
         "STACK.md",
         "INTEGRATIONS.md",
         "CONCERNS.md",
@@ -1640,7 +1682,7 @@ def test_discovery_research_node_dispatches_primary_and_bundles_playbooks(
     assert output.status == NodeStatus.COMPLETED
     assert output.next_node == NodeType.DISCOVERY_THINKING
     assert output.validation_summary and output.validation_summary.stage == 1
-    assert output.paths == [".woof/epics/E220/discovery/research/research.md"]
+    assert output.paths == [_state_path(220, "discovery/research/research.md")]
     _assert_planning_node_input_schema(
         tmp_path, nodes._discovery_bucket_payload(KEY, tmp_path, 220, "research")
     )
@@ -1672,7 +1714,7 @@ def test_discovery_dispatch_completed_lingering_advances(
         assert work_unit_id is None
         assert '"node_type": "discovery_research"' in prompt
         assert artefacts_loaded == [
-            ".woof/epics/E225/spark.md",
+            _state_path(225, "spark.md"),
             "STACK.md",
             "INTEGRATIONS.md",
             "CONCERNS.md",
@@ -1693,7 +1735,7 @@ def test_discovery_dispatch_completed_lingering_advances(
 
     assert output.status == NodeStatus.COMPLETED
     assert output.next_node == NodeType.DISCOVERY_THINKING
-    assert output.paths == [".woof/epics/E225/discovery/research/research.md"]
+    assert output.paths == [_state_path(225, "discovery/research/research.md")]
 
 
 def test_discovery_thinking_node_passes_prior_bucket_artefacts(tmp_path: Path, monkeypatch) -> None:
@@ -1728,8 +1770,8 @@ def test_discovery_thinking_node_passes_prior_bucket_artefacts(tmp_path: Path, m
     )
 
     assert captured["artefacts_loaded"] == [
-        ".woof/epics/E224/spark.md",
-        ".woof/epics/E224/discovery/research/research.md",
+        _state_path(224, "spark.md"),
+        _state_path(224, "discovery/research/research.md"),
         "CURRENT-ARCHITECTURE.md",
         "STRUCTURE.md",
     ]
@@ -1864,7 +1906,7 @@ def test_discovery_synthesis_node_dispatches_primary_and_validates_outputs(
     assert captured["work_unit_id"] is None
     assert '"node_type": "discovery_synthesis"' in captured["prompt"]
     assert captured["artefacts_loaded"] == [
-        ".woof/epics/E22/spark.md",
+        _state_path(22, "spark.md"),
         "CURRENT-ARCHITECTURE.md",
         "STACK.md",
         "INTEGRATIONS.md",
@@ -1886,10 +1928,10 @@ def test_discovery_synthesis_node_dispatches_primary_and_validates_outputs(
     assert output.next_node == NodeType.EPIC_DEFINITION
     assert output.validation_summary and output.validation_summary.stage == 1
     assert output.paths == [
-        ".woof/epics/E22/discovery/synthesis/CONCEPT.md",
-        ".woof/epics/E22/discovery/synthesis/PRINCIPLES.md",
-        ".woof/epics/E22/discovery/synthesis/ARCHITECTURE.md",
-        ".woof/epics/E22/discovery/synthesis/OPEN_QUESTIONS.md",
+        _state_path(22, "discovery/synthesis/CONCEPT.md"),
+        _state_path(22, "discovery/synthesis/PRINCIPLES.md"),
+        _state_path(22, "discovery/synthesis/ARCHITECTURE.md"),
+        _state_path(22, "discovery/synthesis/OPEN_QUESTIONS.md"),
     ]
     events = [json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines()]
     assert events[-1]["event"] == "discovery_synthesised"
@@ -2009,10 +2051,10 @@ def test_epic_definition_node_dispatches_primary_validates_epic_and_continues(
     assert captured["work_unit_id"] is None
     assert '"node_type": "epic_definition"' in captured["prompt"]
     assert captured["artefacts_loaded"] == [
-        ".woof/epics/E24/discovery/synthesis/CONCEPT.md",
-        ".woof/epics/E24/discovery/synthesis/PRINCIPLES.md",
-        ".woof/epics/E24/discovery/synthesis/ARCHITECTURE.md",
-        ".woof/epics/E24/discovery/synthesis/OPEN_QUESTIONS.md",
+        _state_path(24, "discovery/synthesis/CONCEPT.md"),
+        _state_path(24, "discovery/synthesis/PRINCIPLES.md"),
+        _state_path(24, "discovery/synthesis/ARCHITECTURE.md"),
+        _state_path(24, "discovery/synthesis/OPEN_QUESTIONS.md"),
         "CURRENT-ARCHITECTURE.md",
         "STRUCTURE.md",
         "CONCERNS.md",
@@ -2027,7 +2069,7 @@ def test_epic_definition_node_dispatches_primary_validates_epic_and_continues(
     assert output.next_node == NodeType.CONTRACT_READINESS
     assert output.validation_summary and output.validation_summary.stage == 2
     assert output.validation_summary.ok is True
-    assert output.paths == [".woof/epics/E24/EPIC.md"]
+    assert output.paths == [_state_path(24, "EPIC.md")]
     events = [json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines()]
     assert events[-1]["event"] == "definition_closed"
     _assert_node_output_schema(tmp_path, json.loads(output.model_dump_json()))
@@ -2153,7 +2195,7 @@ def test_breakdown_planning_node_dispatches_primary_validates_plan_and_renders_m
     assert captured["work_unit_id"] is None
     assert '"node_type": "breakdown_planning"' in captured["prompt"]
     assert captured["artefacts_loaded"] == [
-        ".woof/epics/E26/EPIC.md",
+        _state_path(26, "EPIC.md"),
         "CURRENT-ARCHITECTURE.md",
         "STRUCTURE.md",
         "TARGET-ARCHITECTURE.md",
@@ -2168,7 +2210,7 @@ def test_breakdown_planning_node_dispatches_primary_validates_plan_and_renders_m
     assert output.status == NodeStatus.COMPLETED
     assert output.next_node == NodeType.PLAN_CRITIQUE
     assert output.validation_summary and output.validation_summary.stage == 3
-    assert output.paths == [".woof/epics/E26/plan.json", ".woof/epics/E26/PLAN.md"]
+    assert output.paths == [_state_path(26, "plan.json"), _state_path(26, "PLAN.md")]
     plan_md = (directory / "PLAN.md").read_text()
     assert "| S1 | Build the first surface | pending | O1 | - | - | - |" in plan_md
     events = [json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines()]
@@ -2265,9 +2307,9 @@ def test_plan_critique_node_dispatches_reviewer_validates_critique_and_halts(
     assert captured["work_unit_id"] is None
     assert '"node_type": "plan_critique"' in captured["prompt"]
     assert captured["artefacts_loaded"] == [
-        ".woof/epics/E27/EPIC.md",
-        ".woof/epics/E27/plan.json",
-        ".woof/epics/E27/PLAN.md",
+        _state_path(27, "EPIC.md"),
+        _state_path(27, "plan.json"),
+        _state_path(27, "PLAN.md"),
         "CURRENT-ARCHITECTURE.md",
         "STRUCTURE.md",
         "CONCERNS.md",
@@ -2280,7 +2322,7 @@ def test_plan_critique_node_dispatches_reviewer_validates_critique_and_halts(
     assert output.status == NodeStatus.COMPLETED
     assert output.next_node == NodeType.PLAN_GATE_OPEN
     assert output.validation_summary and output.validation_summary.stage == 3
-    assert output.paths == [".woof/epics/E27/critique/plan.md"]
+    assert output.paths == [_state_path(27, "critique/plan.md")]
     events = [json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines()]
     assert events[-1]["event"] == "plan_critiqued"
     assert events[-1]["severity"] == "minor"
@@ -2349,7 +2391,7 @@ def test_graph_runs_discovery_definition_breakdown_and_opens_plan_gate(
         NodeType.PLAN_GATE_OPEN,
     ]
     assert outputs[-1].status == NodeStatus.GATE_OPENED
-    assert outputs[-1].gate_path == ".woof/epics/E28/gate.md"
+    assert outputs[-1].gate_path == _state_path(28, "gate.md")
     gate = directory / "gate.md"
     gate_fm = _read_gate_fm(gate)
     assert gate_fm["type"] == "plan_gate"
@@ -2452,8 +2494,8 @@ def test_critique_dispatch_failure_opens_reviewer_gate(tmp_path: Path, monkeypat
         assert '"work_unit_id": "S1"' in prompt
         assert '"staged_diff_command": "git diff --staged"' in prompt
         assert artefacts_loaded == [
-            ".woof/epics/E1/plan.json",
-            ".woof/epics/E1/EPIC.md",
+            _state_path(1, "plan.json"),
+            _state_path(1, "EPIC.md"),
             "CONVENTIONS.md",
             "TESTING.md",
             "CONCERNS.md",
@@ -2667,7 +2709,7 @@ def test_review_disposition_writes_deterministic_non_blocking_disposition(
 
     assert output.status == NodeStatus.COMPLETED
     assert output.next_node == NodeType.VERIFICATION
-    assert output.paths == [".woof/epics/E1/dispositions/work-unit-S1.md"]
+    assert output.paths == [_state_path(1, "dispositions/work-unit-S1.md")]
     disposition = _read_yaml_front_matter(directory / "dispositions" / "work-unit-S1.md")
     assert disposition["timestamp"]
     assert disposition["harness"] == "woof-deterministic-disposition"
@@ -3192,16 +3234,12 @@ def test_profile_b_policy_pushes_committed_transaction_before_done_state_lands(
         capture_output=True,
         text=True,
     ).stdout.strip()
-    committed_plan = _git(
-        tmp_path,
-        "show",
-        "HEAD:.woof/epics/E1/plan.json",
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    plan_after = json.loads((state.epic_dir(KEY, 1) / "plan.json").read_text())
     assert remote_head == local_head
-    assert json.loads(committed_plan.stdout)["work_units"][0]["state"] == "done"
+    # The done state lands in the operator home. It is not in the commit: the
+    # delivery commit carries the delivery change and nothing else (ADR-017).
+    assert plan_after["work_units"][0]["state"] == "done"
+    assert _engine_paths_in_head(tmp_path) == []
 
 
 def test_profile_b_push_disabled_commits_done_state_without_git_push(
@@ -3250,21 +3288,13 @@ def test_profile_b_push_disabled_commits_done_state_without_git_push(
         capture_output=True,
         text=True,
     ).stdout.strip()
-    committed_plan = _git(
-        tmp_path,
-        "show",
-        "HEAD:.woof/epics/E1/plan.json",
-        check=True,
-        capture_output=True,
-        text=True,
-    )
     plan_after = json.loads((directory / "plan.json").read_text())
     events = [json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines()]
     assert outputs[0].node_type == NodeType.COMMIT
     assert outputs[-1].status == NodeStatus.EPIC_COMPLETE
     assert head_after != head_before
-    assert json.loads(committed_plan.stdout)["work_units"][0]["state"] == "done"
     assert plan_after["work_units"][0]["state"] == "done"
+    assert _engine_paths_in_head(tmp_path) == []
     assert any(event["event"] == "work_unit_completed" for event in events)
     assert push_calls == []
 
@@ -3347,14 +3377,7 @@ def test_profile_a_publish_pushes_branch_opens_pr_labels_ready_and_records_metad
     ).stdout.strip()
     committed_events = [
         json.loads(line)
-        for line in _git(
-            tmp_path,
-            "show",
-            "HEAD:.woof/epics/E1/epic.jsonl",
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.splitlines()
+        for line in (state.epic_events_path(KEY, 1)).read_text().splitlines()
         if line.strip()
     ]
     publish_event = next(
@@ -3362,10 +3385,15 @@ def test_profile_a_publish_pushes_branch_opens_pr_labels_ready_and_records_metad
     )
 
     assert output.status == NodeStatus.COMPLETED
-    assert push_calls == [
-        ("push", "origin", "HEAD:S1"),
-        ("push", f"--force-with-lease=S1:{publish_event['initial_head']}", "origin", "HEAD:S1"),
-    ]
+    # One push, not two. The second was a force-with-lease re-push of the branch
+    # after the engine committed its own artefacts onto it; it writes none now.
+    assert push_calls == [("push", "origin", "HEAD:S1")]
+    assert (
+        publish_event["initial_head"]
+        == _git(
+            tmp_path, "rev-parse", "HEAD", check=True, capture_output=True, text=True
+        ).stdout.strip()
+    )
     assert pr_create["repo_slug"] == "example/project"
     assert pr_create["head"] == "S1"
     assert pr_create["base"] == base_branch
@@ -3378,7 +3406,10 @@ def test_profile_a_publish_pushes_branch_opens_pr_labels_ready_and_records_metad
     assert publish_event["pr_number"] == 42
     assert publish_event["head"] == "S1"
     assert publish_event["base"] == base_branch
-    assert publish_event["initial_head"] != head
+    # The published head is the final head: the engine used to land a second
+    # commit of its own artefacts on the branch after publishing, and no longer
+    # writes any (ADR-017).
+    assert publish_event["initial_head"] == head
     assert publish_event["verified_tree"]
     assert not (directory / "executor_result.json").exists()
     assert not (directory / "check-result.json").exists()
@@ -3620,18 +3651,12 @@ def test_commit_writes_epic_completed_into_commit_for_mixed_done_abandoned_epic(
     )
     assert status.stdout == ""
 
-    # HEAD's epic.jsonl already carries the marker - proof it was committed, not
-    # left dangling in the working tree.
-    committed = _git(
-        tmp_path,
-        "show",
-        "HEAD:.woof/epics/E1/epic.jsonl",
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    committed_events = [json.loads(line) for line in committed.stdout.splitlines() if line.strip()]
-    assert any(event["event"] == "epic_completed" for event in committed_events)
+    # The marker is durable in the operator home's event log. It is not in the
+    # commit, and the commit carries no engine path at all (ADR-017).
+    recorded = state.epic_events_path(KEY, 1).read_text()
+    recorded_events = [json.loads(line) for line in recorded.splitlines() if line.strip()]
+    assert any(event["event"] == "epic_completed" for event in recorded_events)
+    assert _engine_paths_in_head(tmp_path) == []
 
 
 def test_commit_resume_git_failure_preserves_resume_artefacts(
@@ -3694,32 +3719,17 @@ def test_commit_redacts_audit_before_staging_transaction(tmp_path: Path) -> None
     text = audit_file.read_text()
     assert "live-oauth-token" not in text
     assert "[REDACTED:bearer_token]" in text
-    committed = _git(
-        tmp_path,
-        "show",
-        "HEAD:.woof/epics/E1/audit/cod-critiquer-1.prompt",
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    assert "live-oauth-token" not in committed.stdout
+    # The audit trail is redacted where it lives, in the operator home. It is not
+    # staged and not committed, so there is no committed copy to leak the token.
+    assert _engine_paths_in_head(tmp_path) == []
 
 
 def test_complete_epic_cleans_stale_transient_files(tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     directory = _write_ready_commit_state(tmp_path, 1)
-    _git(
-        tmp_path,
-        "add",
-        "src/app.py",
-        ".woof/epics/E1/plan.json",
-        ".woof/epics/E1/epic.jsonl",
-        ".woof/epics/E1/dispatch.jsonl",
-        ".woof/epics/E1/critique/work-unit-S1.md",
-        ".woof/epics/E1/dispositions/work-unit-S1.md",
-        ".woof/epics/E1/audit/cod-critiquer-1.prompt",
-        check=True,
-    )
+    # Only the delivery path is stageable: the engine's artefacts are in the
+    # operator home, outside this checkout entirely.
+    _git(tmp_path, "add", "src/app.py", check=True)
     _git(tmp_path, "commit", "-m", "seed", check=True, capture_output=True)
 
     outputs = run_graph(KEY, tmp_path, 1)
@@ -3745,9 +3755,11 @@ def test_in_progress_work_unit_missing_executor_result_opens_incomplete_state_ga
             status=NodeStatus.GATE_OPENED,
             epic_id=1,
             work_unit_id="S1",
-            gate_path=".woof/epics/E1/gate.md",
+            gate_path=_state_path(1, "gate.md"),
             triggered_by=["incomplete_stage_state"],
-            message="Required Stage-5 artefact missing: .woof/epics/E1/executor_result.json",
+            message=(
+                "Required Stage-5 artefact missing: " + _state_path(1, "executor_result.json")
+            ),
         )
     ]
     gate_fm = _read_gate_fm(directory / "gate.md")
@@ -3938,8 +3950,8 @@ def test_gate_reentry_halts_at_human_review_with_gate_path(tmp_path: Path) -> No
             node_type=NodeType.HUMAN_REVIEW,
             status=NodeStatus.HALTED,
             epic_id=14,
-            gate_path=".woof/epics/E14/gate.md",
-            message="gate open at .woof/epics/E14/gate.md",
+            gate_path=_state_path(14, "gate.md"),
+            message=f"gate open at {_state_path(14, 'gate.md')}",
         )
     ]
 
@@ -3964,7 +3976,7 @@ def test_empty_diff_executor_result_opens_review_gate(tmp_path: Path) -> None:
     outputs = run_graph(KEY, tmp_path, 15)
 
     assert outputs[0].status == NodeStatus.GATE_OPENED
-    assert outputs[0].gate_path == ".woof/epics/E15/gate.md"
+    assert outputs[0].gate_path == _state_path(15, "gate.md")
     assert outputs[0].triggered_by == ["empty_diff_review"]
     gate_fm = _read_gate_fm(directory / "gate.md")
     assert gate_fm["triggered_by"] == ["empty_diff_review"]
@@ -4006,7 +4018,7 @@ def test_wf_epic_reports_complete_epic_as_json(tmp_path: Path) -> None:
 def test_wf_opens_gate_for_recoverable_missing_plan_state(tmp_path: Path) -> None:
     _init_git_checkout(tmp_path)
     _write_tracker_prerequisites()
-    directory = tmp_path / ".woof" / "epics" / "E10"
+    directory = state.epic_dir(KEY, 10)
     directory.mkdir(parents=True)
     _write_last_sync(directory, 10)
     env = _make_gh_rate_limit_stub(tmp_path / "bin")
@@ -4035,7 +4047,9 @@ def test_wf_epic_halts_when_gate_is_open(tmp_path: Path) -> None:
     proc = _run_woof(tmp_path, "wf", "--epic", "8", env=env)
 
     assert proc.returncode == 0, proc.stderr
-    assert "woof wf: human_review -> halted: gate open at .woof/epics/E8/gate.md" in proc.stdout
+    assert (
+        f"woof wf: human_review -> halted: gate open at {_state_path(8, 'gate.md')}" in proc.stdout
+    )
 
 
 def test_wf_gate_case_reports_stable_json_contract(tmp_path: Path) -> None:
@@ -4101,12 +4115,12 @@ def test_wf_gate_case_reports_stable_json_contract(tmp_path: Path) -> None:
             "epic_id": 11,
             "work_unit_id": "S1",
             "next_node": None,
-            "gate_path": ".woof/epics/E11/gate.md",
+            "gate_path": _state_path(11, "gate.md"),
             "validation_summary": None,
             "triggered_by": ["check_6_critique_blocker"],
             "message": (
                 "## Context\n\n"
-                "Reviewer critique `.woof/epics/E11/critique/work-unit-S1.md` marked work unit S1 as blocker. "
+                "Reviewer critique `critique/work-unit-S1.md` marked work unit S1 as blocker. "
                 "Woof does not start a model-to-model debate loop for blocker findings.\n\n"
                 "## Findings\n\n"
                 "- F1: test\n"
@@ -4115,7 +4129,7 @@ def test_wf_gate_case_reports_stable_json_contract(tmp_path: Path) -> None:
                 "The primary work-unit output remains staged for operator inspection. "
                 "No primary disposition was requested because blocker findings require a human gate.\n\n"
                 "## Reviewer position\n\n"
-                "Source: `.woof/epics/E11/critique/work-unit-S1.md`\n\n"
+                "Source: `critique/work-unit-S1.md`\n\n"
                 "Reviewer body was empty.\n"
             ),
             "paths": [],
@@ -4215,9 +4229,9 @@ def test_wf_resolve_reviewer_blocker_approval_requeues_critique(tmp_path: Path) 
     work_unit_event = next(event for event in events if event["event"] == "work_unit_gate_resolved")
     assert work_unit_event["decision"] == "approve"
     assert work_unit_event["triggered_by"] == ["check_6_critique_blocker"]
-    assert ".woof/epics/E33/check-result.json" in work_unit_event["paths"]
-    assert ".woof/epics/E33/critique/work-unit-S1.md" in work_unit_event["paths"]
-    assert ".woof/epics/E33/dispositions/work-unit-S1.md" in work_unit_event["paths"]
+    assert _state_path(33, "check-result.json") in work_unit_event["paths"]
+    assert _state_path(33, "critique/work-unit-S1.md") in work_unit_event["paths"]
+    assert _state_path(33, "dispositions/work-unit-S1.md") in work_unit_event["paths"]
 
 
 def test_wf_resolve_commit_transaction_gate_preserves_ok_check_result(
@@ -4733,20 +4747,22 @@ def test_reconstruction_distinguishes_abandoned_work_unit_from_done(tmp_path: Pa
     assert outputs[-1].status == NodeStatus.EPIC_COMPLETE
 
 
-def test_transaction_manifest_requires_audit_and_rejects_extra_staged_file(tmp_path: Path) -> None:
-    _git(tmp_path, "init", check=True, capture_output=True)
+def test_transaction_manifest_is_delivery_only_and_rejects_an_out_of_scope_staged_file(
+    tmp_path: Path,
+) -> None:
+    """The manifest is the work unit's delivery paths and nothing else (ADR-017).
+
+    It used to carry the epic's plan, event log, critique, disposition, and audit
+    trail, because the engine staged those into the delivery commit. They live in
+    the operator home now and can never be staged, so the manifest is exactly the
+    changed files matching the work unit's paths[].
+    """
+
+    _init_git_repo(tmp_path)
     _git(tmp_path, "config", "user.email", "test@example.com", check=True)
     _git(tmp_path, "config", "user.name", "Test", check=True)
     directory = _write_plan(1)
     (directory / "dispatch.jsonl").write_text("{}\n")
-    critique_dir = directory / "critique"
-    critique_dir.mkdir()
-    (critique_dir / "work-unit-S1.md").write_text(
-        "---\ntarget: work_unit\ntarget_id: S1\nseverity: info\n"
-        "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
-        "findings: []\n---\n"
-    )
-    _write_disposition(directory, "S1")
     audit_dir = directory / "audit"
     audit_dir.mkdir()
     (audit_dir / "cod-critiquer-1.prompt").write_text("prompt")
@@ -4764,10 +4780,10 @@ def test_transaction_manifest_requires_audit_and_rejects_extra_staged_file(tmp_p
     )
     manifest = build_work_unit_manifest(tmp_path, work_unit)
 
-    assert ".woof/epics/E1/audit/cod-critiquer-1.prompt" in manifest.expected_paths
-    assert ".woof/epics/E1/critique/work-unit-S1.md" in manifest.expected_paths
-    assert ".woof/epics/E1/dispositions/work-unit-S1.md" in manifest.expected_paths
-    assert "src/app.py" in manifest.expected_paths
+    assert manifest.expected_paths == ["src/app.py"]
+    assert _state_path(1, "audit/cod-critiquer-1.prompt") not in manifest.expected_paths
+    assert _state_path(1, "plan.json") not in manifest.expected_paths
+    assert _state_path(1, "dispatch.jsonl") not in manifest.expected_paths
 
     _git(tmp_path, "add", "--", *manifest.expected_paths, "extra.txt", check=True)
     result = verify_staged_manifest(tmp_path, manifest)
@@ -4778,22 +4794,11 @@ def test_transaction_manifest_requires_audit_and_rejects_extra_staged_file(tmp_p
 
 def test_transaction_manifest_reports_missing_expected_index_paths(tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
-    directory = _write_plan(16)
-    (directory / "dispatch.jsonl").write_text("{}\n")
-    critique_dir = directory / "critique"
-    critique_dir.mkdir()
-    (critique_dir / "work-unit-S1.md").write_text(
-        "---\ntarget: work_unit\ntarget_id: S1\nseverity: info\n"
-        "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
-        "findings: []\n---\n"
-    )
-    _write_disposition(directory, "S1")
-    audit_dir = directory / "audit"
-    audit_dir.mkdir()
-    (audit_dir / "cod-critiquer-1.prompt").write_text("prompt")
+    _write_plan(16)
     src = tmp_path / "src"
     src.mkdir()
     (src / "app.py").write_text("print('O1')\n")
+    (src / "helper.py").write_text("print('O1 helper')\n")
 
     work_unit = WorkUnitSpec(
         id="S1",
@@ -4803,98 +4808,15 @@ def test_transaction_manifest_reports_missing_expected_index_paths(tmp_path: Pat
         state="in_progress",
     )
     manifest = build_work_unit_manifest(tmp_path, work_unit)
-    staged_subset = [
-        path for path in manifest.expected_paths if not path.endswith("dispatch.jsonl")
-    ]
-    _git(tmp_path, "add", "--", *staged_subset, check=True)
+    assert manifest.expected_paths == ["src/app.py", "src/helper.py"]
+
+    # Stage only part of the work unit's delivery diff.
+    _git(tmp_path, "add", "--", "src/app.py", check=True)
 
     result = verify_staged_manifest(tmp_path, manifest)
 
     assert result.ok is False
-    assert result.missing_paths == [".woof/epics/E16/dispatch.jsonl"]
-
-
-def test_transaction_manifest_excludes_committed_prior_epic_artifacts(tmp_path: Path) -> None:
-    _init_git_repo(tmp_path)
-    directory = _write_plan(17)
-    (directory / "EPIC.md").write_text("---\nepic_id: 17\n---\n")
-    (directory / "PLAN.md").write_text("# Plan\n")
-    (directory / "dispatch.jsonl").write_text("{}\n")
-    (directory / "spark.md").write_text("initial spark\n")
-    critique_dir = directory / "critique"
-    critique_dir.mkdir()
-    (critique_dir / "work-unit-S1.md").write_text(
-        "---\ntarget: work_unit\ntarget_id: S1\nseverity: info\n"
-        "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
-        "findings: []\n---\n"
-    )
-    _write_disposition(directory, "S1")
-    audit_dir = directory / "audit"
-    audit_dir.mkdir()
-    (audit_dir / "old-work-unit.prompt").write_text("old prompt")
-    _git(tmp_path, "add", ".woof", check=True)
-    _git(tmp_path, "commit", "-m", "feat: first work unit", check=True)
-
-    (directory / "plan.json").write_text(
-        json.dumps(
-            {
-                "epic_id": 17,
-                "goal": "test graph",
-                "work_units": [
-                    {
-                        "id": "S1",
-                        "title": "first",
-                        "summary": "done",
-                        "paths": ["src/*.py"],
-                        "satisfies": ["O1"],
-                        "implements_contract_decisions": [],
-                        "uses_contract_decisions": [],
-                        "deps": [],
-                        "tests": {"count": 1, "types": ["unit"]},
-                        "state": "done",
-                    },
-                    {
-                        "id": "S2",
-                        "title": "docs",
-                        "summary": "document",
-                        "paths": ["README.md"],
-                        "satisfies": ["O2"],
-                        "implements_contract_decisions": [],
-                        "uses_contract_decisions": [],
-                        "deps": ["S1"],
-                        "tests": {"count": 0, "types": ["documentation", "manual"]},
-                        "state": "in_progress",
-                    },
-                ],
-            }
-        )
-    )
-    (directory / "epic.jsonl").write_text("{}\n{}\n")
-    (critique_dir / "work-unit-S2.md").write_text(
-        "---\ntarget: work_unit\ntarget_id: S2\nseverity: info\n"
-        "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
-        "findings: []\n---\n"
-    )
-    _write_disposition(directory, "S2")
-    (audit_dir / "new-work-unit.prompt").write_text("new prompt")
-    (tmp_path / "README.md").write_text("manual work-unit docs\n")
-
-    work_unit = WorkUnitSpec(
-        id="S2",
-        title="docs",
-        paths=["README.md"],
-        satisfies=["O2"],
-        state="in_progress",
-        tests={"count": 0, "types": ["documentation", "manual"]},
-    )
-    manifest = build_work_unit_manifest(tmp_path, work_unit)
-
-    assert ".woof/epics/E17/critique/work-unit-S1.md" not in manifest.expected_paths
-    assert ".woof/epics/E17/audit/old-work-unit.prompt" not in manifest.expected_paths
-    assert ".woof/epics/E17/spark.md" not in manifest.expected_paths
-    assert ".woof/epics/E17/critique/work-unit-S2.md" in manifest.expected_paths
-    assert ".woof/epics/E17/audit/new-work-unit.prompt" in manifest.expected_paths
-    assert "README.md" in manifest.expected_paths
+    assert result.missing_paths == ["src/helper.py"]
 
 
 def test_transaction_manifest_honours_recursive_pathspec(tmp_path: Path) -> None:
@@ -4975,10 +4897,9 @@ def test_epic_definition_payload_declares_prior_contract_revision_inputs(tmp_pat
 
     payload = nodes._epic_definition_payload(KEY, tmp_path, 70)
 
-    assert payload["inputs"]["prior_epic_path"] == ".woof/epics/E70/definition/EPIC.1.archived.md"
-    assert (
-        payload["inputs"]["revision_findings_path"]
-        == ".woof/epics/E70/definition/EPIC.1.findings.md"
+    assert payload["inputs"]["prior_epic_path"] == _state_path(70, "definition/EPIC.1.archived.md")
+    assert payload["inputs"]["revision_findings_path"] == _state_path(
+        70, "definition/EPIC.1.findings.md"
     )
     # The revision-shaped payload stays valid against the planning-node-input schema.
     _assert_planning_node_input_schema(tmp_path, payload)
@@ -5028,14 +4949,15 @@ def test_epic_definition_node_redispatches_revision_with_prior_contract_and_find
     # The re-dispatch declares the prior epic + findings as inputs and loads them as
     # artefacts, so the revision is evidence-driven.
     assert (
-        '"prior_epic_path": ".woof/epics/E71/definition/EPIC.1.archived.md"' in captured["prompt"]
-    )
-    assert (
-        '"revision_findings_path": ".woof/epics/E71/definition/EPIC.1.findings.md"'
+        f'"prior_epic_path": "{_state_path(71, "definition/EPIC.1.archived.md")}"'
         in captured["prompt"]
     )
-    assert ".woof/epics/E71/definition/EPIC.1.archived.md" in captured["artefacts_loaded"]
-    assert ".woof/epics/E71/definition/EPIC.1.findings.md" in captured["artefacts_loaded"]
+    assert (
+        f'"revision_findings_path": "{_state_path(71, "definition/EPIC.1.findings.md")}"'
+        in captured["prompt"]
+    )
+    assert _state_path(71, "definition/EPIC.1.archived.md") in captured["artefacts_loaded"]
+    assert _state_path(71, "definition/EPIC.1.findings.md") in captured["artefacts_loaded"]
     # The node re-closes definition; the request clears and a fresh EPIC.md exists.
     assert (directory / "EPIC.md").exists()
     events = [json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines()]
@@ -5090,14 +5012,15 @@ def test_epic_definition_node_redispatches_cold_start_revision_without_synthesis
     assert "synthesis inputs are missing" not in (output.message or "")
     assert "prompt" in captured, "dispatch did not run; the node halted on missing synthesis"
     assert (
-        '"prior_epic_path": ".woof/epics/E72/definition/EPIC.1.archived.md"' in captured["prompt"]
-    )
-    assert (
-        '"revision_findings_path": ".woof/epics/E72/definition/EPIC.1.findings.md"'
+        f'"prior_epic_path": "{_state_path(72, "definition/EPIC.1.archived.md")}"'
         in captured["prompt"]
     )
-    assert ".woof/epics/E72/definition/EPIC.1.archived.md" in captured["artefacts_loaded"]
-    assert ".woof/epics/E72/definition/EPIC.1.findings.md" in captured["artefacts_loaded"]
+    assert (
+        f'"revision_findings_path": "{_state_path(72, "definition/EPIC.1.findings.md")}"'
+        in captured["prompt"]
+    )
+    assert _state_path(72, "definition/EPIC.1.archived.md") in captured["artefacts_loaded"]
+    assert _state_path(72, "definition/EPIC.1.findings.md") in captured["artefacts_loaded"]
     assert transitions.definition_revision_requested(KEY, 72) is False
 
 

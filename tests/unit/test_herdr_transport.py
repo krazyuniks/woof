@@ -7,13 +7,16 @@ in a temporary directory and never touch an operator session).
 
 from __future__ import annotations
 
+import json
 import socket
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from woof.cli import herdr as herdr_module
 from woof.cli.herdr import (
     HERDR_PROTOCOL,
     HerdrError,
@@ -22,6 +25,7 @@ from woof.cli.herdr import (
     ensure_session,
     preflight_server,
     reap_session_socket,
+    session_is_dead,
     socket_alive,
 )
 from woof.cli.transport_errors import (
@@ -167,6 +171,55 @@ def ready(path: Path) -> Callable[[], bool]:
     return _ready
 
 
+class FakeHerdrServer:
+    """A Unix socket that answers a ping the way a live herdr server does.
+
+    ``answers=False`` accepts the connection and then says nothing, which is the one
+    thing a socket file alone cannot tell you apart from a live session.
+    """
+
+    def __init__(self, path: Path, *, answers: bool = True) -> None:
+        self.answers = answers
+        self.connections = 0
+        self._held: list[socket.socket] = []
+        self._sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self._sock.bind(str(path))
+        self._sock.listen(8)
+        self._sock.settimeout(0.1)
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._serve, daemon=True)
+        self._thread.start()
+
+    def _serve(self) -> None:
+        while not self._stop.is_set():
+            try:
+                conn, _ = self._sock.accept()
+            except (TimeoutError, OSError):
+                continue
+            self.connections += 1
+            if not self.answers:
+                self._held.append(conn)  # accepted, and answering nothing
+                continue
+            with conn:
+                conn.settimeout(1.0)
+                try:
+                    request = json.loads(conn.recv(8192).decode("utf-8").splitlines()[0])
+                    reply = {
+                        "id": request.get("id"),
+                        "result": {"protocol": HERDR_PROTOCOL, "version": "0.7.3"},
+                    }
+                    conn.sendall((json.dumps(reply) + "\n").encode("utf-8"))
+                except (OSError, ValueError, IndexError):
+                    continue
+
+    def close(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=2.0)
+        for conn in self._held:
+            conn.close()
+        self._sock.close()
+
+
 # --- preflight: a live server, an orphaned socket, an incompatible protocol ---
 
 
@@ -197,13 +250,26 @@ def test_socket_alive_is_false_for_a_socket_file_with_no_listener(tmp_path: Path
     assert socket_alive(orphan) is False
 
 
-def test_socket_alive_is_true_when_a_listener_accepts(tmp_path: Path) -> None:
+def test_socket_alive_is_true_when_a_server_answers(tmp_path: Path) -> None:
     path = tmp_path / "herdr.sock"
-    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    server.bind(str(path))
-    server.listen(1)
+    server = FakeHerdrServer(path)
     try:
         assert socket_alive(path) is True
+    finally:
+        server.close()
+
+
+def test_socket_alive_is_false_when_a_socket_accepts_but_never_answers(tmp_path: Path) -> None:
+    """Liveness is a completed ping, not an accepted connection.
+
+    A socket that accepts and then says nothing is not a session this transport can
+    dispatch into: the first real call would hang out its whole timeout.
+    """
+    path = tmp_path / "herdr.sock"
+    server = FakeHerdrServer(path, answers=False)
+    try:
+        assert socket_alive(path, timeout=0.5) is False
+        assert server.connections == 1, "the probe must reach the socket, not just stat it"
     finally:
         server.close()
 
@@ -220,15 +286,12 @@ def test_ensure_session_reaps_an_orphaned_socket_and_respawns(tmp_path: Path) ->
     sock.write_bytes(b"")
     client_sock.write_bytes(b"")
     launched: list[str] = []
-    holder: list[socket.socket] = []
+    holder: list[FakeHerdrServer] = []
 
     def launch(session: str) -> None:
         launched.append(session)
         assert not sock.exists(), "the orphaned socket must be reaped before the respawn binds"
-        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        server.bind(str(sock))
-        server.listen(1)
-        holder.append(server)
+        holder.append(FakeHerdrServer(sock))
 
     try:
         resolved = ensure_session(
@@ -247,9 +310,7 @@ def test_ensure_session_reaps_an_orphaned_socket_and_respawns(tmp_path: Path) ->
 
 def test_ensure_session_reuses_a_serving_session_without_respawning(tmp_path: Path) -> None:
     sock = tmp_path / "herdr.sock"
-    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    server.bind(str(sock))
-    server.listen(1)
+    server = FakeHerdrServer(sock)
     launched: list[str] = []
     try:
         resolved = ensure_session(
@@ -273,6 +334,48 @@ def test_ensure_session_fails_when_the_respawned_server_never_serves(tmp_path: P
             launch_server=lambda name: None,
             boot_timeout_s=0.3,
         )
+
+
+def test_a_live_server_that_misses_one_probe_is_not_reaped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reaping is destructive, so one failed probe is not a verdict.
+
+    A live server whose accept backlog is saturated can miss a probe. Unlinking its
+    socket on that evidence leaves it running on a path nothing can reach while a
+    second server binds the path -- worse than the orphaned socket the reap exists
+    to clear.
+    """
+    sock = tmp_path / "herdr.sock"
+    sock.write_bytes(b"")
+    probes: list[bool] = [False, True]
+    launched: list[str] = []
+
+    def probe(path: Path, *, timeout: float = 1.0) -> bool:
+        return probes.pop(0) if probes else True
+
+    monkeypatch.setattr(herdr_module, "socket_alive", probe)
+    monkeypatch.setattr(herdr_module.time, "sleep", lambda _seconds: None)
+
+    resolved = ensure_session(
+        "woof-test",
+        socket_path=sock,
+        launch_server=lambda name: launched.append(name),
+        boot_timeout_s=1.0,
+    )
+
+    assert resolved == sock
+    assert sock.exists(), "the live server's socket must survive a single missed probe"
+    assert launched == [], "a live server must not be respawned underneath itself"
+
+
+def test_a_socket_no_probe_can_reach_is_declared_dead(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sock = tmp_path / "herdr.sock"
+    sock.write_bytes(b"")
+    monkeypatch.setattr(herdr_module.time, "sleep", lambda _seconds: None)
+    assert session_is_dead(sock) is True
 
 
 def test_reap_session_socket_removes_both_leftover_sockets(tmp_path: Path) -> None:

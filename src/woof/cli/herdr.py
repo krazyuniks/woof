@@ -55,6 +55,14 @@ BACKEND = "herdr"
 EVIDENCE_LINES = 80
 DEFAULT_BOOT_TIMEOUT_S = 15.0
 DEFAULT_LIVENESS_TIMEOUT_S = 1.0
+LIVENESS_ID = "woof:liveness"
+
+# Declaring a session dead is the precondition for unlinking its socket, so it is
+# confirmed rather than assumed: several probes, each given longer than a liveness
+# check, before a live-but-unreachable server can be mistaken for a dead one.
+REAP_CONFIRMATIONS = 3
+REAP_PROBE_TIMEOUT_S = 2.0
+REAP_PROBE_INTERVAL_S = 0.5
 
 
 class HerdrError(RuntimeError):
@@ -283,19 +291,47 @@ def session_socket_path(session: str) -> Path:
 
 
 def socket_alive(path: Path, *, timeout: float = DEFAULT_LIVENESS_TIMEOUT_S) -> bool:
-    """True when something is accepting connections on this socket.
+    """True when a herdr server answers a ping on this socket.
 
-    Liveness is an accepted connection, never the presence of the file. A dead
-    server leaves its socket behind and that orphan refuses every connect.
+    Liveness is a completed round trip, never the presence of the file and never a
+    bare accepted connection. A dead server leaves its socket behind and that orphan
+    refuses every connect; a socket that accepts and then answers nothing is not a
+    session this transport can dispatch into either.
     """
-    probe = socketlib.socket(socketlib.AF_UNIX, socketlib.SOCK_STREAM)
-    probe.settimeout(timeout)
     try:
-        probe.connect(str(path))
+        transport = SocketTransport(str(path), timeout=timeout)
     except OSError:
         return False
+    try:
+        transport.send_line({"id": LIVENESS_ID, "method": "ping", "params": {}})
+        reply = transport.recv_line(timeout=timeout)
+    except (OSError, ValueError):
+        return False
     finally:
-        probe.close()
+        transport.close()
+    return isinstance(reply, dict) and reply.get("id") == LIVENESS_ID
+
+
+def session_is_dead(
+    path: Path,
+    *,
+    attempts: int = REAP_CONFIRMATIONS,
+    timeout: float = REAP_PROBE_TIMEOUT_S,
+    interval: float = REAP_PROBE_INTERVAL_S,
+) -> bool:
+    """True only when every probe in a row fails.
+
+    Reaping is destructive: it unlinks the socket a server is bound to, and the
+    respawn then binds the path while the original server keeps running on an fd
+    nothing can reach. A live server can miss a probe -- a saturated accept backlog
+    under load is enough -- so one failure is not a verdict. A genuinely dead socket
+    refuses each connect immediately, so confirming costs little.
+    """
+    for attempt in range(attempts):
+        if socket_alive(path, timeout=timeout):
+            return False
+        if attempt + 1 < attempts:
+            time.sleep(interval)
     return True
 
 
@@ -351,7 +387,7 @@ def ensure_session(
     """
     sock = socket_path if socket_path is not None else session_socket_path(session)
     if sock.exists():
-        if socket_alive(sock):
+        if not session_is_dead(sock):
             return sock
         reap_session_socket(sock)
     launcher = launch_server if launch_server is not None else launch_session_server
@@ -701,6 +737,7 @@ __all__ = [
     "open_session",
     "preflight_server",
     "reap_session_socket",
+    "session_is_dead",
     "session_socket_path",
     "socket_alive",
 ]

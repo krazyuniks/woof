@@ -22,7 +22,7 @@ The session is named explicitly through `WOOF_HERDR_SESSION`. There is no implic
 
 The operator's own sessions (`default`, `drains`) are refused as dispatch targets and as teardown targets. Woof starts no worker in them and stops neither their workers nor their server.
 
-Ownership carries the recovery duties. Woof probes liveness by connecting, not by looking for the socket file; a socket with no listener behind it is a dead session, whose leftover server and client sockets Woof reaps before respawning the server. Every worker Woof launches is launched under a stable name and its reference recorded on disk, and Woof terminates the workers it launched, so a worker that outlived its client is found by name rather than by guessing at a process id.
+Ownership carries the recovery duties. Woof probes liveness by pinging the server, not by looking for the socket file; a socket with no server answering behind it is a dead session, whose leftover server and client sockets Woof reaps before respawning the server. Reaping is destructive, so death is confirmed by repeated failed probes rather than assumed from one. Every worker Woof launches is launched under a stable name and its reference recorded on disk as soon as the worker exists, and Woof terminates the workers it launched, so a worker that outlived its client is found by its name rather than by guessing at a process id -- both to reattach to it and to kill it.
 
 Protocol work and live smokes use a disposable named session on its own socket, torn down afterwards.
 

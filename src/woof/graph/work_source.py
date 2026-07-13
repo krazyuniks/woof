@@ -53,7 +53,9 @@ BACKLOG_STATE_BY_ENGINE_STATE = {
 }
 
 _FRONT_MATTER_OPEN = re.compile(r"\A---\r?\n")
-_FRONT_MATTER_CLOSE = re.compile(r"(?P<break>\r?\n)---\r?\n")
+# The closing fence may be the document's last line, with no trailing newline: a
+# document that is front matter and nothing else is still a document.
+_FRONT_MATTER_CLOSE = re.compile(r"(?P<break>\r?\n)---(?:\r?\n|\Z)")
 _WORK_UNITS_KEY = re.compile(r"^work_units:\s*(#.*)?$")
 _TOP_LEVEL_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*:")
 _ITEM = re.compile(r"^(?P<indent>[ \t]*)-[ \t]+(?P<rest>\S.*)$")

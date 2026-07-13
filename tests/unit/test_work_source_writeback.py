@@ -189,6 +189,21 @@ def test_writeback_preserves_crlf_line_endings_byte_for_byte(tmp_path: Path) -> 
     assert b"\n" not in document.read_bytes().replace(b"\r\n", b"")
 
 
+def test_writeback_accepts_a_document_that_ends_at_the_closing_fence(tmp_path: Path) -> None:
+    """Front matter and nothing else: the closing fence is the last byte, with no newline."""
+
+    text = RICH_BACKLOG.split("\n---\n", 1)[0] + "\n---"
+    document = _write_document(tmp_path, text)
+
+    result = writeback_unit_state(document, "alpha", "done")
+
+    assert result.changed is True
+    assert document.read_text(encoding="utf-8") == text.replace(
+        "    state: todo\n", "    state: done\n", 1
+    )
+    assert unit_states(document.read_text(encoding="utf-8"))["gamma"] == "in_progress"
+
+
 def test_writeback_preserves_the_quoting_style_and_trailing_comment(tmp_path: Path) -> None:
     document = _write_document(tmp_path)
 

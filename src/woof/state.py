@@ -162,6 +162,21 @@ def usage_path(project_key: str, epic_id: int) -> Path:
     return epic_dir(project_key, epic_id) / "usage.jsonl"
 
 
+def workers_dir(project_key: str, epic_id: int) -> Path:
+    return runs_root(project_key, epic_id) / "workers"
+
+
+def worker_identity_path(project_key: str, epic_id: int, worker_name: str) -> Path:
+    """Where a retained worker's backend-neutral session identity is recorded.
+
+    Disk is the authority. The record is what lets a fix round reattach to the
+    producer that is already holding the unit's context, and what makes a worker
+    that outlived its client discoverable by name rather than by guessing at a
+    process id.
+    """
+    return workers_dir(project_key, epic_id) / f"{worker_name}.json"
+
+
 # --- project-scoped state --------------------------------------------------
 
 

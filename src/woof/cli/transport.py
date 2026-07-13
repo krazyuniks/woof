@@ -35,12 +35,16 @@ from woof.cli.transport_errors import (
     WorkerTimeout,
 )
 
-# The operator's own herdr sessions. Protocol work and live smokes run against a
-# disposable named session on its own socket; a teardown that could reach these
-# would stop an operator's running drains.
+# The operator's own herdr sessions. Woof never runs a worker in one and never
+# tears one down: they carry the operator's live drains, and a Woof run that
+# started workers in them (or stopped one) would take that work with it. Woof owns
+# the named session it dispatches into, which is what lets it reap the session's
+# orphaned sockets and kill the session's stray workers.
 PROTECTED_SESSIONS = ("default", "drains")
 
-DEFAULT_SESSION = "drains"
+# There is no implicit session. The named session is declared, because the herdr
+# server -- not the client -- spawns the worker: a guessed default would silently
+# put Woof's workers inside whichever session happened to be serving.
 EVIDENCE_LINES = 80
 TMUX_POLL_INTERVAL_S = 1.0
 _UNSAFE_NAME = re.compile(r"[^A-Za-z0-9_-]+")
@@ -49,7 +53,25 @@ _UNSAFE_NAME = re.compile(r"[^A-Za-z0-9_-]+")
 # collapses into an attachment chip that Enter will not submit, and a bare Enter
 # on multiline input inserts a newline rather than submitting. So the task lives
 # in the prompt file and only this pointer is pasted.
-KICKOFF = "Read the full task at {prompt_path} and carry it out. Do not print the answer in chat."
+#
+# A worker asked for an answer writes it to a payload file: the answer of record is
+# a file the worker wrote, never text scraped back off the terminal. A worker whose
+# task already names the artefact it must write (the producer writes its executor
+# result) is pointed at the task alone.
+TASK_KICKOFF = (
+    "Read the full task at {prompt_path} and carry it out. Do not print the answer in chat."
+)
+ANSWER_KICKOFF = (
+    "Read the full task at {prompt_path} and carry it out; then write only your final "
+    "answer (no commentary) to {payload_path} and stop. Do not print the answer in chat."
+)
+
+
+def build_kickoff(prompt_path: Path, payload_path: Path | None = None) -> str:
+    """The single line pasted into the worker to start its turn."""
+    if payload_path is None:
+        return TASK_KICKOFF.format(prompt_path=prompt_path)
+    return ANSWER_KICKOFF.format(prompt_path=prompt_path, payload_path=payload_path)
 
 
 def _safe(value: str, *, fallback: str) -> str:
@@ -210,11 +232,13 @@ class Backend(Protocol):
         worker_ref: str,
         *,
         prompt_path: Path,
+        kickoff: str,
         payload_ready: Callable[[], bool],
         readiness_timeout_s: int,
         completion_timeout_s: int,
     ) -> tuple[str, int]: ...
     def close(self, worker_ref: str) -> None: ...
+    def evidence(self, worker_ref: str) -> str: ...
     def identity(self, worker_name: str, worker_ref: str) -> WorkerIdentity: ...
     def session_name(self) -> str | None: ...
 
@@ -244,13 +268,14 @@ class HerdrBackend:
         worker_ref: str,
         *,
         prompt_path: Path,
+        kickoff: str,
         payload_ready: Callable[[], bool],
         readiness_timeout_s: int,
         completion_timeout_s: int,
     ) -> tuple[str, int]:
         result = self._session.turn(
             pane_id=worker_ref,
-            kickoff=KICKOFF.format(prompt_path=prompt_path),
+            kickoff=kickoff,
             payload_ready=payload_ready,
             readiness_timeout_s=readiness_timeout_s,
             completion_timeout_s=completion_timeout_s,
@@ -307,6 +332,7 @@ class TmuxBackend:
         worker_ref: str,
         *,
         prompt_path: Path,
+        kickoff: str,
         payload_ready: Callable[[], bool],
         readiness_timeout_s: int,
         completion_timeout_s: int,
@@ -315,7 +341,7 @@ class TmuxBackend:
 
         started = time.perf_counter()
         self._tmux.wait_for_input_ready(worker_ref, readiness_timeout_s=readiness_timeout_s)
-        self._tmux.deliver_prompt_file(worker_ref, prompt_path)
+        self._tmux.deliver_prompt_file(worker_ref, prompt_path, kickoff)
         deadline = time.monotonic() + completion_timeout_s
         while time.monotonic() < deadline:
             if payload_ready():
@@ -360,21 +386,50 @@ class TmuxBackend:
 def open_backend(
     profile: HarnessProfile,
     *,
-    session: str = DEFAULT_SESSION,
+    session: str | None = None,
     herdr_session: HerdrSession | None = None,
     tmux_api: Any | None = None,
 ) -> Backend:
     """Open the backend this profile declares, ready to run workers.
 
     For herdr this ensures the named session is serving, preflights the running
-    server, and pins the socket protocol, so an incompatible or dead server fails
-    here rather than halfway through a dispatch.
+    server, and pins the socket protocol, so a dead, orphaned, or incompatible
+    server fails here rather than halfway through a dispatch.
+
+    The named session must be declared. herdr's server spawns the worker, so a
+    guessed default would put Woof's workers inside whatever session was serving --
+    including an operator session running live drains, which Woof must never touch.
     """
     backend = resolve_backend(profile)
-    if backend == BACKEND_HERDR:
-        opened = herdr_session if herdr_session is not None else open_herdr_session(session)
-        return HerdrBackend(opened, harness=profile.name)
-    return TmuxBackend(tmux_api if tmux_api is not None else _tmux_api(), harness=profile.name)
+    if backend != BACKEND_HERDR:
+        return TmuxBackend(tmux_api if tmux_api is not None else _tmux_api(), harness=profile.name)
+    if herdr_session is not None:
+        return HerdrBackend(herdr_session, harness=profile.name)
+    if not session:
+        raise TransportUnavailable(
+            f"harness {profile.name!r} runs on the herdr backend, but no herdr named "
+            f"session is declared. Set WOOF_HERDR_SESSION to a session Woof owns; the "
+            f"herdr server spawns the worker, so the session is never guessed.",
+            backend=BACKEND_HERDR,
+        )
+    require_woof_owned_session(session)
+    return HerdrBackend(open_herdr_session(session), harness=profile.name)
+
+
+def require_woof_owned_session(session: str) -> None:
+    """Refuse a session Woof does not own.
+
+    The operator's sessions carry live drains. Woof starts no worker in one, and
+    stops neither the workers nor the server of one.
+    """
+    if session in PROTECTED_SESSIONS:
+        raise TransportUnavailable(
+            f"refusing to use herdr session {session!r}: it is an operator session with "
+            f"live work. Woof dispatches into a session it owns, so it can reap that "
+            f"session's orphaned sockets and kill its stray workers.",
+            backend=BACKEND_HERDR,
+            session=session,
+        )
 
 
 def _tmux_api() -> Any:
@@ -394,6 +449,7 @@ def run_turn(
     payload_ready: Callable[[], bool],
     readiness_timeout_s: int,
     completion_timeout_s: int,
+    payload_path: Path | None = None,
     identity: WorkerIdentity | None = None,
     close_after: bool = False,
     model: str | None = None,
@@ -421,6 +477,7 @@ def run_turn(
         completed_on, latency_ms = backend.deliver(
             worker_ref,
             prompt_path=prompt_path,
+            kickoff=build_kickoff(prompt_path, payload_path),
             payload_ready=payload_ready,
             readiness_timeout_s=readiness_timeout_s,
             completion_timeout_s=completion_timeout_s,
@@ -467,32 +524,27 @@ def teardown_session(
         for identity in identities:
             backend.close(identity.worker_ref)
         return
-    if session in PROTECTED_SESSIONS:
-        raise TransportUnavailable(
-            f"refusing to tear down herdr session {session!r}: it is an operator session "
-            f"with live work. Protocol work and smokes use a disposable named session on "
-            f"its own socket.",
-            backend=backend.name,
-            session=session,
-        )
+    require_woof_owned_session(session)
     for identity in identities:
         backend.close(identity.worker_ref)
     stop_server(session)
 
 
 __all__ = [
-    "DEFAULT_SESSION",
-    "KICKOFF",
+    "ANSWER_KICKOFF",
     "PROTECTED_SESSIONS",
+    "TASK_KICKOFF",
     "Backend",
     "HerdrBackend",
     "TmuxBackend",
     "TurnOutcome",
     "WorkerIdentity",
+    "build_kickoff",
     "clear_worker_identity",
     "close_worker",
     "load_worker_identity",
     "open_backend",
+    "require_woof_owned_session",
     "resolve_backend",
     "reviewer_worker_name",
     "run_turn",

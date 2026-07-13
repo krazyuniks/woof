@@ -472,9 +472,10 @@ exit 2
         "harness plus registry-resolved model, effort, and runtime-mode disclosure"
     )
     assert producer_route["notes"] == [
-        "trusted-local runtime: Woof dispatches subscription CLIs through tmux_harness; "
-        "commit safety is enforced through deterministic checks, reviewer critique, human gates, "
-        "transaction manifests, and commit decisions"
+        "trusted-local runtime: Woof dispatches subscription CLIs through the interactive "
+        "harness transport declared by the selected profile; commit safety is enforced "
+        "through deterministic checks, reviewer critique, human gates, transaction "
+        "manifests, and commit decisions"
     ]
     reviewer_route = next(
         finding

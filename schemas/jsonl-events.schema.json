@@ -143,12 +143,12 @@
       "type": "array",
       "items": { "type": "string" },
       "minItems": 1,
-      "description": "Resolved harness launch argv. Prompt payloads delivered through tmux_harness prompt files are represented with <prompt:tmux-file> in durable events."
+      "description": "Resolved harness launch argv. The prompt body is delivered to the worker through a file and is represented with <prompt:file> in durable events."
     },
     "prompt_transport": {
       "type": "string",
-      "enum": ["stdin", "tmux_harness_prompt_file"],
-      "description": "How the full prompt body was delivered to the worker. stdin is retained for legacy audit logs."
+      "enum": ["stdin", "harness_prompt_file"],
+      "description": "How the full prompt body was delivered to the worker. Every interactive harness transport delivers the prompt as a file and pastes a one-line pointer to it. stdin is retained for legacy audit logs."
     },
     "pid": {
       "type": "integer",
@@ -165,9 +165,13 @@
         "idle_kill",
         "wallclock_timeout",
         "completed_lingering",
-        "operator_cancel"
+        "operator_cancel",
+        "blocked",
+        "payload_absent",
+        "protocol_mismatch",
+        "transport_unavailable"
       ],
-      "description": "Supervised subprocess outcome classification. completed_lingering means the adapter emitted its terminal marker and Woof reaped a lingering process group; it is a successful dispatch classification."
+      "description": "Dispatch outcome classification. completed_lingering means the adapter emitted its terminal marker and Woof reaped a lingering process group; it is a successful dispatch classification. blocked, wallclock_timeout, and payload_absent are the three distinct ways a worker turn fails: blocked is waiting on human input, wallclock_timeout is a turn that never settled, and payload_absent is a turn that settled or exited without writing the artefact it was asked for. protocol_mismatch and transport_unavailable fail before the worker runs."
     },
     "timed_out": {
       "type": "boolean",
@@ -222,15 +226,52 @@
       "pattern": "^~/\\.claude/projects/[^/]+/[^/]+\\.jsonl$",
       "description": "Portable home-relative reference to Claude Code's native project transcript."
     },
-    "tmux_session": {
+    "transport_backend": {
       "type": "string",
-      "minLength": 1,
-      "description": "tmux_harness session name for the logical dispatch."
+      "enum": ["tmux", "herdr"],
+      "description": "The transport that ran this worker, resolved from the selected harness profile."
     },
-    "tmux_transport": {
+    "transport_session": {
       "type": "string",
       "minLength": 1,
-      "description": "tmux_harness transport identifier."
+      "description": "The transport's named session hosting the worker (a herdr named session; absent for tmux, whose worker reference is itself the session)."
+    },
+    "transport_socket": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The socket the running server was reached on, recorded at preflight."
+    },
+    "transport_protocol": {
+      "type": "integer",
+      "description": "The socket protocol the running server reported at preflight."
+    },
+    "transport_version": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The version the running server reported at preflight."
+    },
+    "worker_name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable worker identity. A producer keeps one name across its fix rounds; each reviewer round gets its own. It is what makes a worker that outlived its client discoverable and killable by name."
+    },
+    "worker_ref": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The backend's handle on the live worker (a herdr pane reference, a tmux session). Opaque to the engine."
+    },
+    "evidence_path": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Where the failed turn's session output was persisted. A blocked, timed-out, or payload-absent worker leaves its evidence on disk for the operator rather than only a tail interpolated into an error message."
+    },
+    "producer_worker_reattached": {
+      "type": "boolean",
+      "description": "True when this turn reattached to the producer worker recorded on disk."
+    },
+    "producer_worker_respawned": {
+      "type": "boolean",
+      "description": "True when the recorded producer worker was gone and was respawned under the same name from the disk record."
     },
     "worker_session_id": {
       "type": "string",

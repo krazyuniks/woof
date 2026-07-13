@@ -52,8 +52,8 @@ class FakeTmux:
     def wait_for_input_ready(self, session: str, *, readiness_timeout_s: int) -> None:
         self.calls.append(("wait_for_input_ready", session))
 
-    def deliver_prompt_file(self, session: str, prompt_path: Path) -> None:
-        self.calls.append(("deliver_prompt_file", session))
+    def deliver_prompt_file(self, session: str, prompt_path: Path, kickoff: str) -> None:
+        self.calls.append(("deliver_prompt_file", {"session": session, "kickoff": kickoff}))
 
     def capture_pane_tail(self, session: str, lines: int) -> str:
         self.calls.append(("capture_pane_tail", session))
@@ -381,3 +381,30 @@ def test_an_operator_session_is_never_torn_down(tmp_path: Path) -> None:
     with pytest.raises(TransportUnavailable) as exc:
         teardown_session(backend, identities=[], stop_server=lambda name: None)
     assert "drains" in str(exc.value)
+
+
+# --- Woof never runs a worker in an operator's session ---
+
+
+def test_a_herdr_profile_without_a_declared_session_is_refused() -> None:
+    """herdr's server spawns the worker, so the session can never be guessed.
+
+    An implicit default would put Woof's workers inside whichever herdr server
+    happened to be serving, which is how a drain colonises the operator's shared
+    session.
+    """
+    with pytest.raises(TransportUnavailable) as exc:
+        open_backend(get_profile("claude"))
+    assert "WOOF_HERDR_SESSION" in str(exc.value)
+
+
+def test_an_operator_session_is_refused_before_a_worker_starts() -> None:
+    for session in PROTECTED_SESSIONS:
+        with pytest.raises(TransportUnavailable) as exc:
+            open_backend(get_profile("claude"), session=session)
+        assert session in str(exc.value)
+
+
+def test_a_tmux_profile_needs_no_herdr_session(tmp_path: Path) -> None:
+    backend = open_backend(get_profile("reasonix"), tmux_api=FakeTmux())
+    assert backend.session_name() is None

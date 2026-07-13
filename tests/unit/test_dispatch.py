@@ -211,7 +211,7 @@ def test_profile_a_run_metadata_records_worktree_derivation() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_dry_run_reviewer_uses_tmux_harness_profile_argv(woof_project: Path) -> None:
+def test_dry_run_reviewer_uses_the_harness_profile_argv(woof_project: Path) -> None:
     proc = run_dispatch(
         woof_project,
         "--role",
@@ -232,7 +232,7 @@ def test_dry_run_reviewer_uses_tmux_harness_profile_argv(woof_project: Path) -> 
         "max",
         "--dangerously-skip-permissions",
     ]
-    assert payload["prompt_transport"] == "tmux_harness_prompt_file"
+    assert payload["prompt_transport"] == "harness_prompt_file"
     assert payload["epic"] == 42
     assert payload["work_unit_id"] == "S3"
     assert payload["role"] == "reviewer"
@@ -250,7 +250,7 @@ def test_dry_run_reviewer_uses_tmux_harness_profile_argv(woof_project: Path) -> 
     assert payload["runtime_policy"] == EXPECTED_TRUSTED_RUNTIME_POLICY
 
 
-def test_dry_run_primary_uses_tmux_harness_profile_argv(woof_project: Path) -> None:
+def test_dry_run_primary_uses_the_harness_profile_argv(woof_project: Path) -> None:
     proc = run_dispatch(
         woof_project,
         "--role",
@@ -273,7 +273,7 @@ def test_dry_run_primary_uses_tmux_harness_profile_argv(woof_project: Path) -> N
         "-c",
         "model_reasoning_effort=xhigh",
     ]
-    assert payload["prompt_transport"] == "tmux_harness_prompt_file"
+    assert payload["prompt_transport"] == "harness_prompt_file"
     assert payload["work_unit_id"] is None
     assert payload["adapter"] == "codex"
     assert payload["harness"] == "codex"
@@ -505,7 +505,7 @@ def test_prompt_file_overrides_stdin(woof_project: Path, tmp_path: Path) -> None
     )
     assert proc.returncode == 0, proc.stderr
     payload = json.loads(proc.stdout)
-    assert payload["prompt_transport"] == "tmux_harness_prompt_file"
+    assert payload["prompt_transport"] == "harness_prompt_file"
     assert "from file" not in payload["argv"]
 
 
@@ -821,7 +821,7 @@ WOOF_VALIDATE = [str(WOOF_BIN), "validate", "--schema", "jsonl-events"]
 
 
 def _make_stub(bin_dir: Path, name: str, payload: str, stdin_path: Path | None = None) -> None:
-    """Write an interactive TUI stub that honours tmux_harness' file protocol."""
+    """Write an interactive TUI stub that honours the transport's prompt-file protocol."""
     bin_dir.mkdir(parents=True, exist_ok=True)
     names = {name}
     if name == "claude":
@@ -948,7 +948,7 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
     assert meta["evidence"] == "S1"
     assert meta["worker_session_id"] == "worker-session-claude"
     assert meta["worker_session_thread_id"] == "thread-1"
-    assert meta["tmux_transport"] == "tmux:claude"
+    assert meta["transport_backend"] == "herdr"
     assert meta["run_id"].startswith("run-7-")
     assert meta["work_unit_id"] == "S2"
     assert meta["attempt_id"]
@@ -967,7 +967,7 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
     assert events[0]["mcp"] == []
     assert events[0]["argv"][-1] == "<prompt:tmux-file>"
     assert events[0]["argv"][0] == "cld"
-    assert events[0]["prompt_transport"] == "tmux_harness_prompt_file"
+    assert events[0]["prompt_transport"] == "harness_prompt_file"
     assert events[0]["runtime_policy"] == EXPECTED_TRUSTED_RUNTIME_POLICY
     assert events[0]["artefacts_loaded"] == ["CONTRACT.md"]
     assert events[0]["prompt_bytes"] == len(b"run the story\n")
@@ -976,7 +976,7 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
     assert events[0]["work_unit_id"] == "S2"
     assert events[0]["attempt_id"] == meta["attempt_id"]
     assert events[1]["artefacts_loaded"] == ["CONTRACT.md"]
-    assert events[1]["prompt_transport"] == "tmux_harness_prompt_file"
+    assert events[1]["prompt_transport"] == "harness_prompt_file"
     assert "runtime_policy" not in events[1]
     assert events[1]["exit_type"] == "clean"
     assert events[1]["prompt_bytes"] == len(b"run the story\n")
@@ -988,7 +988,7 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
     assert events[1]["verdict"] == "pass"
     assert events[1]["evidence"] == "S1"
     assert events[1]["worker_session_id"] == "worker-session-claude"
-    assert events[1]["tmux_transport"] == "tmux:claude"
+    assert events[1]["transport_backend"] == "herdr"
     assert events[1]["run_id"] == meta["run_id"]
     assert events[1]["work_unit_id"] == "S2"
     assert events[1]["attempt_id"] == meta["attempt_id"]
@@ -1510,7 +1510,7 @@ def test_end_to_end_codex_records_thread_and_audit_path(woof_project: Path, tmp_
     assert returned["effort"] == "xhigh"
     assert returned["argv"][-1] == "<prompt:tmux-file>"
     assert returned["argv"][0] == "codex"
-    assert returned["prompt_transport"] == "tmux_harness_prompt_file"
+    assert returned["prompt_transport"] == "harness_prompt_file"
     assert "runtime_policy" not in returned
     assert returned["exit_type"] == "clean"
     assert returned["tokens_in"] == 50

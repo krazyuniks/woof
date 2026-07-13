@@ -123,14 +123,14 @@ def test_tmux_dispatch_captures_structured_result_and_prompt_file(tmp_path: Path
     events = _events(project, 1)
     returned = next(event for event in events if event["event"] == "subprocess_returned")
     assert returned["exit_type"] == "clean"
-    assert returned["prompt_transport"] == "tmux_harness_prompt_file"
+    assert returned["prompt_transport"] == "harness_prompt_file"
     assert returned["argv"][-1] == "<prompt:tmux-file>"
     assert returned["verdict"] == "pass"
     assert returned["evidence"] == "S1"
     assert returned["tokens_in"] == 3
     assert returned["tokens_out"] == 5
     assert returned["worker_session_thread_id"] == "thr-integration"
-    assert _meta(project, 1)["tmux_transport"] == "tmux:codex"
+    assert _meta(project, 1)["transport_backend"] == "herdr"
 
     validate = subprocess.run(
         [*WOOF_VALIDATE, str(state.dispatch_events_path(DEFAULT_PROJECT_KEY, 1))],

@@ -14,6 +14,7 @@ import yaml
 
 from woof import state
 from woof.cli.dispatcher import (
+    PROMPT_TRANSPORT,
     trusted_runtime_policy,
 )
 from woof.cli.harness_registry import (
@@ -556,12 +557,13 @@ def _dispatch_route_summary(
         "model_profile": profile_name,
         "profile_role": role_name,
         "adapter": profile.name if profile is not None else slot.harness,
+        "backend": profile.backend if profile is not None else None,
         "model": resolved_model,
         "effort": resolved_effort,
         "mcp": [],
         "flags": [],
         "timeout_min": timeout_min,
-        "prompt_transport": "tmux_harness_prompt_file",
+        "prompt_transport": PROMPT_TRANSPORT,
         "runtime_policy": trusted_runtime_policy(),
         "errors": errors,
     }

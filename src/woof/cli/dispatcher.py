@@ -1,7 +1,9 @@
 """Dispatch adapter boundary for Woof worker sessions.
 
-This module owns policy run-profile resolution, tmux harness launch argv
-construction, durable dispatch audit events, and structured result capture. The
+This module owns policy run-profile resolution, harness launch argv construction,
+durable dispatch audit events, and structured result capture. The transport that
+actually runs the worker is resolved from the selected harness profile at the
+transport seam, so nothing here branches on a harness name or a backend. The
 top-level CLI module only wires the ``woof dispatch`` command.
 """
 
@@ -16,7 +18,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import time
 import tomllib
 import uuid
 from dataclasses import dataclass
@@ -25,11 +26,14 @@ from pathlib import Path
 from typing import Any
 
 from woof import state
+from woof.cli import transport
 from woof.cli.harness_registry import (
     HarnessError,
     build_launch_argv,
+    get_profile,
     resolve_harness_config,
 )
+from woof.cli.transport_errors import WorkerError
 from woof.graph.git import current_branch, git_env, head_sha
 from woof.lib.error_signature import normalise as _normalise_error_sig
 from woof.lib.rate_limit import classify as _classify_rate_limit
@@ -56,13 +60,28 @@ TRUSTED_RUNTIME_MODE = "trusted-local"
 MODEL_PROFILE_ENV = "WOOF_MODEL_PROFILE"
 NODE_GROUPS = frozenset({"discovery", "definition", "planning", "execution"})
 TRUSTED_RUNTIME_NOTE = (
-    "trusted-local runtime: Woof dispatches subscription CLIs through tmux_harness; "
-    "commit safety is enforced through deterministic checks, reviewer critique, "
-    "human gates, transaction manifests, and commit decisions"
+    "trusted-local runtime: Woof dispatches subscription CLIs through the interactive "
+    "harness transport declared by the selected profile; commit safety is enforced "
+    "through deterministic checks, reviewer critique, human gates, transaction "
+    "manifests, and commit decisions"
 )
 POLICY_ROLE_SLOTS = {"primary": "producer", "reviewer": "reviewer"}
 REVIEW_PROMPT_VERSION_PREFIX = "sha256:"
 DEFAULT_READINESS_SECONDS = 60
+PROMPT_TRANSPORT = "harness_prompt_file"
+HERDR_SESSION_ENV = "WOOF_HERDR_SESSION"
+
+# A worker failure is a graph outcome, not a stack trace. Each typed outcome maps
+# to one exit classification and one exit code, so blocked, timeout, and payload
+# absence stay distinguishable in the durable audit rather than collapsing into a
+# single "nonzero".
+OUTCOME_EXITS: dict[str, tuple[str, int]] = {
+    "blocked": ("blocked", 3),
+    "timeout": ("wallclock_timeout", 124),
+    "payload_absent": ("payload_absent", 1),
+    "protocol_mismatch": ("protocol_mismatch", 2),
+    "transport_unavailable": ("transport_unavailable", 2),
+}
 
 
 @dataclass(frozen=True)
@@ -231,7 +250,7 @@ def normalise_artefacts_loaded(repo_root: Path, values: list[str] | None) -> lis
 
 def audit_argv(wrapped_argv: list[str]) -> list[str]:
     """Return argv suitable for durable audit events without duplicating the prompt."""
-    return [*wrapped_argv, "<prompt:tmux-file>"]
+    return [*wrapped_argv, "<prompt:file>"]
 
 
 def audit_file_stem(
@@ -369,46 +388,6 @@ def _structured_result(answer: str) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def _tmux_capture_api():
-    try:
-        from tmux_harness import HarnessDispatchError, capture_argv
-    except ModuleNotFoundError:
-        candidates = [
-            Path(__file__).resolve().parents[4] / "agent-toolkit" / "skills" / "tmux-harness",
-            Path.home() / "Work" / "agent-toolkit" / "skills" / "tmux-harness",
-            Path("/home/ryan/Work/agent-toolkit/skills/tmux-harness"),
-        ]
-        for candidate in candidates:
-            if candidate.is_dir():
-                sys.path.insert(0, str(candidate))
-                from tmux_harness import HarnessDispatchError, capture_argv
-
-                break
-        else:
-            raise
-    return capture_argv, HarnessDispatchError
-
-
-def _tmux_warm_api():
-    try:
-        from tmux_harness import deliver_prompt_file, read_file_kickoff, tmux
-    except ModuleNotFoundError:
-        candidates = [
-            Path(__file__).resolve().parents[4] / "agent-toolkit" / "skills" / "tmux-harness",
-            Path.home() / "Work" / "agent-toolkit" / "skills" / "tmux-harness",
-            Path("/home/ryan/Work/agent-toolkit/skills/tmux-harness"),
-        ]
-        for candidate in candidates:
-            if candidate.is_dir():
-                sys.path.insert(0, str(candidate))
-                from tmux_harness import deliver_prompt_file, read_file_kickoff, tmux
-
-                break
-        else:
-            raise
-    return deliver_prompt_file, read_file_kickoff, tmux
-
-
 def _structured_usage(result: dict[str, Any]) -> dict[str, int]:
     usage = result.get("usage")
     if not isinstance(usage, dict):
@@ -429,7 +408,14 @@ def _structured_usage(result: dict[str, Any]) -> dict[str, int]:
     return mapped
 
 
-def _result_session_metadata(result: dict[str, Any], tmux_meta: dict[str, Any]) -> dict[str, Any]:
+def _result_session_metadata(
+    result: dict[str, Any], transport_meta: dict[str, Any]
+) -> dict[str, Any]:
+    """Merge the worker's own session identifiers with the transport's, backend-neutrally.
+
+    No field here is named after a backend: the same keys carry a herdr pane and a
+    tmux session, so a consumer reads one shape whichever transport ran the turn.
+    """
     session = result.get("session")
     metadata: dict[str, Any] = {}
     if isinstance(session, dict):
@@ -437,12 +423,18 @@ def _result_session_metadata(result: dict[str, Any], tmux_meta: dict[str, Any]) 
             value = session.get(key)
             if isinstance(value, str) and value:
                 metadata[f"worker_session_{key}"] = value
-    tmux_session = tmux_meta.get("session")
-    if isinstance(tmux_session, str) and tmux_session:
-        metadata["tmux_session"] = tmux_session
-    transport = tmux_meta.get("transport")
-    if isinstance(transport, str) and transport:
-        metadata["tmux_transport"] = transport
+    for source, target in (
+        ("backend", "transport_backend"),
+        ("session", "transport_session"),
+        ("socket", "transport_socket"),
+        ("protocol", "transport_protocol"),
+        ("version", "transport_version"),
+        ("worker_name", "worker_name"),
+        ("worker_ref", "worker_ref"),
+    ):
+        value = transport_meta.get(source)
+        if isinstance(value, str | int) and value != "":
+            metadata[target] = value
     return metadata
 
 
@@ -458,11 +450,21 @@ def _copy_result_fields(event: dict[str, Any], result: dict[str, Any]) -> None:
         event["result_artefacts"] = [str(item) for item in artefacts]
 
 
-def _warm_session_name(run_id: str, work_unit_id: str, role: str) -> str:
-    run = _safe_audit_component(run_id, fallback="run")
-    unit = _safe_audit_component(work_unit_id, fallback="unit")
-    role_component = _safe_audit_component(role, fallback="role")
-    return f"woof-{run}-{unit}-{role_component}"
+def herdr_session_name() -> str | None:
+    """The herdr named session dispatch runs its workers in, if one is declared.
+
+    There is no default. The herdr server spawns the worker, so an implicit session
+    would put Woof's workers wherever a server happened to be listening -- including
+    an operator session carrying live drains. Protocol work and live smokes declare
+    a disposable session on its own socket; a run declares the session Woof owns.
+    """
+    return os.environ.get(HERDR_SESSION_ENV) or None
+
+
+def _worker_failure(exc: WorkerError) -> tuple[str, int, str, str]:
+    """Map a typed worker failure onto its exit classification, code, and evidence."""
+    exit_type, exit_code = OUTCOME_EXITS.get(exc.outcome, ("nonzero", 1))
+    return exit_type, exit_code, str(exc), exc.evidence
 
 
 def _executor_result_ready(path: Path, epic_id: int, work_unit_id: str) -> bool:
@@ -836,7 +838,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         if args.role == "reviewer" and work_unit_id and diff_hash is not None
         else None
     )
-    prompt_transport = "tmux_harness_prompt_file"
+    prompt_transport = PROMPT_TRANSPORT
 
     if args.dry_run:
         payload = {
@@ -880,6 +882,8 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     output_file = base.with_suffix(".output")
     stderr_file = base.with_suffix(".stderr")
     meta_file = base.with_suffix(".meta")
+    evidence_file = base.with_suffix(".evidence")
+    worker_name_prefix = f"woof-{_safe_audit_component(route.adapter, fallback='harness')}"
 
     dispatch_jsonl = state.dispatch_events_path(project_key, epic_id)
     event_argv = audit_argv(argv)
@@ -1073,63 +1077,60 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         ended_at = datetime.now(UTC)
         answer = ""
         stderr = ""
+        evidence = ""
         reported_exit_code = 0
         exit_type = "clean"
-        tmux_meta: dict[str, Any] = {}
-        session = _warm_session_name(run_id, work_unit_id, args.role)
+        transport_meta: dict[str, Any] = {}
+        # The producer's worker name is derived from durable run state, so a fix
+        # round after a client restart resolves to the same worker and reattaches
+        # rather than starting a second one in the same working tree.
+        worker_name = transport.warm_worker_name(run_id, work_unit_id, args.role)
+        record_path = state.worker_identity_path(project_key, epic_id, worker_name)
         result_path = state.executor_result_path(project_key, epic_id)
+
+        def producer_payload_ready() -> bool:
+            return _executor_result_ready(result_path, args.epic, work_unit_id)
+
         try:
-            deliver_prompt_file, read_file_kickoff, tmux = _tmux_warm_api()
-            reattached = tmux.has_session(session)
-            respawned = not reattached
-            if respawned:
-                tmux.launch_session(session, repo_root, argv)
-                tmux.wait_for_input_ready(
-                    session,
-                    readiness_timeout_s=DEFAULT_READINESS_SECONDS,
-                )
-            deliver_prompt_file(
-                session,
-                base.with_suffix(".prompt"),
-                read_file_kickoff(base.with_suffix(".prompt")),
-                prompt=None,
+            backend = transport.open_backend(
+                get_profile(route.adapter), session=herdr_session_name()
             )
-            deadline = time.monotonic() + timeouts.wallclock_seconds
-            while time.monotonic() < deadline:
-                if _executor_result_ready(result_path, args.epic, work_unit_id):
-                    break
-                if not tmux.has_session(session):
-                    reported_exit_code = 1
-                    exit_type = "nonzero"
-                    stderr = (
-                        f"warm producer session {session!r} exited before writing {result_path}"
-                    )
-                    break
-                time.sleep(1.0)
-            else:
-                reported_exit_code = 124
-                exit_type = "wallclock_timeout"
-                stderr = (
-                    f"warm producer session {session!r} did not write "
-                    f"{result_path} within {int(timeouts.wallclock_seconds)}s"
-                )
-            answer = tmux.capture_pane_tail(session, 80)
-            tmux_meta = {
-                "transport": f"tmux:{route.adapter}",
-                "harness": route.adapter,
-                "model": route.config.get("model"),
-                "effort": effort,
-                "session": session,
-                "reattached": reattached,
-                "respawned": respawned,
+            outcome = transport.run_turn(
+                backend,
+                worker_name=worker_name,
+                cwd=repo_root,
+                argv=argv,
+                prompt_path=base.with_suffix(".prompt"),
+                payload_ready=producer_payload_ready,
+                readiness_timeout_s=DEFAULT_READINESS_SECONDS,
+                completion_timeout_s=int(timeouts.wallclock_seconds),
+                identity=transport.load_worker_identity(record_path),
+                model=route.config.get("model"),
+                effort=effort,
+            )
+            # The producer stays open between fix rounds; the record is what the
+            # next round reattaches through, and what makes this worker killable
+            # by name if the client that launched it dies.
+            transport.save_worker_identity(record_path, outcome.identity)
+            transport_meta = outcome.metadata()
+            answer = backend.evidence(outcome.identity.worker_ref)
+        except WorkerError as exc:
+            exit_type, reported_exit_code, stderr, evidence = _worker_failure(exc)
+            answer = evidence
+            transport_meta = {
+                key.removeprefix("transport_"): value
+                for key, value in exc.as_payload().items()
+                if key.startswith("transport_")
             }
-        except Exception as exc:
+        except Exception as exc:  # a transport fault must not lose the audit record
             stderr = str(exc)
             reported_exit_code = 1
             exit_type = "nonzero"
         ended_at = datetime.now(UTC)
         output_file.write_text(answer, encoding="utf-8")
         stderr_file.write_text(stderr, encoding="utf-8")
+        if evidence:
+            evidence_file.write_text(evidence, encoding="utf-8")
         output_bytes = len(answer.encode("utf-8"))
         stderr_bytes = len(stderr.encode("utf-8"))
         duration_ms = int((ended_at - started_at).total_seconds() * 1000)
@@ -1171,10 +1172,12 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
             returned["model"] = route.config["model"]
         if effort:
             returned["effort"] = effort
-        returned.update(_result_session_metadata({}, tmux_meta))
-        if "reattached" in tmux_meta:
-            returned["producer_session_reattached"] = bool(tmux_meta["reattached"])
-            returned["producer_session_respawned"] = bool(tmux_meta["respawned"])
+        returned.update(_result_session_metadata({}, transport_meta))
+        if "reattached" in transport_meta:
+            returned["producer_worker_reattached"] = bool(transport_meta["reattached"])
+            returned["producer_worker_respawned"] = bool(transport_meta["respawned"])
+        if evidence:
+            returned["evidence_path"] = str(evidence_file)
         state.append_jsonl(dispatch_jsonl, returned)
 
         audit_paths = {
@@ -1232,38 +1235,68 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
             "stderr_bytes": stderr_bytes,
             "tokens": {},
             "structured_result": {},
-            "tmux_harness": tmux_meta,
+            "transport": transport_meta,
             "attempt_path": str(attempt_path),
             **lineage_fields,
         }
-        meta.update(_result_session_metadata({}, tmux_meta))
-        if "reattached" in tmux_meta:
-            meta["producer_session_reattached"] = bool(tmux_meta["reattached"])
-            meta["producer_session_respawned"] = bool(tmux_meta["respawned"])
+        meta.update(_result_session_metadata({}, transport_meta))
+        if "reattached" in transport_meta:
+            meta["producer_worker_reattached"] = bool(transport_meta["reattached"])
+            meta["producer_worker_respawned"] = bool(transport_meta["respawned"])
+        if evidence:
+            meta["evidence_path"] = str(evidence_file)
         meta_file.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
         return reported_exit_code
 
     answer = ""
     stderr = ""
-    tmux_meta: dict[str, Any] = {}
+    worker_evidence = ""
+    transport_meta: dict[str, Any] = {}
     exit_type = "clean"
     reported_exit_code = 0
-    tmux_capture_argv, tmux_error = _tmux_capture_api()
     launch_env = {key: value for key, value in os.environ.items() if key.startswith("WOOF_")}
     launch_env["WOOF_REPO_ROOT"] = str(repo_root)
+    launch_argv = [
+        "env",
+        *(f"{key}={value}" for key, value in sorted(launch_env.items())),
+        *argv,
+    ]
+    # A one-shot worker -- reviewer, mapper, enrichment -- is independent by
+    # construction: a fresh worker per dispatch, torn down when the turn ends, so
+    # nothing it saw survives into the next one and nothing it left behind can go
+    # on editing the working tree.
+    oneshot_worker = f"{worker_name_prefix}-{_safe_audit_component(attempt_id, fallback='attempt')}"
+    payload_file = base.with_suffix(".payload")
+
+    def oneshot_payload_ready() -> bool:
+        return payload_file.exists() and payload_file.stat().st_size > 0
+
     try:
-        answer, tmux_meta = tmux_capture_argv(
-            ["env", *(f"{key}={value}" for key, value in sorted(launch_env.items())), *argv],
-            prompt,
-            label=route.adapter,
+        backend = transport.open_backend(get_profile(route.adapter), session=herdr_session_name())
+        outcome = transport.run_turn(
+            backend,
+            worker_name=oneshot_worker,
+            cwd=repo_root,
+            argv=launch_argv,
+            prompt_path=base.with_suffix(".prompt"),
+            payload_path=payload_file,
+            payload_ready=oneshot_payload_ready,
+            readiness_timeout_s=DEFAULT_READINESS_SECONDS,
+            completion_timeout_s=int(timeouts.wallclock_seconds),
+            identity=None,
+            close_after=True,
             model=route.config.get("model"),
             effort=effort,
-            completion_timeout_s=int(timeouts.wallclock_seconds),
         )
-    except tmux_error as exc:
-        stderr = str(exc)
-        exit_type = "nonzero"
-        reported_exit_code = 1
+        transport_meta = outcome.metadata()
+        answer = payload_file.read_text(encoding="utf-8")
+    except WorkerError as exc:
+        exit_type, reported_exit_code, stderr, worker_evidence = _worker_failure(exc)
+        transport_meta = {
+            key.removeprefix("transport_"): value
+            for key, value in exc.as_payload().items()
+            if key.startswith("transport_")
+        }
 
     ended_at = datetime.now(UTC)
     head_after = head_sha(repo_root)
@@ -1282,7 +1315,11 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     stderr_file.write_text(stderr, encoding="utf-8")
     output_bytes = len(answer.encode("utf-8"))
     stderr_bytes = len(stderr.encode("utf-8"))
-    duration_ms = int(tmux_meta.get("latency_ms") or (ended_at - started_at).total_seconds() * 1000)
+    if worker_evidence:
+        evidence_file.write_text(worker_evidence, encoding="utf-8")
+    duration_ms = int(
+        transport_meta.get("latency_ms") or (ended_at - started_at).total_seconds() * 1000
+    )
     tokens = _structured_usage(structured)
 
     returned: dict[str, Any] = {
@@ -1296,8 +1333,8 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         "exit_type": exit_type,
         "exit_code": reported_exit_code,
         "duration_ms": duration_ms,
-        "timed_out": False,
-        "terminal_seen": True,
+        "timed_out": exit_type == "wallclock_timeout",
+        "terminal_seen": reported_exit_code == 0,
         "mcp": mcp_names,
         "argv": event_argv,
         "prompt_transport": prompt_transport,
@@ -1324,7 +1361,9 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         returned["effort"] = effort
     if tokens:
         returned.update(tokens)
-    returned.update(_result_session_metadata(structured, tmux_meta))
+    returned.update(_result_session_metadata(structured, transport_meta))
+    if worker_evidence:
+        returned["evidence_path"] = str(evidence_file)
     _copy_result_fields(returned, structured)
     error_sig = _normalise_error_sig(stderr) if stderr.strip() else None
     if error_sig:
@@ -1386,8 +1425,8 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         "duration_ms": duration_ms,
         "exit_type": exit_type,
         "exit_code": reported_exit_code,
-        "timed_out": False,
-        "terminal_seen": True,
+        "timed_out": exit_type == "wallclock_timeout",
+        "terminal_seen": reported_exit_code == 0,
         "timeouts": timeouts.as_payload(),
         "prompt_bytes": prompt_bytes,
         "artefact_bytes": artefact_bytes,
@@ -1395,13 +1434,15 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         "stderr_bytes": stderr_bytes,
         "tokens": tokens,
         "structured_result": structured,
-        "tmux_harness": tmux_meta,
+        "transport": transport_meta,
         **lineage_fields,
     }
     if instability_path:
         meta["review_instability_path"] = instability_path
+    if worker_evidence:
+        meta["evidence_path"] = str(evidence_file)
     _copy_result_fields(meta, structured)
-    meta.update(_result_session_metadata(structured, tmux_meta))
+    meta.update(_result_session_metadata(structured, transport_meta))
 
     audit_paths = {
         "prompt": str(base.with_suffix(".prompt")),

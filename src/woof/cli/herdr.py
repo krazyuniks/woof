@@ -153,6 +153,7 @@ class HerdrClient(Protocol):
 
     def ping(self) -> dict[str, Any]: ...
     def start_agent(self, *, name: str, cwd: str, argv: list[str]) -> dict[str, Any]: ...
+    def get_agent(self, target: str) -> dict[str, Any]: ...
     def get_status(self, target: str) -> str: ...
     def send_text(self, target: str, text: str) -> None: ...
     def send_keys(self, pane_id: str, keys: list[str]) -> None: ...
@@ -206,12 +207,16 @@ class SocketClient:
             raise HerdrError("bad_response", "agent.start returned no pane_id")
         return cast(dict[str, Any], agent)
 
-    def get_status(self, target: str) -> str:
+    def get_agent(self, target: str) -> dict[str, Any]:
+        """The agent behind a target. herdr resolves a worker name as readily as a pane."""
         result = self._call("agent.get", {"target": target})
         agent = result.get("agent")
         if not isinstance(agent, dict):
             raise HerdrError("bad_response", "agent.get returned no agent object")
-        status = cast(dict[str, Any], agent).get("agent_status")
+        return cast(dict[str, Any], agent)
+
+    def get_status(self, target: str) -> str:
+        status = self.get_agent(target).get("agent_status")
         if not isinstance(status, str) or not status:
             raise HerdrError("bad_response", "agent.get returned no agent_status")
         return status
@@ -470,6 +475,22 @@ class HerdrSession:
         except (HerdrError, OSError):
             return False
         return True
+
+    def find_worker(self, worker_name: str) -> str | None:
+        """The pane reference of the worker running under this name, if one is.
+
+        The recovery ADR-018 states: a worker is launched under a name derived from
+        durable run state, so it stays findable when its identity record does not
+        survive -- a round that failed before the record was written, or a wiped
+        workers directory. Without this the orphan can be neither reattached to nor
+        killed, and the next round puts a second worker in the same working tree.
+        """
+        try:
+            agent = self._client.get_agent(worker_name)
+        except (HerdrError, OSError):
+            return None
+        pane_id = agent.get("pane_id")
+        return pane_id if isinstance(pane_id, str) and pane_id else None
 
     def close_worker(self, pane_id: str) -> None:
         """Terminate the worker addressed by this reference.

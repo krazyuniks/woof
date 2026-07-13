@@ -230,6 +230,7 @@ class Backend(Protocol):
 
     def worker_alive(self, worker_ref: str) -> bool: ...
     def start_worker(self, *, worker_name: str, cwd: Path, argv: list[str]) -> str: ...
+    def find_worker(self, worker_name: str) -> str | None: ...
     def deliver(
         self,
         worker_ref: str,
@@ -275,6 +276,9 @@ class HerdrBackend:
 
     def start_worker(self, *, worker_name: str, cwd: Path, argv: list[str]) -> str:
         return self._session.start_worker(worker_name=worker_name, cwd=str(cwd), argv=argv)
+
+    def find_worker(self, worker_name: str) -> str | None:
+        return self._session.find_worker(worker_name)
 
     def deliver(
         self,
@@ -339,6 +343,11 @@ class TmuxBackend:
     def start_worker(self, *, worker_name: str, cwd: Path, argv: list[str]) -> str:
         self._tmux.launch_session(worker_name, cwd, argv)
         return worker_name
+
+    def find_worker(self, worker_name: str) -> str | None:
+        # Under tmux the stable name *is* the worker reference, so a live session
+        # under that name is the worker, record or no record.
+        return worker_name if self._tmux.has_session(worker_name) else None
 
     def deliver(
         self,
@@ -465,26 +474,45 @@ def run_turn(
     payload_path: Path | None = None,
     identity: WorkerIdentity | None = None,
     close_after: bool = False,
+    on_worker: Callable[[WorkerIdentity], None] | None = None,
     model: str | None = None,
     effort: str | None = None,
 ) -> TurnOutcome:
-    """Run one prompt through a worker: reattach if one is recorded and alive, else start one.
+    """Run one prompt through a worker: reattach if one is alive, else start one.
 
     Pass ``identity`` to keep a retained worker (a producer across fix rounds).
     Pass none, and a fresh worker is started (a reviewer round). ``close_after``
     tears the worker down when the turn ends, which is what makes a reviewer round
     independent and what stops a worker outliving the client that launched it.
+
+    ``on_worker`` is called with the worker's identity as soon as the worker exists
+    and before its turn is delivered. A retained worker survives a turn that fails,
+    so an identity recorded only on success would leave a live worker no later round
+    could find -- and the next round would start a second worker in the same tree.
     """
     reattached = False
     respawned = False
-    if identity is not None and identity.worker_ref and backend.worker_alive(identity.worker_ref):
-        worker_ref = identity.worker_ref
+    recorded_ref = identity.worker_ref if identity is not None else None
+    if recorded_ref and backend.worker_alive(recorded_ref):
+        worker_ref = recorded_ref
         reattached = True
     else:
-        # Either a cold start, or the recorded worker is gone: respawn from the
-        # disk record's name so the identity survives the process that held it.
-        respawned = identity is not None
-        worker_ref = backend.start_worker(worker_name=worker_name, cwd=cwd, argv=argv)
+        # No usable record. Before starting a worker, look for one already running
+        # under this stable name: a round that failed before its identity was
+        # recorded, or a wiped record, leaves exactly that. Adopting it is what
+        # keeps a second worker out of the same working tree.
+        found = backend.find_worker(worker_name)
+        if found is not None:
+            worker_ref = found
+            reattached = True
+        else:
+            # Either a cold start, or the recorded worker is gone: respawn from the
+            # disk record's name so the identity survives the process that held it.
+            respawned = identity is not None
+            worker_ref = backend.start_worker(worker_name=worker_name, cwd=cwd, argv=argv)
+
+    if on_worker is not None:
+        on_worker(backend.identity(worker_name, worker_ref))
 
     try:
         completed_on, latency_ms = backend.deliver(
@@ -521,6 +549,20 @@ def close_worker(backend: Backend, identity: WorkerIdentity) -> None:
     backend.close(identity.worker_ref)
 
 
+def close_named_worker(backend: Backend, worker_name: str) -> bool:
+    """Terminate the worker running under this stable name, if one is.
+
+    The recovery path for a worker with no identity record: the name is derived
+    from durable run state, so it is a handle on the worker even when the record
+    that addressed it is gone. Returns False when no worker answers to the name.
+    """
+    worker_ref = backend.find_worker(worker_name)
+    if worker_ref is None:
+        return False
+    backend.close(worker_ref)
+    return True
+
+
 def teardown_session(
     backend: Backend,
     *,
@@ -555,6 +597,7 @@ __all__ = [
     "WorkerIdentity",
     "build_kickoff",
     "clear_worker_identity",
+    "close_named_worker",
     "close_worker",
     "declared_session",
     "load_worker_identity",

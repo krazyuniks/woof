@@ -21,6 +21,7 @@ from woof.cli.transport import (
     PROTECTED_SESSIONS,
     WorkerIdentity,
     clear_worker_identity,
+    close_named_worker,
     close_worker,
     load_worker_identity,
     open_backend,
@@ -31,7 +32,7 @@ from woof.cli.transport import (
     teardown_session,
     warm_worker_name,
 )
-from woof.cli.transport_errors import TransportUnavailable
+from woof.cli.transport_errors import TransportUnavailable, WorkerBlocked
 
 
 class FakeTmux:
@@ -424,18 +425,19 @@ def test_close_retained_worker_terminates_and_forgets_the_recorded_worker(tmp_pa
     client = FakeClient()
     backend = herdr_backend(client)
     record = tmp_path / "worker.json"
+    name = "woof-run1-unit-primary"
     save_worker_identity(
         record,
         WorkerIdentity(
             backend=BACKEND_HERDR,
-            worker_name="woof-run1-unit-primary",
+            worker_name=name,
             worker_ref="%7",
             session="woof-test",
         ),
     )
     client.live_panes.add("%7")
 
-    closed = close_retained_worker(record, backend=backend)
+    closed = close_retained_worker(record, backend=backend, worker_name=name)
 
     assert closed is True
     assert client.calls_of("close_pane") == ["%7"]
@@ -446,4 +448,106 @@ def test_closing_an_absent_worker_is_a_no_op_not_a_failure(tmp_path: Path) -> No
     from woof.cli.dispatcher import close_retained_worker
 
     backend = herdr_backend(FakeClient())
-    assert close_retained_worker(tmp_path / "absent.json", backend=backend) is False
+    assert (
+        close_retained_worker(tmp_path / "absent.json", backend=backend, worker_name="woof-absent")
+        is False
+    )
+
+
+# --- a worker with no record is still found by its stable name ---
+
+
+def test_a_record_less_worker_is_adopted_by_name_rather_than_duplicated(tmp_path: Path) -> None:
+    """The orphan the ADR promises to recover: alive, named, and unrecorded.
+
+    A round that fails before its identity reaches disk leaves the producer running.
+    Reattaching by recorded reference alone cannot see it, so the next round would
+    start a second worker in the same working tree -- two agents editing the same
+    files, which is the incident this unit exists to prevent.
+    """
+    client = FakeClient(panes=["%1", "%2"])
+    backend = herdr_backend(client)
+    name = warm_worker_name("run-1", "unit-a", "primary")
+
+    first_payload = tmp_path / "a1.txt"
+    client.script = ["working", written(first_payload)]
+    run_turn(
+        backend,
+        worker_name=name,
+        cwd=tmp_path,
+        argv=["cld"],
+        prompt_path=tmp_path / "p1.txt",
+        payload_ready=payload_ready(first_payload),
+        readiness_timeout_s=5,
+        completion_timeout_s=5,
+        identity=None,  # nothing was ever recorded for this worker
+    )
+
+    second_payload = tmp_path / "a2.txt"
+    client.script = ["working", written(second_payload)]
+    second = run_turn(
+        backend,
+        worker_name=name,
+        cwd=tmp_path,
+        argv=["cld"],
+        prompt_path=tmp_path / "p2.txt",
+        payload_ready=payload_ready(second_payload),
+        readiness_timeout_s=5,
+        completion_timeout_s=5,
+        identity=None,  # and still nothing: the record did not survive
+    )
+
+    assert len(client.calls_of("start_agent")) == 1, (
+        "a live worker under the stable name must be adopted, not duplicated"
+    )
+    assert second.reattached is True
+    assert second.identity.worker_ref == "%1"
+    assert name in client.calls_of("get_agent"), "the worker is resolved by its name"
+
+
+def test_a_retained_worker_is_recorded_before_its_turn_is_delivered(tmp_path: Path) -> None:
+    """The identity reaches disk as soon as the worker exists, not when it succeeds."""
+    client = FakeClient(script=["working", "blocked"])
+    backend = herdr_backend(client)
+    record = tmp_path / "worker.json"
+    payload = tmp_path / "a.txt"
+
+    with pytest.raises(WorkerBlocked):
+        run_turn(
+            backend,
+            worker_name=warm_worker_name("run-1", "unit-a", "primary"),
+            cwd=tmp_path,
+            argv=["cld"],
+            prompt_path=tmp_path / "p.txt",
+            payload_ready=payload_ready(payload),
+            readiness_timeout_s=5,
+            completion_timeout_s=5,
+            identity=None,
+            on_worker=lambda identity: save_worker_identity(record, identity),
+        )
+
+    identity = load_worker_identity(record)
+    assert identity is not None, "a blocked round must still leave the worker recorded"
+    assert identity.worker_ref == "%7"
+
+
+def test_close_named_worker_terminates_a_worker_with_no_record(tmp_path: Path) -> None:
+    client = FakeClient()
+    backend = herdr_backend(client)
+    name = warm_worker_name("run-1", "unit-a", "primary")
+    payload = tmp_path / "a.txt"
+    client.script = ["working", written(payload)]
+    run_turn(
+        backend,
+        worker_name=name,
+        cwd=tmp_path,
+        argv=["cld"],
+        prompt_path=tmp_path / "p.txt",
+        payload_ready=payload_ready(payload),
+        readiness_timeout_s=5,
+        completion_timeout_s=5,
+    )
+
+    assert close_named_worker(backend, name) is True
+    assert client.calls_of("close_pane") == ["%7"]
+    assert close_named_worker(backend, "woof-never-started") is False

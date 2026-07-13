@@ -78,6 +78,7 @@ class FakeClient:
         self.calls: list[tuple[str, Any]] = []
         self.streams: list[FakeStream] = []
         self.live_panes: set[str] = set()
+        self.names: dict[str, str] = {}
 
     def ping(self) -> dict[str, Any]:
         self.calls.append(("ping", None))
@@ -87,11 +88,23 @@ class FakeClient:
         pane = self.panes[min(len(self.calls_of("start_agent")), len(self.panes) - 1)]
         self.calls.append(("start_agent", {"name": name, "cwd": cwd, "argv": argv}))
         self.live_panes.add(pane)
+        self.names[name] = pane
         return {"pane_id": pane, "name": name}
+
+    def _resolve(self, target: str) -> str:
+        """herdr resolves a target that is a worker name as readily as a pane id."""
+        return self.names.get(target, target)
+
+    def get_agent(self, target: str) -> dict[str, Any]:
+        self.calls.append(("get_agent", target))
+        pane = self._resolve(target)
+        if pane not in self.live_panes:
+            raise HerdrError("not_found", f"no agent for target {target!r}")
+        return {"pane_id": pane, "agent_status": self.baseline}
 
     def get_status(self, target: str) -> str:
         self.calls.append(("get_status", target))
-        if target not in self.live_panes:
+        if self._resolve(target) not in self.live_panes:
             raise HerdrError("not_found", f"no agent for target {target!r}")
         return self.baseline
 

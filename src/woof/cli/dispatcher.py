@@ -456,17 +456,20 @@ def _worker_failure(exc: WorkerError) -> tuple[str, int, str, str]:
     return exit_type, exit_code, str(exc), exc.evidence
 
 
-def close_retained_worker(record_path: Path, *, backend: transport.Backend) -> bool:
-    """Terminate the retained worker this record names, and forget it.
+def close_retained_worker(
+    record_path: Path, *, backend: transport.Backend, worker_name: str
+) -> bool:
+    """Terminate the retained worker this unit is holding, and forget it.
 
-    Returns False when there is nothing to close. The record is the stable handle:
-    a worker that outlived the client that launched it is found by name here rather
-    than by guessing at a process id, and closing it is what stops two workers ending
-    up in one working tree.
+    Returns False when there is nothing to close. The identity record is the first
+    handle, and the worker's stable name is the fallback: a worker whose record did
+    not survive is still running under the name durable run state derives, and one
+    that could be neither found nor killed is exactly the worker that outlives its
+    client and puts a second worker in the same working tree.
     """
     identity = transport.load_worker_identity(record_path)
     if identity is None:
-        return False
+        return transport.close_named_worker(backend, worker_name)
     transport.close_worker(backend, identity)
     transport.clear_worker_identity(record_path)
     return True
@@ -815,7 +818,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
             backend = transport.open_backend(
                 get_profile(route.adapter), session=transport.declared_session()
             )
-            closed = close_retained_worker(record_path, backend=backend)
+            closed = close_retained_worker(record_path, backend=backend, worker_name=worker_name)
         except WorkerError as exc:
             sys.stderr.write(f"woof: {exc}\n")
             return _worker_failure(exc)[1]
@@ -1116,6 +1119,14 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         def producer_payload_ready() -> bool:
             return _executor_result_ready(result_path, args.epic, work_unit_id)
 
+        def record_producer(identity: transport.WorkerIdentity) -> None:
+            # Written the moment the worker exists, not when its turn succeeds. The
+            # producer is retained, so a round that ends blocked, timed out, or
+            # payload-absent leaves it alive: an unrecorded worker is one the next
+            # round cannot reattach to, and it would start a second worker in this
+            # working tree. The record is also what makes the worker killable.
+            transport.save_worker_identity(record_path, identity)
+
         try:
             backend = transport.open_backend(
                 get_profile(route.adapter), session=transport.declared_session()
@@ -1130,13 +1141,10 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
                 readiness_timeout_s=DEFAULT_READINESS_SECONDS,
                 completion_timeout_s=int(timeouts.wallclock_seconds),
                 identity=transport.load_worker_identity(record_path),
+                on_worker=record_producer,
                 model=route.config.get("model"),
                 effort=effort,
             )
-            # The producer stays open between fix rounds; the record is what the
-            # next round reattaches through, and what makes this worker killable
-            # by name if the client that launched it dies.
-            transport.save_worker_identity(record_path, outcome.identity)
             transport_meta = outcome.metadata()
             answer = backend.evidence(outcome.identity.worker_ref)
         except WorkerError as exc:

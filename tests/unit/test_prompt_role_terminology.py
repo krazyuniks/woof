@@ -131,7 +131,7 @@ REQUIRED_STAGE5_ARCHITECTURE_PHRASES = (
     "assertion-bearing RED test before implementation",
     "horizontal-slicing anti-pattern",
     "imagined-behaviour fingerprint",
-    "Checks 1-9",
+    "Checks 1-10",
 )
 
 

@@ -1,14 +1,22 @@
 """Interactive TUI harness registry for Woof dispatch.
 
-Woof owns the harness/model/effort catalogue for graph workers. The
-``tmux_harness`` package remains pure transport: it launches a prebuilt argv,
-delivers a prompt through a file, captures the structured answer, and tears down
-the tmux session.
+Woof owns the harness/model/effort catalogue for graph workers, and each profile
+declares the transport backend its TUI runs on. The transport packages stay pure
+mechanics: they launch a prebuilt argv, deliver a prompt through a file, capture
+the structured answer, and tear the worker down.
+
+The backend is a property of the profile, never a project-policy choice and never
+a branch in workflow code. Project policy selects a harness, an optional model,
+and an optional effort; the backend follows from the harness.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+
+BACKEND_TMUX = "tmux"
+BACKEND_HERDR = "herdr"
+BACKENDS = (BACKEND_TMUX, BACKEND_HERDR)
 
 
 class HarnessError(Exception):
@@ -24,6 +32,7 @@ class HarnessProfile:
     trailer: list[str]
     default_model: str
     default_effort: str
+    backend: str
     effort_levels: tuple[str, ...] = field(default_factory=tuple)
 
     @property
@@ -38,7 +47,16 @@ class ResolvedHarnessConfig:
     model: str
     effort: str
 
+    @property
+    def backend(self) -> str:
+        return self.profile.backend
 
+
+# The Claude Code family (claude, deepseek, glm -- all the Claude Code TUI) and
+# codex have validated herdr lifecycle integrations, so herdr reports their
+# working/idle/blocked/done transitions over the socket. reasonix and pi have no
+# such integration and stay on tmux, where readiness and completion are observed
+# from the terminal instead.
 HARNESS_PROFILES: dict[str, HarnessProfile] = {
     "claude": HarnessProfile(
         name="claude",
@@ -48,6 +66,7 @@ HARNESS_PROFILES: dict[str, HarnessProfile] = {
         trailer=["--dangerously-skip-permissions"],
         default_model="sonnet",
         default_effort="high",
+        backend=BACKEND_HERDR,
         effort_levels=("low", "medium", "high", "xhigh", "max"),
     ),
     "codex": HarnessProfile(
@@ -58,8 +77,10 @@ HARNESS_PROFILES: dict[str, HarnessProfile] = {
         trailer=[],
         default_model="gpt-5.6-sol",
         default_effort="high",
+        backend=BACKEND_HERDR,
         effort_levels=("none", "low", "medium", "high", "xhigh", "max"),
     ),
+    # DeepSeek driven through the Claude Code TUI via the deepclaude proxy.
     "deepseek": HarnessProfile(
         name="deepseek",
         base=["deepclaude", "-b", "ds", "--"],
@@ -68,6 +89,7 @@ HARNESS_PROFILES: dict[str, HarnessProfile] = {
         trailer=["--dangerously-skip-permissions"],
         default_model="opus",
         default_effort="max",
+        backend=BACKEND_HERDR,
         effort_levels=("low", "medium", "high", "max"),
     ),
     "reasonix": HarnessProfile(
@@ -78,6 +100,7 @@ HARNESS_PROFILES: dict[str, HarnessProfile] = {
         trailer=[],
         default_model="",
         default_effort="max",
+        backend=BACKEND_TMUX,
         effort_levels=("low", "medium", "high", "max"),
     ),
     "pi": HarnessProfile(
@@ -88,7 +111,11 @@ HARNESS_PROFILES: dict[str, HarnessProfile] = {
         trailer=[],
         default_model="",
         default_effort="",
+        backend=BACKEND_TMUX,
     ),
+    # GLM (Z.ai) driven through the Claude Code TUI. ``glm`` is a shell function,
+    # which does not resolve under a non-interactive shell, so the launch wraps an
+    # interactive zsh and the appended flags reach the function through "$@".
     "glm": HarnessProfile(
         name="glm",
         base=["zsh", "-ic", 'glm "$@"', "glm"],
@@ -97,6 +124,7 @@ HARNESS_PROFILES: dict[str, HarnessProfile] = {
         trailer=["--dangerously-skip-permissions"],
         default_model="opus",
         default_effort="max",
+        backend=BACKEND_HERDR,
         effort_levels=("high", "max"),
     ),
 }
@@ -122,6 +150,11 @@ def get_profile(harness: str) -> HarnessProfile:
 
 def supported_harnesses() -> tuple[str, ...]:
     return tuple(sorted(HARNESS_PROFILES))
+
+
+def harness_backend(harness: str) -> str:
+    """Return the transport backend declared by this harness profile."""
+    return get_profile(harness).backend
 
 
 def resolve_harness_config(

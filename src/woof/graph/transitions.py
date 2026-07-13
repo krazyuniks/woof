@@ -236,8 +236,9 @@ def mark_work_unit_state(
         epic_id=plan.epic_id, context=plan.context, goal=plan.goal, work_units=work_units
     )
     # The document is written first: it is the one target outside the operator home
-    # and the only one that can fail closed (a concurrent drain, a unit the operator
-    # removed), and a repeat flip to a state the document already carries is a no-op.
+    # and the only one that can fail closed (a unit the operator removed, a malformed
+    # document), and a repeat flip to a state the document already carries is a no-op.
+    # Concurrent drains serialise on the document lock rather than failing.
     try:
         publish_unit_state(project_key, updated, work_unit_id, state)
     except WorkSourceError as exc:

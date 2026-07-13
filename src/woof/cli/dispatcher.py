@@ -1333,10 +1333,10 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
             if key.startswith("transport_")
         }
     except Exception as exc:  # a transport fault must not lose the audit record
-        # A socket that dies mid-turn raises below the typed failure surface (herdr's
-        # own error is a RuntimeError). Reviewer, mapper, and enrichment are all
-        # one-shot, and the engine classifies their outcome from the durable dispatch
-        # record: a dispatch that died without writing one would be invisible to it.
+        # A transport that dies mid-turn can raise below the typed failure surface,
+        # where the error is a plain RuntimeError. Reviewer, mapper, and enrichment
+        # are all one-shot, and the engine classifies their outcome from the durable
+        # dispatch record: a dispatch that died without writing one is invisible to it.
         stderr = str(exc)
         reported_exit_code = 1
         exit_type = "nonzero"

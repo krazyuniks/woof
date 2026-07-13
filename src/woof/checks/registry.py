@@ -23,6 +23,7 @@ from woof.checks.runners.check_6_critique_blocker import check_6_critique_blocke
 from woof.checks.runners.check_7_commit_transaction import check_7_commit_transaction_runner
 from woof.checks.runners.check_8_docs_drift import check_8_docs_drift_runner
 from woof.checks.runners.check_9_review_valve import check_9_review_valve_runner
+from woof.checks.runners.check_10_work_source_state import check_10_work_source_state_runner
 
 
 class Check(BaseModel):
@@ -101,6 +102,13 @@ REGISTRY: dict[str, Check] = {
         summary="Every-N work units and end-of-epic; surfaces accumulated minor critique findings",
         runner=check_9_review_valve_runner,
     ),
+    "check_10_work_source_state": Check(
+        id="check_10_work_source_state",
+        stage=5,
+        cost="cheap",
+        summary="The produced diff mutates no work-unit state in the drained work-source document",
+        runner=check_10_work_source_state_runner,
+    ),
 }
 
 STAGE_5_CHECK_IDS: list[str] = [
@@ -113,4 +121,5 @@ STAGE_5_CHECK_IDS: list[str] = [
     "check_7_commit_transaction",
     "check_8_docs_drift",
     "check_9_review_valve",
+    "check_10_work_source_state",
 ]

@@ -34,6 +34,7 @@ EXPECTED_STAGE_5_IDS = [
     "check_7_commit_transaction",
     "check_8_docs_drift",
     "check_9_review_valve",
+    "check_10_work_source_state",
 ]
 
 pytestmark = pytest.mark.host_only
@@ -53,8 +54,8 @@ def _run(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str
 # ---------------------------------------------------------------------------
 
 
-def test_registry_exports_nine_canonical_ids_O2() -> None:
-    """O2: STAGE_5_CHECK_IDS contains exactly the 9 canonical IDs."""
+def test_registry_exports_ten_canonical_ids_O2() -> None:
+    """O2: STAGE_5_CHECK_IDS contains exactly the 10 canonical IDs."""
     import sys
 
     sys.path.insert(0, str(REPO_ROOT))
@@ -63,16 +64,16 @@ def test_registry_exports_nine_canonical_ids_O2() -> None:
     assert set(STAGE_5_CHECK_IDS) == set(EXPECTED_STAGE_5_IDS), (
         f"Registry IDs mismatch.\nExpected: {sorted(EXPECTED_STAGE_5_IDS)}\nGot: {sorted(STAGE_5_CHECK_IDS)}"
     )
-    assert len(STAGE_5_CHECK_IDS) == 9
+    assert len(STAGE_5_CHECK_IDS) == 10
     for check_id in STAGE_5_CHECK_IDS:
         assert check_id in REGISTRY, f"{check_id} in STAGE_5_CHECK_IDS but missing from REGISTRY"
 
 
 def test_self_test_exits_zero_when_all_runners_implemented_O2() -> None:
-    """O2: --self-test exits zero when all 9 runners are implemented."""
+    """O2: --self-test exits zero when all 10 runners are implemented."""
     proc = _run("check", "stage-5", "--self-test")
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert "all 9 runners implemented" in proc.stdout
+    assert "all 10 runners implemented" in proc.stdout
 
 
 def test_self_test_distinguishes_implemented_from_placeholder_O2() -> None:
@@ -392,6 +393,7 @@ EXPECTED_GATE_TRIGGERS = {
     "check_7_commit_transaction",
     "check_8_docs_drift",
     "check_9_review_valve",
+    "check_10_work_source_state",
     "empty_diff_review",
     "timeout",
     "subprocess_crash",

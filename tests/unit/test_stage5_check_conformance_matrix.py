@@ -439,6 +439,64 @@ def _build_review_valve_failure(repo_root: Path) -> CheckContext:
     return ctx
 
 
+WORK_SOURCE_BACKLOG = """\
+---
+schema_version: 1
+type: backlog
+project_ref: woof
+status: active
+work_units:
+  - id: S1
+    title: Work unit 1
+    kind: build
+    state: in_progress
+    priority: high
+---
+
+# Wave
+
+Prose the operator wrote.
+"""
+
+
+def _build_work_source_context(repo_root: Path) -> tuple[CheckContext, Path]:
+    """A drain of a pre-decomposed set whose work-source document sits in the repo."""
+
+    _init_repo(repo_root)
+    document = repo_root / "docs" / "backlog.md"
+    _write(document, WORK_SOURCE_BACKLOG)
+    _write(repo_root / "src" / "app.py", "print('O1')\n")
+    _stage(repo_root, "docs/backlog.md", "src/app.py")
+    _git(repo_root, "commit", "-m", "seed")
+    set_dir = state.work_unit_set_dir(DEFAULT_PROJECT_KEY, "wave-5")
+    set_dir.mkdir(parents=True, exist_ok=True)
+    _write(
+        set_dir / "intake.json",
+        json.dumps({"source": {"path": document.as_posix()}}),
+    )
+    plan = _plan(_work_unit(paths=["**/*"]))
+    plan["context"] = {
+        "kind": "work_unit_set",
+        "project_ref": DEFAULT_PROJECT_KEY,
+        "set_id": "wave-5",
+    }
+    return _ctx(repo_root, plan=plan), document
+
+
+def _build_work_source_state_success(repo_root: Path) -> CheckContext:
+    ctx, document = _build_work_source_context(repo_root)
+    _write(document, WORK_SOURCE_BACKLOG.replace("Prose the operator", "Prose the producer"))
+    _stage(repo_root, "docs/backlog.md")
+    return ctx
+
+
+def _build_work_source_state_failure(repo_root: Path) -> CheckContext:
+    ctx, document = _build_work_source_context(repo_root)
+    _write(document, WORK_SOURCE_BACKLOG.replace("state: in_progress", "state: done"))
+    _stage(repo_root, "docs/backlog.md")
+    return ctx
+
+
 STAGE5_CONFORMANCE_FIXTURES = [
     Stage5ConformanceFixture(
         case_id="check_1_success",
@@ -638,6 +696,29 @@ STAGE5_CONFORMANCE_FIXTURES = [
         summary_contains="minor finding(s) require review",
         evidence_contains="S2/F1: Review cumulative risk",
         path_contains="critique/work-unit-S2.md",
+    ),
+    Stage5ConformanceFixture(
+        case_id="check_10_success",
+        check_id="check_10_work_source_state",
+        kind="success",
+        contract="a produced diff may edit the work-source document's prose",
+        build=_build_work_source_state_success,
+        expected_ok=True,
+        expected_severity="info",
+        summary_contains="mutates no work-unit state",
+        path_contains="docs/backlog.md",
+    ),
+    Stage5ConformanceFixture(
+        case_id="check_10_failure",
+        check_id="check_10_work_source_state",
+        kind="failure",
+        contract="a produced diff that flips a work unit's state in the drained backlog is rejected",
+        build=_build_work_source_state_failure,
+        expected_ok=False,
+        expected_severity="blocker",
+        summary_contains="mutates work-unit state",
+        evidence_contains="S1: in_progress -> done",
+        path_contains="docs/backlog.md",
     ),
 ]
 

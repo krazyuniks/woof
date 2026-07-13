@@ -11,7 +11,7 @@ pre-decomposed backlog of at least three units with at least one dependency edge
 
 - [ ] `runner-loop-absorption`, `deploy-aware-merge-coordinator`, `profile-a-worktree-contract`,
       `run-lineage-immutable-attempts`, and `cartography-continuity` are done.
-- [ ] The disposable repo declares a valid `.woof/policy.toml` (Profile A, worktree block, deploy
+- [ ] The disposable repo has a valid project config at `~/.woof/config/projects/<project-key>.toml` (Profile A, worktree block, deploy
       timeouts, deploy-check set) and passes preflight.
 - [ ] The worktree engine has provisioned one worktree per ready unit under the declared root; Woof
       discovers and validates them (it never provisions).

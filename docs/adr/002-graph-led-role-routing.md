@@ -42,7 +42,7 @@ The graph continues after reviewer `info` or `minor` findings. For non-blocking 
 
 ### Route configuration
 
-Default scaffolded routes are declared in `.woof/agents.toml` per consumer repo. The
+Default scaffolded routes are declared in the project config's `[run_profiles]` block. The
 canonical config keys remain `primary` and `reviewer`; they are graph-owned route
 defaults, not provider names. Per-node-group route overlays refine those defaults,
 with Stage 5 overriding the producer/reviewer adapters so Claude writes code and
@@ -63,7 +63,7 @@ with scoped prompt input and explicit artefact references.
 
 ## Consequences
 
-- Per-stage route policy is data in `.woof/agents.toml`, not code in the graph.
+- Per-stage route policy is data in the project config, not code in the graph.
 - `primary` and `reviewer` are the canonical config keys for graph-owned route defaults. Prompt prose and architecture may use `producer`/`reviewer` semantically, but the schema does not need a migration to `producer`.
 - Stage 5 is the only stage where the producer is Claude. The default policy makes this explicit.
 - Adding a stage or role is a schema change plus a routing-policy update, not a prompt change.

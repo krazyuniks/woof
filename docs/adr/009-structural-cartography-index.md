@@ -10,7 +10,7 @@ Amended by ADR-013. Structural cartography remains the target for impact-aware c
 
 ## Context
 
-ADR-004 made cartography mandatory and established the `.woof/codebase/` layers:
+ADR-004 made cartography mandatory and established the cartography layers:
 human-authored design docs, mapper-authored AS-IS docs, and a post-commit mechanical
 layer. The current mechanical layer is deliberately small: `tags`, `files.txt`, and
 `freshness.json`.
@@ -43,7 +43,7 @@ layer.
 
 The index is:
 
-- **Local and gitignored.** It lives under `.woof/codebase/structural/` and is
+- **Operator-local.** It lives under the project's cartography `structural/` subtree in the operator home and is
   regenerated from source, like `tags` and `files.txt`.
 - **Python-owned.** The extraction, schema, and query surface live behind the `woof`
   CLI. Woof does not vendor a TypeScript agent tool, expose a separate MCP server, or
@@ -58,7 +58,7 @@ The index is:
 
 ### Storage
 
-The default storage target is SQLite at `.woof/codebase/structural/index.sqlite`.
+The default storage target is SQLite at `~/.woof/state/projects/<project-key>/codebase/structural/index.sqlite`.
 SQLite is an embedded file format, not an external graph database. It gives Woof enough
 queryability for callers/callees/impact and leaves room for FTS without adding a daemon.
 

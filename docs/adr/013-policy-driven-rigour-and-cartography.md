@@ -12,7 +12,7 @@ Woof's richer runs need contract readiness, conformance checks, and cartography.
 
 ## Decision
 
-Rigour is data and policy driven. Repo policy lives in `.woof/policy.toml` and declares the selected delivery profile, project verification command, producer/reviewer run-profile slots, deterministic gate/check floor, and cartography floor. Epic content and work-unit trace fields activate the relevant checks. The engine path remains one loop over `work_units[]`.
+Rigour is data and policy driven. Project policy lives in `~/.woof/config/projects/<project-key>.toml` and declares the selected delivery profile, project verification command, producer/reviewer run-profile slots, deterministic gate/check floor, and cartography floor. Epic content and work-unit trace fields activate the relevant checks. The engine path remains one loop over `work_units[]`.
 
 Cartography stays first-class. It is enforced when policy requires it and consumed when present.
 

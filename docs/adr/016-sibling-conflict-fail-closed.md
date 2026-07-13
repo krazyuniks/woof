@@ -27,5 +27,5 @@ On halt: already-merged siblings are reconciled per PR, the conflicting PR is le
 ## Consequences
 
 - Correctness is preferred over merge throughput for the entire proving period.
-- Gated conflicts are captured to a sibling-conflict corpus (JSONL under `.woof/`, independent of `eval-instrumentation`) recording detection trigger and resolution outcome, so a future automation decision has evidence.
+- Gated conflicts are captured to a sibling-conflict corpus (JSONL under the project's operator-home state root, independent of `eval-instrumentation`) recording detection trigger and resolution outcome, so a future automation decision has evidence.
 - Automatic reapplication is a separate future ADR, taken only when the corpus and observed toil clear a pre-registered bar; the first automation rung and its thresholds are set then, not now.

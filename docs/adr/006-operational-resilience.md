@@ -38,7 +38,7 @@ Woof adds operational resilience around the graph, not inside model reasoning lo
 3. Runaway protection belongs around the current `woof wf` runner, not in a separate
    `/woof:run` skill. The engine records the facts; Woof can pause the run and
    open a human gate when repeated no-progress or same-error patterns appear. Progress
-   is stage-aware: planning stages make progress by writing expected `.woof/` artefacts;
+   is stage-aware: planning stages make progress by writing expected engine-state artefacts;
    story stages make progress by writing expected outputs and eventually advancing the
    graph-owned commit. Same-error and no-progress counters are separate. Constraint
    discovery routes to a course-correction gate rather than being treated as a stuck
@@ -57,7 +57,7 @@ Woof adds operational resilience around the graph, not inside model reasoning lo
    only; it must never suppress a blocker with plausible severe impact.
 6. tmux is allowed as an operator supervision and presentation layer for long-running
    Woof sessions. It may host panes, monitors, logs, and child processes. It does not
-   own graph state, choose successors, or mutate `.woof/` outside Woof commands.
+   own graph state, choose successors, or mutate engine state outside Woof commands.
 7. HEAD and branch drift are detected, not silently tolerated. Dispatch telemetry records
    the observed git position before and after a worker. The graph can open a gate when
    the branch or HEAD moves in a way not explained by a graph-owned commit.

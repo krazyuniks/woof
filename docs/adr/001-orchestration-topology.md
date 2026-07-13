@@ -27,7 +27,7 @@ Woof is layered. Each layer has one responsibility.
 
 | Layer | Responsibility | Implementation |
 |---|---|---|
-| State | Durable, schema-governed record of every epic, plan, gate, dispatch, and cartography artefact. | Files under `.woof/`. |
+| State | Durable, schema-governed record of every epic, plan, gate, dispatch, and cartography artefact. | Files under `~/.woof/state/projects/<project-key>/`. |
 | Engine | Deterministic transitions, schema validation, typed audit/event writes, dispatch orchestration, and the resumable graph runner. No LLM picks successors. | Python at `src/woof/`, exposed via `woof wf`. |
 | Operator skill | Maps operator requests to `woof` CLI calls, routes the design phase to `/woof:brainstorm`, and surfaces gates. It does not own graph state. | Claude Code umbrella skill at `skills/woof/`. |
 | Dispatched | Stateless, isolated LLM invocations. Each subagent receives only its prompt and scoped artefacts. Output is written back by the engine. | `Task` subagents for Claude; `Bash + codex exec` for Codex. |
@@ -38,7 +38,7 @@ Project setup commands (`woof init`, `woof preflight`, `woof hooks install`) are
 
 Human gates remain graph states: the graph halts on `gate.md` until `woof wf --epic N --resolve <decision>` records a structured decision.
 
-`woof wf --epic N` derives the next node from on-disk state and runs the graph until it halts at a gate, encounters malformed state, or completes the epic. `--once` steps one node. Mutating state by hand under `.woof/` is not an operator workflow.
+`woof wf --epic N` derives the next node from on-disk state and runs the graph until it halts at a gate, encounters malformed state, or completes the epic. `--once` steps one node. Mutating engine state by hand in the operator home is not an operator workflow.
 
 ## Consequences
 

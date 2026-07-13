@@ -36,7 +36,7 @@ One umbrella operator skill plus one interactive specialist.
 ### Mechanics
 
 - The umbrella's guardrail is `allowed-tools: Bash(woof:*), Bash(git:*), Task` plus prose rules:
-  never hand-edit `.woof/` state, surface gates rather than auto-approving, and confirm destructive
+  never hand-edit engine state, surface gates rather than auto-approving, and confirm destructive
   verbs (`woof wf reset`).
 - Skills shell out to the engine. `woof wf` is a shell command; the umbrella maps a request to the
   right `woof ...` call rather than re-implementing graph logic.

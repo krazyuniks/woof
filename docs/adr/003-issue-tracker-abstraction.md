@@ -10,7 +10,7 @@ Superseded by ADR-011 for execution-shape projection. Tracker integration remain
 
 ## Context
 
-Woof keeps the epic-level contract in an issue tracker and the runtime workflow state in `.woof/epics/E<N>/`. Requiring every consumer to use GitHub would tie the graph to a hosted provider; a repository with no hosted tracker must still be able to run Woof.
+Woof keeps the epic-level contract in an issue tracker and the runtime workflow state in `~/.woof/state/projects/<project-key>/epics/E<N>/`. Requiring every consumer to use GitHub would tie the graph to a hosted provider; a repository with no hosted tracker must still be able to run Woof.
 
 ## Decision
 
@@ -22,7 +22,7 @@ Woof depends on a `Tracker` protocol, not on a specific provider. The engine, op
 - `epic_body.py` — tracker-agnostic transforms between `EPIC.md` front-matter and the managed tracker body.
 - `github.py` — GitHub issue adapter.
 - `local.py` — filesystem-only adapter.
-- `__init__.py` — `resolve_tracker(repo_root)`, the factory that reads `[tracker]` from `.woof/prerequisites.toml`.
+- `__init__.py` — the factory that reads `[tracker]` from the project config.
 
 The protocol covers:
 
@@ -36,7 +36,7 @@ The protocol covers:
 - `complete_epic`;
 - `resolve_conflict`.
 
-Configuration lives in `.woof/prerequisites.toml`:
+Configuration lives in the project config's `[tracker]` block:
 
 ```toml
 [tracker]
@@ -48,14 +48,14 @@ repo = "<owner>/<name>"  # required when kind = "github"
 
 Two adapters ship:
 
-- `github`: one GitHub issue per epic. `E<N>` is the GitHub issue number. Push is conflict-detected against `.woof/epics/E<N>/.last-sync`; every graph invocation verifies runtime reachability.
-- `local`: filesystem-only. `.woof/epics/E<N>/` is the authority for an epic. Epic IDs are locally allocated integers. There is no remote, no `.last-sync`, and no sync-conflict gate.
+- `github`: one GitHub issue per epic. `E<N>` is the GitHub issue number. Push is conflict-detected against the epic's `.last-sync` in the operator-home state root; every graph invocation verifies runtime reachability.
+- `local`: filesystem-only. The epic directory in the operator-home state root is the authority for an epic. Epic IDs are locally allocated integers. There is no remote, no `.last-sync`, and no sync-conflict gate.
 
 Lifecycle push methods on both adapters render the same managed body shape from local `EPIC.md` and `plan.json`. The adapters reject epic completion until every planned work unit is terminal.
 
 ## Epic identifiers
 
-An epic ID is a tracker-assigned integer. For `github` it is the GitHub issue number; for `local` it is the next integer allocated under `.woof/epics/`. Schemas across `EPIC.md`, `plan.json`, planning node I/O, and node I/O require integer epic IDs.
+An epic ID is a tracker-assigned integer. For `github` it is the GitHub issue number; for `local` it is the next integer allocated under the operator-home epics root. Schemas across `EPIC.md`, `plan.json`, planning node I/O, and node I/O require integer epic IDs.
 
 ## Conflict handling
 

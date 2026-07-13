@@ -66,7 +66,7 @@ Pre-decomposed intake does not infer a missing epic, observable outcomes, contra
 A work-source document - an epic, or a `work_units[]` backlog - is an input, not engine state (ADR-017). The engine writes one thing back to it: the `state:` of a work unit it drained. That writeback is the single deliberate exception to writing only under the operator home, and it is bounded:
 
 - it targets the document the drain was invoked with, resolved from the source recorded at intake, never inferred from the delivery repo or a conventional location;
-- it is engine-exclusive: a produced diff that mutates a work unit's `state:` in the drained document is rejected before publish by Check 10;
+- it is engine-exclusive: a produced diff that mutates a work unit's `state:` in the drained document is rejected before publish by Check 10, which compares every unit id on either side of the diff, so adding a pre-marked unit or deleting a unit's recorded state is rejected alongside flipping an existing one, and a document the diff adds with no committed baseline is measured against an empty baseline rather than passed;
 - it changes the one `state:` field of the one unit and preserves the rest of the human-authored document byte-for-byte, line endings included: a CRLF document stays CRLF, because the engine reads and writes the document without newline translation and proves, before the replace, that no byte outside the one edited line moved;
 - it is atomic and takes an exclusive lock in the operator home, so concurrent drains sharing a document serialise rather than clobber, and the document's repository receives no engine directory, artefact, or sidecar;
 - a run whose aggregate has no work-source document writes back nothing.

@@ -44,21 +44,33 @@ Prose the operator wrote.
 """
 
 
+GAMMA_UNIT = """\
+  - id: gamma
+    title: Third unit
+    kind: build
+    state: todo
+    priority: low
+"""
+
+
 def _git(repo_root: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=repo_root, check=True, capture_output=True)
 
 
-def _init_repo(repo_root: Path) -> Path:
+def _init_repo(repo_root: Path, *, text: str = BACKLOG, commit_document: bool = True) -> Path:
     repo_root.mkdir(parents=True, exist_ok=True)
     _git(repo_root, "init")
     _git(repo_root, "config", "user.email", "test@example.com")
     _git(repo_root, "config", "user.name", "Test")
     document = repo_root / "docs" / "backlog.md"
     document.parent.mkdir(parents=True, exist_ok=True)
-    document.write_text(BACKLOG, encoding="utf-8")
+    document.write_text(text, encoding="utf-8")
     (repo_root / "src").mkdir(exist_ok=True)
     (repo_root / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
-    _git(repo_root, "add", "--", "docs/backlog.md", "src/app.py")
+    if commit_document:
+        _git(repo_root, "add", "--", "docs/backlog.md", "src/app.py")
+    else:
+        _git(repo_root, "add", "--", "src/app.py")
     _git(repo_root, "commit", "-m", "seed")
     return document
 
@@ -150,6 +162,79 @@ def test_a_produced_diff_that_marks_a_sibling_unit_is_rejected(tmp_path: Path) -
 
     assert outcome.ok is False
     assert "beta" in (outcome.evidence or "")
+
+
+def test_a_produced_diff_that_adds_a_pre_marked_unit_is_rejected(tmp_path: Path) -> None:
+    """Inventing a unit already marked done defeats the guarantee as surely as a flip."""
+
+    repo_root = tmp_path / "repo"
+    document = _init_repo(repo_root)
+    _seed_intake(document)
+    document.write_text(
+        BACKLOG.replace("---\n\n# Wave 5", GAMMA_UNIT.replace("todo", "done") + "---\n\n# Wave 5"),
+        encoding="utf-8",
+    )
+    _git(repo_root, "add", "--", "docs/backlog.md")
+
+    outcome = check_10_work_source_state_runner(_ctx(repo_root, _plan(_set_context())))
+
+    assert outcome.ok is False
+    assert outcome.severity == "blocker"
+    assert "gamma" in (outcome.evidence or "")
+
+
+def test_a_produced_diff_that_deletes_a_unit_the_engine_never_planned_is_rejected(
+    tmp_path: Path,
+) -> None:
+    """Erasing a unit's recorded state is a mutation, even for a unit outside the plan."""
+
+    repo_root = tmp_path / "repo"
+    document = _init_repo(
+        repo_root, text=BACKLOG.replace("---\n\n# Wave 5", GAMMA_UNIT + "---\n\n# Wave 5")
+    )
+    _seed_intake(document)
+    document.write_text(BACKLOG, encoding="utf-8")
+    _git(repo_root, "add", "--", "docs/backlog.md")
+
+    outcome = check_10_work_source_state_runner(_ctx(repo_root, _plan(_set_context())))
+
+    assert outcome.ok is False
+    assert outcome.severity == "blocker"
+    assert "gamma" in (outcome.evidence or "")
+
+
+def test_a_produced_diff_that_adds_the_whole_document_pre_marked_is_rejected(
+    tmp_path: Path,
+) -> None:
+    """No committed baseline: every state the added document carries must be the engine's."""
+
+    repo_root = tmp_path / "repo"
+    document = _init_repo(repo_root, commit_document=False)
+    _seed_intake(document)
+    document.write_text(BACKLOG.replace("state: todo", "state: done"), encoding="utf-8")
+    _git(repo_root, "add", "--", "docs/backlog.md")
+
+    outcome = check_10_work_source_state_runner(_ctx(repo_root, _plan(_set_context())))
+
+    assert outcome.ok is False
+    assert outcome.severity == "blocker"
+    assert "beta" in (outcome.evidence or "")
+
+
+def test_an_added_document_carrying_only_the_engines_own_states_passes(tmp_path: Path) -> None:
+    """The engine's writeback into an as-yet-uncommitted document is not a producer edit."""
+
+    repo_root = tmp_path / "repo"
+    document = _init_repo(repo_root, commit_document=False)
+    _seed_intake(document)
+    document.write_text(
+        BACKLOG.replace("    state: todo\n", "    state: in_progress\n", 1), encoding="utf-8"
+    )
+    _git(repo_root, "add", "--", "docs/backlog.md")
+
+    outcome = check_10_work_source_state_runner(_ctx(repo_root, _plan(_set_context())))
+
+    assert outcome.ok is True
 
 
 def test_a_produced_diff_that_edits_the_documents_prose_is_allowed(tmp_path: Path) -> None:

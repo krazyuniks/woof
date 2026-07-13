@@ -7,6 +7,12 @@ state in the drained document, so the producer pre-mark defect - a producer that
 marks its own unit done, or marks a sibling it never touched - cannot reach a
 commit.
 
+Every unit id on either side of the diff is compared, so inventing a unit that
+arrives pre-marked, or deleting a unit and the state it recorded, is caught too.
+A document the diff adds with no committed baseline is compared against an empty
+baseline rather than waved through: with nothing recorded, every state it carries
+must be one the engine's plan accounts for.
+
 A staged state that already matches the engine's plan is the engine's own
 writeback carried in the diff, not a producer edit, so it passes.
 """
@@ -70,16 +76,6 @@ def check_10_work_source_state_runner(ctx: CheckContext) -> CheckOutcome:
         )
 
     committed = _blob(ctx.repo_root, f"HEAD:{relative}")
-    if committed is None:
-        return CheckOutcome(
-            id=CHECK_ID,
-            ok=True,
-            severity="info",
-            summary=(
-                f"work-source document {relative} has no committed baseline, "
-                "so the produced diff mutates no recorded unit state"
-            ),
-        )
     produced = _blob(ctx.repo_root, f":{relative}")
     if produced is None:  # pragma: no cover - a staged path always has an index blob
         return CheckOutcome(
@@ -90,7 +86,11 @@ def check_10_work_source_state_runner(ctx: CheckContext) -> CheckOutcome:
         )
 
     try:
-        before = unit_states(committed)
+        # No committed baseline means the produced diff adds the document itself, so
+        # there is no recorded state to compare against. The baseline is empty rather
+        # than exempt: every unit state the added document carries must still be one
+        # the engine's plan accounts for, or a producer wrote it.
+        before = unit_states(committed) if committed is not None else {}
         after = unit_states(produced)
     except WorkSourceError as exc:
         return CheckOutcome(
@@ -103,11 +103,7 @@ def check_10_work_source_state_runner(ctx: CheckContext) -> CheckOutcome:
         )
 
     engine = _engine_states(ctx)
-    mutations = [
-        f"{work_unit_id}: {state} -> {after.get(work_unit_id, 'removed')}"
-        for work_unit_id, state in before.items()
-        if after.get(work_unit_id) != state and after.get(work_unit_id) != engine.get(work_unit_id)
-    ]
+    mutations = _mutations(before, after, engine)
     if mutations:
         return CheckOutcome(
             id=CHECK_ID,
@@ -128,6 +124,33 @@ def check_10_work_source_state_runner(ctx: CheckContext) -> CheckOutcome:
         summary=f"the produced diff mutates no work-unit state in {relative}",
         paths=[relative],
     )
+
+
+def _mutations(
+    before: dict[str, str],
+    after: dict[str, str],
+    engine: dict[str, str],
+) -> list[str]:
+    """The unit-state changes in the produced diff that the engine did not make.
+
+    Every unit id on either side is considered, not only the ones the committed
+    document already carried: adding a unit that arrives pre-marked, or deleting a
+    unit and with it the state it recorded, defeats engine-exclusive writeback just
+    as surely as flipping a unit that was already there.
+    """
+
+    mutations = []
+    for work_unit_id in sorted(before.keys() | after.keys()):
+        recorded = before.get(work_unit_id)
+        produced = after.get(work_unit_id)
+        if produced == recorded:
+            continue
+        if produced is not None and produced == engine.get(work_unit_id):
+            continue  # the state the engine's plan holds: its own writeback, in the diff
+        mutations.append(
+            f"{work_unit_id}: {recorded or 'absent'} -> {produced if produced is not None else 'removed'}"
+        )
+    return mutations
 
 
 def _engine_states(ctx: CheckContext) -> dict[str, str]:

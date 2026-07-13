@@ -25,6 +25,11 @@ This glossary defines Woof's project-specific terms. Architecture, ADRs, and bac
 - **Attached execution resource** - a live transport session or agent used to perform work while disk remains the authority for what work should happen.
 - **Harness backend** - the tmux or herdr transport declared by a harness profile. Project policy selects a harness; the registry resolves its backend.
 - **Retained session** - a backend-neutral live worker identity that accepts subsequent turns before explicit close; Woof uses it for a warm producer.
+- **Worker identity** - the durable, backend-neutral record of a worker: its stable name, the backend's reference to the live worker, and the session, socket, protocol, and version it was reached through. It survives the client that launched the worker, so a fix round reattaches and a lost worker respawns under the same name.
+- **Worker reference** - the backend's own handle on a live worker (a herdr pane reference, a tmux session). Opaque to the engine, which only hands it back to the backend that issued it.
+- **Named session** - the herdr server a dispatch reaches through an explicit socket. Woof declares and owns the session it dispatches into, and never uses or tears down an operator's (ADR-018).
+- **Dead session** - a named session whose socket file exists but has no listener behind it. Presence of the socket proves nothing; only an accepted connection is liveness. Dispatch reaps a dead session's sockets and respawns its server.
+- **Payload absence** - a worker turn that settled or exited without writing the artefact it was asked for. Distinct from a timeout (the turn ended, so waiting longer changes nothing) and from blocked (nothing is waiting on the operator).
 - **Profile A** - worktree-per-work-unit delivery with a pull request and serial merge coordinator.
 - **Profile B** - single-tree delivery with graph-owned commit and push.
 - **Cartography** - the `~/.woof/state/projects/<project-key>/codebase/` artefact group used for repo understanding: design docs, mapper-authored AS-IS docs, lexical files, and optional structural indexes. It is engine state in the operator home, not a directory in the driven repo (ADR-017).

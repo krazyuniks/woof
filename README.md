@@ -65,7 +65,7 @@ Quality gates support two postures in the target architecture. Strict mode block
 
 - [`docs/architecture.md`](docs/architecture.md) — system architecture: layers, stages, cartography, role routing, schemas, gates, transaction manifests, prerequisites.
 - [`docs/backlog.md`](docs/backlog.md) — open work and the wave operating order, prescriptive.
-- [`docs/adr/`](docs/adr/) — decision records. ADR-010 through ADR-017 define the merged engine (topology, work-units contract, interactive harness dispatch, policy-driven rigour and cartography, VaultForeman absorption and retirement, Profile A worktree contract, sibling-conflict fail-closed, operator-home config and state); earlier ADRs carry their supersession status in front matter.
+- [`docs/adr/`](docs/adr/) — decision records. ADR-010 through ADR-018 define the merged engine (topology, work-units contract, interactive harness dispatch, policy-driven rigour and cartography, VaultForeman absorption and retirement, Profile A worktree contract, sibling-conflict fail-closed, operator-home config and state, Woof-owned herdr session); earlier ADRs carry their supersession status in front matter.
 
 ## Development
 

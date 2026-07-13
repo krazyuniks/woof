@@ -124,7 +124,7 @@ def test_tmux_dispatch_captures_structured_result_and_prompt_file(tmp_path: Path
     returned = next(event for event in events if event["event"] == "subprocess_returned")
     assert returned["exit_type"] == "clean"
     assert returned["prompt_transport"] == "harness_prompt_file"
-    assert returned["argv"][-1] == "<prompt:tmux-file>"
+    assert returned["argv"][-1] == "<prompt:file>"
     assert returned["verdict"] == "pass"
     assert returned["evidence"] == "S1"
     assert returned["tokens_in"] == 3

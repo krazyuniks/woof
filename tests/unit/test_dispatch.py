@@ -965,7 +965,7 @@ def test_end_to_end_claude_writes_audit_and_jsonl(woof_project: Path, tmp_path: 
     assert events[1]["event"] == "subprocess_returned"
     assert events[0]["effort"] == "max"
     assert events[0]["mcp"] == []
-    assert events[0]["argv"][-1] == "<prompt:tmux-file>"
+    assert events[0]["argv"][-1] == "<prompt:file>"
     assert events[0]["argv"][0] == "cld"
     assert events[0]["prompt_transport"] == "harness_prompt_file"
     assert events[0]["runtime_policy"] == EXPECTED_TRUSTED_RUNTIME_POLICY
@@ -1508,7 +1508,7 @@ def test_end_to_end_codex_records_thread_and_audit_path(woof_project: Path, tmp_
     events = [json.loads(ln) for ln in jsonl.read_text().splitlines() if ln.strip()]
     returned = events[1]
     assert returned["effort"] == "xhigh"
-    assert returned["argv"][-1] == "<prompt:tmux-file>"
+    assert returned["argv"][-1] == "<prompt:file>"
     assert returned["argv"][0] == "codex"
     assert returned["prompt_transport"] == "harness_prompt_file"
     assert "runtime_policy" not in returned

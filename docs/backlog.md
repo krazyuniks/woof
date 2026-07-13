@@ -122,7 +122,7 @@ work_units:
       - A herdr producer keeps the same worker identity across fix rounds; every reviewer round creates a fresh independent worker and receives the full current diff.
       - Herdr lifecycle observation is armed before every prompt; `working -> idle` or `done` completes only with the payload present; blocked and timeout become distinct graph outcomes with evidence.
       - Resume persists backend-neutral session identity and either reattaches safely or respawns from disk authority after process loss.
-      - Running-server preflight records the named socket, server version, and protocol and fails before dispatch when incompatible.
+      - "Running-server preflight records the named socket, server version, and protocol and fails before dispatch when incompatible. A socket file with no listener behind it is a dead session, not a live one: preflight probes liveness rather than the socket's presence, because an orphaned socket left by a dead server otherwise makes every dispatch fail with a connection refusal that never self-heals (observed 2026-07-12 on the shared `drains` session)."
       - Tmux remains supported for explicit tmux profiles, with backend-equivalent result and error metadata; no public field is named after tmux when it represents either backend.
       - Tests cover launch, receipt, warm fix round, fresh review, reattach, respawn, blocked, timeout, protocol mismatch, payload absence, explicit close, and isolated named-session teardown.
   - id: runner-loop-absorption
@@ -477,6 +477,28 @@ work_units:
         change.
       - Operator docs state the rule - no destructive action without this command
         showing the owning drain dead.
+  - id: no-progress-guard-reads-what-the-transition-reads
+    title: Bound the runner's no-progress guard by the transition's read set
+    kind: build
+    state: todo
+    priority: medium
+    deps: [operator-home-config-and-state]
+    summary: "`run_graph` halts when a cycle makes no progress, fingerprinting the whole epic directory plus the git porcelain state and halting when a cycle repeats the same node with an unchanged fingerprint. The fingerprint's net is wider than `next_node`'s read set: it digests every file under the epic directory, while `next_node` consults only a named few. A handler that wrote churning content to an epic-directory file `next_node` never reads would change the digest on every cycle, so the guard would never fire and the runner would spin at full CPU as it did before the guard existed. No current handler does this, so this is a latent hole rather than a live defect: the guard does catch the class that actually hung the suite (a write landing outside the state root). The safety property the guard claims - a node whose write is not read back cannot spin the runner - holds only once the fingerprint is bounded by what the transition actually reads."
+    acceptance:
+      - The no-progress fingerprint is derived from the state the transition actually consults, so a write the transition never reads back cannot mask a stalled cycle.
+      - A handler whose write lands inside the epic directory but outside the transition's read set halts the run with the same named diagnostic as a write landing outside the state root, rather than spinning.
+      - The halt names the node and work unit that failed to advance, and the diagnostic distinguishes a stalled node from a slow one.
+      - A test plants a handler that writes churning content to an epic-directory file the transition does not read, and asserts the run halts rather than looping.
+  - id: supervise-deadlock-test-is-load-sensitive
+    title: Make the stderr-deadlock test a test of the code, not of the machine
+    kind: build
+    state: todo
+    priority: low
+    summary: "`tests/unit/test_supervise.py::test_stderr_heavy_process_does_not_deadlock` fails on a loaded machine and passes on an idle one, on `main` as well as on feature branches. A gate test that depends on host load is not evidence: it costs a real investigation every time it fires (observed 2026-07-13, where it read as a regression in an unrelated change and had to be run down before the change could be cleared), and it trains the reader to discount a failing gate, which is the more expensive failure."
+    acceptance:
+      - The test asserts the property it exists to prove - that a stderr-heavy child cannot deadlock the supervisor - without depending on wall-clock timing that host load can perturb.
+      - The test passes reliably on a machine under load.
+      - No timing threshold is merely widened to make the flake rarer; if the test cannot be made deterministic, it is replaced by one that can, and the reasoning is recorded.
 ---
 
 # Woof Backlog

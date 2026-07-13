@@ -28,7 +28,6 @@ from woof.cli.commands.observe import build_operator_state_summary
 from woof.cli.dispatcher import (
     TRUSTED_RUNTIME_MODE,
     TRUSTED_RUNTIME_NOTE,
-    herdr_session_name,
 )
 from woof.cli.harness_registry import (
     BACKEND_HERDR,
@@ -48,6 +47,7 @@ from woof.cli.main import (
     SCHEMAS,
     run_ajv,
 )
+from woof.cli.transport import declared_session
 from woof.cli.transport_errors import WorkerError
 from woof.graph.git import git_env
 from woof.graph.state import Plan
@@ -454,7 +454,7 @@ def _check_declared_herdr_server() -> PreflightFinding | None:
     authority there, and it refuses a herdr profile with no declared session before
     any worker starts.
     """
-    session = herdr_session_name()
+    session = declared_session()
     if not session:
         return None
     socket_path = session_socket_path(session)

@@ -7,7 +7,7 @@ Subcommands:
     init         Write a project config into the operator home.
     hooks        Manage Woof-owned git hook blocks.
     validate     Validate artefacts against woof JSON Schemas via ajv-cli.
-    dispatch     Run a role through the configured tmux harness profile.
+    dispatch     Run a role through the harness profile the project selects.
     audit-bundle Copy referenced Claude transcripts into an epic audit folder.
     render-epic  Render EPIC.md front-matter into the managed tracker body;
                  optionally sync to the tracker with conflict detection.
@@ -425,7 +425,7 @@ def main() -> int:
 
     dispatch = sub.add_parser(
         "dispatch",
-        help="dispatch a role through the configured tmux harness profile",
+        help="dispatch a role through the harness profile the project selects",
         parents=[project],
     )
     dispatch.add_argument(

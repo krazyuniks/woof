@@ -16,6 +16,7 @@ it is not. Disk is the authority; the live worker is an attached execution resou
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -45,6 +46,8 @@ PROTECTED_SESSIONS = ("default", "drains")
 # There is no implicit session. The named session is declared, because the herdr
 # server -- not the client -- spawns the worker: a guessed default would silently
 # put Woof's workers inside whichever session happened to be serving.
+SESSION_ENV = "WOOF_HERDR_SESSION"
+
 EVIDENCE_LINES = 80
 TMUX_POLL_INTERVAL_S = 1.0
 _UNSAFE_NAME = re.compile(r"[^A-Za-z0-9_-]+")
@@ -243,6 +246,16 @@ class Backend(Protocol):
     def session_name(self) -> str | None: ...
 
 
+def declared_session() -> str | None:
+    """The named session dispatch runs its workers in, if the operator declared one.
+
+    There is no default. A backend whose server spawns the worker would otherwise
+    place Woof's workers inside whichever server happened to be listening, including
+    an operator session carrying live drains.
+    """
+    return os.environ.get(SESSION_ENV) or None
+
+
 def resolve_backend(profile: HarnessProfile) -> str:
     """The backend this profile runs on. The only place a backend is chosen."""
     return profile.backend
@@ -408,8 +421,8 @@ def open_backend(
     if not session:
         raise TransportUnavailable(
             f"harness {profile.name!r} runs on the herdr backend, but no herdr named "
-            f"session is declared. Set WOOF_HERDR_SESSION to a session Woof owns; the "
-            f"herdr server spawns the worker, so the session is never guessed.",
+            f"session is declared. Set {SESSION_ENV} to a session Woof owns; the herdr "
+            f"server spawns the worker, so the session is never guessed.",
             backend=BACKEND_HERDR,
         )
     require_woof_owned_session(session)
@@ -533,6 +546,7 @@ def teardown_session(
 __all__ = [
     "ANSWER_KICKOFF",
     "PROTECTED_SESSIONS",
+    "SESSION_ENV",
     "TASK_KICKOFF",
     "Backend",
     "HerdrBackend",
@@ -542,6 +556,7 @@ __all__ = [
     "build_kickoff",
     "clear_worker_identity",
     "close_worker",
+    "declared_session",
     "load_worker_identity",
     "open_backend",
     "require_woof_owned_session",

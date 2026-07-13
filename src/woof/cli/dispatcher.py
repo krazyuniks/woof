@@ -69,7 +69,6 @@ POLICY_ROLE_SLOTS = {"primary": "producer", "reviewer": "reviewer"}
 REVIEW_PROMPT_VERSION_PREFIX = "sha256:"
 DEFAULT_READINESS_SECONDS = 60
 PROMPT_TRANSPORT = "harness_prompt_file"
-HERDR_SESSION_ENV = "WOOF_HERDR_SESSION"
 
 # A worker failure is a graph outcome, not a stack trace. Each typed outcome maps
 # to one exit classification and one exit code, so blocked, timeout, and payload
@@ -413,8 +412,9 @@ def _result_session_metadata(
 ) -> dict[str, Any]:
     """Merge the worker's own session identifiers with the transport's, backend-neutrally.
 
-    No field here is named after a backend: the same keys carry a herdr pane and a
-    tmux session, so a consumer reads one shape whichever transport ran the turn.
+    No field here is named after a backend: whichever transport ran the turn, its
+    worker reference and session land under the same keys, so a consumer reads one
+    shape and never learns what ran the worker.
     """
     session = result.get("session")
     metadata: dict[str, Any] = {}
@@ -448,17 +448,6 @@ def _copy_result_fields(event: dict[str, Any], result: dict[str, Any]) -> None:
     artefacts = result.get("artefacts")
     if isinstance(artefacts, list):
         event["result_artefacts"] = [str(item) for item in artefacts]
-
-
-def herdr_session_name() -> str | None:
-    """The herdr named session dispatch runs its workers in, if one is declared.
-
-    There is no default. The herdr server spawns the worker, so an implicit session
-    would put Woof's workers wherever a server happened to be listening -- including
-    an operator session carrying live drains. Protocol work and live smokes declare
-    a disposable session on its own socket; a run declares the session Woof owns.
-    """
-    return os.environ.get(HERDR_SESSION_ENV) or None
 
 
 def _worker_failure(exc: WorkerError) -> tuple[str, int, str, str]:
@@ -824,7 +813,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         record_path = state.worker_identity_path(project_key, args.epic, worker_name)
         try:
             backend = transport.open_backend(
-                get_profile(route.adapter), session=herdr_session_name()
+                get_profile(route.adapter), session=transport.declared_session()
             )
             closed = close_retained_worker(record_path, backend=backend)
         except WorkerError as exc:
@@ -1129,7 +1118,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
 
         try:
             backend = transport.open_backend(
-                get_profile(route.adapter), session=herdr_session_name()
+                get_profile(route.adapter), session=transport.declared_session()
             )
             outcome = transport.run_turn(
                 backend,
@@ -1308,7 +1297,9 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         return payload_file.exists() and payload_file.stat().st_size > 0
 
     try:
-        backend = transport.open_backend(get_profile(route.adapter), session=herdr_session_name())
+        backend = transport.open_backend(
+            get_profile(route.adapter), session=transport.declared_session()
+        )
         outcome = transport.run_turn(
             backend,
             worker_name=oneshot_worker,

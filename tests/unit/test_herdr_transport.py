@@ -497,12 +497,12 @@ def test_a_declared_session_is_checked_and_an_undeclared_one_is_not(
 ) -> None:
     """The named session is a runtime choice, so preflight checks it only when declared."""
     from woof.cli import preflight as preflight_mod
-    from woof.cli.dispatcher import HERDR_SESSION_ENV
+    from woof.cli.transport import SESSION_ENV
 
-    monkeypatch.delenv(HERDR_SESSION_ENV, raising=False)
+    monkeypatch.delenv(SESSION_ENV, raising=False)
     assert preflight_mod._check_declared_herdr_server() is None
 
-    monkeypatch.setenv(HERDR_SESSION_ENV, "woof-not-serving")
+    monkeypatch.setenv(SESSION_ENV, "woof-not-serving")
     finding = preflight_mod._check_declared_herdr_server()
     assert finding is not None
     assert finding.id == "dispatch.herdr.server"

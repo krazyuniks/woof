@@ -19,10 +19,12 @@ import pytest
 from woof.cli import herdr as herdr_module
 from woof.cli.herdr import (
     HERDR_PROTOCOL,
+    PROTECTED_SESSIONS,
     HerdrError,
     HerdrSession,
     ServerPreflight,
     ensure_session,
+    open_session,
     preflight_server,
     reap_session_socket,
     session_is_dead,
@@ -376,6 +378,21 @@ def test_a_socket_no_probe_can_reach_is_declared_dead(
     sock.write_bytes(b"")
     monkeypatch.setattr(herdr_module.time, "sleep", lambda _seconds: None)
     assert session_is_dead(sock) is True
+
+
+def test_open_session_refuses_an_operator_session(tmp_path: Path) -> None:
+    """Session resolution itself refuses a session Woof does not own.
+
+    The operator's sessions carry live drains. Refusing them where a session is
+    resolved, rather than in each caller, is what makes the guard a property of the
+    session: no caller can reach one by remembering to check, or by forgetting to.
+    """
+    client = FakeClient()
+    for session in PROTECTED_SESSIONS:
+        with pytest.raises(TransportUnavailable) as exc:
+            open_session(session, client=client)
+        assert session in str(exc.value)
+    assert client.calls == [], "a refused session is never even pinged"
 
 
 def test_reap_session_socket_removes_both_leftover_sockets(tmp_path: Path) -> None:

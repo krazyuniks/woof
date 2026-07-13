@@ -19,6 +19,7 @@ from tests.unit.test_herdr_transport import FakeClient, make_session
 from woof.cli.harness_registry import BACKEND_HERDR, BACKEND_TMUX, get_profile
 from woof.cli.transport import (
     PROTECTED_SESSIONS,
+    HerdrBackend,
     WorkerIdentity,
     clear_worker_identity,
     close_named_worker,
@@ -378,7 +379,7 @@ def test_an_operator_session_is_never_torn_down(tmp_path: Path) -> None:
     """The operator's live sessions carry running drains; a smoke must not stop them."""
     assert set(PROTECTED_SESSIONS) >= {"default", "drains"}
     client = FakeClient()
-    backend = herdr_backend(client, session="drains")
+    backend = HerdrBackend(make_session(client, session="drains"), harness="claude")
     with pytest.raises(TransportUnavailable) as exc:
         teardown_session(backend, identities=[], stop_server=lambda name: None)
     assert "drains" in str(exc.value)
@@ -403,6 +404,22 @@ def test_an_operator_session_is_refused_before_a_worker_starts() -> None:
     for session in PROTECTED_SESSIONS:
         with pytest.raises(TransportUnavailable) as exc:
             open_backend(get_profile("claude"), session=session)
+        assert session in str(exc.value)
+
+
+def test_a_pre_built_operator_session_is_refused_too() -> None:
+    """The guard belongs to the session, not to the caller that happened to resolve it.
+
+    A caller handing in a session it built itself bypasses the resolution path. The
+    protected name is refused wherever the session comes from, so no future caller
+    can reach an operator's session by taking a different route to it.
+    """
+    for session in PROTECTED_SESSIONS:
+        with pytest.raises(TransportUnavailable) as exc:
+            open_backend(
+                get_profile("claude"),
+                herdr_session=make_session(FakeClient(), session=session),
+            )
         assert session in str(exc.value)
 
 

@@ -28,20 +28,17 @@ from woof.cli.harness_registry import (
     BACKEND_TMUX,
     HarnessProfile,
 )
-from woof.cli.herdr import HerdrSession
+from woof.cli.herdr import (
+    PROTECTED_SESSIONS,
+    HerdrSession,
+    require_woof_owned_session,
+)
 from woof.cli.herdr import open_session as open_herdr_session
 from woof.cli.transport_errors import (
     PayloadAbsent,
     TransportUnavailable,
     WorkerTimeout,
 )
-
-# The operator's own herdr sessions. Woof never runs a worker in one and never
-# tears one down: they carry the operator's live drains, and a Woof run that
-# started workers in them (or stopped one) would take that work with it. Woof owns
-# the named session it dispatches into, which is what lets it reap the session's
-# orphaned sockets and kill the session's stray workers.
-PROTECTED_SESSIONS = ("default", "drains")
 
 # There is no implicit session. The named session is declared, because the herdr
 # server -- not the client -- spawns the worker: a guessed default would silently
@@ -426,6 +423,9 @@ def open_backend(
     if backend != BACKEND_HERDR:
         return TmuxBackend(tmux_api if tmux_api is not None else _tmux_api(), harness=profile.name)
     if herdr_session is not None:
+        # A session handed in ready-made took a different route to a session name, so
+        # it is held to the same ownership check the resolution path applies.
+        require_woof_owned_session(herdr_session.session)
         return HerdrBackend(herdr_session, harness=profile.name)
     if not session:
         raise TransportUnavailable(
@@ -434,24 +434,7 @@ def open_backend(
             f"server spawns the worker, so the session is never guessed.",
             backend=BACKEND_HERDR,
         )
-    require_woof_owned_session(session)
     return HerdrBackend(open_herdr_session(session), harness=profile.name)
-
-
-def require_woof_owned_session(session: str) -> None:
-    """Refuse a session Woof does not own.
-
-    The operator's sessions carry live drains. Woof starts no worker in one, and
-    stops neither the workers nor the server of one.
-    """
-    if session in PROTECTED_SESSIONS:
-        raise TransportUnavailable(
-            f"refusing to use herdr session {session!r}: it is an operator session with "
-            f"live work. Woof dispatches into a session it owns, so it can reap that "
-            f"session's orphaned sockets and kill its stray workers.",
-            backend=BACKEND_HERDR,
-            session=session,
-        )
 
 
 def _tmux_api() -> Any:

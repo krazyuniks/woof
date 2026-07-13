@@ -52,6 +52,14 @@ from woof.cli.transport_errors import (
 HERDR_PROTOCOL = 16
 
 BACKEND = "herdr"
+
+# The operator's own herdr sessions. Woof never runs a worker in one and never
+# tears one down: they carry the operator's live drains, and a Woof run that
+# started workers in them (or stopped one) would take that work with it. Woof owns
+# the named session it dispatches into, which is what lets it reap that session's
+# orphaned sockets and kill its stray workers.
+PROTECTED_SESSIONS = ("default", "drains")
+
 EVIDENCE_LINES = 80
 DEFAULT_BOOT_TIMEOUT_S = 15.0
 DEFAULT_LIVENESS_TIMEOUT_S = 1.0
@@ -283,6 +291,24 @@ class SocketClient:
 
 
 # --- session liveness ---------------------------------------------------------
+
+
+def require_woof_owned_session(session: str) -> None:
+    """Refuse a session Woof does not own.
+
+    The operator's sessions carry live drains. Woof starts no worker in one, and
+    stops neither the workers nor the server of one. This is a property of the
+    session rather than of any caller: every path that resolves a session passes
+    through here, so no caller can reach an operator's session by forgetting to ask.
+    """
+    if session in PROTECTED_SESSIONS:
+        raise TransportUnavailable(
+            f"refusing to use herdr session {session!r}: it is an operator session with "
+            f"live work. Woof dispatches into a session it owns, so it can reap that "
+            f"session's orphaned sockets and kill its stray workers.",
+            backend=BACKEND,
+            session=session,
+        )
 
 
 def session_socket_path(session: str) -> Path:
@@ -705,7 +731,11 @@ def open_session(
     launch_server: Callable[[str], None] | None = None,
     boot_timeout_s: float = DEFAULT_BOOT_TIMEOUT_S,
 ) -> HerdrSession:
-    """Ensure the named session serves, preflight it, and return it ready to dispatch."""
+    """Ensure the named session serves, preflight it, and return it ready to dispatch.
+
+    A session Woof does not own is refused here, before it is reached at all.
+    """
+    require_woof_owned_session(session)
     if client is not None:
         socket = str(socket_path or session_socket_path(session))
     else:
@@ -724,6 +754,7 @@ def open_session(
 __all__ = [
     "BACKEND",
     "HERDR_PROTOCOL",
+    "PROTECTED_SESSIONS",
     "EventSource",
     "EventStream",
     "HerdrClient",
@@ -737,6 +768,7 @@ __all__ = [
     "open_session",
     "preflight_server",
     "reap_session_socket",
+    "require_woof_owned_session",
     "session_is_dead",
     "session_socket_path",
     "socket_alive",

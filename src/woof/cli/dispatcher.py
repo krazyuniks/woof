@@ -467,6 +467,22 @@ def _worker_failure(exc: WorkerError) -> tuple[str, int, str, str]:
     return exit_type, exit_code, str(exc), exc.evidence
 
 
+def close_retained_worker(record_path: Path, *, backend: transport.Backend) -> bool:
+    """Terminate the retained worker this record names, and forget it.
+
+    Returns False when there is nothing to close. The record is the stable handle:
+    a worker that outlived the client that launched it is found by name here rather
+    than by guessing at a process id, and closing it is what stops two workers ending
+    up in one working tree.
+    """
+    identity = transport.load_worker_identity(record_path)
+    if identity is None:
+        return False
+    transport.close_worker(backend, identity)
+    transport.clear_worker_identity(record_path)
+    return True
+
+
 def _executor_result_ready(path: Path, epic_id: int, work_unit_id: str) -> bool:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -796,6 +812,26 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
             "woof: --session-mode warm-producer requires --role primary and --work-unit\n"
         )
         return 2
+
+    if getattr(args, "close_worker", False):
+        # Closing takes no prompt: it ends the retained worker this unit is holding,
+        # which is how the engine stops a producer outliving the run that launched it.
+        if args.work_unit is None:
+            sys.stderr.write("woof: --close-worker requires --work-unit\n")
+            return 2
+        run_id = ensure_run_metadata(project_key, args.epic, datetime.now(UTC))
+        worker_name = transport.warm_worker_name(run_id, args.work_unit, args.role)
+        record_path = state.worker_identity_path(project_key, args.epic, worker_name)
+        try:
+            backend = transport.open_backend(
+                get_profile(route.adapter), session=herdr_session_name()
+            )
+            closed = close_retained_worker(record_path, backend=backend)
+        except WorkerError as exc:
+            sys.stderr.write(f"woof: {exc}\n")
+            return _worker_failure(exc)[1]
+        print(json.dumps({"worker_name": worker_name, "closed": closed}))
+        return 0
 
     prompt = Path(args.prompt_file).read_text() if args.prompt_file else sys.stdin.read()
     if not prompt.strip():

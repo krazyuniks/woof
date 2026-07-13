@@ -445,3 +445,65 @@ def test_close_worker_terminates_the_worker_it_launched(tmp_path: Path) -> None:
     assert client.calls_of("close_pane") == [pane]
     assert pane not in client.live_panes
     assert session.worker_alive(pane) is False
+
+
+# --- preflight surfaces the running server to the operator ---
+
+
+def test_preflight_finding_reports_a_live_compatible_server(tmp_path: Path) -> None:
+    from woof.cli.preflight import check_herdr_server
+
+    client = FakeClient()
+    finding = check_herdr_server(
+        "woof-test",
+        socket_path=tmp_path / "herdr.sock",
+        alive=True,
+        client=client,
+    )
+    assert finding.ok is True
+    assert "0.7.3" in finding.detail
+    assert f"protocol {HERDR_PROTOCOL}" in finding.detail
+    assert str(tmp_path / "herdr.sock") in finding.detail
+
+
+def test_preflight_finding_fails_on_an_incompatible_server(tmp_path: Path) -> None:
+    from woof.cli.preflight import check_herdr_server
+
+    client = FakeClient(protocol=HERDR_PROTOCOL + 1, version="0.9.0")
+    finding = check_herdr_server(
+        "woof-test",
+        socket_path=tmp_path / "herdr.sock",
+        alive=True,
+        client=client,
+    )
+    assert finding.ok is False
+    assert str(HERDR_PROTOCOL) in finding.detail
+
+
+def test_preflight_finding_calls_an_orphaned_socket_a_dead_session(tmp_path: Path) -> None:
+    """A socket file with no listener is not a live server; preflight says so."""
+    from woof.cli.preflight import check_herdr_server
+
+    orphan = tmp_path / "herdr.sock"
+    orphan.write_bytes(b"")
+    finding = check_herdr_server("woof-test", socket_path=orphan, alive=False, client=None)
+    assert finding.warn is True, "a dead session is a warning: dispatch reaps and respawns it"
+    assert "no listener" in finding.detail
+    assert "orphaned socket left by a dead server" in finding.detail
+
+
+def test_a_declared_session_is_checked_and_an_undeclared_one_is_not(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The named session is a runtime choice, so preflight checks it only when declared."""
+    from woof.cli import preflight as preflight_mod
+    from woof.cli.dispatcher import HERDR_SESSION_ENV
+
+    monkeypatch.delenv(HERDR_SESSION_ENV, raising=False)
+    assert preflight_mod._check_declared_herdr_server() is None
+
+    monkeypatch.setenv(HERDR_SESSION_ENV, "woof-not-serving")
+    finding = preflight_mod._check_declared_herdr_server()
+    assert finding is not None
+    assert finding.id == "dispatch.herdr.server"
+    assert finding.warn is True  # nothing is serving it; dispatch respawns

@@ -408,3 +408,42 @@ def test_an_operator_session_is_refused_before_a_worker_starts() -> None:
 def test_a_tmux_profile_needs_no_herdr_session(tmp_path: Path) -> None:
     backend = open_backend(get_profile("reasonix"), tmux_api=FakeTmux())
     assert backend.session_name() is None
+
+
+# --- the engine's explicit close verb ---
+
+
+def test_close_retained_worker_terminates_and_forgets_the_recorded_worker(tmp_path: Path) -> None:
+    """The engine's explicit close: end the unit, end the worker.
+
+    Without it the producer outlives the run, and the next dispatch into the same
+    working tree has two workers editing the same files.
+    """
+    from woof.cli.dispatcher import close_retained_worker
+
+    client = FakeClient()
+    backend = herdr_backend(client)
+    record = tmp_path / "worker.json"
+    save_worker_identity(
+        record,
+        WorkerIdentity(
+            backend=BACKEND_HERDR,
+            worker_name="woof-run1-unit-primary",
+            worker_ref="%7",
+            session="woof-test",
+        ),
+    )
+    client.live_panes.add("%7")
+
+    closed = close_retained_worker(record, backend=backend)
+
+    assert closed is True
+    assert client.calls_of("close_pane") == ["%7"]
+    assert not record.exists()
+
+
+def test_closing_an_absent_worker_is_a_no_op_not_a_failure(tmp_path: Path) -> None:
+    from woof.cli.dispatcher import close_retained_worker
+
+    backend = herdr_backend(FakeClient())
+    assert close_retained_worker(tmp_path / "absent.json", backend=backend) is False

@@ -451,7 +451,13 @@ def main() -> int:
         "--session-mode",
         choices=("one-shot", "warm-producer"),
         default="one-shot",
-        help="worker session lifecycle; warm-producer reuses or respawns the producer tmux session",
+        help="worker lifecycle; warm-producer reattaches to the unit's retained producer "
+        "or respawns it from the recorded identity",
+    )
+    dispatch.add_argument(
+        "--close-worker",
+        action="store_true",
+        help="terminate the work unit's retained producer and forget it; takes no prompt",
     )
     dispatch.add_argument(
         "--prompt-file",

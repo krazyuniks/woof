@@ -28,17 +28,27 @@ from woof.cli.commands.observe import build_operator_state_summary
 from woof.cli.dispatcher import (
     TRUSTED_RUNTIME_MODE,
     TRUSTED_RUNTIME_NOTE,
+    herdr_session_name,
 )
 from woof.cli.harness_registry import (
+    BACKEND_HERDR,
     HarnessError,
     build_launch_argv,
     get_profile,
     resolve_harness_config,
 )
+from woof.cli.herdr import (
+    HERDR_PROTOCOL,
+    SocketClient,
+    preflight_server,
+    session_socket_path,
+    socket_alive,
+)
 from woof.cli.main import (
     SCHEMAS,
     run_ajv,
 )
+from woof.cli.transport_errors import WorkerError
 from woof.graph.git import git_env
 from woof.graph.state import Plan
 from woof.lib.audit import scan_text_for_secrets
@@ -413,10 +423,102 @@ def _check_config_schema(config: ProjectConfig, raw: dict[str, Any]) -> list[Pre
 
 def _check_role_routes(config: ProjectConfig) -> list[PreflightFinding]:
     profile = config.run_profile
-    return [
+    findings = [
         _check_dispatch_profile_slot(profile.name, "producer", profile.producer),
         _check_dispatch_profile_slot(profile.name, "reviewer", profile.reviewer),
     ]
+    server = _check_declared_herdr_server() if _any_herdr_slot(profile) else None
+    if server is not None:
+        findings.append(server)
+    return findings
+
+
+def _any_herdr_slot(profile: Any) -> bool:
+    for slot in (profile.producer, profile.reviewer):
+        try:
+            if get_profile(slot.harness).backend == BACKEND_HERDR:
+                return True
+        except HarnessError:
+            continue
+    return False
+
+
+def _check_declared_herdr_server() -> PreflightFinding | None:
+    """Check the herdr server this project would actually dispatch into.
+
+    Compatibility is a property of the running server reached through the named
+    session's socket, not of the herdr binary on PATH, so this connects.
+
+    The named session is a runtime choice, not a host prerequisite: with none
+    declared there is no server to check and preflight stays silent. Dispatch is the
+    authority there, and it refuses a herdr profile with no declared session before
+    any worker starts.
+    """
+    session = herdr_session_name()
+    if not session:
+        return None
+    socket_path = session_socket_path(session)
+    alive = socket_alive(socket_path)
+    client = SocketClient(str(socket_path)) if alive else None
+    return check_herdr_server(session, socket_path=socket_path, alive=alive, client=client)
+
+
+def check_herdr_server(
+    session: str,
+    *,
+    socket_path: Path,
+    alive: bool,
+    client: Any,
+) -> PreflightFinding:
+    """Report the running server behind a named session: its socket, version, and protocol.
+
+    Liveness is an accepted connection, never the presence of the socket file. A
+    socket file with no listener behind it is a dead session whose orphaned socket
+    would make every dispatch fail with a refused connection; dispatch reaps and
+    respawns it, and preflight names it rather than reporting a healthy session.
+    """
+    label = "herdr running server"
+    finding_id = "dispatch.herdr.server"
+    if not alive or client is None:
+        # A dead session is a warning, not a blocker: dispatch reaps the orphaned
+        # socket and respawns the server. What it must never do is treat the socket
+        # file as proof of a live server, which is how every dispatch ends up failing
+        # with a connection refusal that never self-heals.
+        detail = (
+            f"herdr session {session!r} at {socket_path} has no listener"
+            f"{' (an orphaned socket left by a dead server)' if socket_path.exists() else ''}; "
+            "dispatch will reap it and respawn the server"
+        )
+        return PreflightFinding(
+            id=finding_id,
+            label=label,
+            ok=True,
+            warn=True,
+            detail=detail,
+            required=f"a herdr server serving session {session!r} at socket protocol "
+            f"{HERDR_PROTOCOL}",
+        )
+    try:
+        preflight = preflight_server(client, session=session, socket=str(socket_path))
+    except WorkerError as exc:
+        return PreflightFinding(
+            id=finding_id,
+            label=label,
+            ok=False,
+            detail=str(exc),
+            required=f"a herdr server serving session {session!r} at socket protocol "
+            f"{HERDR_PROTOCOL}",
+        )
+    return PreflightFinding(
+        id=finding_id,
+        label=label,
+        ok=True,
+        detail=(
+            f"herdr session {session!r} at {preflight.socket} serves herdr "
+            f"{preflight.version}, protocol {preflight.protocol}"
+        ),
+        required=f"a herdr server serving session {session!r} at socket protocol {HERDR_PROTOCOL}",
+    )
 
 
 def _check_dispatch_profile_slot(

@@ -21,7 +21,7 @@ unnecessary?
 
 ## Output
 
-Write the artefact as `one-thing.md` into the `.woof/epics/E<N>/discovery/thinking/` bucket directory declared in the
+Write the artefact as `one-thing.md` into the `discovery/thinking/` bucket directory declared in the
 graph-owned input. Use this shape:
 
 ```

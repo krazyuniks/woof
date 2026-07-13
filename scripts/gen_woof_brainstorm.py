@@ -86,17 +86,21 @@ epic lives, where the bundle is written, the redo flow, and the handoff.
 
 ## Wrapper: how this runs inside Woof
 
-1. Find the epic. Read `.woof/.current-epic` (it holds `E<N>`) to get the active epic; use a
+Engine state lives in the operator home, not in the repository being worked on: the project state
+root is `~/.woof/state/projects/<project-key>/`, written below as `<state-root>`. The project key is
+the one the operator passes to `woof --project`.
+
+1. Find the epic. Read `<state-root>/.current-epic` (it holds `E<N>`) to get the active epic; use a
    different epic only if the operator names one. If there is no current epic, stop and tell them to
    create one first with `woof wf new "<spark>"` (the umbrella does this). Brainstorm hydrates an
    existing spark; it does not create epics.
 
-2. Read the spark. `.woof/epics/E<N>/spark.md` is the seed for Loop 1; treat it as the Contract 0
-   input. The design concerns the consumer repository, so this is a brownfield discovery whenever
-   there is existing code to grill against.
+2. Read the spark. `<state-root>/epics/E<N>/spark.md` is the seed for Loop 1; treat it as the
+   Contract 0 input. The design concerns the consumer repository, so this is a brownfield discovery
+   whenever there is existing code to grill against.
 
-3. Check for an existing bundle (redo). If `.woof/epics/E<N>/discovery/brainstorm/` already holds a
-   design, do not silently overwrite it. Ask with `AskUserQuestion`:
+3. Check for an existing bundle (redo). If `<state-root>/epics/E<N>/discovery/brainstorm/` already
+   holds a design, do not silently overwrite it. Ask with `AskUserQuestion`:
    - Revise: load the existing bundle, continue the loops from it, and save back into the same
      bucket.
    - Start fresh: run `woof wf reset --epic <N> --yes`, which returns the epic to its spark - it
@@ -104,14 +108,13 @@ epic lives, where the bundle is written, the redo flow, and the handoff.
      critiques, gate and result files) while keeping spark.md, the tracker linkage, and the epic log
      - then run the loops from scratch.
    - Cancel: leave everything untouched and stop.
-   Never edit or delete files under `.woof/` by hand; the reset verb is the only way to clear
-   derived state.
+   Never edit or delete engine state by hand; the reset verb is the only way to clear derived state.
 
 4. Run the two loops. Follow the canonical process below and produce the bundle: the design
    document, `CONTEXT.md`, and any ADRs.
 
 5. Write into the deterministic bucket. Write the whole bundle directly into
-   `.woof/epics/E<N>/discovery/brainstorm/` - there is no path argument and the operator never
+   `<state-root>/epics/E<N>/discovery/brainstorm/` - there is no path argument and the operator never
    chooses a location; Woof owns it. The bundle is self-contained in the bucket: the resolved design
    document there (its front-matter is Contract 2), `CONTEXT.md` alongside it, and any ADRs under
    `discovery/brainstorm/adr/NNNN-slug.md` with `adr_refs` as paths relative to the design document.

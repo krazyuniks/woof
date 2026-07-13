@@ -9,28 +9,29 @@ Graph-owned input:
   "node_type": "executor_dispatch",
   "epic_id": {epic_id},
   "work_unit_id": "{work_unit_id}",
-  "plan_path": ".woof/epics/E{epic_id}/plan.json",
-  "epic_path": ".woof/epics/E{epic_id}/EPIC.md",
-  "executor_result_path": ".woof/epics/E{epic_id}/executor_result.json"
+  "plan_path": "{plan_path}",
+  "epic_path": "{epic_path}",
+  "executor_result_path": "{executor_result_path}"
 }
 ```
+
+The three paths are absolute paths in the operator's Woof home. Engine state is not part of the repository; never look for it under the checkout.
 
 ## Context documents — read these first
 
 When repo policy supplies cartography, the graph prepends a "Graph-owned cartography input" block with `inputs.cartography_paths` and, for lexical or structural floors, `inputs.files_txt_slice`. Read the supplied inputs before implementing:
 
-- `.woof/codebase/STRUCTURE.md`
-- `.woof/codebase/CONVENTIONS.md`
-- `.woof/codebase/TARGET-ARCHITECTURE.md`
-- `.woof/codebase/PRINCIPLES.md`
-- `.woof/codebase/files.txt` (work-unit-scoped subset delivered in `inputs.files_txt_slice`)
+- `STRUCTURE.md`
+- `CONVENTIONS.md`
+- `TARGET-ARCHITECTURE.md`
+- `PRINCIPLES.md`
+- `files.txt` (work-unit-scoped subset delivered in `inputs.files_txt_slice`)
 
 Read:
 
-1. `.woof/.current-epic`
-2. `.woof/epics/E{epic_id}/plan.json`
-3. `.woof/epics/E{epic_id}/EPIC.md`
-4. `CLAUDE.md` / `AGENTS.md` if present
+1. the declared `plan_path`
+2. the declared `epic_path`
+3. `CLAUDE.md` / `AGENTS.md` if present
 
 Implement only work unit `{work_unit_id}` and only its declared `paths[]` scope. Add or update tests for the work unit's `satisfies[]` outcomes. Run the project's normal quality command if the project config declares one.
 
@@ -71,7 +72,7 @@ Your working context is re-paid on every turn, so keep it small:
 
 ## Output
 
-Write `.woof/epics/E{epic_id}/executor_result.json` atomically.
+Write the declared `executor_result_path` atomically.
 
 For completed work:
 

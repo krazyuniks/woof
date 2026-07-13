@@ -21,7 +21,7 @@ not easiest; simplest means fewest moving parts.
 
 ## Output
 
-Write the artefact as `occams-razor.md` into the `.woof/epics/E<N>/discovery/thinking/` bucket directory declared in
+Write the artefact as `occams-razor.md` into the `discovery/thinking/` bucket directory declared in
 the graph-owned input. Use this shape:
 
 ```

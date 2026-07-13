@@ -14,7 +14,7 @@
     "epic_id": {
       "type": "integer",
       "minimum": 1,
-      "description": "Tracker-assigned epic identifier for epic-backed plans. Mirrors EPIC.md.epic_id while the epic graph stores plan.json under .woof/epics/E<N>."
+      "description": "Tracker-assigned epic identifier for epic-backed plans. Mirrors EPIC.md.epic_id while the epic graph stores plan.json under epics/E<N> in the project state root in the operator home."
     },
     "context": {
       "oneOf": [

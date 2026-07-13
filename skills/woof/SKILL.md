@@ -15,10 +15,23 @@ decides; the graph owns the control flow.
 one interactive part - leading the design conversation - is a separate specialist, the
 `woof-brainstorm` skill (`/woof:brainstorm`), which this skill routes to.
 
+## Where the engine keeps its files (ADR-017)
+
+No engine config and no engine state is written into the repository being delivered; a delivery
+commit contains only the delivery change. Both live in the operator home, keyed by project:
+
+- config: `~/.woof/config/projects/<project-key>.toml` - one file per project.
+- state: `~/.woof/state/projects/<project-key>/` - epics, plans, gates, critiques, dispositions,
+  locks, audit, cartography. Written below as `<state-root>`.
+
+Every command takes `--project <key>`; the key is explicit and is never derived from the checkout's
+directory name. Set `WOOF_PROJECT` once in the session and `--project` can be omitted. The
+`--project` flag is left off the examples below for brevity; pass it (or export `WOOF_PROJECT`).
+
 ## Guardrails
 
-- Never hand-edit anything under `.woof/`. Every state change goes through a `woof` verb; the JSONL
-  audit log and gates depend on it.
+- Never hand-edit anything under `<state-root>`. Every state change goes through a `woof` verb; the
+  JSONL audit log and gates depend on it.
 - The graph picks the next node. You run `woof wf`; you do not choose stages. If `woof wf` reports
   `incomplete_stage_state`, fix the named artefact or open a gate - do not patch state by hand.
 - Surface gates; never auto-approve. When the graph opens a gate, show it to the operator and
@@ -31,7 +44,8 @@ one interactive part - leading the design conversation - is a separate specialis
 ## The flow (spark to work units)
 
 1. Create an epic: `woof wf new "<spark>"`. The `github` tracker opens an issue and records it; the
-   `local` tracker creates the epic on disk. Both write `spark.md` and set `.woof/.current-epic`.
+   `local` tracker creates the epic in the operator home. Both write
+   `<state-root>/epics/E<N>/spark.md` and set `<state-root>/.current-epic`.
 2. Design (interactive): hand off to `/woof:brainstorm`. It runs the two design loops and writes the
    resolved bundle into the epic's `discovery/brainstorm/` bucket. This is the only interactive
    stage; route to it rather than driving design from here.
@@ -77,12 +91,18 @@ woof validate <path>... [--schema NAME]    # validate an artefact against a woof
 ### Onboard / maintain a consumer repo
 
 ```bash
-woof init [--tracker github|local]   # scaffold .woof/ config + .gitignore
-woof preflight                       # check local prerequisites
+woof init --project <key> [--tracker github|local] [--language LANG]
+                                     # write ~/.woof/config/projects/<key>.toml
+woof preflight                       # check local prerequisites, config, and cartography
 woof hooks install                   # install the post-commit cartography hook
 woof render-epic --epic N [--sync]   # render EPIC.md front-matter into the tracker body
 woof audit-bundle E<N>               # copy referenced Claude transcripts into the epic audit folder
 ```
+
+`woof init` writes one file, the project config in the operator home. The only file it writes into
+the repo is `scripts/refresh-cartography` (with `--language`), because that generator is the
+project's own and is run by the project's post-commit hook. It writes no config, no state, and no
+`.gitignore` block into the repo.
 
 ### Gate decisions (for `woof wf --epic N --resolve`)
 

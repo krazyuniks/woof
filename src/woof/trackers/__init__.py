@@ -13,8 +13,7 @@ The graph, CLI, and gate code depend on the :class:`Tracker` protocol only.
 
 from __future__ import annotations
 
-from pathlib import Path
-
+from woof.paths import resolve_project_key
 from woof.project_config import ProjectConfigError, TrackerConfig, load_project_config
 from woof.trackers.base import (
     CONFLICT_DECISIONS,
@@ -60,16 +59,22 @@ def load_tracker_config(project_key: str | None = None) -> TrackerConfig:
         raise TrackerError(str(exc)) from exc
 
 
-def resolve_tracker(repo_root: Path, project_key: str | None = None) -> Tracker:
-    """Resolve the configured issue-tracker adapter for a delivery checkout."""
+def resolve_tracker(project_key: str | None = None) -> Tracker:
+    """Resolve the configured issue-tracker adapter for a project.
 
-    config = load_tracker_config(project_key)
+    No adapter takes a repository checkout: the GitHub adapter names the
+    repository in every ``gh`` call, and the local adapter has no remote at all.
+    The project key selects both the config and the durable state.
+    """
+
+    key = resolve_project_key(project_key)
+    config = load_tracker_config(key)
     if config.kind == "github":
         if not config.repo:
             raise TrackerError('[tracker] with kind = "github" requires a non-empty repo')
-        return GitHubTracker(repo_root, config.repo)
+        return GitHubTracker(key, config.repo)
     if config.kind == "local":
-        return LocalTracker(repo_root)
+        return LocalTracker(key)
     raise TrackerError(
         f"[tracker].kind must be one of {', '.join(TRACKER_KINDS)}; got {config.kind!r}"
     )

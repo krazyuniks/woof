@@ -14,6 +14,12 @@ import yaml
 
 from woof.graph.state import Plan, WorkUnitSetContext
 from woof.project_config import ProjectConfigError, load_project_config
+from woof.state import (
+    atomic_write_json,
+    atomic_write_text,
+    intake_sources_path,
+    work_unit_set_dir,
+)
 
 
 @dataclass(frozen=True)
@@ -30,35 +36,31 @@ def now_utc() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def default_project_ref(repo_root: Path) -> str:
-    return repo_root.resolve().name
-
-
-def epic_work_unit_context(repo_root: Path, epic_id: int) -> dict[str, Any]:
+def epic_work_unit_context(project_key: str, epic_id: int) -> dict[str, Any]:
     return {
         "kind": "epic",
-        "project_ref": default_project_ref(repo_root),
+        "project_ref": project_key,
         "epic_id": epic_id,
     }
 
 
-def ensure_epic_plan_context(repo_root: Path, epic_id: int, plan_path: Path) -> None:
+def ensure_epic_plan_context(project_key: str, epic_id: int, plan_path: Path) -> None:
     payload = json.loads(plan_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError(f"{plan_path} must contain a JSON object")
     context = payload.get("context")
-    expected = epic_work_unit_context(repo_root, epic_id)
+    expected = epic_work_unit_context(project_key, epic_id)
     if context is None:
         payload["context"] = expected
     elif context != expected:
         raise ValueError(f"plan context {context!r} does not match {expected!r}")
     if payload.get("epic_id") != epic_id:
         raise ValueError(f"plan epic_id {payload.get('epic_id')} does not match E{epic_id}")
-    plan_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    atomic_write_json(plan_path, payload)
 
 
 def ingest_predecomposed_work_units(
-    repo_root: Path,
+    project_key: str,
     source_path: Path,
     *,
     project_ref: str | None = None,
@@ -68,11 +70,9 @@ def ingest_predecomposed_work_units(
     source_path = source_path.resolve()
     payload = _load_source_payload(source_path)
     source_project_ref = _string(payload.get("project_ref"))
-    resolved_project_ref = project_ref or source_project_ref or default_project_ref(repo_root)
-    resolved_source_ref = (
-        source_ref or _string(payload.get("source_ref")) or _rel(repo_root, source_path)
-    )
-    resolved_set_id = _resolve_set_id(repo_root, source_path, payload, explicit=set_id)
+    resolved_project_ref = project_ref or source_project_ref or project_key
+    resolved_source_ref = source_ref or _string(payload.get("source_ref")) or source_path.as_posix()
+    resolved_set_id = _resolve_set_id(project_key, source_path, payload, explicit=set_id)
     context = {
         "kind": "work_unit_set",
         "project_ref": resolved_project_ref,
@@ -89,24 +89,24 @@ def ingest_predecomposed_work_units(
         }
     )
 
-    directory = repo_root / ".woof" / "work-unit-sets" / resolved_set_id
+    directory = work_unit_set_dir(project_key, resolved_set_id)
     directory.mkdir(parents=True, exist_ok=True)
     plan_path = directory / "plan.json"
     plan_markdown_path = directory / "PLAN.md"
     metadata_path = directory / "intake.json"
-    plan_path.write_text(plan.model_dump_json(indent=2, exclude_none=True) + "\n", encoding="utf-8")
-    plan_markdown_path.write_text(_render_plan_markdown(plan), encoding="utf-8")
+    atomic_write_text(plan_path, plan.model_dump_json(indent=2, exclude_none=True) + "\n")
+    atomic_write_text(plan_markdown_path, _render_plan_markdown(plan))
     metadata = {
         "schema_version": 1,
         "kind": "pre_decomposed_work_units",
         "ingested_at": now_utc(),
         "source": {
-            "path": _rel(repo_root, source_path),
+            "path": source_path.as_posix(),
             "source_ref": resolved_source_ref,
         },
         "context": context,
-        "plan_path": _rel(repo_root, plan_path),
-        "plan_markdown_path": _rel(repo_root, plan_markdown_path),
+        "plan_path": plan_path.as_posix(),
+        "plan_markdown_path": plan_markdown_path.as_posix(),
         "qualified_work_unit_refs": [
             {"context": context, "work_unit_id": unit.id} for unit in plan.work_units
         ],
@@ -114,7 +114,7 @@ def ingest_predecomposed_work_units(
     worktrees = _worktree_metadata(payload, plan)
     if worktrees is not None:
         metadata["worktrees"] = worktrees
-    metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+    atomic_write_json(metadata_path, metadata)
     return IntakeResult(
         context=context,
         directory=directory,
@@ -174,7 +174,7 @@ def _normalise_work_unit(unit: dict[str, Any]) -> dict[str, Any]:
 
 
 def _resolve_set_id(
-    repo_root: Path,
+    project_key: str,
     source_path: Path,
     payload: dict[str, Any],
     *,
@@ -187,7 +187,7 @@ def _resolve_set_id(
     if candidate:
         return _slug(candidate)
 
-    mapping_path = repo_root / ".woof" / "intake" / "sources.json"
+    mapping_path = intake_sources_path(project_key)
     key = str(source_path)
     mapping = _load_mapping(mapping_path)
     existing = mapping.get(key)
@@ -195,8 +195,7 @@ def _resolve_set_id(
         return existing
     assigned = _slug(f"set-{hashlib.sha256(key.encode('utf-8')).hexdigest()[:12]}")
     mapping[key] = assigned
-    mapping_path.parent.mkdir(parents=True, exist_ok=True)
-    mapping_path.write_text(json.dumps(mapping, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    atomic_write_text(mapping_path, json.dumps(mapping, indent=2, sort_keys=True) + "\n")
     return assigned
 
 
@@ -276,13 +275,6 @@ def _string_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, str)]
-
-
-def _rel(repo_root: Path, path: Path) -> str:
-    try:
-        return path.relative_to(repo_root).as_posix()
-    except ValueError:
-        return str(path)
 
 
 def _render_plan_markdown(plan: Plan) -> str:

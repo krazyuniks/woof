@@ -24,6 +24,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from woof import state
 from woof.cli.harness_registry import (
     HarnessError,
     build_launch_argv,
@@ -34,7 +35,6 @@ from woof.lib.error_signature import normalise as _normalise_error_sig
 from woof.lib.rate_limit import classify as _classify_rate_limit
 from woof.paths import (
     ProjectKeyError,
-    project_state_root,
     repo_root_from_git,
     resolve_project_key,
     schema_dir,
@@ -117,22 +117,12 @@ def iso_utc(dt: datetime) -> str:
     return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def append_jsonl(path: Path, event: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(event, separators=(",", ":")) + "\n")
-
-
 def _sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
-
-
-def _relpath(repo_root: Path, path: Path) -> str:
-    return path.relative_to(repo_root).as_posix()
 
 
 def artefacts_byte_count(repo_root: Path, artefacts_loaded: list[str]) -> int:
@@ -337,7 +327,7 @@ def _run_ajv(schema_path: Path, data_json: bytes) -> tuple[bool, str]:
 
 
 def _config_schema_cache_path(project_key: str) -> Path:
-    return project_state_root(project_key) / "config-schema-cache"
+    return state.preflight_cache_dir(project_key) / "project-config-schema"
 
 
 def _config_schema_cache_key(config_bytes: bytes, schema_bytes: bytes) -> str:
@@ -489,11 +479,15 @@ def _executor_result_ready(path: Path, epic_id: int, work_unit_id: str) -> bool:
     return payload.get("epic_id") == epic_id and payload.get("work_unit_id") == work_unit_id
 
 
-def ensure_run_metadata(epic_dir: Path, epic_id: int, created_at: datetime) -> str:
+def run_metadata_path(project_key: str, epic_id: int) -> Path:
+    return state.runs_root(project_key, epic_id) / "run.json"
+
+
+def ensure_run_metadata(project_key: str, epic_id: int, created_at: datetime) -> str:
     """Return the durable run id for this epic, creating run metadata once."""
 
-    path = epic_dir / "run.json"
-    worktrees = _profile_a_run_worktrees(epic_dir)
+    path = run_metadata_path(project_key, epic_id)
+    worktrees = _profile_a_run_worktrees(project_key, epic_id)
     if path.is_file():
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
@@ -503,23 +497,20 @@ def ensure_run_metadata(epic_dir: Path, epic_id: int, created_at: datetime) -> s
         if isinstance(run_id, str) and run_id:
             if worktrees is not None and isinstance(payload, dict) and "worktrees" not in payload:
                 payload["worktrees"] = worktrees
-                path.write_text(
-                    json.dumps(payload, indent=2, sort_keys=True) + "\n",
-                    encoding="utf-8",
-                )
+                state.atomic_write_json(path, payload)
             return run_id
 
     run_id = f"run-{epic_id}-{uuid.uuid4().hex[:12]}"
     payload = {"run_id": run_id, "epic_id": epic_id, "created_at": iso_utc(created_at)}
     if worktrees is not None:
         payload["worktrees"] = worktrees
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    state.atomic_write_json(path, payload)
     return run_id
 
 
-def _profile_a_run_worktrees(epic_dir: Path) -> dict[str, Any] | None:
+def _profile_a_run_worktrees(project_key: str, epic_id: int) -> dict[str, Any] | None:
     try:
-        config = load_project_config()
+        config = load_project_config(project_key)
     except ProjectConfigError:
         return None
     if config.delivery.profile != "A" or config.profile_a is None:
@@ -532,7 +523,7 @@ def _profile_a_run_worktrees(epic_dir: Path) -> dict[str, Any] | None:
     metadata: dict[str, Any] = {"derivation": derivation, "root": root}
     if derivation != "unit_id":
         return metadata
-    unit_ids = _plan_work_unit_ids(epic_dir / "plan.json")
+    unit_ids = _plan_work_unit_ids(state.plan_path(project_key, epic_id))
     metadata["unit_paths"] = {unit_id: f"{root.rstrip('/')}/{unit_id}" for unit_id in unit_ids}
     return metadata
 
@@ -591,20 +582,22 @@ def _review_key(
     return _sha256_text(json.dumps(payload, sort_keys=True, separators=(",", ":")))
 
 
-def _review_cache_path(epic_dir: Path, review_cache_key: str) -> Path:
-    return epic_dir / "reviews" / "cache" / f"{review_cache_key}.json"
+def _review_cache_path(project_key: str, epic_id: int, review_cache_key: str) -> Path:
+    return state.review_cache_dir(project_key, epic_id) / f"{review_cache_key}.json"
 
 
-def _review_attempts_dir(epic_dir: Path) -> Path:
-    return epic_dir / "reviews" / "attempts"
+def _review_attempts_dir(project_key: str, epic_id: int) -> Path:
+    return state.review_cache_dir(project_key, epic_id) / "attempts"
 
 
-def _attempts_dir(epic_dir: Path) -> Path:
-    return epic_dir / "attempts"
+def _attempts_dir(project_key: str, epic_id: int) -> Path:
+    return state.runs_root(project_key, epic_id) / "attempts"
 
 
-def _load_review_cache(epic_dir: Path, review_cache_key: str) -> dict[str, Any] | None:
-    path = _review_cache_path(epic_dir, review_cache_key)
+def _load_review_cache(
+    project_key: str, epic_id: int, review_cache_key: str
+) -> dict[str, Any] | None:
+    path = _review_cache_path(project_key, epic_id, review_cache_key)
     if not path.is_file():
         return None
     try:
@@ -614,26 +607,25 @@ def _load_review_cache(epic_dir: Path, review_cache_key: str) -> dict[str, Any] 
     return payload if isinstance(payload, dict) else None
 
 
-def _write_json_file(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-
-def _write_attempt_file(epic_dir: Path, attempt_id: str, payload: dict[str, Any]) -> Path:
-    path = _attempts_dir(epic_dir) / f"{attempt_id}.json"
-    _write_json_file(path, payload)
+def _write_attempt_file(
+    project_key: str, epic_id: int, attempt_id: str, payload: dict[str, Any]
+) -> Path:
+    path = _attempts_dir(project_key, epic_id) / f"{attempt_id}.json"
+    state.atomic_write_json(path, payload)
     return path
 
 
-def _write_review_attempt_file(epic_dir: Path, attempt_id: str, payload: dict[str, Any]) -> Path:
-    path = _review_attempts_dir(epic_dir) / f"{attempt_id}.json"
-    _write_json_file(path, payload)
+def _write_review_attempt_file(
+    project_key: str, epic_id: int, attempt_id: str, payload: dict[str, Any]
+) -> Path:
+    path = _review_attempts_dir(project_key, epic_id) / f"{attempt_id}.json"
+    state.atomic_write_json(path, payload)
     return path
 
 
-def _prior_review_verdicts(epic_dir: Path, review_cache_key: str) -> set[str]:
+def _prior_review_verdicts(project_key: str, epic_id: int, review_cache_key: str) -> set[str]:
     verdicts: set[str] = set()
-    attempts_dir = _review_attempts_dir(epic_dir)
+    attempts_dir = _review_attempts_dir(project_key, epic_id)
     if not attempts_dir.is_dir():
         return verdicts
     for path in sorted(attempts_dir.glob("*.json")):
@@ -652,9 +644,9 @@ def _prior_review_verdicts(epic_dir: Path, review_cache_key: str) -> set[str]:
 
 
 def _record_review_instability(
-    epic_dir: Path,
+    project_key: str,
+    epic_id: int,
     *,
-    repo_root: Path,
     run_id: str,
     attempt_id: str,
     work_unit_id: str,
@@ -664,7 +656,7 @@ def _record_review_instability(
     prior_verdicts: set[str],
     new_verdict: str,
 ) -> str:
-    path = epic_dir / "reviews" / "instability" / f"{review_cache_key}.jsonl"
+    path = state.instability_path(project_key, epic_id)
     event = {
         "run_id": run_id,
         "attempt_id": attempt_id,
@@ -676,14 +668,14 @@ def _record_review_instability(
         "new_verdict": new_verdict,
         "at": iso_utc(datetime.now(UTC)),
     }
-    append_jsonl(path, event)
-    return _relpath(repo_root, path)
+    state.append_jsonl(path, event)
+    return str(path)
 
 
 def _write_review_cache_entry(
-    epic_dir: Path,
+    project_key: str,
+    epic_id: int,
     *,
-    repo_root: Path,
     review_cache_key: str,
     run_id: str,
     attempt_id: str,
@@ -698,7 +690,7 @@ def _write_review_cache_entry(
     exit_code: int,
     exit_type: str,
 ) -> None:
-    critique_path = epic_dir / "critique" / f"work-unit-{work_unit_id}.md"
+    critique_path = state.work_unit_critique_path(project_key, epic_id, work_unit_id)
     critique_text = critique_path.read_text(encoding="utf-8") if critique_path.is_file() else None
     payload: dict[str, Any] = {
         "review_cache_key": review_cache_key,
@@ -717,18 +709,30 @@ def _write_review_cache_entry(
         "created_at": iso_utc(datetime.now(UTC)),
     }
     if critique_text is not None:
-        payload["critique_path"] = _relpath(repo_root, critique_path)
+        payload["critique_path"] = str(critique_path)
         payload["critique_text"] = critique_text
-    _write_json_file(_review_cache_path(epic_dir, review_cache_key), payload)
+    state.atomic_write_json(
+        _review_cache_path(project_key, epic_id, review_cache_key),
+        payload,
+    )
 
 
-def _restore_cached_critique(repo_root: Path, cached: dict[str, Any]) -> None:
-    critique_path = cached.get("critique_path")
+def _restore_cached_critique(
+    project_key: str, epic_id: int, work_unit_id: str, cached: dict[str, Any]
+) -> None:
+    """Rewrite the cached critique into engine state.
+
+    The destination is derived from the project key, never from the cached
+    ``critique_path``: the cache entry records where the critique was written,
+    not where a later run must put it.
+    """
+
     critique_text = cached.get("critique_text")
-    if isinstance(critique_path, str) and isinstance(critique_text, str):
-        path = repo_root / critique_path
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(critique_text, encoding="utf-8")
+    if isinstance(critique_text, str):
+        state.atomic_write_text(
+            state.work_unit_critique_path(project_key, epic_id, work_unit_id),
+            critique_text,
+        )
 
 
 def cmd_dispatch(args: argparse.Namespace) -> int:
@@ -866,18 +870,18 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         print(json.dumps(payload))
         return 0
 
-    epic_dir = repo_root / ".woof" / "epics" / f"E{args.epic}"
-    audit_dir = epic_dir / "audit"
+    epic_id = args.epic
+    audit_dir = state.audit_dir(project_key, epic_id)
     audit_dir.mkdir(parents=True, exist_ok=True)
     started_at = datetime.now(UTC)
-    run_id = ensure_run_metadata(epic_dir, args.epic, started_at)
+    run_id = ensure_run_metadata(project_key, epic_id, started_at)
     attempt_id = _attempt_id(run_id, args.role, work_unit_id, started_at)
     base = reserve_audit_base(audit_dir, route.adapter, args.role, started_at, prompt)
     output_file = base.with_suffix(".output")
     stderr_file = base.with_suffix(".stderr")
     meta_file = base.with_suffix(".meta")
 
-    dispatch_jsonl = epic_dir / "dispatch.jsonl"
+    dispatch_jsonl = state.dispatch_events_path(project_key, epic_id)
     event_argv = audit_argv(argv)
     launcher_pid = os.getpid()
 
@@ -899,7 +903,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     if review_cache_key is not None:
         assert work_unit_id is not None
         assert diff_hash is not None
-        cached = _load_review_cache(epic_dir, review_cache_key)
+        cached = _load_review_cache(project_key, epic_id, review_cache_key)
         if cached is not None:
             ended_at = datetime.now(UTC)
             answer = str(cached.get("answer") or "")
@@ -908,19 +912,19 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
             structured = structured if isinstance(structured, dict) else _structured_result(answer)
             exit_code = int(cached.get("exit_code") or 0)
             exit_type = str(cached.get("exit_type") or ("clean" if exit_code == 0 else "nonzero"))
-            _restore_cached_critique(repo_root, cached)
+            _restore_cached_critique(project_key, epic_id, work_unit_id, cached)
             output_file.write_text(answer, encoding="utf-8")
             stderr_file.write_text(stderr, encoding="utf-8")
             output_bytes = len(answer.encode("utf-8"))
             stderr_bytes = len(stderr.encode("utf-8"))
             duration_ms = int((ended_at - started_at).total_seconds() * 1000)
             verdict = str(cached.get("verdict") or structured.get("verdict") or "").strip().lower()
-            prior_verdicts = _prior_review_verdicts(epic_dir, review_cache_key)
+            prior_verdicts = _prior_review_verdicts(project_key, epic_id, review_cache_key)
             instability_path = None
             if verdict and any(item != verdict for item in prior_verdicts):
                 instability_path = _record_review_instability(
-                    epic_dir,
-                    repo_root=repo_root,
+                    project_key,
+                    epic_id,
                     run_id=run_id,
                     attempt_id=attempt_id,
                     work_unit_id=work_unit_id,
@@ -961,13 +965,13 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
             _copy_result_fields(cache_event, structured)
             if instability_path:
                 cache_event["review_instability_path"] = instability_path
-            append_jsonl(dispatch_jsonl, cache_event)
+            state.append_jsonl(dispatch_jsonl, cache_event)
 
             audit_paths = {
-                "prompt": _relpath(repo_root, base.with_suffix(".prompt")),
-                "output": _relpath(repo_root, output_file),
-                "stderr": _relpath(repo_root, stderr_file),
-                "meta": _relpath(repo_root, meta_file),
+                "prompt": str(base.with_suffix(".prompt")),
+                "output": str(output_file),
+                "stderr": str(stderr_file),
+                "meta": str(meta_file),
             }
             attempt_payload = {
                 "attempt_kind": "review_cache_hit",
@@ -984,7 +988,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
             }
             if instability_path:
                 attempt_payload["review_instability_path"] = instability_path
-            attempt_path = _write_attempt_file(epic_dir, attempt_id, attempt_payload)
+            attempt_path = _write_attempt_file(project_key, epic_id, attempt_id, attempt_payload)
 
             meta = {
                 "harness": route.adapter,
@@ -1020,7 +1024,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
                 "tokens": _structured_usage(structured),
                 "structured_result": structured,
                 "review_cache_hit": True,
-                "attempt_path": _relpath(repo_root, attempt_path),
+                "attempt_path": str(attempt_path),
                 **lineage_fields,
             }
             if instability_path:
@@ -1062,7 +1066,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         spawned_event["model"] = route.config["model"]
     if effort:
         spawned_event["effort"] = effort
-    append_jsonl(dispatch_jsonl, spawned_event)
+    state.append_jsonl(dispatch_jsonl, spawned_event)
 
     if args.session_mode == "warm-producer":
         assert work_unit_id is not None
@@ -1073,7 +1077,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         exit_type = "clean"
         tmux_meta: dict[str, Any] = {}
         session = _warm_session_name(run_id, work_unit_id, args.role)
-        result_path = epic_dir / "executor_result.json"
+        result_path = state.executor_result_path(project_key, epic_id)
         try:
             deliver_prompt_file, read_file_kickoff, tmux = _tmux_warm_api()
             reattached = tmux.has_session(session)
@@ -1098,8 +1102,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
                     reported_exit_code = 1
                     exit_type = "nonzero"
                     stderr = (
-                        f"warm producer session {session!r} exited before writing "
-                        f"{_relpath(repo_root, result_path)}"
+                        f"warm producer session {session!r} exited before writing {result_path}"
                     )
                     break
                 time.sleep(1.0)
@@ -1108,7 +1111,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
                 exit_type = "wallclock_timeout"
                 stderr = (
                     f"warm producer session {session!r} did not write "
-                    f"{_relpath(repo_root, result_path)} within {int(timeouts.wallclock_seconds)}s"
+                    f"{result_path} within {int(timeouts.wallclock_seconds)}s"
                 )
             answer = tmux.capture_pane_tail(session, 80)
             tmux_meta = {
@@ -1172,13 +1175,13 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         if "reattached" in tmux_meta:
             returned["producer_session_reattached"] = bool(tmux_meta["reattached"])
             returned["producer_session_respawned"] = bool(tmux_meta["respawned"])
-        append_jsonl(dispatch_jsonl, returned)
+        state.append_jsonl(dispatch_jsonl, returned)
 
         audit_paths = {
-            "prompt": _relpath(repo_root, base.with_suffix(".prompt")),
-            "output": _relpath(repo_root, output_file),
-            "stderr": _relpath(repo_root, stderr_file),
-            "meta": _relpath(repo_root, meta_file),
+            "prompt": str(base.with_suffix(".prompt")),
+            "output": str(output_file),
+            "stderr": str(stderr_file),
+            "meta": str(meta_file),
         }
         attempt_payload = {
             "attempt_kind": "dispatch",
@@ -1193,7 +1196,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
             "session_mode": args.session_mode,
             **lineage_fields,
         }
-        attempt_path = _write_attempt_file(epic_dir, attempt_id, attempt_payload)
+        attempt_path = _write_attempt_file(project_key, epic_id, attempt_id, attempt_payload)
 
         meta = {
             "harness": route.adapter,
@@ -1230,7 +1233,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
             "tokens": {},
             "structured_result": {},
             "tmux_harness": tmux_meta,
-            "attempt_path": _relpath(repo_root, attempt_path),
+            "attempt_path": str(attempt_path),
             **lineage_fields,
         }
         meta.update(_result_session_metadata({}, tmux_meta))
@@ -1341,11 +1344,11 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     verdict = str(structured.get("verdict") or "").strip().lower()
     instability_path = None
     if review_cache_key is not None and work_unit_id is not None and diff_hash is not None:
-        prior_verdicts = _prior_review_verdicts(epic_dir, review_cache_key)
+        prior_verdicts = _prior_review_verdicts(project_key, epic_id, review_cache_key)
         if verdict and any(item != verdict for item in prior_verdicts):
             instability_path = _record_review_instability(
-                epic_dir,
-                repo_root=repo_root,
+                project_key,
+                epic_id,
                 run_id=run_id,
                 attempt_id=attempt_id,
                 work_unit_id=work_unit_id,
@@ -1357,7 +1360,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
             )
             returned["review_instability_path"] = instability_path
 
-    append_jsonl(dispatch_jsonl, returned)
+    state.append_jsonl(dispatch_jsonl, returned)
 
     meta = {
         "harness": route.adapter,
@@ -1401,10 +1404,10 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     meta.update(_result_session_metadata(structured, tmux_meta))
 
     audit_paths = {
-        "prompt": _relpath(repo_root, base.with_suffix(".prompt")),
-        "output": _relpath(repo_root, output_file),
-        "stderr": _relpath(repo_root, stderr_file),
-        "meta": _relpath(repo_root, meta_file),
+        "prompt": str(base.with_suffix(".prompt")),
+        "output": str(output_file),
+        "stderr": str(stderr_file),
+        "meta": str(meta_file),
     }
     attempt_payload = {
         "attempt_kind": "dispatch",
@@ -1420,16 +1423,18 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     }
     if instability_path:
         attempt_payload["review_instability_path"] = instability_path
-    attempt_path = _write_attempt_file(epic_dir, attempt_id, attempt_payload)
-    meta["attempt_path"] = _relpath(repo_root, attempt_path)
+    attempt_path = _write_attempt_file(project_key, epic_id, attempt_id, attempt_payload)
+    meta["attempt_path"] = str(attempt_path)
 
     if review_cache_key is not None and work_unit_id is not None and diff_hash is not None:
-        review_attempt_path = _write_review_attempt_file(epic_dir, attempt_id, attempt_payload)
-        meta["review_attempt_path"] = _relpath(repo_root, review_attempt_path)
+        review_attempt_path = _write_review_attempt_file(
+            project_key, epic_id, attempt_id, attempt_payload
+        )
+        meta["review_attempt_path"] = str(review_attempt_path)
         if verdict:
             _write_review_cache_entry(
-                epic_dir,
-                repo_root=repo_root,
+                project_key,
+                epic_id,
                 review_cache_key=review_cache_key,
                 run_id=run_id,
                 attempt_id=attempt_id,

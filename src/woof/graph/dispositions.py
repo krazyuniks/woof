@@ -12,6 +12,7 @@ import yaml
 
 from woof.graph.git import git
 from woof.project_config import ProjectConfigError, load_project_config
+from woof.state import atomic_write_text
 
 # ---------------------------------------------------------------------------
 # Blocker-evidence resolution
@@ -214,17 +215,14 @@ def work_unit_disposition_path(epic_dir: Path, work_unit_id: str) -> Path:
     return epic_dir / "dispositions" / f"work-unit-{work_unit_id}.md"
 
 
-def work_unit_critique_relpath(epic_id: int, work_unit_id: str) -> str:
-    return f".woof/epics/E{epic_id}/critique/work-unit-{work_unit_id}.md"
+def work_unit_critique_ref(work_unit_id: str) -> str:
+    """Epic-relative reference to a critique, as recorded in disposition front-matter."""
 
-
-def work_unit_disposition_relpath(epic_id: int, work_unit_id: str) -> str:
-    return f".woof/epics/E{epic_id}/dispositions/work-unit-{work_unit_id}.md"
+    return f"critique/work-unit-{work_unit_id}.md"
 
 
 def render_deterministic_work_unit_disposition(
     *,
-    epic_id: int,
     work_unit_id: str,
     critique: MarkdownFrontMatter,
     timestamp: str,
@@ -254,7 +252,7 @@ def render_deterministic_work_unit_disposition(
     front = {
         "target": "work_unit",
         "target_id": work_unit_id,
-        "critique_path": work_unit_critique_relpath(epic_id, work_unit_id),
+        "critique_path": work_unit_critique_ref(work_unit_id),
         "severity": severity,
         "timestamp": timestamp,
         "harness": "woof-deterministic-disposition",
@@ -271,24 +269,19 @@ def render_deterministic_work_unit_disposition(
 def write_deterministic_work_unit_disposition(
     *,
     epic_dir: Path,
-    epic_id: int,
     work_unit_id: str,
     critique: MarkdownFrontMatter,
     timestamp: str,
 ) -> Path:
     path = work_unit_disposition_path(epic_dir, work_unit_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(
+    atomic_write_text(
+        path,
         render_deterministic_work_unit_disposition(
-            epic_id=epic_id,
             work_unit_id=work_unit_id,
             critique=critique,
             timestamp=timestamp,
         ),
-        encoding="utf-8",
     )
-    tmp.replace(path)
     return path
 
 
@@ -376,9 +369,7 @@ def validate_critique_invariants(
     return errors
 
 
-def validate_work_unit_disposition(
-    epic_dir: Path, epic_id: int, work_unit_id: str
-) -> DispositionValidation:
+def validate_work_unit_disposition(epic_dir: Path, work_unit_id: str) -> DispositionValidation:
     critique_path = work_unit_critique_path(epic_dir, work_unit_id)
     disposition_path = work_unit_disposition_path(epic_dir, work_unit_id)
     try:
@@ -404,9 +395,7 @@ def validate_work_unit_disposition(
     if not disposition_path.exists():
         return DispositionValidation(
             ok=False,
-            errors=[
-                f"disposition file missing: {work_unit_disposition_relpath(epic_id, work_unit_id)}"
-            ],
+            errors=[f"disposition file missing: {disposition_path}"],
             severity=severity,
             finding_count=len(critique_findings(critique)),
         )
@@ -424,7 +413,6 @@ def validate_work_unit_disposition(
     errors = validate_disposition_front_matter(
         disposition,
         critique,
-        epic_id=epic_id,
         work_unit_id=work_unit_id,
     )
     return DispositionValidation(
@@ -439,11 +427,10 @@ def validate_disposition_front_matter(
     disposition: dict[str, Any],
     critique: dict[str, Any],
     *,
-    epic_id: int,
     work_unit_id: str,
 ) -> list[str]:
     errors: list[str] = []
-    expected_critique_path = work_unit_critique_relpath(epic_id, work_unit_id)
+    expected_critique_path = work_unit_critique_ref(work_unit_id)
     severity = critique_severity(critique)
 
     if disposition.get("target") != "work_unit":
@@ -500,7 +487,6 @@ def validate_disposition_front_matter(
 
 def reviewer_blocker_gate_body(
     *,
-    epic_id: int,
     work_unit_id: str,
     critique: MarkdownFrontMatter,
 ) -> str:
@@ -523,7 +509,7 @@ def reviewer_blocker_gate_body(
     if not finding_lines:
         finding_lines.append("- Reviewer marked the critique as blocker.")
 
-    critique_rel = work_unit_critique_relpath(epic_id, work_unit_id)
+    critique_rel = work_unit_critique_ref(work_unit_id)
     body = critique.body.strip() or "Reviewer body was empty."
     return (
         "## Context\n\n"

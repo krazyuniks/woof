@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://woof.dev/schemas/jsonl-events.schema.json",
   "title": "woof JSONL event",
-  "description": "One line of .woof/epics/E<N>/epic.jsonl (stage-level narrative) or .woof/epics/E<N>/dispatch.jsonl (subprocess events). Both streams share this schema; the event field discriminates. Per-event payload fields validate via the conditional rules in allOf. Cross-line invariants (subprocess_returned matches a prior subprocess_spawned by pid; gate_resolved follows gate_opened; status transitions are monotonic) are helper-enforced, not schema-enforced.",
+  "description": "One line of epics/E<N>/epic.jsonl (stage-level narrative) or epics/E<N>/dispatch.jsonl (subprocess events), both within the project state root in the operator home, ~/.woof/state/projects/<project-key>/ (ADR-017). Both streams share this schema; the event field discriminates. Per-event payload fields validate via the conditional rules in allOf. Cross-line invariants (subprocess_returned matches a prior subprocess_spawned by pid; gate_resolved follows gate_opened; status transitions are monotonic) are helper-enforced, not schema-enforced.",
   "type": "object",
   "additionalProperties": true,
   "required": ["event", "at"],
@@ -107,12 +107,12 @@
     "config_role": {
       "type": "string",
       "minLength": 1,
-      "description": "Role entry read from .woof/agents.toml when it differs from the semantic requested role."
+      "description": "Role entry read from the project config's agent routing when it differs from the semantic requested role."
     },
     "model_profile": {
       "type": "string",
       "minLength": 1,
-      "description": "Selected .woof/agents.toml model profile applied to this route."
+      "description": "Selected model profile from the project config applied to this route."
     },
     "profile_role": {
       "type": "string",
@@ -255,7 +255,7 @@
     "codex_audit_path": {
       "type": "string",
       "minLength": 1,
-      "description": "Path under .woof/epics/E<N>/audit/ where Codex prompt+output+meta were tee'd."
+      "description": "Path under the epic's audit/ directory in the project state root where Codex prompt+output+meta were tee'd."
     },
     "empty_diff": {
       "type": "boolean"

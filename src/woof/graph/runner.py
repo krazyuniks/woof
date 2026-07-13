@@ -2,21 +2,62 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from woof import state
 from woof.cli.preflight import _check_profile_a_worktrees_for_plans
 from woof.gate.write import write_gate, write_gate_for_trigger
+from woof.graph.git import git
 from woof.graph.lock import epic_workflow_lock
 from woof.graph.nodes import NodeHandler, default_registry
 from woof.graph.resilience import detect_resilience_gate
 from woof.graph.state import NodeInput, NodeOutput, NodeStatus, NodeType, Plan
-from woof.graph.transitions import StageStateError, epic_dir, load_plan, next_node
+from woof.graph.transitions import StageStateError, load_plan, next_node
 from woof.paths import schema_dir
 
 
-def _gate_path(epic_id: int) -> str:
-    return f".woof/epics/E{epic_id}/gate.md"
+class GraphNoProgressError(StageStateError):
+    """A graph cycle re-entered the same node without changing any state it reads.
+
+    ``next_node`` is a pure function of the epic's durable state plus the delivery
+    checkout's git state. If a cycle runs a node and neither of those changes, the
+    next cycle asks the same question of the same state and gets the same answer,
+    so the runner would spin forever. That is always a defect - a node whose write
+    lands somewhere the transition function does not read it back - and the runner
+    names it rather than burning CPU.
+    """
+
+
+def _gate_path(project_key: str, epic_id: int) -> str:
+    """The gate's location in the operator home. It is not a repo path any more."""
+
+    return str(state.gate_path(project_key, epic_id))
+
+
+def _state_fingerprint(project_key: str, repo_root: Path, epic_id: int) -> str:
+    """Digest everything ``next_node`` reads: the epic's state and the git worktree."""
+
+    digest = hashlib.sha256()
+    directory = state.epic_dir(project_key, epic_id)
+    for path in sorted(path for path in directory.rglob("*") if path.is_file()):
+        digest.update(path.relative_to(directory).as_posix().encode())
+        digest.update(b"\0")
+        digest.update(hashlib.sha256(path.read_bytes()).digest())
+    digest.update(_git_fingerprint(repo_root).encode())
+    return digest.hexdigest()
+
+
+def _git_fingerprint(repo_root: Path) -> str:
+    """HEAD plus the porcelain worktree status, or empty when this is not a checkout."""
+
+    try:
+        head = git(repo_root, "rev-parse", "HEAD", check=False)
+        status = git(repo_root, "status", "--porcelain=v1", "--untracked-files=all", check=False)
+    except OSError:
+        return ""
+    return f"{head.stdout}\0{status.stdout}"
 
 
 @dataclass(frozen=True)
@@ -82,12 +123,13 @@ def _stage_state_gate_body(epic_id: int, message: str) -> str:
 
 
 def _open_resilience_gate(
-    repo_root: Path, epic_id: int, work_unit_id: str | None, trigger: str
+    project_key: str, epic_id: int, work_unit_id: str | None, trigger: str
 ) -> NodeOutput:
     node_type = NodeType.GATE_OPEN
     write_gate_for_trigger(
         trigger=trigger,
-        epic_dir=epic_dir(repo_root, epic_id),
+        project_key=project_key,
+        epic_id=epic_id,
         work_unit_id=work_unit_id,
         schema_path=schema_dir() / "gate.schema.json",
     )
@@ -96,17 +138,18 @@ def _open_resilience_gate(
         status=NodeStatus.GATE_OPENED,
         epic_id=epic_id,
         work_unit_id=work_unit_id,
-        gate_path=_gate_path(epic_id),
+        gate_path=_gate_path(project_key, epic_id),
         triggered_by=[trigger],
     )
 
 
-def _open_stage_state_gate(repo_root: Path, epic_id: int, exc: StageStateError) -> NodeOutput:
+def _open_stage_state_gate(project_key: str, epic_id: int, exc: StageStateError) -> NodeOutput:
     gate_type = exc.gate_type
     work_unit_id = exc.work_unit_id
     node_type = NodeType.PLAN_GATE_OPEN if gate_type == "plan_gate" else NodeType.GATE_OPEN
     write_gate(
-        epic_dir=epic_dir(repo_root, epic_id),
+        project_key=project_key,
+        epic_id=epic_id,
         work_unit_id=work_unit_id,
         triggered_by=["incomplete_stage_state"],
         position_text=_stage_state_gate_body(epic_id, str(exc)),
@@ -119,16 +162,16 @@ def _open_stage_state_gate(repo_root: Path, epic_id: int, exc: StageStateError) 
         status=NodeStatus.GATE_OPENED,
         epic_id=epic_id,
         work_unit_id=work_unit_id,
-        gate_path=_gate_path(epic_id),
+        gate_path=_gate_path(project_key, epic_id),
         triggered_by=["incomplete_stage_state"],
         message=str(exc),
     )
 
 
 def _profile_a_worktree_failure(
-    repo_root: Path, epic_id: int, work_unit_id: str
+    project_key: str, repo_root: Path, epic_id: int, work_unit_id: str
 ) -> StageStateError | None:
-    plan_path = epic_dir(repo_root, epic_id) / "plan.json"
+    plan_path = state.plan_path(project_key, epic_id)
     findings = _check_profile_a_worktrees_for_plans(repo_root, [plan_path])
     failed = [finding for finding in findings if not finding.ok]
     if not failed:
@@ -162,6 +205,7 @@ def _drain_block_message(plan: Plan) -> str:
 
 
 def run_graph(
+    project_key: str,
     repo_root: Path,
     epic_id: int,
     *,
@@ -171,15 +215,17 @@ def run_graph(
 ) -> list[NodeOutput]:
     """Run the graph until it halts, gates, completes, or publishes one work unit."""
 
-    with epic_workflow_lock(repo_root, epic_id):
+    with epic_workflow_lock(project_key, epic_id):
         handlers: dict = registry or default_registry()
         outputs: list[NodeOutput] = []
+        previous_cycle: tuple[NodeType, str | None] | None = None
+        previous_fingerprint: str | None = None
         while True:
             try:
-                node_type, work_unit_id = next_node(repo_root, epic_id)
+                node_type, work_unit_id = next_node(project_key, repo_root, epic_id)
             except StageStateError as exc:
                 if exc.operator_recoverable:
-                    outputs.append(_open_stage_state_gate(repo_root, epic_id, exc))
+                    outputs.append(_open_stage_state_gate(project_key, epic_id, exc))
                     return outputs
                 raise
             if node_type is NodeStatus.EPIC_ABANDONED:
@@ -206,10 +252,24 @@ def run_graph(
                 )
                 return outputs
             if node_type is NodeType.EXECUTOR_DISPATCH and work_unit_id is not None:
-                failure = _profile_a_worktree_failure(repo_root, epic_id, work_unit_id)
+                failure = _profile_a_worktree_failure(project_key, repo_root, epic_id, work_unit_id)
                 if failure is not None:
-                    outputs.append(_open_stage_state_gate(repo_root, epic_id, failure))
+                    outputs.append(_open_stage_state_gate(project_key, epic_id, failure))
                     return outputs
+
+            fingerprint = _state_fingerprint(project_key, repo_root, epic_id)
+            if (node_type, work_unit_id) == previous_cycle and fingerprint == previous_fingerprint:
+                work_unit = f" work unit {work_unit_id}" if work_unit_id else ""
+                raise GraphNoProgressError(
+                    f"E{epic_id} made no progress: node {node_type.value}{work_unit} ran and "
+                    "left the epic state and the delivery checkout unchanged, so the graph "
+                    "would re-enter it forever. The node's write is not landing where "
+                    "next_node reads it back.",
+                    work_unit_id=work_unit_id,
+                )
+            previous_cycle = (node_type, work_unit_id)
+            previous_fingerprint = fingerprint
+
             handler: NodeHandler = handlers[node_type]
             try:
                 out = handler(
@@ -217,12 +277,13 @@ def run_graph(
                         node_type=node_type,
                         epic_id=epic_id,
                         work_unit_id=work_unit_id,
+                        project_key=project_key,
                         repo_root=repo_root,
                     )
                 )
             except StageStateError as exc:
                 if exc.operator_recoverable:
-                    outputs.append(_open_stage_state_gate(repo_root, epic_id, exc))
+                    outputs.append(_open_stage_state_gate(project_key, epic_id, exc))
                     return outputs
                 raise
             outputs.append(out)
@@ -230,9 +291,11 @@ def run_graph(
                 node_type in {NodeType.EXECUTOR_DISPATCH, NodeType.CRITIQUE_DISPATCH}
                 and out.status == NodeStatus.COMPLETED
             ):
-                trigger = detect_resilience_gate(repo_root, epic_id, work_unit_id)
+                trigger = detect_resilience_gate(project_key, repo_root, epic_id, work_unit_id)
                 if trigger is not None:
-                    outputs.append(_open_resilience_gate(repo_root, epic_id, work_unit_id, trigger))
+                    outputs.append(
+                        _open_resilience_gate(project_key, epic_id, work_unit_id, trigger)
+                    )
                     return outputs
             if once or out.status in {
                 NodeStatus.GATE_OPENED,
@@ -242,17 +305,17 @@ def run_graph(
                 return outputs
             if drain_cycle and node_type is NodeType.COMMIT:
                 try:
-                    follow_type, follow_work_unit_id = next_node(repo_root, epic_id)
+                    follow_type, follow_work_unit_id = next_node(project_key, repo_root, epic_id)
                 except StageStateError as exc:
                     if exc.operator_recoverable:
                         try:
-                            plan = load_plan(repo_root, epic_id)
+                            plan = load_plan(project_key, epic_id)
                         except StageStateError:
-                            outputs.append(_open_stage_state_gate(repo_root, epic_id, exc))
+                            outputs.append(_open_stage_state_gate(project_key, epic_id, exc))
                         else:
                             outputs.append(
                                 _open_stage_state_gate(
-                                    repo_root,
+                                    project_key,
                                     epic_id,
                                     StageStateError(
                                         f"{exc}; {_drain_block_message(plan)}",

@@ -21,7 +21,7 @@ tools, approaches, vendors, or architectures raised by the spark.
 
 ## Output
 
-Write the artefact as `options.md` into the `.woof/epics/E<N>/discovery/research/` bucket directory declared in the
+Write the artefact as `options.md` into the `discovery/research/` bucket directory declared in the
 graph-owned input. Use this shape:
 
 ```

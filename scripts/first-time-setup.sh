@@ -244,9 +244,15 @@ print -r -- ""
 
 cd "$REPO_DIR"
 
-if [[ ! -f pyproject.toml || ! -d .woof ]]; then
+if [[ ! -f pyproject.toml || ! -d src/woof ]]; then
     log_error "Run this script from a Woof repository checkout"
     exit 2
+fi
+
+typeset -r WOOF_CONFIG_DIR="${WOOF_HOME:-$HOME/.woof}/config/projects"
+if [[ -z "$(print -rn -- "$WOOF_CONFIG_DIR"/*.toml(N))" ]]; then
+    log_warn "No project config in ${WOOF_CONFIG_DIR}"
+    print -r -- "       Engine config lives in the operator home. Create one with: woof init --project <project-key>"
 fi
 
 log_step "Checking core prerequisites..."

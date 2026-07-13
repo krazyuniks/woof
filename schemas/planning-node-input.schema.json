@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://woof.dev/schemas/planning-node-input.schema.json",
   "title": "woof planning graph node input",
-  "description": "Input contract for deterministic Stage 1-4 planning graph nodes. LLM nodes are pure producers: each node receives declared filesystem inputs and may write only the declared output paths. Artefact content remains validated by the dedicated discovery, epic, plan, critique, and gate schemas.",
+  "description": "Input contract for deterministic Stage 1-4 planning graph nodes. LLM nodes are pure producers: each node receives declared filesystem inputs and may write only the declared output paths. Engine state paths are absolute paths in the operator home under ~/.woof/state/projects/<project-key>/ (ADR-017); repo_root is the driven repository. Artefact content remains validated by the dedicated discovery, epic, plan, critique, and gate schemas.",
   "type": "object",
   "additionalProperties": false,
   "required": ["node_type", "epic_id", "repo_root", "epic_dir", "inputs"],
@@ -21,7 +21,8 @@
     },
     "epic_dir": {
       "type": "string",
-      "pattern": "^\\.woof/epics/E[1-9]\\d*$"
+      "description": "Absolute path to the epic directory in the operator home, under ~/.woof/state/projects/<project-key>/epics/E<N> (ADR-017).",
+      "pattern": "epics/E[1-9]\\d*$"
     },
     "aggregate_context": {
       "$ref": "#/$defs/epic_context"
@@ -240,7 +241,7 @@
         "critique_path": { "$ref": "#/$defs/path" },
         "gate_path": {
           "type": "string",
-          "pattern": "^\\.woof/epics/E[1-9]\\d*/gate\\.md$"
+          "pattern": "epics/E[1-9]\\d*/gate\\.md$"
         },
         "triggered_by": {
           "type": "array",
@@ -260,7 +261,7 @@
       "properties": {
         "gate_path": {
           "type": "string",
-          "pattern": "^\\.woof/epics/E[1-9]\\d*/gate\\.md$"
+          "pattern": "epics/E[1-9]\\d*/gate\\.md$"
         },
         "decision": { "$ref": "#/$defs/plan_gate_decision" },
         "revised_paths": { "$ref": "#/$defs/path_list" }

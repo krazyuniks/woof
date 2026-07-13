@@ -21,7 +21,7 @@ what to add, ask what to remove. Subtraction often beats addition.
 
 ## Output
 
-Write the artefact as `via-negativa.md` into the `.woof/epics/E<N>/discovery/thinking/` bucket directory declared in
+Write the artefact as `via-negativa.md` into the `discovery/thinking/` bucket directory declared in
 the graph-owned input. Use this shape:
 
 ```

@@ -2,7 +2,11 @@
 
 The GitHub adapter keeps the epic-level contract in a GitHub issue: one issue
 per epic, ``E<N>`` ≡ issue ``#<N>``. Push is conflict-detected against the
-``.last-sync`` baseline recorded under the epic directory.
+``.last-sync`` baseline recorded in the epic's durable state under the operator
+home (ADR-017).
+
+Every ``gh`` call names the repository explicitly, so the adapter needs no
+repository checkout: the project key selects the state it reads and writes.
 """
 
 from __future__ import annotations
@@ -18,9 +22,11 @@ from typing import Any
 
 import yaml
 
+from woof import state
 from woof.gate.write import write_gate
 from woof.graph.state import TERMINAL_WORK_UNIT_STATES, Plan
 from woof.paths import schema_dir
+from woof.state import append_jsonl, atomic_write_text
 from woof.trackers.base import (
     ColdStartResult,
     ConflictResolutionResult,
@@ -28,9 +34,6 @@ from woof.trackers.base import (
     LifecycleSyncResult,
     NewEpicResult,
     TrackerError,
-    append_jsonl,
-    atomic_write_text,
-    epic_directory,
     iso_utc,
     last_sync_body,
     last_sync_text,
@@ -70,8 +73,8 @@ class GitHubTracker:
 
     kind = "github"
 
-    def __init__(self, repo_root: Path, repo: str) -> None:
-        self.repo_root = repo_root
+    def __init__(self, project_key: str, repo: str) -> None:
+        self.project_key = project_key
         self.repo = repo
 
     # -- runtime ----------------------------------------------------------
@@ -126,10 +129,10 @@ class GitHubTracker:
                 "Closed the newly created issue."
             ) from exc
 
-        current_epic_path = self.repo_root / ".woof" / ".current-epic"
+        current_epic_path = state.current_epic_path(self.project_key)
         atomic_write_text(current_epic_path, f"E{epic_id}\n")
         append_jsonl(
-            result.epic_dir / "epic.jsonl",
+            self._events_path(epic_id),
             {
                 "event": "current_epic_selected",
                 "at": iso_utc(),
@@ -158,7 +161,7 @@ class GitHubTracker:
         if isinstance(number, int) and number != epic_id:
             raise TrackerError(f"gh returned issue #{number}, expected #{epic_id}")
 
-        last_sync_path = epic_directory(self.repo_root, epic_id) / ".last-sync"
+        last_sync_path = state.last_sync_path(self.project_key, epic_id)
         last_sync = read_last_sync(last_sync_path)
         if last_sync is None:
             raise TrackerError(
@@ -172,7 +175,7 @@ class GitHubTracker:
             )
 
     def has_sync_state(self, epic_id: int) -> bool:
-        return (epic_directory(self.repo_root, epic_id) / ".last-sync").is_file()
+        return state.last_sync_path(self.project_key, epic_id).is_file()
 
     def push_epic_definition(
         self, epic_id: int, front: dict[str, Any], prose: str
@@ -180,8 +183,8 @@ class GitHubTracker:
         remote = self._fetch_issue(epic_id)
         remote_updated_at = _issue_updated_at(remote)
         remote_body = _issue_body(remote)
-        epic_dir = epic_directory(self.repo_root, epic_id)
-        last_sync_path = epic_dir / ".last-sync"
+        epic_dir = state.epic_dir(self.project_key, epic_id)
+        last_sync_path = state.last_sync_path(self.project_key, epic_id)
         last_sync = read_last_sync(last_sync_path)
 
         body = render_epic_issue_body(
@@ -223,7 +226,7 @@ class GitHubTracker:
             },
         )
         append_jsonl(
-            epic_dir / "epic.jsonl",
+            self._events_path(epic_id),
             {
                 "event": "tracker_synced",
                 "at": iso_utc(),
@@ -276,8 +279,7 @@ class GitHubTracker:
         # before plan.json exists (a readiness-gate abandon). The body is left as
         # the current remote; the close reason carries the not-delivered semantics.
         remote = self._fetch_issue(epic_id)
-        epic_dir = epic_directory(self.repo_root, epic_id)
-        last_sync_path = epic_dir / ".last-sync"
+        last_sync_path = state.last_sync_path(self.project_key, epic_id)
         # Correct the close reason unless the issue is already closed as
         # not-planned. An open issue is closed with that reason; an issue closed
         # for a different reason (e.g. someone closed it manually as "completed")
@@ -305,7 +307,7 @@ class GitHubTracker:
             },
         )
         append_jsonl(
-            epic_dir / "epic.jsonl",
+            self._events_path(epic_id),
             {
                 "event": "tracker_synced",
                 "at": iso_utc(),
@@ -329,8 +331,7 @@ class GitHubTracker:
         issue = self._fetch_issue(epic_id)
         remote_body = _issue_body(issue)
         updated_at = _issue_updated_at(issue)
-        epic_dir = epic_directory(self.repo_root, epic_id)
-        last_sync_path = epic_dir / ".last-sync"
+        last_sync_path = state.last_sync_path(self.project_key, epic_id)
         epic_path: Path | None = None
 
         if decision == "accept_remote":
@@ -343,7 +344,7 @@ class GitHubTracker:
                     "accept_remote requires a GitHub issue body with Woof managed sections; "
                     "use hand_merge for unstructured remote bodies"
                 )
-            epic_path = epic_dir / "EPIC.md"
+            epic_path = state.epic_contract_path(self.project_key, epic_id)
             atomic_write_text(epic_path, epic_text)
 
         write_last_sync(
@@ -362,8 +363,8 @@ class GitHubTracker:
             "conflict_resolution": decision,
         }
         if epic_path is not None:
-            event["paths"] = [epic_path.relative_to(self.repo_root).as_posix()]
-        append_jsonl(epic_dir / "epic.jsonl", event)
+            event["paths"] = [epic_path.as_posix()]
+        append_jsonl(self._events_path(epic_id), event)
         return ConflictResolutionResult(
             epic_id=epic_id,
             decision=decision,
@@ -493,19 +494,19 @@ class GitHubTracker:
         epic_text = epic_markdown_from_issue(epic_id=epic_id, title=title, body=body)
         updated_at = _issue_updated_at(issue)
 
-        epic_dir = epic_directory(self.repo_root, epic_id)
+        epic_dir = state.epic_dir(self.project_key, epic_id)
         if epic_dir.exists():
             raise TrackerError(f"{epic_dir} already exists")
         epic_dir.mkdir(parents=True)
 
-        spark_path = epic_dir / "spark.md"
+        spark_path = state.spark_path(self.project_key, epic_id)
         spark_path.write_text(spark_markdown(title, body), encoding="utf-8")
         epic_path: Path | None = None
         if epic_text is not None:
-            epic_path = epic_dir / "EPIC.md"
+            epic_path = state.epic_contract_path(self.project_key, epic_id)
             epic_path.write_text(epic_text, encoding="utf-8")
 
-        last_sync_path = epic_dir / ".last-sync"
+        last_sync_path = state.last_sync_path(self.project_key, epic_id)
         write_last_sync(
             last_sync_path,
             {
@@ -516,7 +517,7 @@ class GitHubTracker:
             },
         )
         append_jsonl(
-            epic_dir / "epic.jsonl",
+            self._events_path(epic_id),
             {
                 "event": "spark_created",
                 "at": iso_utc(),
@@ -525,7 +526,7 @@ class GitHubTracker:
             },
         )
         append_jsonl(
-            epic_dir / "epic.jsonl",
+            self._events_path(epic_id),
             {
                 "event": "tracker_synced",
                 "at": iso_utc(),
@@ -541,15 +542,18 @@ class GitHubTracker:
             last_sync_path=last_sync_path,
         )
 
+    def _events_path(self, epic_id: int) -> Path:
+        return state.epic_events_path(self.project_key, epic_id)
+
     def _load_epic_markdown(self, epic_id: int) -> tuple[dict[str, Any], str]:
-        epic_path = epic_directory(self.repo_root, epic_id) / "EPIC.md"
+        epic_path = state.epic_contract_path(self.project_key, epic_id)
         try:
             return split_epic_front_matter(epic_path)
         except (OSError, ValueError, yaml.YAMLError) as exc:
             raise TrackerError(f"{epic_path} could not be loaded: {exc}") from exc
 
     def _load_plan(self, epic_id: int) -> Plan:
-        plan_path = epic_directory(self.repo_root, epic_id) / "plan.json"
+        plan_path = state.plan_path(self.project_key, epic_id)
         try:
             return Plan.model_validate_json(plan_path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
@@ -565,8 +569,8 @@ class GitHubTracker:
         remote = self._fetch_issue(epic_id)
         remote_updated_at = _issue_updated_at(remote)
         remote_body = _issue_body(remote)
-        epic_dir = epic_directory(self.repo_root, epic_id)
-        last_sync_path = epic_dir / ".last-sync"
+        epic_dir = state.epic_dir(self.project_key, epic_id)
+        last_sync_path = state.last_sync_path(self.project_key, epic_id)
         last_sync = read_last_sync(last_sync_path)
 
         body = render(last_sync_body(last_sync) if last_sync else remote_body)
@@ -605,7 +609,7 @@ class GitHubTracker:
                 },
             )
             append_jsonl(
-                epic_dir / "epic.jsonl",
+                self._events_path(epic_id),
                 {
                     "event": "tracker_synced",
                     "at": iso_utc(),
@@ -697,7 +701,8 @@ class GitHubTracker:
             local_body=local_body,
         )
         gate_path = write_gate(
-            epic_dir=epic_dir,
+            project_key=self.project_key,
+            epic_id=epic_id,
             work_unit_id=None,
             triggered_by=["tracker_sync_conflict"],
             position_text=position_text,
@@ -705,7 +710,7 @@ class GitHubTracker:
             gate_type="plan_gate",
         )
         append_jsonl(
-            epic_dir / "epic.jsonl",
+            self._events_path(epic_id),
             {
                 "event": "tracker_sync_conflict",
                 "at": iso_utc(),

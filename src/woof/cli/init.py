@@ -326,14 +326,25 @@ REFRESH_BLOCK_RE = re.compile(rf"(?ms)^{re.escape(REFRESH_BEGIN)}\n.*?^{re.escap
 # substitution rather than str.format to avoid brace-escaping noise.
 REFRESH_SCAFFOLD = """\
 # >>> woof:refresh-cartography
-# Managed by `woof init`; regenerates the .woof/codebase mechanical layer
-# (files.txt, tags, freshness.json). Re-run `woof init --language <lang> ...` to
-# recompose. Edits inside this block are overwritten.
+# Managed by `woof init`; regenerates the cartography mechanical layer
+# (files.txt, tags, freshness.json) under the operator home. Re-run
+# `woof init --language <lang> ...` to recompose. Edits inside this block are
+# overwritten.
 set -eu
 
 woof_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 cd "$woof_root"
-woof_codebase=".woof/codebase"
+
+# Cartography is engine state, so it lives in the operator home under the
+# project key, never in the driven repo (ADR-017). The key is baked in by
+# `woof init --project`; WOOF_PROJECT overrides it for a one-off run.
+woof_home="${WOOF_HOME:-$HOME/.woof}"
+woof_project="${WOOF_PROJECT:-__WOOF_PROJECT_KEY__}"
+if [ -z "$woof_project" ]; then
+  echo "woof refresh-cartography: no project key; set WOOF_PROJECT or re-run \\`woof init --project <key>\\`" >&2
+  exit 1
+fi
+woof_codebase="$woof_home/state/projects/$woof_project/codebase"
 mkdir -p "$woof_codebase"
 
 # git ls-files -> files.txt
@@ -513,7 +524,7 @@ def run_init(
     script: FileAction | None = None
     script_note: str | None = None
     if requested:
-        script = _compose_refresh_script(project_root, requested)
+        script = _compose_refresh_script(project_root, requested, project_key)
     else:
         script_note = (
             f"skipped {REFRESH_SCRIPT_RELPATH}: no cartography languages declared "
@@ -585,11 +596,13 @@ def _refresh_fragment_text(language: str) -> str:
     return fragment_path.read_text().strip("\n")
 
 
-def _render_refresh_block(languages: list[str]) -> str:
+def _render_refresh_block(languages: list[str], project_key: str) -> str:
     """Render the managed refresh-cartography block for the given languages."""
     fragments = "\n".join(_refresh_fragment_text(language) for language in languages)
-    return REFRESH_SCAFFOLD.replace("__WOOF_FRAGMENTS__", fragments).replace(
-        "__WOOF_GENERATOR_VERSION__", str(REFRESH_GENERATOR_VERSION)
+    return (
+        REFRESH_SCAFFOLD.replace("__WOOF_FRAGMENTS__", fragments)
+        .replace("__WOOF_PROJECT_KEY__", project_key)
+        .replace("__WOOF_GENERATOR_VERSION__", str(REFRESH_GENERATOR_VERSION))
     )
 
 
@@ -609,9 +622,11 @@ def _compose_refresh_body(existing: str | None, block: str) -> str:
     return f"{existing}{separator}{block}"
 
 
-def _compose_refresh_script(project_root: Path, languages: list[str]) -> FileAction:
+def _compose_refresh_script(
+    project_root: Path, languages: list[str], project_key: str
+) -> FileAction:
     """Compose scripts/refresh-cartography idempotently and make it executable."""
-    block = _render_refresh_block(languages)
+    block = _render_refresh_block(languages, project_key)
     script_path = project_root / REFRESH_SCRIPT_RELPATH
     existing = script_path.read_text() if script_path.is_file() else None
     updated = _compose_refresh_body(existing, block)

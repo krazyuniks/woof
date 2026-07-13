@@ -13,8 +13,9 @@ strict (default)
 baseline
     A gate that was **red at capture time** is reported as a finding but does
     not block, provided its command identity (the exact configured command
-    string) is unchanged and a durable baseline record exists at
-    ``.woof/quality-gates-baseline.json``.  Two conditions re-arm blocking:
+    string) is unchanged and a durable baseline record exists in the operator
+    home at ``state.quality_gates_baseline_path``.  Two conditions re-arm
+    blocking:
 
     1. The command string differs from the captured identity — the gate was
        reconfigured and its behaviour may have changed.
@@ -36,13 +37,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from woof import state
 from woof.checks import CheckContext, CheckOutcome
 from woof.lib.schema_validate import validate_against_schema
 from woof.project_config import ProjectConfigError, load_project_config
 
 CHECK_ID = "check_1_quality_gates"
 CONFIG_LABEL = "project config [gates.*]"
-BASELINE_PATH = ".woof/quality-gates-baseline.json"
 # Gate mode, timeout, and blocking defaults are resolved by the project-config
 # loader; this runner receives the resolved specs.
 KILL_GRACE_SECONDS = 1
@@ -86,7 +87,7 @@ def check_1_quality_gates_runner(ctx: CheckContext) -> CheckOutcome:
             paths=[],
         )
 
-    baseline, baseline_warning = _load_baseline(ctx.repo_root)
+    baseline, baseline_warning = _load_baseline(ctx.project_key)
     runs = [_run_gate(ctx.repo_root, spec) for spec in specs]
 
     blocking_failures: list[_GateRun] = []
@@ -214,8 +215,8 @@ def _check_freshness(data: dict[str, Any]) -> str | None:
     return None
 
 
-def _load_baseline(repo_root: Path) -> tuple[dict[str, _BaselineEntry], str | None]:
-    baseline_path = repo_root / BASELINE_PATH
+def _load_baseline(project_key: str) -> tuple[dict[str, _BaselineEntry], str | None]:
+    baseline_path = state.quality_gates_baseline_path(project_key)
     if not baseline_path.exists():
         return {}, None
     try:
@@ -312,17 +313,21 @@ class CaptureResult:
 
 
 def capture_baseline(
+    project_key: str,
     repo_root: Path,
     expiry_seconds: int,
 ) -> tuple[CaptureResult, str | None]:
     """Run all configured gates and write a fresh baseline record.
 
-    Returns (CaptureResult, error_message). On error the baseline is not written.
-    This is the ONLY path that writes the baseline; no implicit recapture occurs.
+    The gates run in the delivery checkout; the record is durable engine state and
+    is written to the operator home. Returns (CaptureResult, error_message). On error
+    the baseline is not written. This is the ONLY path that writes the baseline; no
+    implicit recapture occurs.
     """
+    baseline_path = state.quality_gates_baseline_path(project_key)
     specs, error = _load_gate_specs()
     if error is not None:
-        return CaptureResult(repo_root / BASELINE_PATH, 0, 0), error
+        return CaptureResult(baseline_path, 0, 0), error
 
     runs = [_run_gate(repo_root, spec) for spec in specs]
 
@@ -344,11 +349,9 @@ def capture_baseline(
 
     ok, errors = validate_against_schema(record, "quality-gates-baseline")
     if not ok:
-        return CaptureResult(repo_root / BASELINE_PATH, 0, 0), f"baseline record invalid: {errors}"
+        return CaptureResult(baseline_path, 0, 0), f"baseline record invalid: {errors}"
 
-    baseline_path = repo_root / BASELINE_PATH
-    (repo_root / ".woof").mkdir(exist_ok=True)
-    baseline_path.write_text(json.dumps(record, indent=2))
+    state.atomic_write_text(baseline_path, json.dumps(record, indent=2))
 
     return CaptureResult(baseline_path, len(runs), red_count), None
 

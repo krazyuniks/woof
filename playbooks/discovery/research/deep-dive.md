@@ -21,7 +21,7 @@ sources into a coherent, comprehensive understanding.
 
 ## Output
 
-Write the artefact as `deep-dive.md` into the `.woof/epics/E<N>/discovery/research/` bucket directory declared in the
+Write the artefact as `deep-dive.md` into the `discovery/research/` bucket directory declared in the
 graph-owned input. Use this shape:
 
 ```

@@ -11,9 +11,11 @@ Bring a consumer repository under Woof from the `/woof` umbrella.
    woof init --project <key> --tracker local --language python    # epics live on disk only, no remote
    ```
 
-   `woof init` writes exactly one file, `~/.woof/config/projects/<key>.toml` (ADR-017). Nothing
-   is written into the repository being driven: a delivery repo carries no trace of the engine
-   that builds it. The project key is explicit at every entry point and is never derived from the
+   `woof init` writes one config file, `~/.woof/config/projects/<key>.toml` (ADR-017). No config
+   and no engine state is written into the repository being driven: a delivery repo carries no
+   trace of the engine that builds it. The only file init writes into the repo is
+   `scripts/refresh-cartography`, the project's own cartography generator (see below).
+   The project key is explicit at every entry point and is never derived from the
    checkout's directory name, because worktree containers routinely hold directories called
    `main`. Set `WOOF_PROJECT` to avoid repeating `--project` on every command.
 
@@ -47,8 +49,10 @@ Bring a consumer repository under Woof from the `/woof` umbrella.
 
 3. Authenticate the model CLIs once: `claude /login` and `codex login`.
 
-4. Author cartography under `.woof/codebase/` when the config requires it. `woof preflight`
-   enforces the declared cartography floor (see `map-codebase.md`):
+4. Author cartography under `~/.woof/state/projects/<key>/codebase/` when the config requires it.
+   It is engine state in the operator home, not repo content, so it is not under version control in
+   the repo being delivered (see `map-codebase.md`). `woof preflight` enforces the declared
+   cartography floor:
 
    - `design`, `lexical`, and `structural` require the two human-authored design docs,
      `TARGET-ARCHITECTURE.md` and `PRINCIPLES.md`, with
@@ -60,9 +64,9 @@ Bring a consumer repository under Woof from the `/woof` umbrella.
    - mapper-authored AS-IS docs are loaded when present and required at dispatch when the selected node requests them.
    - `none` requires no cartography artefacts.
 
-   Existing consumers whose policy selects a non-none floor but whose `prerequisites.toml` has no
-   `[cartography]` block should re-run `woof init --language <lang>` and then complete this setup
-   and map-codebase path.
+   A project whose config selects a non-none floor but declares no `[cartography]` section fails
+   preflight; re-run `woof init --project <key> --language <lang>` and then complete this setup and
+   map-codebase path.
 
 5. Install the post-commit cartography hook (see `map-codebase.md`):
 
@@ -71,7 +75,8 @@ Bring a consumer repository under Woof from the `/woof` umbrella.
    ```
 
    The hook runs `./scripts/refresh-cartography` on every commit to keep the mechanical layer
-   fresh. Run it once by hand (or make a commit) so `tags`, `files.txt`, and `freshness.json`
+   fresh. The script writes into the project's cartography directory in the operator home, not into
+   the repo. Run it once by hand (or make a commit) so `tags`, `files.txt`, and `freshness.json`
    exist before preflight.
 
 6. Verify prerequisites and resolve any failures:
@@ -96,7 +101,8 @@ Bring a consumer repository under Woof from the `/woof` umbrella.
 - `github`: epics are GitHub issues. Woof creates, hydrates, and syncs them; this is Woof's only
   external integration. Needs `gh` authenticated and `repo` set; `woof init` pre-fills `repo` from
   the git remote when one is reachable.
-- `local`: epics live under `.woof/epics/E<N>/` with no remote. A Kanban board is `local` from
-  Woof's point of view - it lives a layer out and drives `woof wf new`; Woof never knows about it.
+- `local`: epics live under `~/.woof/state/projects/<key>/epics/E<N>/` with no remote. A Kanban
+  board is `local` from Woof's point of view - it lives a layer out and drives `woof wf new`; Woof
+  never knows about it.
 
 See `docs/consumers.md` in the Woof repo for the full first-run walkthrough.

@@ -1,20 +1,24 @@
 """Local filesystem issue-tracker adapter.
 
-The local adapter has no external remote: ``.woof/epics/E<N>/`` is the sole
-authority for an epic. It lets Woof run against any repository without a
-GitHub (or other hosted) issue tracker. Epic IDs are integers assigned
+The local adapter has no external remote: the epic directory in the operator
+home is the sole authority for an epic. It lets Woof run against any repository
+without a GitHub (or other hosted) issue tracker. Epic IDs are integers assigned
 locally; push operations are no-ops because there is no second copy of the
 contract to keep in sync, and a sync conflict can never arise.
+
+The adapter takes no repository checkout: it does no git or remote work, so the
+project key alone selects everything it touches.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import yaml
 
+from woof import state
 from woof.graph.state import TERMINAL_WORK_UNIT_STATES, Plan
+from woof.state import append_jsonl, atomic_write_text
 from woof.trackers.base import (
     CONFLICT_DECISIONS,
     ColdStartResult,
@@ -23,9 +27,6 @@ from woof.trackers.base import (
     LifecycleSyncResult,
     NewEpicResult,
     TrackerError,
-    append_jsonl,
-    atomic_write_text,
-    epic_directory,
     iso_utc,
 )
 from woof.trackers.epic_body import (
@@ -37,12 +38,12 @@ from woof.trackers.epic_body import (
 
 
 class LocalTracker:
-    """Issue-tracker adapter backed only by the local ``.woof/`` filesystem."""
+    """Issue-tracker adapter backed only by the project's durable engine state."""
 
     kind = "local"
 
-    def __init__(self, repo_root: Path) -> None:
-        self.repo_root = repo_root
+    def __init__(self, project_key: str) -> None:
+        self.project_key = project_key
 
     # -- runtime ----------------------------------------------------------
 
@@ -54,15 +55,16 @@ class LocalTracker:
     def create_epic(self, spark: str) -> NewEpicResult:
         title, body = seed_from_spark(spark)
         epic_id = self._next_epic_id()
-        epic_dir = epic_directory(self.repo_root, epic_id)
+        epic_dir = state.epic_dir(self.project_key, epic_id)
         if epic_dir.exists():
             raise TrackerError(f"{epic_dir} already exists")
         epic_dir.mkdir(parents=True)
 
-        spark_path = epic_dir / "spark.md"
+        spark_path = state.spark_path(self.project_key, epic_id)
         spark_path.write_text(spark_markdown(title, body), encoding="utf-8")
+        events_path = state.epic_events_path(self.project_key, epic_id)
         append_jsonl(
-            epic_dir / "epic.jsonl",
+            events_path,
             {
                 "event": "spark_created",
                 "at": iso_utc(),
@@ -71,10 +73,10 @@ class LocalTracker:
             },
         )
 
-        current_epic_path = self.repo_root / ".woof" / ".current-epic"
+        current_epic_path = state.current_epic_path(self.project_key)
         atomic_write_text(current_epic_path, f"E{epic_id}\n")
         append_jsonl(
-            epic_dir / "epic.jsonl",
+            events_path,
             {
                 "event": "current_epic_selected",
                 "at": iso_utc(),
@@ -86,8 +88,8 @@ class LocalTracker:
             epic_dir=epic_dir,
             spark_path=spark_path,
             epic_path=None,
-            last_sync_path=epic_dir / ".last-sync",
-            epic_ref=epic_dir.relative_to(self.repo_root).as_posix(),
+            last_sync_path=state.last_sync_path(self.project_key, epic_id),
+            epic_ref=epic_dir.as_posix(),
             current_epic_path=current_epic_path,
         )
 
@@ -98,14 +100,14 @@ class LocalTracker:
         )
 
     def assert_epic_authority(self, epic_id: int) -> None:
-        epic_dir = epic_directory(self.repo_root, epic_id)
+        epic_dir = state.epic_dir(self.project_key, epic_id)
         if not epic_dir.is_dir():
             raise TrackerError(
                 f'E{epic_id} not found. Use `woof wf new "<spark>"` to start a new epic.'
             )
 
     def has_sync_state(self, epic_id: int) -> bool:
-        return epic_directory(self.repo_root, epic_id).is_dir()
+        return state.epic_dir(self.project_key, epic_id).is_dir()
 
     def push_epic_definition(
         self, epic_id: int, front: dict[str, Any], prose: str
@@ -115,7 +117,7 @@ class LocalTracker:
             epic_id=epic_id,
             body=body,
             updated_at=iso_utc(),
-            last_sync_path=epic_directory(self.repo_root, epic_id) / ".last-sync",
+            last_sync_path=state.last_sync_path(self.project_key, epic_id),
             changed=False,
         )
 
@@ -161,27 +163,27 @@ class LocalTracker:
             epic_id=epic_id,
             body=body,
             updated_at=iso_utc(),
-            last_sync_path=epic_directory(self.repo_root, epic_id) / ".last-sync",
+            last_sync_path=state.last_sync_path(self.project_key, epic_id),
             changed=False,
             closed=closed,
         )
 
     def _load_epic_markdown(self, epic_id: int) -> tuple[dict[str, Any], str]:
-        epic_path = epic_directory(self.repo_root, epic_id) / "EPIC.md"
+        epic_path = state.epic_contract_path(self.project_key, epic_id)
         try:
             return split_epic_front_matter(epic_path)
         except (OSError, ValueError, yaml.YAMLError) as exc:
             raise TrackerError(f"{epic_path} could not be loaded: {exc}") from exc
 
     def _load_plan(self, epic_id: int) -> Plan:
-        plan_path = epic_directory(self.repo_root, epic_id) / "plan.json"
+        plan_path = state.plan_path(self.project_key, epic_id)
         try:
             return Plan.model_validate_json(plan_path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
             raise TrackerError(f"{plan_path} could not be loaded: {exc}") from exc
 
     def _next_epic_id(self) -> int:
-        epics_dir = self.repo_root / ".woof" / "epics"
+        epics_dir = state.epics_root(self.project_key)
         highest = 0
         if epics_dir.is_dir():
             for child in epics_dir.iterdir():

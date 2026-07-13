@@ -14,15 +14,11 @@ from pathlib import Path
 
 import yaml
 
+from woof import state
+
 
 def iso_utc() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _append_jsonl(path: Path, event: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(event, separators=(",", ":")) + "\n")
 
 
 def _validate_gate(gate_md: Path, schema_path: Path) -> tuple[bool, str]:
@@ -66,7 +62,8 @@ def _validate_gate(gate_md: Path, schema_path: Path) -> tuple[bool, str]:
 
 
 def write_gate(
-    epic_dir: Path,
+    project_key: str,
+    epic_id: int,
     work_unit_id: str | None,
     triggered_by: list[str],
     position_text: str,
@@ -81,8 +78,8 @@ def write_gate(
     Returns the path of the written gate.md.
     Raises ValueError if the resulting front-matter fails schema validation.
     """
-    gate_path = epic_dir / "gate.md"
-    epic_jsonl = epic_dir / "epic.jsonl"
+    gate_path = state.gate_path(project_key, epic_id)
+    epic_jsonl = state.epic_events_path(project_key, epic_id)
     now = iso_utc()
 
     resolved_gate_type = gate_type or _gate_type_for_triggers(triggered_by)
@@ -99,13 +96,13 @@ def write_gate(
     fm_yaml = yaml.dump(front, default_flow_style=False, allow_unicode=True)
     body = _ensure_gate_sections(
         position_text.strip(),
-        epic_dir=epic_dir,
+        epic_id=epic_id,
         work_unit_id=work_unit_id,
         gate_type=resolved_gate_type,
         triggered_by=triggered_by,
     )
     content = f"---\n{fm_yaml}---\n\n{body}\n"
-    gate_path.write_text(content)
+    state.atomic_write_text(gate_path, content)
 
     if validate and schema_path and schema_path.is_file():
         ok, msg = _validate_gate(gate_path, schema_path)
@@ -113,8 +110,6 @@ def write_gate(
             gate_path.unlink(missing_ok=True)
             raise ValueError(f"gate.md front-matter failed schema validation: {msg}")
 
-    epic_id_str = epic_dir.name  # e.g. "E182"
-    epic_id = int(epic_id_str.lstrip("E")) if epic_id_str.startswith("E") else 0
     event: dict = {
         "event": _opened_event_for_gate_type(resolved_gate_type),
         "at": now,
@@ -124,7 +119,7 @@ def write_gate(
     }
     if work_unit_id:
         event["work_unit_id"] = work_unit_id
-    _append_jsonl(epic_jsonl, event)
+    state.append_jsonl(epic_jsonl, event)
 
     return gate_path
 
@@ -132,7 +127,8 @@ def write_gate(
 def write_gate_from_check_result(
     check_result_path: Path,
     position_path: Path | None,
-    epic_dir: Path,
+    project_key: str,
+    epic_id: int,
     work_unit_id: str | None = None,
     *,
     schema_path: Path | None = None,
@@ -151,7 +147,8 @@ def write_gate_from_check_result(
         position_text = _auto_position(triggered_by, check_result)
 
     return write_gate(
-        epic_dir=epic_dir,
+        project_key=project_key,
+        epic_id=epic_id,
         work_unit_id=sid,
         triggered_by=triggered_by,
         position_text=position_text,
@@ -163,7 +160,8 @@ def write_gate_from_check_result(
 
 def write_gate_for_trigger(
     trigger: str,
-    epic_dir: Path,
+    project_key: str,
+    epic_id: int,
     work_unit_id: str | None,
     exit_code: int | None = None,
     position_path: Path | None = None,
@@ -177,7 +175,8 @@ def write_gate_for_trigger(
         position_text = _auto_position_for_trigger(trigger, exit_code)
 
     return write_gate(
-        epic_dir=epic_dir,
+        project_key=project_key,
+        epic_id=epic_id,
         work_unit_id=work_unit_id,
         triggered_by=[trigger],
         position_text=position_text,
@@ -225,7 +224,7 @@ def _opened_event_for_gate_type(gate_type: str) -> str:
 def _ensure_gate_sections(
     text: str,
     *,
-    epic_dir: Path,
+    epic_id: int,
     work_unit_id: str | None,
     gate_type: str,
     triggered_by: list[str],
@@ -239,7 +238,7 @@ def _ensure_gate_sections(
     if all(section in text for section in required):
         return text
 
-    epic = epic_dir.name if epic_dir.name.startswith("E") else "the epic"
+    epic = f"E{epic_id}"
     work_unit = f" work unit {work_unit_id}" if work_unit_id else ""
     trigger_text = ", ".join(triggered_by)
     body = text or "No additional position text was provided."

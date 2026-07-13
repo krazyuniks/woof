@@ -18,7 +18,8 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
-from woof.paths import repo_root_from_git
+from woof import state
+from woof.paths import ProjectKeyError, repo_root_from_git, resolve_project_key
 
 
 def _load_plan(plan_path: Path) -> dict:
@@ -27,8 +28,8 @@ def _load_plan(plan_path: Path) -> dict:
     return Plan.model_validate_json(plan_path.read_text()).model_dump(exclude_none=True)
 
 
-def _load_critique_fm(epic_dir: Path, work_unit_id: str) -> dict | None:
-    p = epic_dir / "critique" / f"work-unit-{work_unit_id}.md"
+def _load_critique_fm(project_key: str, epic_id: int, work_unit_id: str) -> dict | None:
+    p = state.work_unit_critique_path(project_key, epic_id, work_unit_id)
     if not p.exists():
         return None
     import yaml
@@ -46,29 +47,28 @@ def _load_critique_fm(epic_dir: Path, work_unit_id: str) -> dict | None:
 
 
 def _cartography_context(
-    repo_root: Path, plan: dict, work_unit_id: str
+    project_key: str, repo_root: Path, plan: dict, work_unit_id: str
 ) -> tuple[str | None, list[str], list[str]]:
+    """Resolve the cartography floor, its document names, and the work unit's file slice.
+
+    The names are relative to the cartography directory in the operator home, not to
+    the delivery checkout; ``files.txt`` still lists repo-relative delivery paths, so
+    the pathspec filter runs against ``repo_root``.
+    """
+
     from woof.graph.pathspec import PathspecEvaluationError, filter_paths_matching
     from woof.project_config import load_project_config
 
-    floor = load_project_config().cartography.floor
+    floor = load_project_config(project_key).cartography.floor
     if floor == "none":
         return floor, [], []
 
-    codebase = repo_root / ".woof" / "codebase"
+    codebase = state.codebase_dir(project_key)
     design = ["TARGET-ARCHITECTURE.md", "PRINCIPLES.md"]
     if floor == "design":
-        return (
-            floor,
-            [f".woof/codebase/{name}" for name in design if (codebase / name).is_file()],
-            [],
-        )
+        return floor, [name for name in design if (codebase / name).is_file()], []
 
-    paths = [
-        path.relative_to(repo_root).as_posix()
-        for path in sorted(codebase.glob("*.md"))
-        if path.is_file()
-    ]
+    paths = [path.name for path in sorted(codebase.glob("*.md")) if path.is_file()]
     files_txt = codebase / "files.txt"
     if not files_txt.is_file():
         return floor, paths, []
@@ -153,9 +153,15 @@ def cmd_check_stage_5(args: argparse.Namespace) -> int:
         sys.stderr.write("woof check stage-5: --work-unit required (unless --self-test)\n")
         return 2
 
+    try:
+        project_key = resolve_project_key(getattr(args, "project", None))
+    except ProjectKeyError as exc:
+        sys.stderr.write(f"woof check stage-5: {exc}\n")
+        return 2
+
     repo_root = _find_repo_root()
-    epic_dir = repo_root / ".woof" / "epics" / f"E{args.epic}"
-    plan_path = epic_dir / "plan.json"
+    epic_dir = state.epic_dir(project_key, args.epic)
+    plan_path = state.plan_path(project_key, args.epic)
 
     if not plan_path.exists():
         sys.stderr.write(f"woof check stage-5: {plan_path} not found\n")
@@ -165,13 +171,14 @@ def cmd_check_stage_5(args: argparse.Namespace) -> int:
 
     plan = _load_plan(plan_path)
     work_unit_id = args.work_unit
-    critique = _load_critique_fm(epic_dir, work_unit_id)
+    critique = _load_critique_fm(project_key, args.epic, work_unit_id)
     cartography_floor, cartography_paths, files_txt_slice = _cartography_context(
-        repo_root, plan, work_unit_id
+        project_key, repo_root, plan, work_unit_id
     )
     ctx = CheckContext(
         epic_id=args.epic,
         work_unit_id=work_unit_id,
+        project_key=project_key,
         repo_root=repo_root,
         epic_dir=epic_dir,
         plan=plan,

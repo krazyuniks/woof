@@ -26,6 +26,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from woof import state
 from woof.cli.commands.observe import ObserveError, build_observe_report
 from woof.cli.dispatcher import MODEL_PROFILE_ENV
 from woof.graph.state import NodeStatus
@@ -198,8 +199,6 @@ def seed_epic_fixture(
     """Seed a fresh EPIC.md and optional deterministic runtime config."""
 
     epic_id = epic_id_from_fixture(epic_fixture)
-    woof_dir = repo_root / ".woof"
-    woof_dir.mkdir(exist_ok=True)
     project_key = resolve_project_key()
     if config_dir is not None:
         _copy_project_config(config_dir, project_key)
@@ -212,12 +211,14 @@ def seed_epic_fixture(
         )
     _write_benchmark_excludes(repo_root)
 
-    epic_dir = woof_dir / "epics" / f"E{epic_id}"
+    epic_dir = state.epic_dir(project_key, epic_id)
     if epic_dir.exists():
         shutil.rmtree(epic_dir)
     epic_dir.mkdir(parents=True)
-    shutil.copy2(epic_fixture, epic_dir / "EPIC.md")
-    (woof_dir / ".current-epic").write_text(f"E{epic_id}\n", encoding="utf-8")
+    shutil.copy2(epic_fixture, state.epic_contract_path(project_key, epic_id))
+    current_epic = state.current_epic_path(project_key)
+    current_epic.parent.mkdir(parents=True, exist_ok=True)
+    current_epic.write_text(f"E{epic_id}\n", encoding="utf-8")
     return epic_id
 
 
@@ -338,7 +339,11 @@ context_lines = 3
 
 
 def _write_benchmark_excludes(repo_root: Path) -> None:
-    """Keep benchmark-only runtime files out of git status in throwaway worktrees."""
+    """Keep byte-compiled stub output out of git status in throwaway worktrees.
+
+    Engine state lives in the operator home (ADR-017), so nothing the engine writes
+    can appear in the worktree's git status; only the stub gate's Python artefacts can.
+    """
 
     proc = _git(repo_root, "rev-parse", "--git-path", "info/exclude", check=False)
     if proc.returncode != 0:
@@ -353,12 +358,6 @@ def _write_benchmark_excludes(repo_root: Path) -> None:
     if not exclude_path.exists():
         exclude_path.write_text("", encoding="utf-8")
     patterns = [
-        ".woof/.current-epic",
-        ".woof/epics/*/gate.md",
-        ".woof/epics/*/.wf.lock",
-        ".woof/epics/*/executor_result.json",
-        ".woof/epics/*/check-result.json",
-        ".woof/epics/*/audit/raw/",
         "__pycache__/",
         "tests/__pycache__/",
         "*.pyc",
@@ -510,10 +509,10 @@ def collect_run_manifest(
 ) -> dict[str, Any]:
     """Aggregate a redacted benchmark run manifest from a consumer worktree."""
 
-    directory = repo_root / ".woof" / "epics" / f"E{epic_id}"
-    epic_events = _read_jsonl(directory / "epic.jsonl")
-    dispatch_events = _read_jsonl(directory / "dispatch.jsonl")
-    observe_report, observe_error = _safe_observe(repo_root, epic_id)
+    project_key = resolve_project_key()
+    epic_events = _read_jsonl(state.epic_events_path(project_key, epic_id))
+    dispatch_events = _read_jsonl(state.dispatch_events_path(project_key, epic_id))
+    observe_report, observe_error = _safe_observe(project_key, epic_id)
     node_sequence = _node_sequence(command_outputs, epic_events, dispatch_events)
     route_policy = _route_policy(observe_report)
     effective_model_profile = model_profile or _route_policy_model_profile(route_policy)
@@ -521,7 +520,7 @@ def collect_run_manifest(
     gate_summary = _gate_summary(observe_report, epic_events)
     checks = _checks_summary(observe_report)
     dispatch = _dispatch_summary(dispatch_events)
-    diff = _diff_summary(repo_root, consumer_base_sha, work_unit_statuses)
+    diff = _diff_summary(project_key, repo_root, consumer_base_sha, work_unit_statuses)
     final_state = _final_state(observe_report, node_sequence, gate_summary)
     quality = _quality_outcome(
         final_state=final_state,
@@ -529,7 +528,7 @@ def collect_run_manifest(
         diff=diff,
         run_exit_code=run_exit_code,
         epic_events=epic_events,
-        repo_root=repo_root,
+        project_key=project_key,
         epic_id=epic_id,
         operator_notes=operator_notes,
     )
@@ -543,7 +542,7 @@ def collect_run_manifest(
             "seed": {
                 "start_state": "EPIC.md",
                 "epic_id": epic_id,
-                "epic_path": f".woof/epics/E{epic_id}/EPIC.md",
+                "epic_path": f"epics/E{epic_id}/EPIC.md",
             },
         },
         "variant": {
@@ -584,9 +583,9 @@ def collect_run_manifest(
     return redact_manifest(manifest)
 
 
-def _safe_observe(repo_root: Path, epic_id: int) -> tuple[dict[str, Any] | None, str | None]:
+def _safe_observe(project_key: str, epic_id: int) -> tuple[dict[str, Any] | None, str | None]:
     try:
-        return build_observe_report(repo_root, epic_id), None
+        return build_observe_report(project_key, epic_id), None
     except (FileNotFoundError, ObserveError, ValueError) as exc:
         return None, str(exc)
 
@@ -876,6 +875,7 @@ def _int(value: object) -> int:
 
 
 def _diff_summary(
+    project_key: str,
     repo_root: Path,
     consumer_base_sha: str,
     work_unit_statuses: Sequence[Mapping[str, Any]],
@@ -883,7 +883,7 @@ def _diff_summary(
     committed = _diff_part(repo_root, consumer_base_sha, "HEAD")
     staged = _diff_cached_part(repo_root)
     unstaged = _diff_unstaged_part(repo_root)
-    pathscope = _pathscope_summary(committed["files"], repo_root, work_unit_statuses)
+    pathscope = _pathscope_summary(committed["files"], project_key, work_unit_statuses)
     return {
         "committed": committed,
         "staged": staged,
@@ -949,15 +949,16 @@ def _parse_numstat(lines: Iterable[str]) -> tuple[int, int]:
 
 def _pathscope_summary(
     changed_files: Sequence[str],
-    repo_root: Path,
+    project_key: str,
     work_unit_statuses: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
-    plan_paths = _plan_work_unit_paths(repo_root)
+    plan_paths = _plan_work_unit_paths(project_key)
     if not plan_paths:
         return {"known": False, "ok": None, "allowed_pathspecs": [], "outside_scope": []}
-    user_files = [path for path in changed_files if not path.startswith(".woof/")]
     outside = [
-        path for path in user_files if not any(_pathspec_matches(path, spec) for spec in plan_paths)
+        path
+        for path in changed_files
+        if not any(_pathspec_matches(path, spec) for spec in plan_paths)
     ]
     return {
         "known": True,
@@ -968,8 +969,8 @@ def _pathscope_summary(
     }
 
 
-def _plan_work_unit_paths(repo_root: Path) -> list[str]:
-    plan_paths = sorted((repo_root / ".woof" / "epics").glob("E*/plan.json"))
+def _plan_work_unit_paths(project_key: str) -> list[str]:
+    plan_paths = sorted(state.epics_root(project_key).glob("E*/plan.json"))
     if not plan_paths:
         return []
     try:
@@ -1022,7 +1023,7 @@ def _quality_outcome(
     diff: Mapping[str, Any],
     run_exit_code: int,
     epic_events: Sequence[Mapping[str, Any]],
-    repo_root: Path,
+    project_key: str,
     epic_id: int,
     operator_notes: str | None,
 ) -> dict[str, Any]:
@@ -1064,13 +1065,13 @@ def _quality_outcome(
         "reason": reason,
         "quality_command_ok": checks.get("ok") if checks.get("exists") else None,
         "pathscope_ok": pathscope.get("ok"),
-        "reviewer_severity": _reviewer_severity(repo_root, epic_id, epic_events),
+        "reviewer_severity": _reviewer_severity(project_key, epic_id, epic_events),
         "operator_notes": operator_notes or "",
     }
 
 
 def _reviewer_severity(
-    repo_root: Path,
+    project_key: str,
     epic_id: int,
     epic_events: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
@@ -1079,7 +1080,7 @@ def _reviewer_severity(
         for event in epic_events
         if event.get("event") == "plan_critiqued" and event.get("severity")
     ]
-    critique_dir = repo_root / ".woof" / "epics" / f"E{epic_id}" / "critique"
+    critique_dir = state.critique_dir(project_key, epic_id)
     work_units: dict[str, str] = {}
     if critique_dir.is_dir():
         for path in sorted(critique_dir.glob("work-unit-*.md")):
@@ -1466,7 +1467,10 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--epic-fixture", required=True, help="path to small valid EPIC.md")
     run.add_argument(
         "--config-dir",
-        help="directory containing deterministic .woof config files to copy into each worktree",
+        help=(
+            "directory holding the deterministic <project-key>.toml project config "
+            "to install into the operator home for each variant"
+        ),
     )
     run.add_argument(
         "--variant",
@@ -1535,7 +1539,7 @@ def epic_id(prompt: str) -> int:
     match = re.search(r'"epic_id":\s*(\d+)', prompt)
     if match:
         return int(match.group(1))
-    match = re.search(r"\.woof/epics/E(\d+)/", prompt)
+    match = re.search(r"epics/E(\d+)/", prompt)
     if match:
         return int(match.group(1))
     raise SystemExit("epic id not found in prompt")
@@ -1546,6 +1550,14 @@ def work_unit_id(prompt: str) -> str:
     if match:
         return match.group(1)
     raise SystemExit("work-unit id not found in prompt")
+
+
+def declared_path(prompt: str, key: str) -> Path:
+    """Engine state lives outside the repo, so only the prompt knows where to write."""
+    match = re.search('"' + key + r'":\s*"([^"]+)"', prompt)
+    if not match:
+        raise SystemExit(key + " not found in prompt")
+    return Path(match.group(1))
 
 
 def write(path: Path, text: str) -> None:
@@ -1578,7 +1590,7 @@ def write_plan(prompt: str) -> None:
             }
         ],
     }
-    write(Path(f".woof/epics/E{eid}/plan.json"), json.dumps(plan, indent=2) + "\n")
+    write(declared_path(prompt, "plan_path"), json.dumps(plan, indent=2) + "\n")
 
 
 def execute_work_unit(prompt: str) -> None:
@@ -1622,7 +1634,7 @@ def execute_work_unit(prompt: str) -> None:
         check=True,
     )
     write(
-        Path(f".woof/epics/E{eid}/executor_result.json"),
+        declared_path(prompt, "executor_result_path"),
         json.dumps(
             {
                 "epic_id": eid,
@@ -1688,18 +1700,19 @@ from pathlib import Path
 NOW = "2026-05-26T00:00:00Z"
 
 
-def epic_id(prompt: str) -> int:
-    match = re.search(r'"epic_id":\s*(\d+)', prompt)
-    if match:
-        return int(match.group(1))
-    raise SystemExit("epic id not found in prompt")
-
-
 def work_unit_id(prompt: str) -> str:
     match = re.search(r'"work_unit_id":\s*"(S\d+)"', prompt)
     if match:
         return match.group(1)
     raise SystemExit("work-unit id not found in prompt")
+
+
+def critique_path(prompt: str) -> Path:
+    """Engine state lives outside the repo, so only the prompt knows where to write."""
+    match = re.search(r'"critique_path":\s*"([^"]+)"', prompt)
+    if not match:
+        raise SystemExit("critique_path not found in prompt")
+    return Path(match.group(1))
 
 
 def write(path: Path, text: str) -> None:
@@ -1708,9 +1721,8 @@ def write(path: Path, text: str) -> None:
 
 
 def write_plan_critique(prompt: str) -> None:
-    eid = epic_id(prompt)
     write(
-        Path(f".woof/epics/E{eid}/critique/plan.md"),
+        critique_path(prompt),
         f"""---
 target: plan
 target_id: null
@@ -1726,10 +1738,9 @@ Plan is acceptable for the dry efficiency harness.
 
 
 def write_work_unit_critique(prompt: str) -> None:
-    eid = epic_id(prompt)
     sid = work_unit_id(prompt)
     write(
-        Path(f".woof/epics/E{eid}/critique/work-unit-{sid}.md"),
+        critique_path(prompt),
         f"""---
 target: work_unit
 target_id: {sid}

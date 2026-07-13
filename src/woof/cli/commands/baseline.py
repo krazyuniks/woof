@@ -1,8 +1,8 @@
 """woof baseline capture - explicit operator recapture of the quality-gates baseline.
 
 Runs every gate declared in the project config's [gates.*] sections, records
-their pass/fail state and command identity, and writes a fresh
-.woof/quality-gates-baseline.json with wall-clock freshness metadata.
+their pass/fail state and command identity, and writes a fresh baseline record
+into the operator home with wall-clock freshness metadata (ADR-017).
 
 Recapture is NEVER implicit: this command is the ONLY path that writes the baseline.
 Any other mechanism that suppressed failures without explicit operator intent would be
@@ -15,7 +15,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from woof.paths import repo_root_from_git
+from woof.paths import ProjectKeyError, repo_root_from_git, resolve_project_key
 
 DEFAULT_EXPIRY_DAYS = 30
 
@@ -30,11 +30,17 @@ def _find_repo_root() -> Path:
 def cmd_baseline_capture(args: argparse.Namespace) -> int:
     from woof.checks.runners.check_1_quality_gates import capture_baseline
 
+    try:
+        project_key = resolve_project_key(args.project)
+    except ProjectKeyError as exc:
+        sys.stderr.write(f"woof baseline capture: {exc}\n")
+        return 2
+
     repo_root = Path(args.project_root).resolve() if args.project_root else _find_repo_root()
 
     expiry_seconds = args.expiry_days * 86400
 
-    result, error = capture_baseline(repo_root, expiry_seconds)
+    result, error = capture_baseline(project_key, repo_root, expiry_seconds)
     if error is not None:
         sys.stderr.write(f"woof baseline capture: {error}\n")
         return 2

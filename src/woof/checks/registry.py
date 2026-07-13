@@ -56,7 +56,7 @@ REGISTRY: dict[str, Check] = {
         id="check_3_scope",
         stage=5,
         cost="cheap",
-        summary="Staged file set ⊆ work_unit.paths[] pathspec plus allowed .woof/ files",
+        summary="Staged file set ⊆ work_unit.paths[] pathspec",
         runner=check_3_scope_runner,
     ),
     "check_4_contract_refs": Check(
@@ -84,7 +84,7 @@ REGISTRY: dict[str, Check] = {
         id="check_7_commit_transaction",
         stage=5,
         cost="cheap",
-        summary="Staged set contains the four .woof durable files; no foreign .woof/ paths",
+        summary="Delivery diff is commit-ready: staged ⊆ work_unit.paths[]; nothing left unstaged",
         runner=check_7_commit_transaction_runner,
     ),
     "check_8_docs_drift": Check(

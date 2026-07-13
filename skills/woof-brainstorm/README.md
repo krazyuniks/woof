@@ -4,7 +4,7 @@
 
 A skill for interactive design discovery. It turns a rough idea into a design that the human and
 the agent both understand and agree on, then hands a schema-validated artefact to whatever builds
-the work (a Woof epic, a BQ backlog, or a plain document).
+the work (a Woof epic or a plain document).
 
 It is built on Domain-Driven Design and hexagonal architecture, applied as the agent's way of
 thinking rather than as vocabulary imposed on the user.
@@ -50,7 +50,7 @@ INPUTS
    === CONTRACT 2 ===  resolved bundle: architecture doc + CONTEXT.md + ADRs + open-questions
         |
         v
-   handoff -> a Woof epic  /  a BQ backlog  /  keep the bundle
+   handoff -> a Woof epic  /  keep the bundle
 ```
 
 ### Loop 1 - Brainstorm (generative; you lead)
@@ -114,7 +114,6 @@ intent.
 The bundle is deliberately neutral about who consumes it:
 
 - A Woof epic decomposes it into an `EPIC.md` and a story plan.
-- A BQ backlog decomposes it into task files.
 - For research or a one-off decision, the bundle is the deliverable.
 
 ## Contracts and language

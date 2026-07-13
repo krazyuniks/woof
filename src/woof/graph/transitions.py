@@ -6,6 +6,7 @@ import json
 import subprocess
 from pathlib import Path
 
+from woof import state
 from woof.graph.dispositions import (
     FrontMatterError,
     critique_severity,
@@ -17,6 +18,7 @@ from woof.graph.dispositions import (
 from woof.graph.git import changed_paths, staged_paths
 from woof.graph.manifest import build_work_unit_manifest
 from woof.graph.state import TERMINAL_WORK_UNIT_STATES, NodeStatus, NodeType, Plan, WorkUnitSpec
+from woof.state import epic_dir
 from woof.trackers.base import CONFLICT_TRIGGERS, NON_APPROVING_TRIGGERS
 
 
@@ -37,11 +39,7 @@ class StageStateError(RuntimeError):
         self.work_unit_id = work_unit_id
 
 
-def epic_dir(repo_root: Path, epic_id: int) -> Path:
-    return repo_root / ".woof" / "epics" / f"E{epic_id}"
-
-
-def epic_definition_dir(repo_root: Path, epic_id: int) -> Path:
+def epic_definition_dir(project_key: str, epic_id: int) -> Path:
     """Directory holding archived epic contracts and their revision findings.
 
     ``revise_epic_contract`` (E17 P5 / D-RC) archives the prior ``EPIC.md`` here as
@@ -51,21 +49,21 @@ def epic_definition_dir(repo_root: Path, epic_id: int) -> Path:
     contract.
     """
 
-    return epic_dir(repo_root, epic_id) / "definition"
+    return epic_dir(project_key, epic_id) / "definition"
 
 
-def archived_epic_contract_path(repo_root: Path, epic_id: int, index: int) -> Path:
-    return epic_definition_dir(repo_root, epic_id) / f"EPIC.{index}.archived.md"
+def archived_epic_contract_path(project_key: str, epic_id: int, index: int) -> Path:
+    return epic_definition_dir(project_key, epic_id) / f"EPIC.{index}.archived.md"
 
 
-def archived_epic_findings_path(repo_root: Path, epic_id: int, index: int) -> Path:
-    return epic_definition_dir(repo_root, epic_id) / f"EPIC.{index}.findings.md"
+def archived_epic_findings_path(project_key: str, epic_id: int, index: int) -> Path:
+    return epic_definition_dir(project_key, epic_id) / f"EPIC.{index}.findings.md"
 
 
-def archived_epic_contracts(repo_root: Path, epic_id: int) -> list[tuple[int, Path]]:
+def archived_epic_contracts(project_key: str, epic_id: int) -> list[tuple[int, Path]]:
     """Return ``(index, path)`` for each archived epic contract, ascending by index."""
 
-    directory = epic_definition_dir(repo_root, epic_id)
+    directory = epic_definition_dir(project_key, epic_id)
     if not directory.is_dir():
         return []
     archives: list[tuple[int, Path]] = []
@@ -76,12 +74,12 @@ def archived_epic_contracts(repo_root: Path, epic_id: int) -> list[tuple[int, Pa
     return sorted(archives)
 
 
-def discovery_synthesis_dir(repo_root: Path, epic_id: int) -> Path:
-    return epic_dir(repo_root, epic_id) / "discovery" / "synthesis"
+def discovery_synthesis_dir(project_key: str, epic_id: int) -> Path:
+    return epic_dir(project_key, epic_id) / "discovery" / "synthesis"
 
 
-def discovery_synthesis_paths(repo_root: Path, epic_id: int) -> dict[str, Path]:
-    directory = discovery_synthesis_dir(repo_root, epic_id)
+def discovery_synthesis_paths(project_key: str, epic_id: int) -> dict[str, Path]:
+    directory = discovery_synthesis_dir(project_key, epic_id)
     return {
         "concept_path": directory / "CONCEPT.md",
         "principles_path": directory / "PRINCIPLES.md",
@@ -90,10 +88,10 @@ def discovery_synthesis_paths(repo_root: Path, epic_id: int) -> dict[str, Path]:
     }
 
 
-def discovery_synthesis_complete(repo_root: Path, epic_id: int) -> bool:
+def discovery_synthesis_complete(project_key: str, epic_id: int) -> bool:
     return all(
         path.is_file() and path.read_text(encoding="utf-8").strip()
-        for path in discovery_synthesis_paths(repo_root, epic_id).values()
+        for path in discovery_synthesis_paths(project_key, epic_id).values()
     )
 
 
@@ -111,14 +109,14 @@ _DISCOVERY_BUCKET_NODES = (
 INTERACTIVE_DISCOVERY_BUCKET = "brainstorm"
 
 
-def discovery_bucket_dir(repo_root: Path, epic_id: int, bucket: str) -> Path:
-    return epic_dir(repo_root, epic_id) / "discovery" / bucket
+def discovery_bucket_dir(project_key: str, epic_id: int, bucket: str) -> Path:
+    return epic_dir(project_key, epic_id) / "discovery" / bucket
 
 
-def discovery_bucket_complete(repo_root: Path, epic_id: int, bucket: str) -> bool:
+def discovery_bucket_complete(project_key: str, epic_id: int, bucket: str) -> bool:
     """Return whether a Stage-1 producer bucket has at least one artefact."""
 
-    directory = discovery_bucket_dir(repo_root, epic_id, bucket)
+    directory = discovery_bucket_dir(project_key, epic_id, bucket)
     if not directory.is_dir():
         return False
     return any(
@@ -127,7 +125,7 @@ def discovery_bucket_complete(repo_root: Path, epic_id: int, bucket: str) -> boo
     )
 
 
-def interactive_brainstorm_bundle_present(repo_root: Path, epic_id: int) -> bool:
+def interactive_brainstorm_bundle_present(project_key: str, epic_id: int) -> bool:
     """Return whether an accepted brainstorm bundle sits in the interactive bucket.
 
     The interactive bucket is written by the `woof-brainstorm` skill straight into
@@ -138,7 +136,7 @@ def interactive_brainstorm_bundle_present(repo_root: Path, epic_id: int) -> bool
     file is ignored, so a half-written bundle never triggers the skip.
     """
 
-    directory = discovery_bucket_dir(repo_root, epic_id, INTERACTIVE_DISCOVERY_BUCKET)
+    directory = discovery_bucket_dir(project_key, epic_id, INTERACTIVE_DISCOVERY_BUCKET)
     if not directory.is_dir():
         return False
     for path in sorted(directory.glob("*.md")):
@@ -151,20 +149,20 @@ def interactive_brainstorm_bundle_present(repo_root: Path, epic_id: int) -> bool
     return False
 
 
-def plan_markdown_path(repo_root: Path, epic_id: int) -> Path:
-    return epic_dir(repo_root, epic_id) / "PLAN.md"
+def plan_markdown_path(project_key: str, epic_id: int) -> Path:
+    return epic_dir(project_key, epic_id) / "PLAN.md"
 
 
-def plan_critique_path(repo_root: Path, epic_id: int) -> Path:
-    return epic_dir(repo_root, epic_id) / "critique" / "plan.md"
+def plan_critique_path(project_key: str, epic_id: int) -> Path:
+    return state.critique_dir(project_key, epic_id) / "plan.md"
 
 
-def gate_path(repo_root: Path, epic_id: int) -> Path:
-    return epic_dir(repo_root, epic_id) / "gate.md"
+def gate_path(project_key: str, epic_id: int) -> Path:
+    return state.gate_path(project_key, epic_id)
 
 
-def load_plan(repo_root: Path, epic_id: int) -> Plan:
-    path = epic_dir(repo_root, epic_id) / "plan.json"
+def load_plan(project_key: str, epic_id: int) -> Plan:
+    path = state.plan_path(project_key, epic_id)
     try:
         return Plan.model_validate_json(path.read_text())
     except FileNotFoundError as exc:
@@ -179,10 +177,10 @@ def load_plan(repo_root: Path, epic_id: int) -> Plan:
         ) from exc
 
 
-def write_plan(repo_root: Path, plan: Plan) -> None:
+def write_plan(project_key: str, plan: Plan) -> None:
     if plan.epic_id is None:
         raise StageStateError("cannot write work-unit-set plan through epic plan writer")
-    path = epic_dir(repo_root, plan.epic_id) / "plan.json"
+    path = state.plan_path(project_key, plan.epic_id)
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(plan.model_dump_json(indent=2, exclude_none=True) + "\n")
     tmp.replace(path)
@@ -205,8 +203,8 @@ def next_ready_work_unit(plan: Plan) -> WorkUnitSpec | None:
     return None
 
 
-def mark_work_unit_state(repo_root: Path, epic_id: int, work_unit_id: str, state: str) -> None:
-    plan = load_plan(repo_root, epic_id)
+def mark_work_unit_state(project_key: str, epic_id: int, work_unit_id: str, state: str) -> None:
+    plan = load_plan(project_key, epic_id)
     if all(work_unit.id != work_unit_id for work_unit in plan.work_units):
         raise StageStateError(f"work unit {work_unit_id} not found in E{epic_id} plan")
     work_units = []
@@ -218,30 +216,27 @@ def mark_work_unit_state(repo_root: Path, epic_id: int, work_unit_id: str, state
         else:
             work_units.append(work_unit)
     write_plan(
-        repo_root,
+        project_key,
         Plan(epic_id=plan.epic_id, context=plan.context, goal=plan.goal, work_units=work_units),
     )
 
 
-def append_epic_event(repo_root: Path, epic_id: int, event: dict) -> None:
-    path = epic_dir(repo_root, epic_id) / "epic.jsonl"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(event, separators=(",", ":")) + "\n")
+def append_epic_event(project_key: str, epic_id: int, event: dict) -> None:
+    state.append_jsonl(state.epic_events_path(project_key, epic_id), event)
 
 
-def epic_event_exists(repo_root: Path, epic_id: int, **fields: object) -> bool:
-    path = epic_dir(repo_root, epic_id) / "epic.jsonl"
+def epic_event_exists(project_key: str, epic_id: int, **fields: object) -> bool:
+    path = state.epic_events_path(project_key, epic_id)
     if not path.exists():
         return False
-    for event in iter_epic_events(repo_root, epic_id):
+    for event in iter_epic_events(project_key, epic_id):
         if all(event.get(key) == value for key, value in fields.items()):
             return True
     return False
 
 
-def iter_epic_events(repo_root: Path, epic_id: int) -> list[dict]:
-    path = epic_dir(repo_root, epic_id) / "epic.jsonl"
+def iter_epic_events(project_key: str, epic_id: int) -> list[dict]:
+    path = state.epic_events_path(project_key, epic_id)
     if not path.exists():
         return []
     events: list[dict] = []
@@ -266,8 +261,8 @@ def iter_epic_events(repo_root: Path, epic_id: int) -> list[dict]:
     return events
 
 
-def iter_dispatch_events(repo_root: Path, epic_id: int) -> list[dict]:
-    path = epic_dir(repo_root, epic_id) / "dispatch.jsonl"
+def iter_dispatch_events(project_key: str, epic_id: int) -> list[dict]:
+    path = state.dispatch_events_path(project_key, epic_id)
     if not path.exists():
         return []
     events: list[dict] = []
@@ -284,17 +279,17 @@ def iter_dispatch_events(repo_root: Path, epic_id: int) -> list[dict]:
 
 
 def append_epic_event_once(
-    repo_root: Path, epic_id: int, event_payload: dict, **identity: object
+    project_key: str, epic_id: int, event_payload: dict, **identity: object
 ) -> None:
-    if not epic_event_exists(repo_root, epic_id, **identity):
-        append_epic_event(repo_root, epic_id, event_payload)
+    if not epic_event_exists(project_key, epic_id, **identity):
+        append_epic_event(project_key, epic_id, event_payload)
 
 
-def plan_gate_resolved(repo_root: Path, epic_id: int) -> bool:
+def plan_gate_resolved(project_key: str, epic_id: int) -> bool:
     """Return whether the mandatory Stage-4 plan gate has been resolved."""
 
     resolved = False
-    for event in iter_epic_events(repo_root, epic_id):
+    for event in iter_epic_events(project_key, epic_id):
         if event.get("event") == "plan_gate_resolved":
             triggered_by = event.get("triggered_by")
             if not isinstance(triggered_by, list):
@@ -318,11 +313,11 @@ def plan_gate_resolved(repo_root: Path, epic_id: int) -> bool:
     return resolved
 
 
-def definition_revision_requested(repo_root: Path, epic_id: int) -> bool:
+def definition_revision_requested(project_key: str, epic_id: int) -> bool:
     """Return whether a gate resolution has requested Stage-2 re-entry."""
 
     requested = False
-    for event in iter_epic_events(repo_root, epic_id):
+    for event in iter_epic_events(project_key, epic_id):
         if (
             event.get("event") == "gate_resolved"
             and event.get("decision") == "revise_epic_contract"
@@ -333,7 +328,7 @@ def definition_revision_requested(repo_root: Path, epic_id: int) -> bool:
     return requested
 
 
-def readiness_satisfied(repo_root: Path, epic_id: int) -> bool:
+def readiness_satisfied(project_key: str, epic_id: int) -> bool:
     """Return whether Stage-2.5 contract readiness is satisfied for this contract.
 
     Satisfied iff, after the most recent ``definition_closed``, either a
@@ -346,7 +341,7 @@ def readiness_satisfied(repo_root: Path, epic_id: int) -> bool:
     ``epic_reset`` marker.
     """
 
-    events = iter_epic_events(repo_root, epic_id)
+    events = iter_epic_events(project_key, epic_id)
     last_definition_closed = -1
     for index, event in enumerate(events):
         if event.get("event") == "definition_closed":
@@ -368,7 +363,7 @@ def readiness_satisfied(repo_root: Path, epic_id: int) -> bool:
     return False
 
 
-def failed_readiness_cycles(repo_root: Path, epic_id: int) -> int:
+def failed_readiness_cycles(project_key: str, epic_id: int) -> int:
     """Count readiness failures across the current epic attempt.
 
     Counts ``readiness_gate_opened`` events carrying the ``readiness_unready``
@@ -382,13 +377,13 @@ def failed_readiness_cycles(repo_root: Path, epic_id: int) -> int:
     """
     return sum(
         1
-        for event in iter_epic_events(repo_root, epic_id)
+        for event in iter_epic_events(project_key, epic_id)
         if event.get("event") == "readiness_gate_opened"
         and "readiness_unready" in (event.get("triggered_by") or [])
     )
 
 
-def epic_abandoned(repo_root: Path, epic_id: int) -> bool:
+def epic_abandoned(project_key: str, epic_id: int) -> bool:
     """Return whether the epic has been abandoned (E17 P4 / D-AB).
 
     The ``abandon_epic`` gate verb appends a graph-owned ``epic_abandoned`` event;
@@ -398,7 +393,7 @@ def epic_abandoned(repo_root: Path, epic_id: int) -> bool:
     epic by superseding the prior ``epic_abandoned`` event.
     """
 
-    return epic_event_exists(repo_root, epic_id, event="epic_abandoned")
+    return epic_event_exists(project_key, epic_id, event="epic_abandoned")
 
 
 def _load_json(path: Path) -> dict:
@@ -416,9 +411,11 @@ def _json_loads_ok(path: Path) -> bool:
     return True
 
 
-def _has_uncommitted_commit_work(repo_root: Path, epic_id: int, work_unit: WorkUnitSpec) -> bool:
+def _has_uncommitted_commit_work(
+    project_key: str, repo_root: Path, epic_id: int, work_unit: WorkUnitSpec
+) -> bool:
     try:
-        manifest = build_work_unit_manifest(repo_root, epic_id, work_unit)
+        manifest = build_work_unit_manifest(repo_root, work_unit)
         changed = set(changed_paths(repo_root))
         staged = set(staged_paths(repo_root))
     except subprocess.CalledProcessError as exc:
@@ -438,8 +435,10 @@ def _has_uncommitted_commit_work(repo_root: Path, epic_id: int, work_unit: WorkU
     return bool(staged or changed & expected)
 
 
-def _resumable_commit_work_unit(repo_root: Path, epic_id: int, plan: Plan) -> str | None:
-    directory = epic_dir(repo_root, epic_id)
+def _resumable_commit_work_unit(
+    project_key: str, repo_root: Path, epic_id: int, plan: Plan
+) -> str | None:
+    directory = epic_dir(project_key, epic_id)
     result_path = directory / "executor_result.json"
     check_result_path = directory / "check-result.json"
     if not result_path.exists() or not check_result_path.exists():
@@ -462,14 +461,16 @@ def _resumable_commit_work_unit(repo_root: Path, epic_id: int, plan: Plan) -> st
     critique_path = directory / "critique" / f"work-unit-{work_unit.id}.md"
     if not critique_path.exists():
         return None
-    if not _has_uncommitted_commit_work(repo_root, epic_id, work_unit):
+    if not _has_uncommitted_commit_work(project_key, repo_root, epic_id, work_unit):
         result_path.unlink(missing_ok=True)
         check_result_path.unlink(missing_ok=True)
         return None
     return work_unit.id
 
 
-def next_node(repo_root: Path, epic_id: int) -> tuple[NodeType | NodeStatus | None, str | None]:
+def next_node(
+    project_key: str, repo_root: Path, epic_id: int
+) -> tuple[NodeType | NodeStatus | None, str | None]:
     """Return the next node and work-unit id from filesystem state.
 
     Terminal outcomes use the first slot for a :class:`NodeStatus` sentinel:
@@ -479,12 +480,12 @@ def next_node(repo_root: Path, epic_id: int) -> tuple[NodeType | NodeStatus | No
     ``NodeOutput`` status, never to ``EPIC_COMPLETE``.
     """
 
-    directory = epic_dir(repo_root, epic_id)
+    directory = epic_dir(project_key, epic_id)
     # An abandoned epic is unconditionally terminal: short-circuit before any
     # other state read so a lingering gate or plan cannot mask the outcome.
-    if epic_abandoned(repo_root, epic_id):
+    if epic_abandoned(project_key, epic_id):
         return NodeStatus.EPIC_ABANDONED, None
-    if gate_path(repo_root, epic_id).exists():
+    if gate_path(project_key, epic_id).exists():
         return NodeType.HUMAN_REVIEW, None
 
     plan_path = directory / "plan.json"
@@ -493,21 +494,21 @@ def next_node(repo_root: Path, epic_id: int) -> tuple[NodeType | NodeStatus | No
         # prior EPIC.md was archived to definition/EPIC.<n>.archived.md, so EPIC.md
         # is absent and the definition node re-dispatches with the prior epic plus
         # findings as declared inputs rather than re-validating an edited file.
-        if definition_revision_requested(repo_root, epic_id):
+        if definition_revision_requested(project_key, epic_id):
             return NodeType.EPIC_DEFINITION, None
         if (directory / "EPIC.md").exists():
-            if epic_event_exists(repo_root, epic_id, event="definition_closed"):
-                if readiness_satisfied(repo_root, epic_id):
+            if epic_event_exists(project_key, epic_id, event="definition_closed"):
+                if readiness_satisfied(project_key, epic_id):
                     return NodeType.BREAKDOWN_PLANNING, None
                 return NodeType.CONTRACT_READINESS, None
             return NodeType.EPIC_DEFINITION, None
-        if discovery_synthesis_complete(repo_root, epic_id):
+        if discovery_synthesis_complete(project_key, epic_id):
             return NodeType.EPIC_DEFINITION, None
         if (directory / "spark.md").exists():
-            if interactive_brainstorm_bundle_present(repo_root, epic_id):
+            if interactive_brainstorm_bundle_present(project_key, epic_id):
                 return NodeType.DISCOVERY_SYNTHESIS, None
             for bucket, node in _DISCOVERY_BUCKET_NODES:
-                if not discovery_bucket_complete(repo_root, epic_id, bucket):
+                if not discovery_bucket_complete(project_key, epic_id, bucket):
                     return node, None
             return NodeType.DISCOVERY_SYNTHESIS, None
         raise StageStateError(
@@ -516,8 +517,8 @@ def next_node(repo_root: Path, epic_id: int) -> tuple[NodeType | NodeStatus | No
             operator_recoverable=True,
         )
 
-    plan = load_plan(repo_root, epic_id)
-    resumable_work_unit = _resumable_commit_work_unit(repo_root, epic_id, plan)
+    plan = load_plan(project_key, epic_id)
+    resumable_work_unit = _resumable_commit_work_unit(project_key, repo_root, epic_id, plan)
     if resumable_work_unit is not None:
         return NodeType.COMMIT, resumable_work_unit
 
@@ -528,18 +529,18 @@ def next_node(repo_root: Path, epic_id: int) -> tuple[NodeType | NodeStatus | No
         (work_unit for work_unit in plan.work_units if work_unit.state == "in_progress"),
         None,
     )
-    critique_path = plan_critique_path(repo_root, epic_id)
+    critique_path = plan_critique_path(project_key, epic_id)
     if in_progress is None:
         if (directory / "EPIC.md").exists() and not critique_path.exists():
             return NodeType.PLAN_CRITIQUE, None
 
-        if epic_event_exists(repo_root, epic_id, event="breakdown_planned"):
-            if not epic_event_exists(repo_root, epic_id, event="plan_critiqued"):
+        if epic_event_exists(project_key, epic_id, event="breakdown_planned"):
+            if not epic_event_exists(project_key, epic_id, event="plan_critiqued"):
                 return NodeType.PLAN_CRITIQUE, None
-            if not plan_gate_resolved(repo_root, epic_id):
+            if not plan_gate_resolved(project_key, epic_id):
                 return NodeType.PLAN_GATE_OPEN, None
 
-        if critique_path.exists() and not plan_gate_resolved(repo_root, epic_id):
+        if critique_path.exists() and not plan_gate_resolved(project_key, epic_id):
             return NodeType.PLAN_GATE_OPEN, None
 
     if in_progress is None:
@@ -583,7 +584,7 @@ def next_node(repo_root: Path, epic_id: int) -> tuple[NodeType | NodeStatus | No
         return NodeType.REVIEW_DISPOSITION, in_progress.id
     if not work_unit_disposition_path(directory, in_progress.id).exists():
         return NodeType.REVIEW_DISPOSITION, in_progress.id
-    disposition = validate_work_unit_disposition(directory, epic_id, in_progress.id)
+    disposition = validate_work_unit_disposition(directory, in_progress.id)
     if not disposition.ok:
         return NodeType.REVIEW_DISPOSITION, in_progress.id
     if not check_result_path.exists():

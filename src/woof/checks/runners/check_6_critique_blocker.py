@@ -120,7 +120,7 @@ def check_6_critique_blocker_runner(ctx: CheckContext) -> CheckOutcome:
             evidence=_format_findings(blocker_findings),
         )
 
-    disposition = validate_work_unit_disposition(ctx.epic_dir, ctx.epic_id, ctx.work_unit_id)
+    disposition = validate_work_unit_disposition(ctx.epic_dir, ctx.work_unit_id)
     if not disposition.ok:
         return CheckOutcome(
             id=CHECK_ID,

@@ -10,17 +10,17 @@ Graph-owned input:
 
 ## Context documents — read these first
 
-When repo policy supplies cartography, the graph delivers relevant `.woof/codebase/` documents in `inputs.cartography_paths`. Read the supplied paths before beginning work:
+When repo policy supplies cartography, the graph delivers the names of the relevant cartography documents in `inputs.cartography_paths`. The documents live in the project's cartography directory in the operator home. Read them before beginning work:
 
-- `.woof/codebase/CURRENT-ARCHITECTURE.md`
-- `.woof/codebase/STACK.md`
-- `.woof/codebase/INTEGRATIONS.md`
-- `.woof/codebase/STRUCTURE.md`
-- `.woof/codebase/CONVENTIONS.md`
-- `.woof/codebase/TESTING.md`
-- `.woof/codebase/CONCERNS.md`
-- `.woof/codebase/TARGET-ARCHITECTURE.md`
-- `.woof/codebase/PRINCIPLES.md`
+- `CURRENT-ARCHITECTURE.md`
+- `STACK.md`
+- `INTEGRATIONS.md`
+- `STRUCTURE.md`
+- `CONVENTIONS.md`
+- `TESTING.md`
+- `CONCERNS.md`
+- `TARGET-ARCHITECTURE.md`
+- `PRINCIPLES.md`
 
 Read the declared spark and discovery source paths. Produce only these synthesis artefacts:
 

@@ -85,7 +85,7 @@
     },
     "gate_path": {
       "oneOf": [
-        { "type": "string", "pattern": "^\\.woof/epics/E[1-9]\\d*/gate\\.md$" },
+        { "type": "string", "pattern": "epics/E[1-9]\\d*/gate\\.md$" },
         { "type": "null" }
       ]
     },

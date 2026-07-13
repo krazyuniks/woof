@@ -21,7 +21,7 @@ externally, and extract lessons so the epic does not repeat known mistakes.
 
 ## Output
 
-Write the artefact as `history.md` into the `.woof/epics/E<N>/discovery/research/` bucket directory declared in the
+Write the artefact as `history.md` into the `discovery/research/` bucket directory declared in the
 graph-owned input. Use this shape:
 
 ```

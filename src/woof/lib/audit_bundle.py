@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from woof import state
+
 EPIC_REF_RE = re.compile(r"^E?([1-9]\d*)$")
 CLAUDE_TRANSCRIPT_RE = re.compile(r"^~/\.claude/projects/([^/]+)/([^/]+\.jsonl)$")
 
@@ -45,22 +47,22 @@ class AuditBundleResult:
         return not self.missing
 
 
-def normalise_epic_ref(epic: str) -> str:
-    """Return canonical ``E<N>`` form for an epic reference."""
+def parse_epic_ref(epic: str) -> int:
+    """Return the epic number for an ``E<N>`` or ``<N>`` reference."""
 
     match = EPIC_REF_RE.fullmatch(epic.strip())
     if not match:
         raise AuditBundleError(f"invalid epic reference {epic!r}; expected E<N> or <N>")
-    return f"E{match.group(1)}"
+    return int(match.group(1))
 
 
 def bundle_claude_transcripts(
-    repo_root: Path,
+    project_key: str,
     epic: str,
     *,
     home: Path | None = None,
 ) -> AuditBundleResult:
-    """Copy referenced Claude Code transcripts into ``audit/claude-code/``.
+    """Copy referenced Claude Code transcripts into the epic's ``audit/claude-code/``.
 
     ``dispatch.jsonl`` must store portable home-relative transcript references
     such as ``~/.claude/projects/<project-slug>/<session>.jsonl``. The bundle
@@ -68,16 +70,16 @@ def bundle_claude_transcripts(
     collisions across source checkouts.
     """
 
-    epic_ref = normalise_epic_ref(epic)
-    epic_dir = repo_root / ".woof" / "epics" / epic_ref
-    dispatch_jsonl = epic_dir / "dispatch.jsonl"
+    epic_id = parse_epic_ref(epic)
+    epic_dir = state.epic_dir(project_key, epic_id)
+    dispatch_jsonl = state.dispatch_events_path(project_key, epic_id)
     if not epic_dir.is_dir():
         raise AuditBundleError(f"{epic_dir} not found")
     if not dispatch_jsonl.is_file():
         raise AuditBundleError(f"{dispatch_jsonl} not found")
 
     transcript_refs = _claude_transcript_refs(dispatch_jsonl)
-    destination_dir = epic_dir / "audit" / "claude-code"
+    destination_dir = state.audit_dir(project_key, epic_id) / "claude-code"
     home_dir = home or Path.home()
     copied: list[TranscriptCopy] = []
     missing: list[MissingTranscript] = []
@@ -96,7 +98,7 @@ def bundle_claude_transcripts(
         copied.append(TranscriptCopy(reference=reference, destination=destination))
 
     return AuditBundleResult(
-        epic=epic_ref,
+        epic=f"E{epic_id}",
         dispatch_jsonl=dispatch_jsonl,
         destination_dir=destination_dir,
         copied=tuple(copied),

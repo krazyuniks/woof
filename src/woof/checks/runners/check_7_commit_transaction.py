@@ -1,10 +1,14 @@
 """check_7_commit_transaction - Stage-5 Check 7.
 
 Verifies that the pending work-unit transaction is commit-ready:
-  1. Required durable .woof artefacts are staged
-  2. Non-empty work units have at least one staged in-scope work-unit path
-  3. Staged paths contain only work-unit paths plus allowed durable/audit .woof paths
-  4. No unstaged or untracked paths remain in the worktree
+  1. Non-empty work units have at least one staged in-scope work-unit path
+  2. Staged paths contain only work-unit paths
+  3. No unstaged or untracked paths remain in the worktree
+
+Since ADR-017 the git transaction is decoupled from engine state: the plan, the
+event logs, the critique, and the disposition live in the operator home and can
+never be staged, so a delivery commit contains the work unit's delivery paths and
+nothing else.
 """
 
 from __future__ import annotations
@@ -13,8 +17,6 @@ import subprocess
 from pathlib import Path
 
 from woof.checks import CheckContext, CheckOutcome
-from woof.graph.dispositions import work_unit_disposition_relpath
-from woof.graph.manifest import durable_epic_paths
 from woof.graph.pathspec import PathspecEvaluationError, staged_paths_matching
 
 CHECK_ID = "check_7_commit_transaction"
@@ -59,23 +61,6 @@ def _work_unit(ctx: CheckContext) -> dict | None:
     return None
 
 
-def _required_paths(ctx: CheckContext) -> list[str]:
-    epic = f"E{ctx.epic_id}"
-    return [
-        f".woof/epics/{epic}/plan.json",
-        f".woof/epics/{epic}/epic.jsonl",
-        f".woof/epics/{epic}/dispatch.jsonl",
-        f".woof/epics/{epic}/critique/work-unit-{ctx.work_unit_id}.md",
-        work_unit_disposition_relpath(ctx.epic_id, ctx.work_unit_id),
-    ]
-
-
-def _is_allowed_woof_path(ctx: CheckContext, path: str, required: set[str]) -> bool:
-    if path in required:
-        return True
-    return path in set(durable_epic_paths(ctx.epic_dir, ctx.repo_root))
-
-
 def _is_unstaged(status: str) -> bool:
     if status == "??":
         return True
@@ -104,12 +89,11 @@ def check_7_commit_transaction_runner(ctx: CheckContext) -> CheckOutcome:
         return _failure(
             summary=f"work unit {ctx.work_unit_id!r} not found in plan.json",
             evidence=["plan.json has no matching work-unit entry"],
-            paths=[f".woof/epics/E{ctx.epic_id}/plan.json"],
+            paths=[],
         )
 
     work_unit_patterns = [str(pattern) for pattern in work_unit.get("paths", [])]
     empty_diff = bool(work_unit.get("empty_diff", False))
-    required = set(_required_paths(ctx))
 
     try:
         staged = _staged_paths(ctx.repo_root)
@@ -130,27 +114,12 @@ def check_7_commit_transaction_runner(ctx: CheckContext) -> CheckOutcome:
             paths=[],
         )
 
-    staged_work_unit_paths = [
-        path
-        for path in staged
-        if not path.startswith(".woof/") and path in work_unit_matched_staged
-    ]
-    missing_required = sorted(path for path in required if path not in staged)
-    foreign_staged = sorted(
-        path
-        for path in staged
-        if (
-            (path.startswith(".woof/") and not _is_allowed_woof_path(ctx, path, required))
-            or (not path.startswith(".woof/") and path not in work_unit_matched_staged)
-        )
-    )
+    staged_work_unit_paths = [path for path in staged if path in work_unit_matched_staged]
+    foreign_staged = sorted(path for path in staged if path not in work_unit_matched_staged)
     unstaged = sorted(path for status, path in status_entries if _is_unstaged(status))
 
     evidence: list[str] = []
     paths: list[str] = []
-    if missing_required:
-        evidence.append(f"missing required staged paths: {missing_required}")
-        paths.extend(missing_required)
     if not empty_diff and not staged_work_unit_paths:
         evidence.append("no staged work-unit paths matched work_unit.paths[]")
     if foreign_staged:
@@ -167,14 +136,10 @@ def check_7_commit_transaction_runner(ctx: CheckContext) -> CheckOutcome:
             paths=paths,
         )
 
-    work_unit_path_count = len(staged_work_unit_paths)
-    if empty_diff:
-        summary = "empty_diff work unit has required durable artefacts staged and no unstaged paths"
+    if empty_diff and not staged_work_unit_paths:
+        summary = "empty_diff work unit has no staged paths and no unstaged paths remain"
     else:
-        summary = (
-            f"{work_unit_path_count} staged work-unit path(s) plus required durable "
-            "artefacts are commit-ready"
-        )
+        summary = f"{len(staged_work_unit_paths)} staged work-unit path(s) are commit-ready"
     return CheckOutcome(
         id=CHECK_ID,
         ok=True,

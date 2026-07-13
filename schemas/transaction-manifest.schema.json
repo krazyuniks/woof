@@ -2,22 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://woof.dev/schemas/transaction-manifest.schema.json",
   "title": "woof transaction manifest",
+  "description": "Delivery paths for one work unit's commit. Engine state lives in the operator home under ~/.woof/state/projects/<project-key>/ (ADR-017) and is never committed, so a delivery commit contains only the work unit's repository paths.",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "epic_id",
-    "work_unit_id",
-    "expected_paths",
-    "work_unit_paths",
-    "required_paths",
-    "audit_paths"
-  ],
+  "required": ["work_unit_id", "expected_paths", "work_unit_paths"],
   "properties": {
-    "epic_id": {
-      "type": "integer",
-      "minimum": 1,
-      "description": "Tracker-assigned epic identifier. Same value as E<N>."
-    },
     "work_unit_id": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9._-]*$" },
     "expected_paths": {
       "type": "array",
@@ -25,16 +14,6 @@
       "uniqueItems": true
     },
     "work_unit_paths": {
-      "type": "array",
-      "items": { "type": "string", "minLength": 1 },
-      "uniqueItems": true
-    },
-    "required_paths": {
-      "type": "array",
-      "items": { "type": "string", "minLength": 1 },
-      "uniqueItems": true
-    },
-    "audit_paths": {
       "type": "array",
       "items": { "type": "string", "minLength": 1 },
       "uniqueItems": true

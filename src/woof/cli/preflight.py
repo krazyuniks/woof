@@ -23,6 +23,7 @@ from typing import Any
 
 import yaml
 
+from woof import state
 from woof.cli.commands.observe import build_operator_state_summary
 from woof.cli.dispatcher import (
     TRUSTED_RUNTIME_MODE,
@@ -44,7 +45,6 @@ from woof.lib.audit import scan_text_for_secrets
 from woof.paths import (
     ProjectKeyError,
     project_config_path,
-    project_state_root,
     repo_root_from_git,
     resolve_project_key,
     schema_dir,
@@ -149,8 +149,8 @@ def run_preflight(
     fall back to.
     """
 
-    operator_state = build_operator_state_summary(repo_root)
     key = resolve_project_key(project_key)
+    operator_state = build_operator_state_summary(key)
     try:
         config = load_project_config(key)
         raw = load_raw_project_config(key)
@@ -171,14 +171,14 @@ def run_preflight(
         )
 
     cache_key = _preflight_cache_key(config)
-    cache_dir = project_state_root(key)
+    cache_dir = state.preflight_cache_dir(key)
     findings: list[PreflightFinding] = list(
         _cached_findings(
             cache_dir / "preflight-floor",
             cache_key=cache_key,
             ttl=FLOOR_CACHE_TTL,
             force=force,
-            producer=lambda: _run_floor_checks(repo_root, config, raw),
+            producer=lambda: _run_floor_checks(key, repo_root, config, raw),
         )
     )
     findings.extend(
@@ -187,14 +187,14 @@ def run_preflight(
             cache_key=cache_key,
             ttl=RUNTIME_CACHE_TTL,
             force=force,
-            producer=lambda: _run_runtime_checks(repo_root, config),
+            producer=lambda: _run_runtime_checks(config),
         )
     )
     # Uncached: the floor/runtime cache keys do not track cartography doc content,
     # so a cached pass could mask a secret a mapper just wrote. A security gate
     # must re-read the docs every run.
-    findings.extend(_check_profile_a_worktrees(repo_root, config))
-    findings.extend(_check_cartography_secrets(repo_root))
+    findings.extend(_check_profile_a_worktrees(key, repo_root, config))
+    findings.extend(_check_cartography_secrets(key))
     return PreflightResult(repo_root=repo_root, findings=findings, operator_state=operator_state)
 
 
@@ -217,7 +217,7 @@ def _load_toml(path: Path) -> dict[str, Any] | str:
 
 
 def _run_floor_checks(
-    repo_root: Path, config: ProjectConfig, raw: dict[str, Any]
+    project_key: str, repo_root: Path, config: ProjectConfig, raw: dict[str, Any]
 ) -> list[PreflightFinding]:
     findings: list[PreflightFinding] = []
     findings.extend(_check_woof_install())
@@ -229,13 +229,13 @@ def _run_floor_checks(
     findings.extend(_check_language_tools(config))
     findings.extend(_check_tree_sitter(config))
     findings.extend(_check_quality_gate_commands(repo_root, config))
-    findings.extend(_check_cartography(repo_root, config))
+    findings.extend(_check_cartography(project_key, repo_root, config))
     findings.extend(_check_host_prerequisites(repo_root, config))
     findings.extend(_check_server_prerequisites(repo_root, config))
     return findings
 
 
-def _run_runtime_checks(repo_root: Path, config: ProjectConfig) -> list[PreflightFinding]:
+def _run_runtime_checks(config: ProjectConfig) -> list[PreflightFinding]:
     findings: list[PreflightFinding] = []
     findings.extend(_check_tracker(config))
     findings.extend(_check_adapter_auth_markers(config))
@@ -608,8 +608,10 @@ def _check_policy_cartography_floor(config: ProjectConfig) -> PreflightFinding:
     )
 
 
-def _check_profile_a_worktrees(repo_root: Path, config: ProjectConfig) -> list[PreflightFinding]:
-    return _check_profile_a_worktrees_for_plans(repo_root, _plan_paths(repo_root), config=config)
+def _check_profile_a_worktrees(
+    project_key: str, repo_root: Path, config: ProjectConfig
+) -> list[PreflightFinding]:
+    return _check_profile_a_worktrees_for_plans(repo_root, _plan_paths(project_key), config=config)
 
 
 def _check_profile_a_worktrees_for_plans(
@@ -630,7 +632,7 @@ def _check_profile_a_worktrees_for_plans(
     root = worktree.root
     derivation = worktree.derivation
     base_branch = resolved.delivery.base_branch.strip() or "main"
-    ready_units = _ready_worktree_units(repo_root, plan_paths=plan_paths)
+    ready_units = _ready_worktree_units(plan_paths)
     if not ready_units:
         return [
             PreflightFinding(
@@ -696,11 +698,9 @@ def _check_profile_a_worktrees_for_plans(
     return findings
 
 
-def _ready_worktree_units(
-    repo_root: Path, *, plan_paths: list[Path] | None = None
-) -> list[dict[str, Any]]:
+def _ready_worktree_units(plan_paths: list[Path]) -> list[dict[str, Any]]:
     units: list[dict[str, Any]] = []
-    for plan_path in plan_paths if plan_paths is not None else _plan_paths(repo_root):
+    for plan_path in plan_paths:
         try:
             plan = Plan.model_validate(json.loads(plan_path.read_text(encoding="utf-8")))
         except (OSError, ValueError, json.JSONDecodeError):
@@ -719,8 +719,8 @@ def _ready_worktree_units(
     return units
 
 
-def _plan_paths(repo_root: Path) -> list[Path]:
-    roots = [repo_root / ".woof" / "epics", repo_root / ".woof" / "work-unit-sets"]
+def _plan_paths(project_key: str) -> list[Path]:
+    roots = [state.epics_root(project_key), state.work_unit_sets_root(project_key)]
     paths: list[Path] = []
     for root in roots:
         if root.is_dir():
@@ -1214,14 +1214,21 @@ DEFAULT_STALENESS_FLOOR_HOURS = 168
 CARTOGRAPHY_REFRESH_PROMPT = (
     "Run ./scripts/refresh-cartography to regenerate the cartography mechanical layer."
 )
-CARTOGRAPHY_AUTHOR_HINT = (
-    "Author .woof/codebase/ through the /woof map-codebase flow "
-    "(see skills/woof/references/setup.md and skills/woof/references/map-codebase.md)."
-)
-CARTOGRAPHY_ONBOARDING_INSTALL = """\
+
+
+def _cartography_author_hint(project_key: str) -> str:
+    return (
+        f"Author {state.codebase_dir(project_key)}/ through the /woof map-codebase flow "
+        "(see skills/woof/references/setup.md and skills/woof/references/map-codebase.md)."
+    )
+
+
+def _cartography_onboarding_install(project_key: str) -> str:
+    codebase = state.codebase_dir(project_key)
+    return f"""\
 Follow the /woof setup onboarding path:
-1. Run `woof init --project <key> --language <lang>` (repeat --language as needed) so the project config carries [cartography] and `scripts/refresh-cartography` is composed.
-2. Author `.woof/codebase/TARGET-ARCHITECTURE.md` and `.woof/codebase/PRINCIPLES.md` during setup.
+1. Run `woof init --project {project_key} --language <lang>` (repeat --language as needed) so the project config carries [cartography] and `scripts/refresh-cartography` is composed.
+2. Author `{codebase}/TARGET-ARCHITECTURE.md` and `{codebase}/PRINCIPLES.md` during setup.
 3. Run the /woof map-codebase flow to write the AS-IS cartography docs, then run `./scripts/refresh-cartography` and `woof hooks install`.
 References:
 - skills/woof/references/setup.md
@@ -1229,24 +1236,28 @@ References:
 """
 
 
-def _check_cartography(repo_root: Path, config: ProjectConfig) -> list[PreflightFinding]:
-    """Validate the cartography artefact group at ``.woof/codebase/`` (ADR-004).
+def _check_cartography(
+    project_key: str, repo_root: Path, config: ProjectConfig
+) -> list[PreflightFinding]:
+    """Validate the cartography artefact group in the operator home (ADR-004, ADR-017).
 
     The project config declares the required floor. ``none`` skips the artefact
     group. ``design`` requires the human-authored target/principles docs.
     ``lexical`` and ``structural`` additionally require the refresh script and
-    current mechanical files (``tags``, ``files.txt``, ``freshness.json``).
+    current mechanical files (``tags``, ``files.txt``, ``freshness.json``). The
+    docs and the mechanical layer live under the project's cartography directory
+    in the operator home; only the refresh script itself is repo-owned.
     """
 
     cartography = config.cartography
     if cartography.floor == "none":
         return []
     if not cartography.declared:
-        return [_check_cartography_onboarding(config)]
+        return [_check_cartography_onboarding(project_key, config)]
 
     findings: list[PreflightFinding] = [
         _check_cartography_doc(
-            repo_root,
+            project_key,
             finding_id,
             filename,
             min_chars=cartography.summary_min_chars,
@@ -1256,30 +1267,30 @@ def _check_cartography(repo_root: Path, config: ProjectConfig) -> list[Preflight
     ]
 
     if cartography.floor in {"lexical", "structural"}:
-        findings.append(_check_cartography_script(repo_root))
-        findings.append(_check_cartography_mechanical(repo_root))
+        findings.append(_check_cartography_script(project_key, repo_root))
+        findings.append(_check_cartography_mechanical(project_key))
         if cartography.languages:
             findings.append(_check_cartography_ctags())
         freshness = _check_cartography_freshness(
-            repo_root, floor_hours=cartography.staleness_floor_hours
+            project_key, floor_hours=cartography.staleness_floor_hours
         )
         if freshness is not None:
             findings.append(freshness)
     return findings
 
 
-def _check_cartography_secrets(repo_root: Path) -> list[PreflightFinding]:
-    """Scan committed cartography prose for leaked secrets (ADR-004 hygiene).
+def _check_cartography_secrets(project_key: str) -> list[PreflightFinding]:
+    """Scan cartography prose for leaked secrets (ADR-004 hygiene).
 
-    The design and AS-IS layers under ``.woof/codebase/`` are committed planning
-    state, authored partly by mapper subagents, so a leaked key lands in git
-    history. This gate runs uncached (the preflight floor cache key does not track
-    cartography doc content, so a cached pass would mask a freshly written secret)
-    and fails closed on a high-signal token match. Only the file, line, and
-    pattern reason are reported; the matched value is never surfaced.
+    The design and AS-IS layers are authored partly by mapper subagents and are
+    read back into producer and reviewer prompts, so a leaked key propagates into
+    every dispatched worker's context. This gate runs uncached (the preflight floor
+    cache key does not track cartography doc content, so a cached pass would mask a
+    freshly written secret) and fails closed on a high-signal token match. Only the
+    file, line, and pattern reason are reported; the matched value is never surfaced.
     """
 
-    codebase = repo_root / ".woof" / "codebase"
+    codebase = state.codebase_dir(project_key)
     if not codebase.is_dir():
         return []
 
@@ -1293,16 +1304,15 @@ def _check_cartography_secrets(repo_root: Path) -> list[PreflightFinding]:
                     id=f"cartography.secrets.{doc.stem}",
                     label=f"cartography secret scan ({doc.name})",
                     ok=False,
-                    detail=f"could not read {doc.relative_to(repo_root).as_posix()}: {exc}",
+                    detail=f"could not read {doc}: {exc}",
                 )
             )
             continue
         hits = scan_text_for_secrets(text)
         if not hits:
             continue
-        rel = doc.relative_to(repo_root).as_posix()
         shown = hits[:10]
-        locations = ", ".join(f"{rel}:{hit.line} ({hit.reason})" for hit in shown)
+        locations = ", ".join(f"{doc.name}:{hit.line} ({hit.reason})" for hit in shown)
         if len(hits) > len(shown):
             locations += f", +{len(hits) - len(shown)} more"
         findings.append(
@@ -1310,11 +1320,11 @@ def _check_cartography_secrets(repo_root: Path) -> list[PreflightFinding]:
                 id=f"cartography.secrets.{doc.stem}",
                 label=f"cartography secret scan ({doc.name})",
                 ok=False,
-                required="no secrets in committed cartography docs",
+                required="no secrets in cartography docs",
                 detail=(
-                    f"potential secret(s) in committed cartography doc: {locations}. "
-                    "Cartography docs are committed planning state (ADR-004); remove "
-                    "the secret before committing."
+                    f"potential secret(s) in cartography doc: {locations}. "
+                    "Cartography docs are fed to dispatched workers (ADR-004); remove "
+                    "the secret."
                 ),
                 notes=[
                     "Mapper subagents must not read or quote secret-bearing files; "
@@ -1328,35 +1338,37 @@ def _check_cartography_secrets(repo_root: Path) -> list[PreflightFinding]:
                 id="cartography.secrets",
                 label="cartography secret scan",
                 ok=True,
-                detail="no high-signal secrets detected in committed cartography docs",
+                detail="no high-signal secrets detected in cartography docs",
             )
         )
     return findings
 
 
-def _check_cartography_onboarding(config: ProjectConfig) -> PreflightFinding:
+def _check_cartography_onboarding(project_key: str, config: ProjectConfig) -> PreflightFinding:
     return PreflightFinding(
         id="cartography.contract",
         label="cartography contract",
         ok=False,
         required=(
-            "project config [cartography], .woof/codebase/ design and mapper docs, "
-            "scripts/refresh-cartography, and the Woof post-commit hook"
+            f"project config [cartography], design and mapper docs in "
+            f"{state.codebase_dir(project_key)}/, scripts/refresh-cartography, "
+            "and the Woof post-commit hook"
         ),
         detail=(
             f"{config.source} has no [cartography] section; Woof requires the "
             "cartography onboarding path before preflight can pass"
         ),
-        install=CARTOGRAPHY_ONBOARDING_INSTALL,
+        install=_cartography_onboarding_install(project_key),
     )
 
 
-def _check_cartography_script(repo_root: Path) -> PreflightFinding:
+def _check_cartography_script(project_key: str, repo_root: Path) -> PreflightFinding:
     """Check the consumer-owned ``scripts/refresh-cartography``.
 
-    The Woof post-commit hook block invokes ``./scripts/refresh-cartography``, so
-    a missing, stale, or non-executable script must fail loud rather than
-    silently no-op.
+    The script is the one cartography artefact that stays in the driven repo: it
+    is the project's own generator, invoked by the project's post-commit hook, and
+    it writes into the operator home. A missing, stale, or non-executable script
+    must fail loud rather than silently no-op.
     """
 
     script = repo_root / "scripts" / "refresh-cartography"
@@ -1366,7 +1378,7 @@ def _check_cartography_script(repo_root: Path) -> PreflightFinding:
             label="cartography script",
             ok=False,
             detail=f"{script} not found",
-            install=CARTOGRAPHY_AUTHOR_HINT,
+            install=_cartography_author_hint(project_key),
         )
     if not script.is_file():
         return PreflightFinding(
@@ -1392,7 +1404,7 @@ def _check_cartography_script(repo_root: Path) -> PreflightFinding:
 
 
 def _check_cartography_doc(
-    repo_root: Path,
+    project_key: str,
     finding_id: str,
     filename: str,
     *,
@@ -1407,7 +1419,7 @@ def _check_cartography_doc(
     or ``complete: true``).
     """
 
-    path = repo_root / ".woof" / "codebase" / filename
+    path = state.codebase_dir(project_key) / filename
     label = f"cartography doc: {filename}"
     if not path.is_file():
         return PreflightFinding(
@@ -1415,7 +1427,7 @@ def _check_cartography_doc(
             label=label,
             ok=False,
             detail=f"{path} not found",
-            install=CARTOGRAPHY_AUTHOR_HINT,
+            install=_cartography_author_hint(project_key),
         )
     try:
         text = path.read_text(encoding="utf-8")
@@ -1435,7 +1447,7 @@ def _check_cartography_doc(
                 f"{path} still contains the stub marker {stub_marker!r}; "
                 "author real content and remove the marker"
             ),
-            install=CARTOGRAPHY_AUTHOR_HINT,
+            install=_cartography_author_hint(project_key),
         )
     front, body = _split_front_matter(text)
     if _doc_marked_complete(front):
@@ -1456,7 +1468,7 @@ def _check_cartography_doc(
                 f"{min_chars}-char floor; author content or mark it complete in "
                 "front matter (status: complete)"
             ),
-            install=CARTOGRAPHY_AUTHOR_HINT,
+            install=_cartography_author_hint(project_key),
         )
     return PreflightFinding(
         id=finding_id,
@@ -1466,10 +1478,10 @@ def _check_cartography_doc(
     )
 
 
-def _check_cartography_mechanical(repo_root: Path) -> PreflightFinding:
+def _check_cartography_mechanical(project_key: str) -> PreflightFinding:
     """Check the mechanical layer (``tags``, ``files.txt``, ``freshness.json``)."""
 
-    codebase = repo_root / ".woof" / "codebase"
+    codebase = state.codebase_dir(project_key)
     missing = [name for name in CARTOGRAPHY_MECHANICAL_FILES if not (codebase / name).is_file()]
     ok = not missing
     return PreflightFinding(
@@ -1533,7 +1545,7 @@ def _check_cartography_ctags() -> PreflightFinding:
 
 
 def _check_cartography_freshness(
-    repo_root: Path,
+    project_key: str,
     *,
     floor_hours: int,
 ) -> PreflightFinding | None:
@@ -1563,7 +1575,7 @@ def _check_cartography_freshness(
     cache.
     """
 
-    path = repo_root / ".woof" / "codebase" / CARTOGRAPHY_FRESHNESS_FILE
+    path = state.codebase_dir(project_key) / CARTOGRAPHY_FRESHNESS_FILE
     if not path.is_file():
         return None
     try:

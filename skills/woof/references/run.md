@@ -4,19 +4,23 @@ Drive one epic forward through the deterministic graph from the `/woof` umbrella
 deterministic: `woof wf` reads the epic's filesystem state and runs the next node. You re-run it to
 advance; you never pick the stage.
 
+That state lives in the operator home, not in the repo being delivered: the epic's directory is
+`~/.woof/state/projects/<project-key>/epics/E<N>/`, written below as `<epic-dir>`. Every command
+takes `--project <key>` (omitted from the examples below; set `WOOF_PROJECT` or pass it).
+
 ## Create or cold-start
 
 ```bash
 woof wf new "<spark>"     # new epic: opens the tracker issue, writes spark.md, sets .current-epic
 woof wf intake --source PATH  # pre-decomposed work_units: validate, assign set_id, write metadata
-woof wf --epic N          # existing epic: initialises from the tracker if the local dir is absent
+woof wf --epic N          # existing epic: initialises from the tracker if the state dir is absent
 ```
 
 ## Lead the design (interactive)
 
 Before running the headless graph, hand off to `/woof:brainstorm` to run the two design loops. It
-writes the resolved bundle into `.woof/epics/E<N>/discovery/brainstorm/`. With that bucket present,
-the graph skips the headless research/thinking/ideate chain.
+writes the resolved bundle into `<epic-dir>/discovery/brainstorm/`. With that bucket present, the
+graph skips the headless research/thinking/ideate chain.
 
 If no human leads the design, skip this step: `woof wf --epic N` runs the headless discovery chain
 as the autonomy fallback.
@@ -39,7 +43,7 @@ Surface progress from the command output; inspect deeper with `woof observe` (se
 
 `woof wf --epic N` is resumable: it recomputes the next node from filesystem state, including a
 half-finished commit. If it reports `incomplete_stage_state`, read the named artefact - do not edit
-`.woof/` by hand. Either complete the step it expects or open/resolve a gate.
+the epic's state directory by hand. Either complete the step it expects or open/resolve a gate.
 
 ## Inspect
 

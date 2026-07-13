@@ -21,7 +21,7 @@ what to do now, schedule, delegate, or drop.
 
 ## Output
 
-Write the artefact as `eisenhower-matrix.md` into the `.woof/epics/E<N>/discovery/thinking/` bucket directory declared
+Write the artefact as `eisenhower-matrix.md` into the `discovery/thinking/` bucket directory declared
 in the graph-owned input. Use this shape:
 
 ```

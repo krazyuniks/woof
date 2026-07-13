@@ -47,22 +47,21 @@ _DEFERRAL_RE = re.compile(
 )
 
 
-def validate_discovery_synthesis_contract(repo_root: Path, epic_id: int) -> PlanningContractResult:
+def validate_discovery_synthesis_contract(project_key: str, epic_id: int) -> PlanningContractResult:
     """Validate Stage 1 synthesis content beyond non-empty file existence."""
 
-    paths = discovery_synthesis_paths(repo_root, epic_id)
+    paths = discovery_synthesis_paths(project_key, epic_id)
     failures: list[str] = []
 
     concept_path = paths["concept_path"]
     try:
         concept_text = concept_path.read_text(encoding="utf-8")
     except OSError as exc:
-        failures.append(f"{_display_path(repo_root, concept_path)}: cannot read: {exc}")
+        failures.append(f"{concept_path}: cannot read: {exc}")
     else:
         if not _has_problem_framing(concept_text):
             failures.append(
-                f"{_display_path(repo_root, concept_path)}: "
-                "must include a non-empty `## Problem Framing` section"
+                f"{concept_path}: must include a non-empty `## Problem Framing` section"
             )
 
     questions_path = paths["open_questions_path"]
@@ -73,13 +72,11 @@ def validate_discovery_synthesis_contract(repo_root: Path, epic_id: int) -> Plan
             ok=False,
             failures=[
                 *failures,
-                f"{_display_path(repo_root, questions_path)}: cannot read: {exc}",
+                f"{questions_path}: cannot read: {exc}",
             ],
             open_questions=[],
         )
-    failures.extend(
-        f"{_display_path(repo_root, questions_path)}: {failure}" for failure in question_failures
-    )
+    failures.extend(f"{questions_path}: {failure}" for failure in question_failures)
     return PlanningContractResult(
         ok=not failures,
         failures=failures,
@@ -87,21 +84,20 @@ def validate_discovery_synthesis_contract(repo_root: Path, epic_id: int) -> Plan
     )
 
 
-def validate_definition_open_questions(repo_root: Path, epic_id: int, epic_path: Path) -> list[str]:
+def validate_definition_open_questions(
+    project_key: str, epic_id: int, epic_path: Path
+) -> list[str]:
     """Ensure Definition resolves or carries every active Discovery question."""
 
-    questions_path = discovery_synthesis_paths(repo_root, epic_id)["open_questions_path"]
+    questions_path = discovery_synthesis_paths(project_key, epic_id)["open_questions_path"]
     if not questions_path.exists():
         return []
 
     open_questions, question_failures = parse_open_questions(questions_path)
     if question_failures:
-        return [
-            f"{_display_path(repo_root, questions_path)}: {failure}"
-            for failure in question_failures
-        ]
+        return [f"{questions_path}: {failure}" for failure in question_failures]
     if not open_questions:
-        return _definition_unknown_question_failures(repo_root, epic_path, active_ids=set())
+        return _definition_unknown_question_failures(epic_path, active_ids=set())
 
     epic_front = _load_epic_front_matter(epic_path)
     active_ids = {question.id for question in open_questions}
@@ -113,16 +109,13 @@ def validate_definition_open_questions(repo_root: Path, epic_id: int, epic_path:
     missing = sorted(active_ids - covered_ids)
     for question_id in missing:
         failures.append(
-            f"{_display_path(repo_root, epic_path)}: "
+            f"{epic_path}: "
             f"Definition must resolve or carry forward discovery open question {question_id}"
         )
     duplicates = sorted(carried_ids & resolved_ids)
     for question_id in duplicates:
-        failures.append(
-            f"{_display_path(repo_root, epic_path)}: "
-            f"{question_id} cannot be both carried forward and resolved"
-        )
-    failures.extend(_definition_unknown_question_failures(repo_root, epic_path, active_ids))
+        failures.append(f"{epic_path}: {question_id} cannot be both carried forward and resolved")
+    failures.extend(_definition_unknown_question_failures(epic_path, active_ids))
     return failures
 
 
@@ -135,16 +128,16 @@ def validate_stage3_plan_contract(repo_root: Path, epic_path: Path, plan_path: P
             exclude_none=True
         )
     except ValueError as exc:
-        return [f"{_display_path(repo_root, plan_path)}: plan.json parse error: {exc}"]
+        return [f"{plan_path}: plan.json parse error: {exc}"]
 
     epic = _load_epic_front_matter(epic_path)
     if not epic:
         return [
-            f"{_display_path(repo_root, epic_path)}: "
+            f"{epic_path}: "
             "EPIC.md front-matter could not be parsed for plan cross-reference validation"
         ]
     for failure in stage3_plan_contract_failures(plan, epic):
-        failures.append(f"{_display_path(repo_root, plan_path)}: {failure}")
+        failures.append(f"{plan_path}: {failure}")
     return failures
 
 
@@ -257,16 +250,13 @@ def _question_ids(value: object) -> set[str]:
     return ids
 
 
-def _definition_unknown_question_failures(
-    repo_root: Path, epic_path: Path, active_ids: set[str]
-) -> list[str]:
+def _definition_unknown_question_failures(epic_path: Path, active_ids: set[str]) -> list[str]:
     front = _load_epic_front_matter(epic_path)
     referenced_ids = _question_ids(front.get("open_questions")) | _question_ids(
         front.get("resolved_open_questions")
     )
     return [
-        f"{_display_path(repo_root, epic_path)}: "
-        f"Definition references unknown discovery open question {question_id}"
+        f"{epic_path}: Definition references unknown discovery open question {question_id}"
         for question_id in sorted(referenced_ids - active_ids)
     ]
 

@@ -22,7 +22,7 @@ then what?" and follows the chain.
 
 ## Output
 
-Write the artefact as `second-order.md` into the `.woof/epics/E<N>/discovery/thinking/` bucket directory declared in
+Write the artefact as `second-order.md` into the `discovery/thinking/` bucket directory declared in
 the graph-owned input. Use this shape:
 
 ```

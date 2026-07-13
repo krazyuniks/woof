@@ -16,14 +16,17 @@ from typing import Any
 
 import yaml
 
+from woof import state
 from woof.checks import CheckContext, CheckOutcome
 from woof.graph.state import Plan
 from woof.paths import schema_dir
 
 CHECK_ID = "check_5_plan_crossrefs"
+# Names within the project's cartography directory, not repo paths: cartography is
+# engine-consumed derived state in the operator home (ADR-017).
 DESIGN_CARTOGRAPHY_REFS = {
-    ".woof/codebase/TARGET-ARCHITECTURE.md",
-    ".woof/codebase/PRINCIPLES.md",
+    "TARGET-ARCHITECTURE.md",
+    "PRINCIPLES.md",
 }
 POLICY_CARTOGRAPHY_FLOORS = {"none", "design", "lexical", "structural"}
 
@@ -31,7 +34,8 @@ POLICY_CARTOGRAPHY_FLOORS = {"none", "design", "lexical", "structural"}
 def check_5_plan_crossrefs_runner(ctx: CheckContext) -> CheckOutcome:
     plan_path = ctx.epic_dir / "plan.json"
     epic_path = ctx.epic_dir / "EPIC.md"
-    paths = [_display_path(plan_path, ctx.repo_root), _display_path(epic_path, ctx.repo_root)]
+    paths = [str(plan_path), str(epic_path)]
+    cartography_paths = _cartography_display_paths(ctx)
 
     failures: list[str] = []
     cartography_failures = _cartography_context_failures(ctx)
@@ -59,7 +63,7 @@ def check_5_plan_crossrefs_runner(ctx: CheckContext) -> CheckOutcome:
             severity="blocker",
             summary=summary,
             evidence="\n".join(failures),
-            paths=paths + list(ctx.cartography_paths),
+            paths=paths + cartography_paths,
         )
 
     work_unit_count = len(plan.get("work_units", [])) if plan else 0
@@ -76,8 +80,13 @@ def check_5_plan_crossrefs_runner(ctx: CheckContext) -> CheckOutcome:
             f"plan schema and cross-reference invariants valid "
             f"({work_unit_count} work unit(s)){cartography_note}"
         ),
-        paths=paths + list(ctx.cartography_paths),
+        paths=paths + cartography_paths,
     )
+
+
+def _cartography_display_paths(ctx: CheckContext) -> list[str]:
+    codebase_dir = state.codebase_dir(ctx.project_key)
+    return [str(codebase_dir / name) for name in ctx.cartography_paths if isinstance(name, str)]
 
 
 def _cartography_context_failures(ctx: CheckContext) -> list[str]:
@@ -88,40 +97,41 @@ def _cartography_context_failures(ctx: CheckContext) -> list[str]:
         return [f"cartography.floor has unknown value {floor!r}"]
 
     failures: list[str] = []
-    path_set = set(ctx.cartography_paths)
-    if not all(isinstance(path, str) and path for path in ctx.cartography_paths):
-        failures.append("cartography_paths must contain non-empty repo-relative strings")
+    name_set = set(ctx.cartography_paths)
+    if not all(isinstance(name, str) and name for name in ctx.cartography_paths):
+        failures.append("cartography_paths must contain non-empty names")
 
-    invalid_paths = [
-        path
-        for path in ctx.cartography_paths
-        if not isinstance(path, str)
-        or path.startswith("/")
-        or not path.startswith(".woof/codebase/")
+    invalid_names = [
+        name
+        for name in ctx.cartography_paths
+        if not isinstance(name, str) or name.startswith("/") or ".." in Path(name).parts
     ]
-    if invalid_paths:
-        failures.append(f"cartography_paths outside .woof/codebase/: {sorted(invalid_paths)!r}")
+    if invalid_names:
+        failures.append(
+            f"cartography_paths must be names inside the cartography directory: "
+            f"{sorted(invalid_names)!r}"
+        )
 
-    missing_refs = sorted(DESIGN_CARTOGRAPHY_REFS - path_set)
+    missing_refs = sorted(DESIGN_CARTOGRAPHY_REFS - name_set)
     if missing_refs:
         failures.append(f"missing required design cartography path(s): {missing_refs!r}")
 
+    codebase_dir = state.codebase_dir(ctx.project_key)
     missing_files = [
-        path
-        for path in ctx.cartography_paths
-        if isinstance(path, str) and not (ctx.repo_root / path).is_file()
+        name
+        for name in ctx.cartography_paths
+        if isinstance(name, str) and not (codebase_dir / name).is_file()
     ]
     if missing_files:
-        failures.append(f"declared cartography path(s) missing on disk: {sorted(missing_files)!r}")
+        failures.append(
+            f"declared cartography path(s) missing under {codebase_dir}: {sorted(missing_files)!r}"
+        )
 
     if floor in {"lexical", "structural"}:
         invalid_slice = [
             path
             for path in ctx.files_txt_slice
-            if not isinstance(path, str)
-            or not path
-            or path.startswith("/")
-            or path.startswith(".woof/")
+            if not isinstance(path, str) or not path or path.startswith("/")
         ]
         if invalid_slice:
             failures.append(f"files_txt_slice has invalid repo path(s): {sorted(invalid_slice)!r}")
@@ -338,13 +348,6 @@ def _crossref_failures(
             raise ValueError("current_work_unit_id is required for Stage-5 plan validation")
         failures.extend(_stage5_status_failures(work_units, current_work_unit_id, work_unit_id_set))
     return failures
-
-
-def _display_path(path: Path, repo_root: Path) -> str:
-    try:
-        return str(path.relative_to(repo_root))
-    except ValueError:
-        return str(path)
 
 
 def _object_items(value: object) -> list[dict[str, Any]]:

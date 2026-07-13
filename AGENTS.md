@@ -2,7 +2,7 @@
 
 ## Project shape
 
-Woof is the orchestration engine for AI-assisted software delivery. It has five layers: state on disk (`.woof/`), a Python graph library (`src/woof/`), the shared interactive harness transport boundary, a Claude Code operator skill layer (`skills/`: the `woof` umbrella over the `woof` CLI plus the `woof-brainstorm` design specialist), and dispatched producer/reviewer/mapper workers.
+Woof is the orchestration engine for AI-assisted software delivery. It has five layers: state on disk in the operator home (`~/.woof/`), a Python graph library (`src/woof/`), the shared interactive harness transport boundary, a Claude Code operator skill layer (`skills/`: the `woof` umbrella over the `woof` CLI plus the `woof-brainstorm` design specialist), and dispatched producer/reviewer/mapper workers.
 
 Authority for design decisions: ADRs under `docs/adr/`. Authority for system architecture: `docs/architecture.md`. Authority for glossary terms: `docs/CONTEXT.md`. Authority for open work: `docs/backlog.md`.
 
@@ -49,8 +49,8 @@ Do not introduce parallel Make, npm, tox, or ad-hoc shell entry points while a `
 - Preserve policy-driven rigour and cartography (ADR-013). Cartography remains first-class, with the required floor declared by repo policy.
 - Single source of truth. Every concept has one authoritative home and one bounded scope. Routing and run profiles live only in the project's `~/.woof/config/projects/<project-key>.toml`; the executable unit has one schema; the dispatch registry owns harness/model/effort vocabulary. Never declare a concept in two files, and never ship a back-compat alias without its deletion in the same change.
 - Do not introduce a parallel operator surface for running epics. The operator entry point is the `/woof` umbrella, which runs `woof wf` (ADR-007).
-- Do not add a parallel state-mutation path. Skill-facing state changes go through typed `woof wf` verbs (`new`, `--resolve`, `reset`); never hand-edit `.woof/` state.
-- Do not commit runtime state: locks, current-epic markers, generated audit raw data, and the mechanical cartography layer are gitignored.
+- Do not add a parallel state-mutation path. Skill-facing state changes go through typed `woof wf` verbs (`new`, `--resolve`, `reset`); never hand-edit engine state in the operator home.
+- Do not write engine state into a driven repo (ADR-017). Runs, epics, plans, gates, locks, critiques, audit trails, and cartography live under `~/.woof/state/projects/<project-key>/`. A delivery commit contains only the delivery change.
 - Use conventional commits, e.g. `feat(graph): add transaction guard`.
 
 ## Quality bar

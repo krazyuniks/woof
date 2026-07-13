@@ -35,6 +35,7 @@ from pathlib import Path
 
 import yaml
 
+from woof import state
 from woof.checks.contract_refs import ContractRefUsageError, validate_contract_refs
 from woof.cli.dispatcher import NODE_GROUPS, cmd_dispatch
 from woof.cli.harness_registry import supported_harnesses
@@ -47,7 +48,7 @@ from woof.lib.schema_validate import run_ajv
 from woof.paths import (
     WOOF_PROJECT_ENV,
     ProjectKeyError,
-    repo_root_from_git,
+    resolve_project_key,
     schema_dir,
 )
 from woof.trackers import TrackerError, resolve_tracker
@@ -239,9 +240,12 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 
 def cmd_audit_bundle(args: argparse.Namespace) -> int:
-    repo_root = repo_root_from_git()
     try:
-        result = bundle_claude_transcripts(repo_root, args.epic)
+        project_key = resolve_project_key(getattr(args, "project", None))
+        result = bundle_claude_transcripts(project_key, args.epic)
+    except ProjectKeyError as exc:
+        sys.stderr.write(f"woof: {exc}\n")
+        return 2
     except NonPortableTranscriptError as exc:
         sys.stderr.write(f"woof: {exc}\n")
         return 2
@@ -249,11 +253,11 @@ def cmd_audit_bundle(args: argparse.Namespace) -> int:
         sys.stderr.write(f"woof: {exc}\n")
         return 2
 
-    destination = _display_path(repo_root, result.destination_dir)
+    destination = result.destination_dir
     if result.copied:
         print(f"{result.epic}: copied {len(result.copied)} Claude transcript(s) into {destination}")
         for item in result.copied:
-            print(f"  copied {item.reference} -> {_display_path(repo_root, item.destination)}")
+            print(f"  copied {item.reference} -> {item.destination}")
     else:
         print(f"{result.epic}: copied 0 Claude transcript(s) into {destination}")
 
@@ -266,13 +270,6 @@ def cmd_audit_bundle(args: argparse.Namespace) -> int:
     return 0
 
 
-def _display_path(repo_root: Path, path: Path) -> str:
-    try:
-        return path.relative_to(repo_root).as_posix()
-    except ValueError:
-        return path.as_posix()
-
-
 # ---------------------------------------------------------------------------
 # render-epic
 # ---------------------------------------------------------------------------
@@ -280,9 +277,12 @@ def _display_path(repo_root: Path, path: Path) -> str:
 
 def cmd_render_epic(args: argparse.Namespace) -> int:
     ensure_ajv()
-    repo_root = repo_root_from_git()
-    epic_dir = repo_root / ".woof" / "epics" / f"E{args.epic}"
-    epic_md = epic_dir / "EPIC.md"
+    try:
+        project_key = resolve_project_key(getattr(args, "project", None))
+    except ProjectKeyError as exc:
+        sys.stderr.write(f"woof: {exc}\n")
+        return 2
+    epic_md = state.epic_contract_path(project_key, args.epic)
     if not epic_md.is_file():
         sys.stderr.write(f"woof: {epic_md} not found\n")
         return 2
@@ -308,7 +308,7 @@ def cmd_render_epic(args: argparse.Namespace) -> int:
         return 0
 
     try:
-        tracker = resolve_tracker(repo_root, args.project)
+        tracker = resolve_tracker(project_key)
         result = tracker.push_epic_definition(args.epic, front, prose)
     except TrackerError as exc:
         message = str(exc)

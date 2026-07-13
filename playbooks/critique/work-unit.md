@@ -4,24 +4,23 @@ You are the reviewer role, dispatched by the Woof skill from a graph contract to
 
 ## Context documents — read these first
 
-When repo policy supplies cartography, the graph prepends a "Graph-owned input" block with `inputs.cartography_paths`. Read the supplied paths before reviewing:
+When repo policy supplies cartography, the graph prepends a "Graph-owned input" block with `inputs.cartography_paths`, naming cartography documents in the project's cartography directory in the operator home. Read them before reviewing:
 
-- `.woof/codebase/CONVENTIONS.md`
-- `.woof/codebase/TESTING.md`
-- `.woof/codebase/CONCERNS.md`
+- `CONVENTIONS.md`
+- `TESTING.md`
+- `CONCERNS.md`
 
 ## Inputs
 
-- Graph-owned input JSON — prepended by the graph. It names `epic_id`, `work_unit_id`, the selected work unit object from `plan.json`, the expected critique path, and the exact staged-diff commands to inspect.
-- `.woof/.current-epic` — verifies the epic id `<N>`
-- `.woof/epics/E<N>/EPIC.md` — outcome + contract-decision contracts
-- `.woof/epics/E<N>/plan.json` — use the graph-owned `work_unit_id`; do not infer a different work unit from local status
+- Graph-owned input JSON — prepended by the graph. It names `epic_id`, `work_unit_id`, the selected work unit object from `plan.json`, the absolute engine-state paths (`inputs.epic_path`, `inputs.plan_path`, `inputs.critique_path`), and the exact staged-diff commands to inspect.
+- `inputs.epic_path` (`EPIC.md`) — outcome + contract-decision contracts
+- `inputs.plan_path` (`plan.json`) — use the graph-owned `work_unit_id`; do not infer a different work unit from local status
 - `git diff --staged` (and `git diff --staged --name-only`) — the work unit's actual change
 - `CLAUDE.md` / `AGENTS.md` — project conventions
 
 ## Output
 
-Write `.woof/epics/E<N>/critique/work-unit-S<k>.md` with YAML front-matter conforming to `woof/schemas/critique.schema.json` plus prose.
+Write the declared `inputs.critique_path` with YAML front-matter conforming to `woof/schemas/critique.schema.json` plus prose.
 
 Front-matter:
 

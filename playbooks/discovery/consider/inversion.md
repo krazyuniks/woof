@@ -20,7 +20,7 @@ to succeed, ask what would guarantee failure, then design to avoid those things.
 
 ## Output
 
-Write the artefact as `inversion.md` into the `.woof/epics/E<N>/discovery/thinking/` bucket directory declared in the
+Write the artefact as `inversion.md` into the `discovery/thinking/` bucket directory declared in the
 graph-owned input. Use this shape:
 
 ```

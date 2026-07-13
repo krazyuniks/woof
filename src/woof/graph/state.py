@@ -230,6 +230,10 @@ class NodeInput(BaseModel):
     node_type: NodeType
     epic_id: int
     work_unit_id: str | None = None
+    # The two roots are independent (ADR-017). ``project_key`` locates engine
+    # state under the operator home; ``repo_root`` locates the delivery checkout.
+    # Neither is derived from the other.
+    project_key: str
     repo_root: Path
     reason: str | None = None
     decision: GateDecision | None = None
@@ -259,12 +263,15 @@ class NodeOutput(BaseModel):
 
 
 class TransactionManifest(BaseModel):
-    epic_id: int
+    """The exact delivery-path set a work-unit commit may contain (ADR-017).
+
+    Engine state lives in the operator home, so a commit has no engine paths to
+    require and none to permit: expected == the work unit's own delivery paths.
+    """
+
     work_unit_id: str
     expected_paths: list[str]
     work_unit_paths: list[str]
-    required_paths: list[str]
-    audit_paths: list[str]
 
 
 class ManifestVerification(BaseModel):

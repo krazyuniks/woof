@@ -14,23 +14,25 @@ NO_PROGRESS_THRESHOLD = 3
 _UNKNOWN_SIG_PREFIX = "__unknown__"
 
 
-def _work_unit_path_patterns(repo_root: Path, epic_id: int, work_unit_id: str | None) -> list[str]:
+def _work_unit_path_patterns(project_key: str, epic_id: int, work_unit_id: str | None) -> list[str]:
     if not work_unit_id:
         return []
     try:
-        plan = load_plan(repo_root, epic_id)
+        plan = load_plan(project_key, epic_id)
         work_unit = work_unit_by_id(plan, work_unit_id)
         return list(work_unit.paths)
     except (StageStateError, ValueError):
         return []
 
 
-def _has_work_unit_progress(repo_root: Path, epic_id: int, work_unit_id: str | None) -> bool:
+def _has_work_unit_progress(
+    project_key: str, repo_root: Path, epic_id: int, work_unit_id: str | None
+) -> bool:
     """Return True when current staged paths signal work-unit progress (signal 2)."""
     current_staged = staged_paths(repo_root)
     if not current_staged:
         return False
-    patterns = _work_unit_path_patterns(repo_root, epic_id, work_unit_id)
+    patterns = _work_unit_path_patterns(project_key, epic_id, work_unit_id)
     if not patterns:
         return bool(current_staged)
     try:
@@ -39,7 +41,9 @@ def _has_work_unit_progress(repo_root: Path, epic_id: int, work_unit_id: str | N
         return bool(current_staged)
 
 
-def detect_resilience_gate(repo_root: Path, epic_id: int, work_unit_id: str | None) -> str | None:
+def detect_resilience_gate(
+    project_key: str, repo_root: Path, epic_id: int, work_unit_id: str | None
+) -> str | None:
     """Scan dispatch telemetry for run-resilience conditions.
 
     Returns "course_correction", "run_resilience", or None.
@@ -52,7 +56,7 @@ def detect_resilience_gate(repo_root: Path, epic_id: int, work_unit_id: str | No
       previous non-rate-limited event; starts a new streak of 1 when it differs.
     - course_correction (same-error threshold) is checked before run_resilience.
     """
-    events = iter_dispatch_events(repo_root, epic_id)
+    events = iter_dispatch_events(project_key, epic_id)
     subprocess_events = [
         e
         for e in events
@@ -83,7 +87,7 @@ def detect_resilience_gate(repo_root: Path, epic_id: int, work_unit_id: str | No
 
         prev_error_sig = raw_sig
 
-    if _has_work_unit_progress(repo_root, epic_id, work_unit_id):
+    if _has_work_unit_progress(project_key, repo_root, epic_id, work_unit_id):
         consecutive_same_error = 0
         consecutive_no_progress = 0
 

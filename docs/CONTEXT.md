@@ -25,10 +25,10 @@ This glossary defines Woof's project-specific terms. Architecture, ADRs, and bac
 - **Retained session** - a backend-neutral live worker identity that accepts subsequent turns before explicit close; Woof uses it for a warm producer.
 - **Profile A** - worktree-per-work-unit delivery with a pull request and serial merge coordinator.
 - **Profile B** - single-tree delivery with graph-owned commit and push.
-- **Cartography** - the `.woof/codebase/` artefact group used for repo understanding: design docs, mapper-authored AS-IS docs, lexical files, and optional structural indexes.
+- **Cartography** - the `~/.woof/state/projects/<project-key>/codebase/` artefact group used for repo understanding: design docs, mapper-authored AS-IS docs, lexical files, and optional structural indexes. It is engine state in the operator home, not a directory in the driven repo (ADR-017).
 - **Cartography floor** - the minimum cartography capability a repo policy requires before a run may proceed.
 - **Mechanical layer** - regenerated cartography artefacts such as `tags`, `files.txt`, `freshness.json`, and structural indexes.
-- **Structural cartography index** - generated files/symbols/edges data under `.woof/codebase/structural/` for impact-aware review and conformance checks.
+- **Structural cartography index** - generated files/symbols/edges data under the project's cartography `structural/` directory for impact-aware review and conformance checks.
 - **Structural impact context** - token-bounded callers, callees, imports, and dependency evidence produced from structural cartography.
 - **Check floor** - the deterministic checks a repo policy requires before review or publish.
 - **Readiness gate** - deterministic halt when an epic or work-unit set is not concrete enough for the next step declared by policy.

@@ -10,17 +10,17 @@ Graph-owned input:
 
 ## Context documents — read these first
 
-When repo policy supplies cartography, the graph delivers relevant `.woof/codebase/` documents in `inputs.cartography_paths`. Read the supplied paths before beginning work:
+When repo policy supplies cartography, the graph delivers the names of the relevant cartography documents in `inputs.cartography_paths`. The documents live in the project's cartography directory in the operator home. Read them before beginning work:
 
-- `.woof/codebase/CURRENT-ARCHITECTURE.md`
-- `.woof/codebase/STACK.md`
-- `.woof/codebase/INTEGRATIONS.md`
-- `.woof/codebase/STRUCTURE.md`
-- `.woof/codebase/CONVENTIONS.md`
-- `.woof/codebase/TESTING.md`
-- `.woof/codebase/CONCERNS.md`
-- `.woof/codebase/TARGET-ARCHITECTURE.md`
-- `.woof/codebase/PRINCIPLES.md`
+- `CURRENT-ARCHITECTURE.md`
+- `STACK.md`
+- `INTEGRATIONS.md`
+- `STRUCTURE.md`
+- `CONVENTIONS.md`
+- `TESTING.md`
+- `CONCERNS.md`
+- `TARGET-ARCHITECTURE.md`
+- `PRINCIPLES.md`
 
 This is a non-interactive dispatch. Do not ask the operator questions and do not
 wait for confirmation. Where scope is ambiguous, state the assumption you made
@@ -31,7 +31,7 @@ artefacts already produced for this epic). Turn that material into candidate
 directions for the epic.
 
 Write at least one non-empty Markdown artefact into the declared `bucket_dir`
-(`.woof/epics/E<N>/discovery/ideate/`):
+(the epic's `discovery/ideate/` directory):
 
 - `ideas.md` - divergent candidate directions. Generate broadly before
   filtering; capture even the ideas you expect to reject, with a one-line

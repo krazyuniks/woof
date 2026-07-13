@@ -26,7 +26,7 @@ Run Woof against the repository you want it to manage. The `/woof` skill walks y
 woof init
 ```
 
-`woof init` scaffolds `.woof/`, including `policy.toml` for delivery profile, verification command, producer/reviewer run-profile slots, deterministic check floor, and cartography floor. You then author the target architecture and design principles, install the cartography hook (`woof hooks install`), and start your first epic with `woof wf new "<spark>"` or ingest a pre-decomposed `work_units[]` source with `woof wf intake --source PATH`.
+`woof init` writes the project's config to `~/.woof/config/projects/<project-key>.toml`, declaring the delivery profile, verification command, producer/reviewer run-profile slots, deterministic check floor, and cartography floor. It writes nothing into the driven repo. You then author the target architecture and design principles, install the cartography hook (`woof hooks install`), and start your first epic with `woof wf new "<spark>"` or ingest a pre-decomposed `work_units[]` source with `woof wf intake --source PATH`.
 
 ## Operator workflow
 
@@ -37,13 +37,13 @@ One umbrella skill is the operator's surface, plus one interactive design specia
 | `/woof` | Drive the `woof` CLI: create and run epics, ingest pre-decomposed work units, resolve gates, reset, observe, and onboard a repo. The operator's command-map. |
 | `/woof:brainstorm` | Lead the design conversation for an epic (the two brainstorm loops), then hand off to `woof wf`. |
 
-The umbrella maps a request to the right `woof` shell command. Running an epic is `woof wf --epic N`: it reads the epic's on-disk state under `.woof/` and runs the next graph node, dispatching producer and reviewer subagents for dispatch-shaped nodes, running deterministic nodes in-process, and surfacing gates for an operator decision (`woof wf --epic N --resolve <decision>`). The on-disk state is authoritative; the skill's in-session context is reconstructed from disk on a new session. Redo a design with `woof wf reset --epic N`.
+The umbrella maps a request to the right `woof` shell command. Running an epic is `woof wf --epic N`: it reads the epic's on-disk state under `~/.woof/state/projects/<project-key>/` and runs the next graph node, dispatching producer and reviewer subagents for dispatch-shaped nodes, running deterministic nodes in-process, and surfacing gates for an operator decision (`woof wf --epic N --resolve <decision>`). The on-disk state is authoritative; the skill's in-session context is reconstructed from disk on a new session. Redo a design with `woof wf reset --epic N`.
 
 The target graph checks contract readiness after definition and before planning. That gate runs early, but not immediately after epic creation: at creation time Woof only has a spark. Once `EPIC.md` exists, Woof can deterministically check whether acceptance criteria are machine-checkable, contract decisions are concrete, and referenced existing paths resolve before any model decomposes the work.
 
 ## Cartography
 
-Every consumer repository carries a mandatory cartography artefact group at `.woof/codebase/`:
+Every project carries a mandatory cartography artefact group at `~/.woof/state/projects/<project-key>/codebase/`:
 
 - Human-authored design layer (`TARGET-ARCHITECTURE.md`, `PRINCIPLES.md`).
 - Mapper-authored AS-IS layer (`CURRENT-ARCHITECTURE.md`, `STACK.md`, `INTEGRATIONS.md`, `STRUCTURE.md`, `CONVENTIONS.md`, `TESTING.md`, `CONCERNS.md`).
@@ -57,7 +57,7 @@ Dispatched agents run in trusted-local mode. Woof does not sandbox them, restric
 
 The runtime model is reported by `woof preflight` and by the skill at epic start.
 
-Woof is allowed to be opinionated about expert-local tooling. tmux may be used for long-running supervision, logs, and dashboards when it improves operability. It is not a workflow authority; graph state, typed commands, gates, and commits remain owned by `.woof/` and the Python engine.
+Woof is allowed to be opinionated about expert-local tooling. tmux may be used for long-running supervision, logs, and dashboards when it improves operability. It is not a workflow authority; graph state, typed commands, gates, and commits remain owned by the operator home and the Python engine.
 
 Quality gates support two postures in the target architecture. Strict mode blocks on any failure. Baseline mode starts as a command-level brownfield posture: pre-existing red commands can be recorded and reported without blocking, while fine-grained per-failure subtraction requires a structured parser or machine-readable gate output.
 

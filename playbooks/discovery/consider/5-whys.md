@@ -20,7 +20,7 @@ Keep asking "why" until you reach the root cause, not just a symptom.
 
 ## Output
 
-Write the artefact as `5-whys.md` into the `.woof/epics/E<N>/discovery/thinking/` bucket directory declared in the
+Write the artefact as `5-whys.md` into the `discovery/thinking/` bucket directory declared in the
 graph-owned input. Use this shape:
 
 ```

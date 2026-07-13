@@ -1,4 +1,9 @@
-"""Audit artefact redaction and size capping for commit-bound files."""
+"""Audit artefact redaction and size capping.
+
+Audit artefacts live in the operator's state home and are never staged into a
+delivery commit. Redaction still runs over them: the tree holds raw executor
+transcripts, and a secret that leaks into one must not survive at rest.
+"""
 
 from __future__ import annotations
 
@@ -9,6 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from re import Pattern
 
+from woof import state
 from woof.project_config import AuditConfig, load_project_config
 
 SENSITIVE_KEY_RE = re.compile(
@@ -57,9 +63,11 @@ class RedactionPattern:
 
 @dataclass(frozen=True)
 class AuditFileSummary:
+    """One audit file after redaction. Paths are relative to the epic's audit directory."""
+
     path: str
     original_bytes: int
-    committed_bytes: int
+    stored_bytes: int
     redacted: bool = False
     truncated: bool = False
     raw_path: str | None = None
@@ -94,17 +102,24 @@ def load_project_audit_config(project_key: str | None = None) -> AuditConfig:
     return load_project_config(project_key).dispatch.audit
 
 
-def prepare_commit_audit(repo_root: Path, epic_dir: Path) -> list[AuditFileSummary]:
-    """Redact and cap audit files that may be included in a work-unit commit."""
+def redact_audit_artefacts(
+    project_key: str, epic_id: int, *, repo_root: Path
+) -> list[AuditFileSummary]:
+    """Redact and cap the epic's audit files in place.
 
-    config = load_project_audit_config()
-    audit_dir = epic_dir / "audit"
+    ``repo_root`` is read only for the redaction patterns derived from the driven
+    repository's own secret files; the audit tree itself lives under the operator home.
+    """
+
+    config = load_project_audit_config(project_key)
+    audit_dir = state.audit_dir(project_key, epic_id)
     if not config.enabled or not audit_dir.is_dir():
         return []
 
+    raw_dir = state.audit_raw_dir(project_key, epic_id)
     patterns = _redaction_patterns(repo_root, config)
     summaries: list[AuditFileSummary] = []
-    for path in _commit_bound_audit_files(audit_dir):
+    for path in _redactable_audit_files(audit_dir, raw_dir):
         original = path.read_bytes()
         text = original.decode("utf-8", errors="replace")
         redacted_text, reasons = _redact(text, patterns)
@@ -112,36 +127,34 @@ def prepare_commit_audit(repo_root: Path, epic_dir: Path) -> list[AuditFileSumma
         raw_path: Path | None = None
         candidate = redacted_text.encode()
         if len(candidate) > config.max_bytes:
-            raw_path = _raw_path(audit_dir, path)
+            raw_path = _raw_path(audit_dir, raw_dir, path)
             raw_path.parent.mkdir(parents=True, exist_ok=True)
             raw_path.write_bytes(original)
-            raw_rel = raw_path.relative_to(repo_root).as_posix()
+            raw_rel = raw_path.relative_to(audit_dir).as_posix()
             redacted_text = _cap_text(redacted_text, config.max_bytes, raw_rel)
 
-        committed = redacted_text.encode()
-        if committed != original:
+        stored = redacted_text.encode()
+        if stored != original:
             path.write_text(redacted_text)
 
         summaries.append(
             AuditFileSummary(
-                path=path.relative_to(repo_root).as_posix(),
+                path=path.relative_to(audit_dir).as_posix(),
                 original_bytes=len(original),
-                committed_bytes=len(committed),
+                stored_bytes=len(stored),
                 redacted=bool(reasons),
                 truncated=raw_path is not None,
-                raw_path=raw_path.relative_to(repo_root).as_posix() if raw_path else None,
+                raw_path=raw_path.relative_to(audit_dir).as_posix() if raw_path else None,
                 reasons=tuple(sorted(reasons)),
             )
         )
     return summaries
 
 
-def _commit_bound_audit_files(audit_dir: Path) -> list[Path]:
+def _redactable_audit_files(audit_dir: Path, raw_dir: Path) -> list[Path]:
     files = []
     for path in audit_dir.rglob("*"):
-        if not path.is_file():
-            continue
-        if "raw" in path.relative_to(audit_dir).parts:
+        if not path.is_file() or path.is_relative_to(raw_dir):
             continue
         files.append(path)
     return sorted(files)
@@ -220,9 +233,9 @@ def _redact(text: str, patterns: list[RedactionPattern]) -> tuple[str, set[str]]
     return redacted, reasons
 
 
-def _raw_path(audit_dir: Path, path: Path) -> Path:
+def _raw_path(audit_dir: Path, raw_dir: Path, path: Path) -> Path:
     rel = path.relative_to(audit_dir).as_posix().replace("/", "__")
-    return audit_dir / "raw" / rel
+    return raw_dir / rel
 
 
 def _cap_text(text: str, max_bytes: int, raw_rel: str) -> str:

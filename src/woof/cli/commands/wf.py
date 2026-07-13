@@ -11,18 +11,17 @@ from pathlib import Path
 
 import yaml
 
+from woof import state
 from woof.graph.decisions import all_decisions, validate_decision
 from woof.graph.dispositions import (
     NON_BLOCKING_SEVERITIES,
     FrontMatterError,
     critique_severity,
     read_markdown_front_matter,
-    work_unit_critique_path,
-    work_unit_disposition_path,
 )
 from woof.graph.intake import ingest_predecomposed_work_units
 from woof.graph.lock import WorkflowLockError
-from woof.graph.runner import run_graph
+from woof.graph.runner import GraphNoProgressError, run_graph
 from woof.graph.state import (
     TERMINAL_WORK_UNIT_STATES,
     GateDecision,
@@ -38,12 +37,13 @@ from woof.graph.transitions import (
     archived_epic_contracts,
     archived_epic_findings_path,
     epic_definition_dir,
-    epic_dir,
     load_plan,
     mark_work_unit_state,
+    plan_critique_path,
+    plan_markdown_path,
     write_plan,
 )
-from woof.paths import repo_root_from_git
+from woof.paths import ProjectKeyError, repo_root_from_git, resolve_project_key
 from woof.trackers import (
     CONFLICT_DECISIONS,
     CONFLICT_TRIGGERS,
@@ -83,20 +83,23 @@ def _gate_resolved_event_name(gate_type: str | None) -> str | None:
     return None
 
 
-def _display_path(repo_root: Path, path: Path) -> str:
-    try:
-        return path.relative_to(repo_root).as_posix()
-    except ValueError:
-        return str(path)
-
-
-def _remove_paths(repo_root: Path, *paths: Path) -> list[str]:
+def _remove_paths(*paths: Path) -> list[str]:
     removed: list[str] = []
     for path in paths:
         if path.exists():
             path.unlink()
-            removed.append(_display_path(repo_root, path))
+            removed.append(str(path))
     return removed
+
+
+def _plan_artefacts(project_key: str, epic_id: int) -> tuple[Path, Path, Path]:
+    """The planning artefacts a plan revision must clear."""
+
+    return (
+        state.plan_path(project_key, epic_id),
+        plan_markdown_path(project_key, epic_id),
+        plan_critique_path(project_key, epic_id),
+    )
 
 
 def _work_unit_critique_requires_requeue(critique_path: Path) -> bool:
@@ -115,8 +118,8 @@ def _check_result_ok(check_result_path: Path) -> bool:
     return isinstance(payload, dict) and payload.get("ok") is True
 
 
-def _update_work_unit(repo_root: Path, epic_id: int, work_unit_id: str, **updates: object) -> None:
-    plan = load_plan(repo_root, epic_id)
+def _update_work_unit(project_key: str, epic_id: int, work_unit_id: str, **updates: object) -> None:
+    plan = load_plan(project_key, epic_id)
     work_units: list[WorkUnitSpec] = []
     found = False
     for work_unit in plan.work_units:
@@ -130,12 +133,12 @@ def _update_work_unit(repo_root: Path, epic_id: int, work_unit_id: str, **update
     if not found:
         raise StageStateError(f"work unit {work_unit_id} not found in E{epic_id} plan")
     write_plan(
-        repo_root,
+        project_key,
         Plan(epic_id=plan.epic_id, context=plan.context, goal=plan.goal, work_units=work_units),
     )
 
 
-def _abandon_epic(repo_root: Path, epic_id: int, tracker: Tracker) -> list[str]:
+def _abandon_epic(project_key: str, epic_id: int, tracker: Tracker) -> list[str]:
     """Apply the shared abandon_epic effect (E17 P4 / D-AB).
 
     Closes the tracker issue as not delivered, then appends the graph-owned
@@ -149,9 +152,9 @@ def _abandon_epic(repo_root: Path, epic_id: int, tracker: Tracker) -> list[str]:
 
     changed: list[str] = []
     result = tracker.close_not_delivered(epic_id)
-    changed.append(_display_path(repo_root, result.last_sync_path))
+    changed.append(str(result.last_sync_path))
     append_epic_event_once(
-        repo_root,
+        project_key,
         epic_id,
         {
             "event": "epic_abandoned",
@@ -176,7 +179,7 @@ def _gate_body(gate_path: Path) -> str:
     return text.strip()
 
 
-def _revise_epic_contract(repo_root: Path, epic_id: int) -> list[str]:
+def _revise_epic_contract(project_key: str, epic_id: int) -> list[str]:
     """Apply the shared revise_epic_contract archive effect (E17 P5 / D-RC).
 
     Archive the prior ``EPIC.md`` to ``definition/EPIC.<n>.archived.md`` and snapshot
@@ -190,27 +193,26 @@ def _revise_epic_contract(repo_root: Path, epic_id: int) -> list[str]:
     routes through this one path from both.
     """
 
-    directory = epic_dir(repo_root, epic_id)
-    epic_path = directory / "EPIC.md"
+    epic_path = state.epic_contract_path(project_key, epic_id)
     changed: list[str] = []
     if not epic_path.exists():
         return changed
-    epic_definition_dir(repo_root, epic_id).mkdir(parents=True, exist_ok=True)
-    archives = archived_epic_contracts(repo_root, epic_id)
+    epic_definition_dir(project_key, epic_id).mkdir(parents=True, exist_ok=True)
+    archives = archived_epic_contracts(project_key, epic_id)
     index = (archives[-1][0] + 1) if archives else 1
-    archived = archived_epic_contract_path(repo_root, epic_id, index)
+    archived = archived_epic_contract_path(project_key, epic_id, index)
     epic_path.replace(archived)
-    changed.append(_display_path(repo_root, archived))
-    body = _gate_body(directory / "gate.md")
+    changed.append(str(archived))
+    body = _gate_body(state.gate_path(project_key, epic_id))
     if body:
-        findings = archived_epic_findings_path(repo_root, epic_id, index)
-        findings.write_text(body + "\n", encoding="utf-8")
-        changed.append(_display_path(repo_root, findings))
+        findings = archived_epic_findings_path(project_key, epic_id, index)
+        state.atomic_write_text(findings, body + "\n")
+        changed.append(str(findings))
     return changed
 
 
 def _apply_gate_resolution_effects(
-    repo_root: Path,
+    project_key: str,
     epic_id: int,
     *,
     decision: GateDecision,
@@ -219,7 +221,6 @@ def _apply_gate_resolution_effects(
     triggered_by: list[str],
     tracker: Tracker,
 ) -> list[str]:
-    directory = epic_dir(repo_root, epic_id)
     changed: list[str] = []
 
     # A non-approving trigger (e.g. incomplete_stage_state) means the operator
@@ -230,9 +231,9 @@ def _apply_gate_resolution_effects(
     if any(trigger in CONFLICT_TRIGGERS for trigger in triggered_by):
         validate_decision("tracker_sync_conflict", decision)
         result = tracker.resolve_conflict(epic_id, decision)
-        changed.append(_display_path(repo_root, result.last_sync_path))
+        changed.append(str(result.last_sync_path))
         if result.epic_path is not None:
-            changed.append(_display_path(repo_root, result.epic_path))
+            changed.append(str(result.epic_path))
         return changed
 
     if decision in CONFLICT_DECISIONS:
@@ -243,7 +244,7 @@ def _apply_gate_resolution_effects(
         # offers it; validate it against this gate's allowed set, then route to the
         # canonical path. An invalid gate type (no abandon_epic) raises here.
         validate_decision(gate_type, decision)
-        return _abandon_epic(repo_root, epic_id, tracker)
+        return _abandon_epic(project_key, epic_id, tracker)
 
     if gate_type == "readiness_gate":
         validate_decision("readiness_gate", decision)
@@ -255,7 +256,7 @@ def _apply_gate_resolution_effects(
             # transitions.definition_revision_requested, which routes next_node back
             # to the definition node; the node re-dispatches with the prior epic +
             # findings as declared inputs.
-            return _revise_epic_contract(repo_root, epic_id)
+            return _revise_epic_contract(project_key, epic_id)
         # approve_with_reason: no file effects at Stage 2.5. The readiness_gate_resolved
         # event _resolve_gate appends (decision=approve_with_reason, after the latest
         # definition_closed) satisfies transitions.readiness_satisfied, so the unchanged
@@ -271,59 +272,39 @@ def _apply_gate_resolution_effects(
             # Archive the prior EPIC.md + plan-gate findings and re-enter definition
             # (E17 P5 / D-RC), then clear the now-stale plan artefacts the prior
             # contract produced.
-            changed.extend(_revise_epic_contract(repo_root, epic_id))
-            changed.extend(
-                _remove_paths(
-                    repo_root,
-                    directory / "plan.json",
-                    directory / "PLAN.md",
-                    directory / "critique" / "plan.md",
-                )
-            )
+            changed.extend(_revise_epic_contract(project_key, epic_id))
+            changed.extend(_remove_paths(*_plan_artefacts(project_key, epic_id)))
             return changed
         if decision == "revise_plan":
-            changed.extend(
-                _remove_paths(
-                    repo_root,
-                    directory / "plan.json",
-                    directory / "PLAN.md",
-                    directory / "critique" / "plan.md",
-                )
-            )
+            changed.extend(_remove_paths(*_plan_artefacts(project_key, epic_id)))
             return changed
         return changed
 
     if gate_type in {"work_unit_gate", "review_gate"}:
         validate_decision(gate_type, decision)
-        check_result = directory / "check-result.json"
-        executor_result = directory / "executor_result.json"
+        check_result = state.check_result_path(project_key, epic_id)
+        executor_result = state.executor_result_path(project_key, epic_id)
         if decision == "approve":
             preserve_check_result = (
                 "check_7_commit_transaction" in triggered_by and _check_result_ok(check_result)
             )
             if not preserve_check_result:
-                changed.extend(_remove_paths(repo_root, check_result))
+                changed.extend(_remove_paths(check_result))
             if work_unit_id and "check_6_critique_blocker" in triggered_by:
-                critique_path = work_unit_critique_path(directory, work_unit_id)
+                critique_path = state.work_unit_critique_path(project_key, epic_id, work_unit_id)
                 if _work_unit_critique_requires_requeue(critique_path):
                     changed.extend(
                         _remove_paths(
-                            repo_root,
                             critique_path,
-                            work_unit_disposition_path(directory, work_unit_id),
+                            state.work_unit_disposition_path(project_key, epic_id, work_unit_id),
                         )
                     )
             if work_unit_id and "empty_diff_review" in triggered_by:
-                _update_work_unit(repo_root, epic_id, work_unit_id, state="done", empty_diff=True)
-                changed.append(_display_path(repo_root, directory / "plan.json"))
-                changed.extend(
-                    _remove_paths(
-                        repo_root,
-                        executor_result,
-                    )
-                )
+                _update_work_unit(project_key, epic_id, work_unit_id, state="done", empty_diff=True)
+                changed.append(str(state.plan_path(project_key, epic_id)))
+                changed.extend(_remove_paths(executor_result))
                 append_epic_event_once(
-                    repo_root,
+                    project_key,
                     epic_id,
                     {
                         "event": "work_unit_completed",
@@ -356,7 +337,7 @@ def _apply_gate_resolution_effects(
             # retry and never for the rerun. Reject it before any mutation;
             # post-completion recovery semantics belong to E18's completion-event
             # reconciliation, not this verb.
-            plan = load_plan(repo_root, epic_id)
+            plan = load_plan(project_key, epic_id)
             target_work_unit = next((s for s in plan.work_units if s.id == work_unit_id), None)
             if target_work_unit is not None and target_work_unit.state in TERMINAL_WORK_UNIT_STATES:
                 raise StageStateError(
@@ -368,19 +349,18 @@ def _apply_gate_resolution_effects(
             # its per-work-unit executor/check/critique/disposition artefacts so
             # next_node re-dispatches it cleanly. Sibling work units and their
             # artefacts are untouched.
-            mark_work_unit_state(repo_root, epic_id, work_unit_id, "pending")
-            changed.append(_display_path(repo_root, directory / "plan.json"))
+            mark_work_unit_state(project_key, epic_id, work_unit_id, "pending")
+            changed.append(str(state.plan_path(project_key, epic_id)))
             changed.extend(
                 _remove_paths(
-                    repo_root,
                     check_result,
                     executor_result,
-                    work_unit_critique_path(directory, work_unit_id),
-                    work_unit_disposition_path(directory, work_unit_id),
+                    state.work_unit_critique_path(project_key, epic_id, work_unit_id),
+                    state.work_unit_disposition_path(project_key, epic_id, work_unit_id),
                 )
             )
             append_epic_event(
-                repo_root,
+                project_key,
                 epic_id,
                 {
                     "event": "work_unit_retried",
@@ -391,16 +371,9 @@ def _apply_gate_resolution_effects(
             )
             return changed
         if decision in {"revise_work_unit_scope", "revise_plan"}:
-            changed.extend(_remove_paths(repo_root, check_result))
+            changed.extend(_remove_paths(check_result))
             if decision == "revise_plan":
-                changed.extend(
-                    _remove_paths(
-                        repo_root,
-                        directory / "plan.json",
-                        directory / "PLAN.md",
-                        directory / "critique" / "plan.md",
-                    )
-                )
+                changed.extend(_remove_paths(*_plan_artefacts(project_key, epic_id)))
             return changed
         if decision == "abandon_work_unit" and work_unit_id:
             # Honest terminal: mark the work unit abandoned (not done) and record a
@@ -408,11 +381,11 @@ def _apply_gate_resolution_effects(
             # abandoned work unit as terminal and skips it; the epic still completes
             # on its remaining work units ("skip and continue"). The state is
             # distinct from done so reconstruction never conflates the two.
-            _update_work_unit(repo_root, epic_id, work_unit_id, state="abandoned")
-            changed.append(_display_path(repo_root, directory / "plan.json"))
-            changed.extend(_remove_paths(repo_root, check_result, executor_result))
+            _update_work_unit(project_key, epic_id, work_unit_id, state="abandoned")
+            changed.append(str(state.plan_path(project_key, epic_id)))
+            changed.extend(_remove_paths(check_result, executor_result))
             append_epic_event_once(
-                repo_root,
+                project_key,
                 epic_id,
                 {
                     "event": "work_unit_abandoned",
@@ -428,8 +401,8 @@ def _apply_gate_resolution_effects(
     return changed
 
 
-def _resolve_gate(repo_root: Path, epic_id: int, decision: GateDecision, tracker: Tracker) -> int:
-    gate = epic_dir(repo_root, epic_id) / "gate.md"
+def _resolve_gate(project_key: str, epic_id: int, decision: GateDecision, tracker: Tracker) -> int:
+    gate = state.gate_path(project_key, epic_id)
     if not gate.exists():
         sys.stderr.write(f"woof wf: no open gate at {gate}\n")
         return 2
@@ -444,7 +417,7 @@ def _resolve_gate(repo_root: Path, epic_id: int, decision: GateDecision, tracker
     )
     try:
         changed_paths = _apply_gate_resolution_effects(
-            repo_root,
+            project_key,
             epic_id,
             decision=decision,
             gate_type=gate_type,
@@ -479,7 +452,7 @@ def _resolve_gate(repo_root: Path, epic_id: int, decision: GateDecision, tracker
             specific_event["work_unit_id"] = work_unit_id
         if changed_paths:
             specific_event["paths"] = changed_paths
-        append_epic_event(repo_root, epic_id, specific_event)
+        append_epic_event(project_key, epic_id, specific_event)
     event = {
         "event": "gate_resolved",
         "at": _now(),
@@ -493,7 +466,7 @@ def _resolve_gate(repo_root: Path, epic_id: int, decision: GateDecision, tracker
         event["work_unit_id"] = work_unit_id
     if changed_paths:
         event["paths"] = changed_paths
-    append_epic_event(repo_root, epic_id, event)
+    append_epic_event(project_key, epic_id, event)
     gate.unlink()
     sys.stdout.write(f"woof wf: gate resolved decision={decision}\n")
     return 0
@@ -516,12 +489,10 @@ def _reset_targets(directory: Path) -> list[Path]:
     return sorted(child for child in directory.iterdir() if child.name not in _RESET_KEEP)
 
 
-def _reset_epic(repo_root: Path, epic_id: int, *, assume_yes: bool) -> int:
-    directory = epic_dir(repo_root, epic_id)
+def _reset_epic(project_key: str, epic_id: int, *, assume_yes: bool) -> int:
+    directory = state.epic_dir(project_key, epic_id)
     if not directory.is_dir():
-        sys.stderr.write(
-            f"woof wf reset: E{epic_id} not found at {_display_path(repo_root, directory)}\n"
-        )
+        sys.stderr.write(f"woof wf reset: E{epic_id} not found at {directory}\n")
         return 2
 
     present = _reset_targets(directory)
@@ -535,7 +506,7 @@ def _reset_epic(repo_root: Path, epic_id: int, *, assume_yes: bool) -> int:
             f"E{epic_id}, keeping spark.md, .last-sync, and epic.jsonl:\n"
         )
         for path in present:
-            sys.stderr.write(f"  - {_display_path(repo_root, path)}\n")
+            sys.stderr.write(f"  - {path}\n")
         sys.stderr.write("Proceed? [y/N] ")
         sys.stderr.flush()
         reply = sys.stdin.readline().strip().lower()
@@ -549,10 +520,10 @@ def _reset_epic(repo_root: Path, epic_id: int, *, assume_yes: bool) -> int:
             shutil.rmtree(path)
         else:
             path.unlink()
-        removed.append(_display_path(repo_root, path))
+        removed.append(str(path))
 
     append_epic_event(
-        repo_root,
+        project_key,
         epic_id,
         {
             "event": "epic_reset",
@@ -571,6 +542,14 @@ def _reset_epic(repo_root: Path, epic_id: int, *, assume_yes: bool) -> int:
 
 
 def cmd_wf(args: argparse.Namespace) -> int:
+    # The project key selects the engine state; the repo root is the delivery
+    # checkout the graph runs its git work in. They are independent (ADR-017).
+    try:
+        project_key = resolve_project_key(getattr(args, "project", None))
+    except ProjectKeyError as exc:
+        sys.stderr.write(f"woof wf: {exc}\n")
+        return 2
+
     try:
         repo_root = repo_root_from_git()
     except FileNotFoundError as exc:
@@ -578,7 +557,7 @@ def cmd_wf(args: argparse.Namespace) -> int:
         return 2
 
     try:
-        tracker = resolve_tracker(repo_root)
+        tracker = resolve_tracker(project_key)
     except TrackerError as exc:
         sys.stderr.write(f"woof wf: tracker not configured: {exc}\n")
         return 2
@@ -595,7 +574,7 @@ def cmd_wf(args: argparse.Namespace) -> int:
         if args.epic is None:
             sys.stderr.write("woof wf reset: --epic is required, e.g. `woof wf reset --epic 12`\n")
             return 2
-        return _reset_epic(repo_root, args.epic, assume_yes=args.yes)
+        return _reset_epic(project_key, args.epic, assume_yes=args.yes)
 
     if args.action == "new":
         if args.epic is not None:
@@ -629,7 +608,8 @@ def cmd_wf(args: argparse.Namespace) -> int:
         else:
             sys.stdout.write(
                 f"woof wf new: created E{result.epic_id} at {result.epic_ref}; "
-                f"initialised spark.md and .woof/.current-epic\n"
+                f"initialised {result.spark_path} and "
+                f"{state.current_epic_path(project_key)}\n"
                 f"Next: woof wf --epic {result.epic_id}\n"
             )
         return 0
@@ -643,7 +623,7 @@ def cmd_wf(args: argparse.Namespace) -> int:
             return 2
         try:
             result = ingest_predecomposed_work_units(
-                repo_root,
+                project_key,
                 args.source,
                 project_ref=args.project_ref,
                 set_id=args.set_id,
@@ -653,24 +633,23 @@ def cmd_wf(args: argparse.Namespace) -> int:
             sys.stderr.write(f"woof wf intake: {exc}\n")
             return 2
         paths = [
-            _display_path(repo_root, result.plan_path),
-            _display_path(repo_root, result.plan_markdown_path),
-            _display_path(repo_root, result.metadata_path),
+            str(result.plan_path),
+            str(result.plan_markdown_path),
+            str(result.metadata_path),
         ]
         if args.format == "json":
             payload = {
                 "status": "intaked",
                 "context": result.context,
                 "work_unit_count": result.work_unit_count,
-                "directory": _display_path(repo_root, result.directory),
+                "directory": str(result.directory),
                 "paths": paths,
             }
             sys.stdout.write(json.dumps(payload, sort_keys=True) + "\n")
         else:
             sys.stdout.write(
                 "woof wf intake: intaked "
-                f"{result.work_unit_count} work unit(s) into "
-                f"{_display_path(repo_root, result.directory)}\n"
+                f"{result.work_unit_count} work unit(s) into {result.directory}\n"
             )
             for path in paths:
                 sys.stdout.write(f"  wrote {path}\n")
@@ -686,7 +665,7 @@ def cmd_wf(args: argparse.Namespace) -> int:
     if not check_runtime():
         return 2
 
-    directory = epic_dir(repo_root, args.epic)
+    directory = state.epic_dir(project_key, args.epic)
     if not directory.exists():
         try:
             result = tracker.fetch_epic(args.epic)
@@ -720,12 +699,15 @@ def cmd_wf(args: argparse.Namespace) -> int:
         return 2
 
     if args.resolve:
-        return _resolve_gate(repo_root, args.epic, args.resolve, tracker)
+        return _resolve_gate(project_key, args.epic, args.resolve, tracker)
 
     try:
-        outputs = run_graph(repo_root, args.epic, once=args.once)
+        outputs = run_graph(project_key, repo_root, args.epic, once=args.once)
     except WorkflowLockError as exc:
         sys.stderr.write(f"woof wf: workflow lock active: {exc}\n")
+        return 2
+    except GraphNoProgressError as exc:
+        sys.stderr.write(f"woof wf: no_progress: {exc}\n")
         return 2
     except StageStateError as exc:
         sys.stderr.write(f"woof wf: incomplete_stage_state: {exc}\n")
@@ -739,7 +721,7 @@ def cmd_wf(args: argparse.Namespace) -> int:
             sys.stderr.write(f"woof wf: tracker error: {exc}\n")
             return 2
         append_epic_event_once(
-            repo_root,
+            project_key,
             args.epic,
             {
                 "event": "epic_completed",

@@ -15,6 +15,7 @@ from pathlib import Path
 
 import yaml
 
+from woof import state
 from woof.gate.write import write_gate, write_gate_for_trigger, write_gate_from_check_result
 from woof.graph.dispositions import (
     FrontMatterError,
@@ -27,7 +28,6 @@ from woof.graph.dispositions import (
     validate_work_unit_disposition,
     work_unit_critique_path,
     work_unit_disposition_path,
-    work_unit_disposition_relpath,
     write_deterministic_work_unit_disposition,
 )
 from woof.graph.epilogue import DISPATCH_DENIAL_EPILOGUE
@@ -74,7 +74,6 @@ from woof.graph.transitions import (
     discovery_synthesis_dir,
     discovery_synthesis_paths,
     epic_dir,
-    epic_event_exists,
     failed_readiness_cycles,
     load_plan,
     mark_work_unit_state,
@@ -85,7 +84,7 @@ from woof.graph.transitions import (
 from woof.graph.transitions import (
     gate_path as graph_gate_path,
 )
-from woof.lib.audit import prepare_commit_audit
+from woof.lib.audit import redact_audit_artefacts
 from woof.paths import schema_dir, tool_root
 from woof.project_config import load_project_config
 
@@ -185,32 +184,28 @@ def _woof_subprocess_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     return env
 
 
-def _gate_path(epic_id: int) -> str:
-    return f".woof/epics/E{epic_id}/gate.md"
+def _gate_path(project_key: str, epic_id: int) -> str:
+    return str(state.gate_path(project_key, epic_id))
 
 
-def _gate_operator_message(repo_root: Path, epic_id: int) -> str:
-    relpath = _gate_path(epic_id)
-    path = repo_root / relpath
+def _gate_operator_message(project_key: str, epic_id: int) -> str:
+    gate_ref = _gate_path(project_key, epic_id)
+    path = state.gate_path(project_key, epic_id)
     try:
         text = path.read_text(encoding="utf-8")
     except OSError:
-        return f"gate open at {relpath}"
+        return f"gate open at {gate_ref}"
     body = text
     if text.startswith("---\n"):
         end = text.find("\n---\n", 4)
         if end >= 0:
             body = text[end + len("\n---\n") :]
     body = body.strip()
-    return f"gate open at {relpath}\n\n{body}" if body else f"gate open at {relpath}"
+    return f"gate open at {gate_ref}\n\n{body}" if body else f"gate open at {gate_ref}"
 
 
-def _relpath(repo_root: Path, path: Path) -> str:
-    return path.relative_to(repo_root).as_posix()
-
-
-def _existing_prompt_artefacts(repo_root: Path, paths: list[Path]) -> list[str]:
-    return [_relpath(repo_root, path) for path in paths if path.is_file()]
+def _existing_prompt_artefacts(paths: list[Path]) -> list[str]:
+    return [str(path) for path in paths if path.is_file()]
 
 
 def _validation_summary(check_result: dict) -> ValidationSummary:
@@ -269,125 +264,6 @@ def _check_verified_index(repo_root: Path, check_result: dict) -> str | None:
     if actual_paths != expected_paths:
         return f"staged paths changed after verification: {expected_paths} -> {actual_paths}"
     return None
-
-
-def _tree_blob(repo_root: Path, tree: str, path: str) -> str | None:
-    proc = git(repo_root, "show", f"{tree}:{path}", check=False)
-    if proc.returncode != 0:
-        return None
-    return proc.stdout
-
-
-def _plan_matches_completed_resume_delta(
-    repo_root: Path, epic_id: int, work_unit_id: str, verified_tree: str
-) -> bool:
-    plan_path = f".woof/epics/E{epic_id}/plan.json"
-    base_text = _tree_blob(repo_root, verified_tree, plan_path)
-    if base_text is None:
-        return False
-    try:
-        base_plan = Plan.model_validate_json(base_text)
-        current_plan = load_plan(repo_root, epic_id)
-    except ValueError:
-        return False
-
-    expected_units: list[WorkUnitSpec] = []
-    found = False
-    for unit in base_plan.work_units:
-        data = unit.model_dump(exclude_none=True)
-        if unit.id == work_unit_id:
-            data["state"] = "done"
-            found = True
-        expected_units.append(WorkUnitSpec.model_validate(data))
-    if not found:
-        return False
-    expected_plan = Plan(
-        epic_id=base_plan.epic_id,
-        context=base_plan.context,
-        goal=base_plan.goal,
-        work_units=expected_units,
-    )
-    return current_plan.model_dump(exclude_none=True) == expected_plan.model_dump(exclude_none=True)
-
-
-def _epic_events_match_completed_resume_delta(
-    repo_root: Path, epic_id: int, work_unit_id: str, verified_tree: str
-) -> bool:
-    event_path = f".woof/epics/E{epic_id}/epic.jsonl"
-    base_text = _tree_blob(repo_root, verified_tree, event_path)
-    if base_text is None:
-        return False
-    current_path = repo_root / event_path
-    try:
-        current_text = current_path.read_text(encoding="utf-8")
-    except OSError:
-        return False
-
-    base_lines = [line for line in base_text.splitlines() if line.strip()]
-    current_lines = [line for line in current_text.splitlines() if line.strip()]
-    if current_lines[: len(base_lines)] != base_lines:
-        return False
-    added_lines = current_lines[len(base_lines) :]
-    if not added_lines:
-        return True
-
-    for raw in added_lines:
-        try:
-            event = json.loads(raw)
-        except json.JSONDecodeError:
-            return False
-        if not isinstance(event, dict):
-            return False
-        event_name = event.get("event")
-        if event_name == "work_unit_completed" or event_name == "transaction_manifest_verified":
-            if event.get("work_unit_id") != work_unit_id:
-                return False
-        elif event_name == "epic_completed":
-            if event.get("epic_id") != epic_id:
-                return False
-        else:
-            return False
-    return True
-
-
-def _completed_resume_delta_is_graph_owned(
-    repo_root: Path, epic_id: int, work_unit_id: str, check_result: dict
-) -> bool:
-    verified_tree = check_result.get("verified_tree")
-    if not isinstance(verified_tree, str):
-        return False
-    try:
-        delta_paths = sorted(
-            git(repo_root, "diff", "--cached", "--name-only", verified_tree).stdout.splitlines()
-        )
-    except subprocess.CalledProcessError:
-        return False
-    allowed_paths = {
-        f".woof/epics/E{epic_id}/plan.json",
-        f".woof/epics/E{epic_id}/epic.jsonl",
-    }
-    if not delta_paths or any(path not in allowed_paths for path in delta_paths):
-        return False
-    if not epic_event_exists(
-        repo_root,
-        epic_id,
-        event="work_unit_completed",
-        work_unit_id=work_unit_id,
-    ):
-        return False
-    if (
-        f".woof/epics/E{epic_id}/plan.json" in delta_paths
-        and not _plan_matches_completed_resume_delta(
-            repo_root, epic_id, work_unit_id, verified_tree
-        )
-    ):
-        return False
-    return (
-        f".woof/epics/E{epic_id}/epic.jsonl" not in delta_paths
-        or _epic_events_match_completed_resume_delta(
-            repo_root, epic_id, work_unit_id, verified_tree
-        )
-    )
 
 
 def _write_prompt_file(text: str) -> Path:
@@ -546,13 +422,13 @@ def _planning_halt(
     )
 
 
-def _discovery_source_paths(repo_root: Path, epic_id: int) -> list[str]:
-    discovery_dir = epic_dir(repo_root, epic_id) / "discovery"
-    synthesis_dir = discovery_synthesis_dir(repo_root, epic_id)
+def _discovery_source_paths(project_key: str, epic_id: int) -> list[str]:
+    discovery_dir = epic_dir(project_key, epic_id) / "discovery"
+    synthesis_dir = discovery_synthesis_dir(project_key, epic_id)
     if not discovery_dir.exists():
         return []
     return [
-        _relpath(repo_root, path)
+        str(path)
         for path in sorted(discovery_dir.rglob("*.md"))
         if not path.is_relative_to(synthesis_dir)
     ]
@@ -627,8 +503,8 @@ _CRITIQUE_DISPATCH_CARTOGRAPHY_DOCS = ["CONVENTIONS.md", "TESTING.md", "CONCERNS
 _DESIGN_CARTOGRAPHY_DOCS = {"TARGET-ARCHITECTURE.md", "PRINCIPLES.md"}
 
 
-def _codebase_doc_relpath(doc_name: str) -> str:
-    return f".woof/codebase/{doc_name}"
+def _codebase_doc_name(doc_name: str) -> str:
+    return doc_name
 
 
 def _declared_cartography_floor() -> str:
@@ -645,7 +521,7 @@ def _cartography_docs_for_floor(doc_names: list[str]) -> list[str]:
 
 
 def _require_cartography_docs(
-    repo_root: Path,
+    project_key: str,
     doc_names: list[str],
     gate_type: str,
     *,
@@ -654,12 +530,12 @@ def _require_cartography_docs(
     """Return repo-relative paths for each named codebase doc.
 
     Raises StageStateError(operator_recoverable=True, gate_type=gate_type) if
-    any document is absent from .woof/codebase/. The check lives here, at
+    any document is absent from the project's cartography directory. The check lives here, at
     payload-build time, not in preflight — so a missing doc always halts
     rather than silently dispatching cold.
     """
-    refs = [_codebase_doc_relpath(name) for name in _cartography_docs_for_floor(doc_names)]
-    missing = [ref for ref in refs if not (repo_root / ref).is_file()]
+    refs = [_codebase_doc_name(name) for name in _cartography_docs_for_floor(doc_names)]
+    missing = [ref for ref in refs if not (state.codebase_dir(project_key) / ref).is_file()]
     if missing:
         raise StageStateError(
             "Missing cartography document(s) required before dispatch: "
@@ -673,8 +549,10 @@ def _require_cartography_docs(
     return refs
 
 
-def _work_unit_files_txt_slice(repo_root: Path, work_unit: WorkUnitSpec) -> list[str] | None:
-    """Return the work-unit-scoped subset of .woof/codebase/files.txt lines.
+def _work_unit_files_txt_slice(
+    project_key: str, repo_root: Path, work_unit: WorkUnitSpec
+) -> list[str] | None:
+    """Return the work-unit-scoped subset of the cartography files.txt lines.
 
     Raises StageStateError(work_unit_gate) if files.txt is missing or the pathspec
     evaluation fails. Decision D1 (E19): filter through work_unit.paths[] at build
@@ -683,10 +561,10 @@ def _work_unit_files_txt_slice(repo_root: Path, work_unit: WorkUnitSpec) -> list
     floor = _declared_cartography_floor()
     if floor in {"none", "design"}:
         return None
-    files_txt_path = repo_root / ".woof" / "codebase" / "files.txt"
+    files_txt_path = state.codebase_dir(project_key) / "files.txt"
     if not files_txt_path.is_file():
         raise StageStateError(
-            "Missing mechanical cartography file: .woof/codebase/files.txt. "
+            f"Missing mechanical cartography file: {files_txt_path}. "
             "Run `scripts/refresh-cartography` to generate it.",
             operator_recoverable=True,
             gate_type="work_unit_gate",
@@ -708,40 +586,41 @@ def _work_unit_files_txt_slice(repo_root: Path, work_unit: WorkUnitSpec) -> list
         ) from exc
 
 
-def _discovery_bucket_source_paths(repo_root: Path, epic_id: int, bucket: str) -> list[str]:
+def _discovery_bucket_source_paths(project_key: str, epic_id: int, bucket: str) -> list[str]:
     """Return prior-bucket discovery artefacts visible to a producer bucket node."""
 
-    discovery_dir = epic_dir(repo_root, epic_id) / "discovery"
+    discovery_dir = epic_dir(project_key, epic_id) / "discovery"
     if not discovery_dir.exists():
         return []
-    synthesis_dir = discovery_synthesis_dir(repo_root, epic_id)
-    bucket_dir = discovery_bucket_dir(repo_root, epic_id, bucket)
+    synthesis_dir = discovery_synthesis_dir(project_key, epic_id)
+    bucket_dir = discovery_bucket_dir(project_key, epic_id, bucket)
     return [
-        _relpath(repo_root, path)
+        str(path)
         for path in sorted(discovery_dir.rglob("*.md"))
         if not path.is_relative_to(synthesis_dir) and not path.is_relative_to(bucket_dir)
     ]
 
 
 def _discovery_bucket_payload(
+    project_key: str,
     repo_root: Path,
     epic_id: int,
     bucket: str,
     cartography_refs: list[str] | None = None,
 ) -> dict:
-    directory = epic_dir(repo_root, epic_id)
+    directory = epic_dir(project_key, epic_id)
     payload = {
         "node_type": _DISCOVERY_BUCKET_NODE_TYPE[bucket].value,
         "epic_id": epic_id,
         "repo_root": str(repo_root),
-        "epic_dir": _relpath(repo_root, directory),
+        "epic_dir": str(directory),
         "inputs": {
-            "spark_path": _relpath(repo_root, directory / "spark.md"),
-            "discovery_dir": _relpath(repo_root, directory / "discovery"),
-            "bucket_dir": _relpath(repo_root, discovery_bucket_dir(repo_root, epic_id, bucket)),
+            "spark_path": str(directory / "spark.md"),
+            "discovery_dir": str(directory / "discovery"),
+            "bucket_dir": str(discovery_bucket_dir(project_key, epic_id, bucket)),
         },
     }
-    source_paths = _discovery_bucket_source_paths(repo_root, epic_id, bucket)
+    source_paths = _discovery_bucket_source_paths(project_key, epic_id, bucket)
     if source_paths:
         payload["inputs"]["source_paths"] = source_paths
     if cartography_refs:
@@ -749,12 +628,12 @@ def _discovery_bucket_payload(
     return payload
 
 
-def _discovery_bucket_artefacts(repo_root: Path, epic_id: int, bucket: str) -> list[str]:
-    directory = epic_dir(repo_root, epic_id)
+def _discovery_bucket_artefacts(project_key: str, epic_id: int, bucket: str) -> list[str]:
+    directory = epic_dir(project_key, epic_id)
     source_paths = [
-        repo_root / path for path in _discovery_bucket_source_paths(repo_root, epic_id, bucket)
+        Path(path) for path in _discovery_bucket_source_paths(project_key, epic_id, bucket)
     ]
-    return _existing_prompt_artefacts(repo_root, [directory / "spark.md", *source_paths])
+    return _existing_prompt_artefacts([directory / "spark.md", *source_paths])
 
 
 def _playbook_description(path: Path) -> str:
@@ -799,13 +678,14 @@ def _discovery_bucket_playbooks(bucket: str) -> str:
 
 
 def _discovery_bucket_prompt(
+    project_key: str,
     repo_root: Path,
     epic_id: int,
     bucket: str,
     cartography_refs: list[str] | None = None,
 ) -> str:
     payload = _discovery_bucket_payload(
-        repo_root, epic_id, bucket, cartography_refs=cartography_refs
+        project_key, repo_root, epic_id, bucket, cartography_refs=cartography_refs
     )
     prompt = _prompt_template(
         tool_root() / "playbooks" / "discovery" / f"{bucket}.md",
@@ -818,24 +698,25 @@ def _discovery_bucket_prompt(
 
 
 def _discovery_synthesis_payload(
+    project_key: str,
     repo_root: Path,
     epic_id: int,
     cartography_refs: list[str] | None = None,
 ) -> dict:
-    directory = epic_dir(repo_root, epic_id)
-    synthesis_dir = discovery_synthesis_dir(repo_root, epic_id)
+    directory = epic_dir(project_key, epic_id)
+    synthesis_dir = discovery_synthesis_dir(project_key, epic_id)
     payload = {
         "node_type": NodeType.DISCOVERY_SYNTHESIS.value,
         "epic_id": epic_id,
         "repo_root": str(repo_root),
-        "epic_dir": _relpath(repo_root, directory),
+        "epic_dir": str(directory),
         "inputs": {
-            "spark_path": _relpath(repo_root, directory / "spark.md"),
-            "discovery_dir": _relpath(repo_root, directory / "discovery"),
-            "synthesis_dir": _relpath(repo_root, synthesis_dir),
+            "spark_path": str(directory / "spark.md"),
+            "discovery_dir": str(directory / "discovery"),
+            "synthesis_dir": str(synthesis_dir),
         },
     }
-    source_paths = _discovery_source_paths(repo_root, epic_id)
+    source_paths = _discovery_source_paths(project_key, epic_id)
     if source_paths:
         payload["inputs"]["source_paths"] = source_paths
     if cartography_refs:
@@ -843,13 +724,13 @@ def _discovery_synthesis_payload(
     return payload
 
 
-def _discovery_synthesis_artefacts(repo_root: Path, epic_id: int) -> list[str]:
-    directory = epic_dir(repo_root, epic_id)
-    source_paths = [repo_root / path for path in _discovery_source_paths(repo_root, epic_id)]
-    return _existing_prompt_artefacts(repo_root, [directory / "spark.md", *source_paths])
+def _discovery_synthesis_artefacts(project_key: str, epic_id: int) -> list[str]:
+    directory = epic_dir(project_key, epic_id)
+    source_paths = [Path(path) for path in _discovery_source_paths(project_key, epic_id)]
+    return _existing_prompt_artefacts([directory / "spark.md", *source_paths])
 
 
-def _epic_contract_revision_paths(repo_root: Path, epic_id: int) -> list[Path]:
+def _epic_contract_revision_paths(project_key: str, epic_id: int) -> list[Path]:
     """Return the prior epic (and its findings) feeding a pending contract revision.
 
     Empty unless a ``revise_epic_contract`` resolution is awaiting re-definition
@@ -860,93 +741,95 @@ def _epic_contract_revision_paths(repo_root: Path, epic_id: int) -> list[Path]:
     exists.
     """
 
-    if not definition_revision_requested(repo_root, epic_id):
+    if not definition_revision_requested(project_key, epic_id):
         return []
-    archives = archived_epic_contracts(repo_root, epic_id)
+    archives = archived_epic_contracts(project_key, epic_id)
     if not archives:
         return []
     index, archived = archives[-1]
     paths = [archived]
-    findings = archived_epic_findings_path(repo_root, epic_id, index)
+    findings = archived_epic_findings_path(project_key, epic_id, index)
     if findings.is_file():
         paths.append(findings)
     return paths
 
 
 def _epic_definition_payload(
+    project_key: str,
     repo_root: Path,
     epic_id: int,
     cartography_refs: list[str] | None = None,
 ) -> dict:
-    directory = epic_dir(repo_root, epic_id)
+    directory = epic_dir(project_key, epic_id)
     inputs: dict[str, object] = {
-        "synthesis_dir": _relpath(repo_root, discovery_synthesis_dir(repo_root, epic_id)),
-        "epic_path": _relpath(repo_root, directory / "EPIC.md"),
+        "synthesis_dir": str(discovery_synthesis_dir(project_key, epic_id)),
+        "epic_path": str(directory / "EPIC.md"),
     }
-    revision_paths = _epic_contract_revision_paths(repo_root, epic_id)
+    revision_paths = _epic_contract_revision_paths(project_key, epic_id)
     if revision_paths:
-        inputs["prior_epic_path"] = _relpath(repo_root, revision_paths[0])
+        inputs["prior_epic_path"] = str(revision_paths[0])
         if len(revision_paths) > 1:
-            inputs["revision_findings_path"] = _relpath(repo_root, revision_paths[1])
+            inputs["revision_findings_path"] = str(revision_paths[1])
     if cartography_refs:
         inputs["cartography_paths"] = cartography_refs
     return {
         "node_type": NodeType.EPIC_DEFINITION.value,
         "epic_id": epic_id,
         "repo_root": str(repo_root),
-        "epic_dir": _relpath(repo_root, directory),
+        "epic_dir": str(directory),
         "inputs": inputs,
     }
 
 
-def _epic_definition_artefacts(repo_root: Path, epic_id: int) -> list[str]:
+def _epic_definition_artefacts(project_key: str, epic_id: int) -> list[str]:
     return _existing_prompt_artefacts(
-        repo_root,
         [
-            *discovery_synthesis_paths(repo_root, epic_id).values(),
-            *_epic_contract_revision_paths(repo_root, epic_id),
+            *discovery_synthesis_paths(project_key, epic_id).values(),
+            *_epic_contract_revision_paths(project_key, epic_id),
         ],
     )
 
 
 def _breakdown_planning_payload(
+    project_key: str,
     repo_root: Path,
     epic_id: int,
     cartography_refs: list[str] | None = None,
 ) -> dict:
-    directory = epic_dir(repo_root, epic_id)
+    directory = epic_dir(project_key, epic_id)
     inputs: dict[str, object] = {
-        "epic_path": _relpath(repo_root, directory / "EPIC.md"),
-        "plan_path": _relpath(repo_root, directory / "plan.json"),
-        "plan_markdown_path": _relpath(repo_root, plan_markdown_path(repo_root, epic_id)),
+        "epic_path": str(directory / "EPIC.md"),
+        "plan_path": str(directory / "plan.json"),
+        "plan_markdown_path": str(plan_markdown_path(project_key, epic_id)),
     }
     if cartography_refs:
         inputs["cartography_paths"] = cartography_refs
     return {
         "node_type": NodeType.BREAKDOWN_PLANNING.value,
         "epic_id": epic_id,
-        "aggregate_context": epic_work_unit_context(repo_root, epic_id),
+        "aggregate_context": epic_work_unit_context(project_key, epic_id),
         "repo_root": str(repo_root),
-        "epic_dir": _relpath(repo_root, directory),
+        "epic_dir": str(directory),
         "inputs": inputs,
     }
 
 
-def _breakdown_planning_artefacts(repo_root: Path, epic_id: int) -> list[str]:
-    return _existing_prompt_artefacts(repo_root, [epic_dir(repo_root, epic_id) / "EPIC.md"])
+def _breakdown_planning_artefacts(project_key: str, epic_id: int) -> list[str]:
+    return _existing_prompt_artefacts([epic_dir(project_key, epic_id) / "EPIC.md"])
 
 
 def _plan_critique_payload(
+    project_key: str,
     repo_root: Path,
     epic_id: int,
     cartography_refs: list[str] | None = None,
 ) -> dict:
-    directory = epic_dir(repo_root, epic_id)
+    directory = epic_dir(project_key, epic_id)
     inputs: dict[str, object] = {
-        "epic_path": _relpath(repo_root, directory / "EPIC.md"),
-        "plan_path": _relpath(repo_root, directory / "plan.json"),
-        "plan_markdown_path": _relpath(repo_root, plan_markdown_path(repo_root, epic_id)),
-        "critique_path": _relpath(repo_root, plan_critique_path(repo_root, epic_id)),
+        "epic_path": str(directory / "EPIC.md"),
+        "plan_path": str(directory / "plan.json"),
+        "plan_markdown_path": str(plan_markdown_path(project_key, epic_id)),
+        "critique_path": str(plan_critique_path(project_key, epic_id)),
     }
     if cartography_refs:
         inputs["cartography_paths"] = cartography_refs
@@ -954,36 +837,36 @@ def _plan_critique_payload(
         "node_type": NodeType.PLAN_CRITIQUE.value,
         "epic_id": epic_id,
         "repo_root": str(repo_root),
-        "epic_dir": _relpath(repo_root, directory),
+        "epic_dir": str(directory),
         "inputs": inputs,
     }
 
 
-def _plan_critique_artefacts(repo_root: Path, epic_id: int) -> list[str]:
-    directory = epic_dir(repo_root, epic_id)
+def _plan_critique_artefacts(project_key: str, epic_id: int) -> list[str]:
+    directory = epic_dir(project_key, epic_id)
     return _existing_prompt_artefacts(
-        repo_root,
         [
             directory / "EPIC.md",
             directory / "plan.json",
-            plan_markdown_path(repo_root, epic_id),
+            plan_markdown_path(project_key, epic_id),
         ],
     )
 
 
 def _work_unit_critique_payload(
+    project_key: str,
     repo_root: Path,
     epic_id: int,
     work_unit_id: str,
     cartography_refs: list[str] | None = None,
 ) -> dict:
-    directory = epic_dir(repo_root, epic_id)
-    plan = load_plan(repo_root, epic_id)
+    directory = epic_dir(project_key, epic_id)
+    plan = load_plan(project_key, epic_id)
     work_unit = work_unit_by_id(plan, work_unit_id)
     inputs: dict[str, object] = {
-        "epic_path": _relpath(repo_root, directory / "EPIC.md"),
-        "plan_path": _relpath(repo_root, directory / "plan.json"),
-        "critique_path": _relpath(repo_root, work_unit_critique_path(directory, work_unit_id)),
+        "epic_path": str(directory / "EPIC.md"),
+        "plan_path": str(directory / "plan.json"),
+        "critique_path": str(work_unit_critique_path(directory, work_unit_id)),
         "staged_diff_command": "git diff --staged",
         "staged_paths_command": "git diff --staged --name-only",
         "work_unit": work_unit.model_dump(),
@@ -995,42 +878,45 @@ def _work_unit_critique_payload(
         "epic_id": epic_id,
         "work_unit_id": work_unit_id,
         "repo_root": str(repo_root),
-        "epic_dir": _relpath(repo_root, directory),
+        "epic_dir": str(directory),
         "inputs": inputs,
     }
 
 
-def _plan_gate_open_payload(repo_root: Path, epic_id: int) -> dict:
-    directory = epic_dir(repo_root, epic_id)
+def _plan_gate_open_payload(project_key: str, repo_root: Path, epic_id: int) -> dict:
+    directory = epic_dir(project_key, epic_id)
     return {
         "node_type": NodeType.PLAN_GATE_OPEN.value,
         "epic_id": epic_id,
         "repo_root": str(repo_root),
-        "epic_dir": _relpath(repo_root, directory),
+        "epic_dir": str(directory),
         "inputs": {
-            "plan_path": _relpath(repo_root, directory / "plan.json"),
-            "plan_markdown_path": _relpath(repo_root, plan_markdown_path(repo_root, epic_id)),
-            "critique_path": _relpath(repo_root, plan_critique_path(repo_root, epic_id)),
-            "gate_path": _gate_path(epic_id),
+            "plan_path": str(directory / "plan.json"),
+            "plan_markdown_path": str(plan_markdown_path(project_key, epic_id)),
+            "critique_path": str(plan_critique_path(project_key, epic_id)),
+            "gate_path": _gate_path(project_key, epic_id),
             "triggered_by": ["plan_review"],
         },
     }
 
 
-def _missing_discovery_outputs(repo_root: Path, epic_id: int) -> list[str]:
+def _missing_discovery_outputs(project_key: str, epic_id: int) -> list[str]:
     missing: list[str] = []
-    for path in discovery_synthesis_paths(repo_root, epic_id).values():
+    for path in discovery_synthesis_paths(project_key, epic_id).values():
         if not path.is_file() or not path.read_text(encoding="utf-8").strip():
-            missing.append(_relpath(repo_root, path))
+            missing.append(str(path))
     return missing
 
 
 def _discovery_synthesis_prompt(
+    project_key: str,
     repo_root: Path,
     epic_id: int,
     cartography_refs: list[str] | None = None,
 ) -> str:
-    payload = _discovery_synthesis_payload(repo_root, epic_id, cartography_refs=cartography_refs)
+    payload = _discovery_synthesis_payload(
+        project_key, repo_root, epic_id, cartography_refs=cartography_refs
+    )
     return (
         _prompt_template(
             tool_root() / "playbooks" / "discovery" / "synthesis.md",
@@ -1041,11 +927,14 @@ def _discovery_synthesis_prompt(
 
 
 def _epic_definition_prompt(
+    project_key: str,
     repo_root: Path,
     epic_id: int,
     cartography_refs: list[str] | None = None,
 ) -> str:
-    payload = _epic_definition_payload(repo_root, epic_id, cartography_refs=cartography_refs)
+    payload = _epic_definition_payload(
+        project_key, repo_root, epic_id, cartography_refs=cartography_refs
+    )
     return (
         _prompt_template(
             tool_root() / "playbooks" / "discovery" / "definition.md",
@@ -1056,11 +945,14 @@ def _epic_definition_prompt(
 
 
 def _breakdown_planning_prompt(
+    project_key: str,
     repo_root: Path,
     epic_id: int,
     cartography_refs: list[str] | None = None,
 ) -> str:
-    payload = _breakdown_planning_payload(repo_root, epic_id, cartography_refs=cartography_refs)
+    payload = _breakdown_planning_payload(
+        project_key, repo_root, epic_id, cartography_refs=cartography_refs
+    )
     return (
         _prompt_template(
             tool_root() / "playbooks" / "planning" / "breakdown.md",
@@ -1071,11 +963,14 @@ def _breakdown_planning_prompt(
 
 
 def _plan_critique_prompt(
+    project_key: str,
     repo_root: Path,
     epic_id: int,
     cartography_refs: list[str] | None = None,
 ) -> str:
-    payload = _plan_critique_payload(repo_root, epic_id, cartography_refs=cartography_refs)
+    payload = _plan_critique_payload(
+        project_key, repo_root, epic_id, cartography_refs=cartography_refs
+    )
     template = (tool_root() / "playbooks" / "critique" / "plan.md").read_text(encoding="utf-8")
     return (
         "Graph-owned input:\n\n"
@@ -1087,13 +982,14 @@ def _plan_critique_prompt(
 
 
 def _work_unit_critique_prompt(
+    project_key: str,
     repo_root: Path,
     epic_id: int,
     work_unit_id: str,
     cartography_refs: list[str] | None = None,
 ) -> str:
     payload = _work_unit_critique_payload(
-        repo_root, epic_id, work_unit_id, cartography_refs=cartography_refs
+        project_key, repo_root, epic_id, work_unit_id, cartography_refs=cartography_refs
     )
     template = (tool_root() / "playbooks" / "critique" / "work-unit.md").read_text(encoding="utf-8")
     return (
@@ -1106,6 +1002,7 @@ def _work_unit_critique_prompt(
 
 
 def _executor_dispatch_prompt(
+    project_key: str,
     repo_root: Path,
     epic_id: int,
     work_unit_id: str,
@@ -1113,7 +1010,7 @@ def _executor_dispatch_prompt(
     files_txt_slice: list[str] | None,
 ) -> str:
     """Build the executor dispatch prompt with cartography payload prepended."""
-    base = _work_unit_prompt(epic_id, work_unit_id)
+    base = _work_unit_prompt(project_key, epic_id, work_unit_id)
     inputs: dict[str, object] = {}
     if cartography_refs:
         inputs["cartography_paths"] = cartography_refs
@@ -1147,7 +1044,9 @@ def _validate_epic(repo_root: Path, epic_path: Path) -> tuple[bool, str]:
     return proc.returncode == 0, (proc.stdout + proc.stderr).strip()
 
 
-def _validate_plan(repo_root: Path, epic_id: int, plan_path: Path) -> tuple[bool, str, bool]:
+def _validate_plan(
+    project_key: str, repo_root: Path, epic_id: int, plan_path: Path
+) -> tuple[bool, str, bool]:
     """Validate plan.json; returns (ok, message, cache_hit).
 
     Results are cached by SHA-256 of plan.json content within this process.
@@ -1171,7 +1070,7 @@ def _validate_plan(repo_root: Path, epic_id: int, plan_path: Path) -> tuple[bool
         _PLAN_VALIDATE_CACHE[content_hash] = result
         return result[0], result[1], False
     try:
-        plan = load_plan(repo_root, epic_id)
+        plan = load_plan(project_key, epic_id)
     except (StageStateError, ValueError) as exc:
         result = (False, str(exc))
         _PLAN_VALIDATE_CACHE[content_hash] = result
@@ -1262,10 +1161,16 @@ def _render_plan_markdown(plan: Plan) -> str:
     return "".join(out)
 
 
-def _work_unit_prompt(epic_id: int, work_unit_id: str) -> str:
+def _work_unit_prompt(project_key: str, epic_id: int, work_unit_id: str) -> str:
     return _prompt_template(
         tool_root() / "playbooks" / "execution" / "work-unit.md",
-        {"epic_id": str(epic_id), "work_unit_id": work_unit_id},
+        {
+            "epic_id": str(epic_id),
+            "work_unit_id": work_unit_id,
+            "plan_path": str(state.plan_path(project_key, epic_id)),
+            "epic_path": str(state.epic_contract_path(project_key, epic_id)),
+            "executor_result_path": str(state.executor_result_path(project_key, epic_id)),
+        },
     )
 
 
@@ -1284,9 +1189,9 @@ def _blocker_signature(critique: MarkdownFrontMatter) -> str:
 
 
 def _fix_rounds_used(
-    repo_root: Path, epic_id: int, work_unit_id: str, blocker_signature: str
+    project_key: str, epic_id: int, work_unit_id: str, blocker_signature: str
 ) -> int:
-    events_path = epic_dir(repo_root, epic_id) / "epic.jsonl"
+    events_path = epic_dir(project_key, epic_id) / "epic.jsonl"
     if not events_path.exists():
         return 0
     used = 0
@@ -1308,6 +1213,7 @@ def _fix_rounds_used(
 
 
 def _fix_round_prompt(
+    project_key: str,
     repo_root: Path,
     epic_id: int,
     work_unit_id: str,
@@ -1315,23 +1221,23 @@ def _fix_round_prompt(
     critique: MarkdownFrontMatter,
     base_prompt: str,
 ) -> str:
-    critique_rel = work_unit_critique_path(epic_dir(repo_root, epic_id), work_unit_id)
+    critique_rel = work_unit_critique_path(epic_dir(project_key, epic_id), work_unit_id)
     return (
         "# Work Unit Fix Round\n\n"
         "Continue the same work-unit producer session. Address the reviewer blocker "
         "evidence below, update the staged work-unit diff, and rewrite "
-        f"`.woof/epics/E{epic_id}/executor_result.json` when complete.\n\n"
+        f"`{state.executor_result_path(project_key, epic_id)}` when complete.\n\n"
         "Do not dispatch the reviewer. Do not commit. Do not open or edit gate.md.\n\n"
         "## Reviewer Blocker Evidence\n\n"
-        f"Source: `{_relpath(repo_root, critique_rel)}`\n\n"
-        f"{reviewer_blocker_gate_body(epic_id=epic_id, work_unit_id=work_unit_id, critique=critique)}"
+        f"Source: `{critique_rel}`\n\n"
+        f"{reviewer_blocker_gate_body(work_unit_id=work_unit_id, critique=critique)}"
         "\n\n## Producer Contract\n\n"
         f"{base_prompt}"
     )
 
 
-def _clear_fix_round_artefacts(repo_root: Path, epic_id: int, work_unit_id: str) -> None:
-    directory = epic_dir(repo_root, epic_id)
+def _clear_fix_round_artefacts(project_key: str, epic_id: int, work_unit_id: str) -> None:
+    directory = epic_dir(project_key, epic_id)
     for path in (
         directory / "executor_result.json",
         directory / "check-result.json",
@@ -1340,12 +1246,11 @@ def _clear_fix_round_artefacts(repo_root: Path, epic_id: int, work_unit_id: str)
         path.unlink(missing_ok=True)
 
 
-def _work_unit_context_artefacts(repo_root: Path, epic_id: int) -> list[str]:
-    directory = epic_dir(repo_root, epic_id)
+def _work_unit_context_artefacts(project_key: str, repo_root: Path, epic_id: int) -> list[str]:
+    directory = epic_dir(project_key, epic_id)
     return _existing_prompt_artefacts(
-        repo_root,
         [
-            repo_root / ".woof" / ".current-epic",
+            state.current_epic_path(project_key),
             directory / "plan.json",
             directory / "EPIC.md",
             repo_root / "CLAUDE.md",
@@ -1354,10 +1259,11 @@ def _work_unit_context_artefacts(repo_root: Path, epic_id: int) -> list[str]:
     )
 
 
-def _disposition_artefacts(repo_root: Path, epic_id: int, work_unit_id: str) -> list[str]:
-    directory = epic_dir(repo_root, epic_id)
+def _disposition_artefacts(
+    project_key: str, repo_root: Path, epic_id: int, work_unit_id: str
+) -> list[str]:
+    directory = epic_dir(project_key, epic_id)
     return _existing_prompt_artefacts(
-        repo_root,
         [
             directory / "EPIC.md",
             directory / "plan.json",
@@ -1372,6 +1278,7 @@ def _disposition_prompt(epic_id: int, work_unit_id: str) -> str:
 
 
 def _run_dispatch(
+    project_key: str,
     repo_root: Path,
     role: str,
     epic_id: int,
@@ -1382,7 +1289,7 @@ def _run_dispatch(
     session_mode: str = "one-shot",
 ) -> DispatchRunResult:
     prompt_file = _write_prompt_file(prompt)
-    dispatch_jsonl = epic_dir(repo_root, epic_id) / "dispatch.jsonl"
+    dispatch_jsonl = epic_dir(project_key, epic_id) / "dispatch.jsonl"
     dispatch_offset = _dispatch_jsonl_offset(dispatch_jsonl)
     try:
         args = [
@@ -1430,39 +1337,38 @@ def _discovery_bucket_node(inp: NodeInput, bucket: str) -> NodeOutput:
 
     if inp.work_unit_id:
         raise ValueError(f"discovery_{bucket} does not accept work_unit_id")
-    directory = epic_dir(inp.repo_root, inp.epic_id)
+    directory = epic_dir(inp.project_key, inp.epic_id)
     spark_path = directory / "spark.md"
     if not spark_path.is_file() or not spark_path.read_text(encoding="utf-8").strip():
         return _planning_halt(
             inp,
             stage=1,
-            message=(
-                f"Required Stage-1 input missing or empty: {_relpath(inp.repo_root, spark_path)}"
-            ),
+            message=(f"Required Stage-1 input missing or empty: {spark_path!s}"),
             triggered_by=["incomplete_stage_state"],
             check_count=1,
             failed_check_count=1,
         )
 
-    bucket_dir = discovery_bucket_dir(inp.repo_root, inp.epic_id, bucket)
-    bucket_relpath = _relpath(inp.repo_root, bucket_dir)
-    if not discovery_bucket_complete(inp.repo_root, inp.epic_id, bucket):
+    bucket_dir = discovery_bucket_dir(inp.project_key, inp.epic_id, bucket)
+    bucket_ref = str(bucket_dir)
+    if not discovery_bucket_complete(inp.project_key, inp.epic_id, bucket):
         carto_refs = _require_cartography_docs(
-            inp.repo_root,
+            inp.project_key,
             _DISCOVERY_BUCKET_CARTOGRAPHY_DOCS[bucket],
             "plan_gate",
         )
         bucket_dir.mkdir(parents=True, exist_ok=True)
         proc = _run_dispatch(
+            inp.project_key,
             inp.repo_root,
             role="primary",
             epic_id=inp.epic_id,
             work_unit_id=None,
             prompt=_discovery_bucket_prompt(
-                inp.repo_root, inp.epic_id, bucket, cartography_refs=carto_refs
+                inp.project_key, inp.repo_root, inp.epic_id, bucket, cartography_refs=carto_refs
             ),
             artefacts_loaded=[
-                *_discovery_bucket_artefacts(inp.repo_root, inp.epic_id, bucket),
+                *_discovery_bucket_artefacts(inp.project_key, inp.epic_id, bucket),
                 *carto_refs,
             ],
             route_key="discovery",
@@ -1476,26 +1382,26 @@ def _discovery_bucket_node(inp: NodeInput, bucket: str) -> NodeOutput:
                 triggered_by=["subprocess_crash"],
                 check_count=1,
                 failed_check_count=1,
-                paths=[bucket_relpath],
+                paths=[bucket_ref],
             )
-        if not discovery_bucket_complete(inp.repo_root, inp.epic_id, bucket):
+        if not discovery_bucket_complete(inp.project_key, inp.epic_id, bucket):
             return _planning_halt(
                 inp,
                 stage=1,
-                message=f"Discovery {bucket} produced no artefacts under {bucket_relpath}",
+                message=f"Discovery {bucket} produced no artefacts under {bucket_ref}",
                 triggered_by=["schema_validation_failed"],
                 check_count=1,
                 failed_check_count=1,
-                paths=[bucket_relpath],
+                paths=[bucket_ref],
             )
 
     paths = sorted(
-        _relpath(inp.repo_root, path)
+        str(path)
         for path in bucket_dir.glob("*.md")
         if path.is_file() and path.read_text(encoding="utf-8").strip()
     )
     append_epic_event_once(
-        inp.repo_root,
+        inp.project_key,
         inp.epic_id,
         {
             "event": "discovery_bucket_explored",
@@ -1537,36 +1443,34 @@ def discovery_ideate_node(inp: NodeInput) -> NodeOutput:
 def discovery_synthesis_node(inp: NodeInput) -> NodeOutput:
     if inp.work_unit_id:
         raise ValueError("discovery_synthesis does not accept work_unit_id")
-    directory = epic_dir(inp.repo_root, inp.epic_id)
+    directory = epic_dir(inp.project_key, inp.epic_id)
     spark_path = directory / "spark.md"
     if not spark_path.is_file() or not spark_path.read_text(encoding="utf-8").strip():
         return _planning_halt(
             inp,
             stage=1,
-            message=f"Required Stage-1 input missing or empty: {_relpath(inp.repo_root, spark_path)}",
+            message=f"Required Stage-1 input missing or empty: {spark_path!s}",
             triggered_by=["incomplete_stage_state"],
             check_count=1,
             failed_check_count=1,
         )
 
-    paths = [
-        _relpath(inp.repo_root, path)
-        for path in discovery_synthesis_paths(inp.repo_root, inp.epic_id).values()
-    ]
-    missing = _missing_discovery_outputs(inp.repo_root, inp.epic_id)
+    paths = [str(path) for path in discovery_synthesis_paths(inp.project_key, inp.epic_id).values()]
+    missing = _missing_discovery_outputs(inp.project_key, inp.epic_id)
     if missing:
-        carto_refs = _require_cartography_docs(inp.repo_root, _FULL_CARTOGRAPHY_SET, "plan_gate")
-        discovery_synthesis_dir(inp.repo_root, inp.epic_id).mkdir(parents=True, exist_ok=True)
+        carto_refs = _require_cartography_docs(inp.project_key, _FULL_CARTOGRAPHY_SET, "plan_gate")
+        discovery_synthesis_dir(inp.project_key, inp.epic_id).mkdir(parents=True, exist_ok=True)
         proc = _run_dispatch(
+            inp.project_key,
             inp.repo_root,
             role="primary",
             epic_id=inp.epic_id,
             work_unit_id=None,
             prompt=_discovery_synthesis_prompt(
-                inp.repo_root, inp.epic_id, cartography_refs=carto_refs
+                inp.project_key, inp.repo_root, inp.epic_id, cartography_refs=carto_refs
             ),
             artefacts_loaded=[
-                *_discovery_synthesis_artefacts(inp.repo_root, inp.epic_id),
+                *_discovery_synthesis_artefacts(inp.project_key, inp.epic_id),
                 *carto_refs,
             ],
             route_key="discovery",
@@ -1582,7 +1486,7 @@ def discovery_synthesis_node(inp: NodeInput) -> NodeOutput:
                 failed_check_count=len(paths),
                 paths=paths,
             )
-        missing = _missing_discovery_outputs(inp.repo_root, inp.epic_id)
+        missing = _missing_discovery_outputs(inp.project_key, inp.epic_id)
         if missing:
             return _planning_halt(
                 inp,
@@ -1595,7 +1499,7 @@ def discovery_synthesis_node(inp: NodeInput) -> NodeOutput:
                 paths=paths,
             )
 
-    contract = validate_discovery_synthesis_contract(inp.repo_root, inp.epic_id)
+    contract = validate_discovery_synthesis_contract(inp.project_key, inp.epic_id)
     if not contract.ok:
         return _planning_halt(
             inp,
@@ -1608,7 +1512,7 @@ def discovery_synthesis_node(inp: NodeInput) -> NodeOutput:
         )
 
     append_epic_event_once(
-        inp.repo_root,
+        inp.project_key,
         inp.epic_id,
         {
             "event": "discovery_synthesised",
@@ -1636,12 +1540,12 @@ def discovery_synthesis_node(inp: NodeInput) -> NodeOutput:
 def epic_definition_node(inp: NodeInput) -> NodeOutput:
     if inp.work_unit_id:
         raise ValueError("epic_definition does not accept work_unit_id")
-    directory = epic_dir(inp.repo_root, inp.epic_id)
+    directory = epic_dir(inp.project_key, inp.epic_id)
     epic_path = directory / "EPIC.md"
-    epic_relpath = _relpath(inp.repo_root, epic_path)
+    epic_ref = str(epic_path)
 
-    if discovery_synthesis_complete(inp.repo_root, inp.epic_id):
-        contract = validate_discovery_synthesis_contract(inp.repo_root, inp.epic_id)
+    if discovery_synthesis_complete(inp.project_key, inp.epic_id):
+        contract = validate_discovery_synthesis_contract(inp.project_key, inp.epic_id)
         if not contract.ok:
             return _planning_halt(
                 inp,
@@ -1651,16 +1555,16 @@ def epic_definition_node(inp: NodeInput) -> NodeOutput:
                 check_count=6,
                 failed_check_count=len(contract.failures),
                 paths=[
-                    _relpath(inp.repo_root, path)
-                    for path in discovery_synthesis_paths(inp.repo_root, inp.epic_id).values()
+                    str(path)
+                    for path in discovery_synthesis_paths(inp.project_key, inp.epic_id).values()
                 ],
             )
 
     if not epic_path.exists():
         if not discovery_synthesis_complete(
-            inp.repo_root, inp.epic_id
-        ) and not definition_revision_requested(inp.repo_root, inp.epic_id):
-            missing = _missing_discovery_outputs(inp.repo_root, inp.epic_id)
+            inp.project_key, inp.epic_id
+        ) and not definition_revision_requested(inp.project_key, inp.epic_id):
+            missing = _missing_discovery_outputs(inp.project_key, inp.epic_id)
             return _planning_halt(
                 inp,
                 stage=2,
@@ -1670,16 +1574,19 @@ def epic_definition_node(inp: NodeInput) -> NodeOutput:
                 failed_check_count=len(missing) or 4,
             )
         carto_refs = _require_cartography_docs(
-            inp.repo_root, _EPIC_DEFINITION_CARTOGRAPHY_DOCS, "plan_gate"
+            inp.project_key, _EPIC_DEFINITION_CARTOGRAPHY_DOCS, "plan_gate"
         )
         proc = _run_dispatch(
+            inp.project_key,
             inp.repo_root,
             role="primary",
             epic_id=inp.epic_id,
             work_unit_id=None,
-            prompt=_epic_definition_prompt(inp.repo_root, inp.epic_id, cartography_refs=carto_refs),
+            prompt=_epic_definition_prompt(
+                inp.project_key, inp.repo_root, inp.epic_id, cartography_refs=carto_refs
+            ),
             artefacts_loaded=[
-                *_epic_definition_artefacts(inp.repo_root, inp.epic_id),
+                *_epic_definition_artefacts(inp.project_key, inp.epic_id),
                 *carto_refs,
             ],
             route_key="definition",
@@ -1693,18 +1600,18 @@ def epic_definition_node(inp: NodeInput) -> NodeOutput:
                 triggered_by=["subprocess_crash"],
                 check_count=1,
                 failed_check_count=1,
-                paths=[epic_relpath],
+                paths=[epic_ref],
             )
 
     if not epic_path.exists():
         return _planning_halt(
             inp,
             stage=2,
-            message=f"Epic definition did not produce required file: {epic_relpath}",
+            message=f"Epic definition did not produce required file: {epic_ref}",
             triggered_by=["schema_validation_failed"],
             check_count=1,
             failed_check_count=1,
-            paths=[epic_relpath],
+            paths=[epic_ref],
         )
 
     ok, message = _validate_epic(inp.repo_root, epic_path)
@@ -1716,11 +1623,11 @@ def epic_definition_node(inp: NodeInput) -> NodeOutput:
             triggered_by=["schema_validation_failed"],
             check_count=1,
             failed_check_count=1,
-            paths=[epic_relpath],
+            paths=[epic_ref],
         )
 
     open_question_failures = validate_definition_open_questions(
-        inp.repo_root, inp.epic_id, epic_path
+        inp.project_key, inp.epic_id, epic_path
     )
     if open_question_failures:
         return _planning_halt(
@@ -1731,22 +1638,19 @@ def epic_definition_node(inp: NodeInput) -> NodeOutput:
             check_count=2,
             failed_check_count=len(open_question_failures),
             paths=[
-                epic_relpath,
-                _relpath(
-                    inp.repo_root,
-                    discovery_synthesis_paths(inp.repo_root, inp.epic_id)["open_questions_path"],
-                ),
+                epic_ref,
+                str(discovery_synthesis_paths(inp.project_key, inp.epic_id)["open_questions_path"]),
             ],
         )
 
     append_epic_event(
-        inp.repo_root,
+        inp.project_key,
         inp.epic_id,
         {
             "event": "definition_closed",
             "at": _now(),
             "epic_id": inp.epic_id,
-            "paths": [epic_relpath],
+            "paths": [epic_ref],
         },
     )
     return NodeOutput(
@@ -1760,7 +1664,7 @@ def epic_definition_node(inp: NodeInput) -> NodeOutput:
             check_count=1,
             failed_check_count=0,
         ),
-        paths=[epic_relpath],
+        paths=[epic_ref],
     )
 
 
@@ -1775,7 +1679,7 @@ def _validate_readiness_result(repo_root: Path, result_path: Path) -> tuple[bool
     return proc.returncode == 0, (proc.stdout + proc.stderr).strip()
 
 
-def _readiness_gate_body(epic_id: int, epic_relpath: str, result: ReadinessResult) -> str:
+def _readiness_gate_body(epic_id: int, epic_ref: str, result: ReadinessResult) -> str:
     finding_lines: list[str] = []
     for check in result.checks:
         if check.ok:
@@ -1789,10 +1693,10 @@ def _readiness_gate_body(epic_id: int, epic_relpath: str, result: ReadinessResul
     return (
         "## Context\n\n"
         f"Stage 2.5 contract readiness for E{epic_id}. The deterministic readiness checker "
-        f"found `{epic_relpath}` not ready for planning.\n\n"
+        f"found `{epic_ref}` not ready for planning.\n\n"
         "## Findings\n\n" + "\n".join(finding_lines) + "\n\n"
         "## Primary position\n\n"
-        f"Source: `{epic_relpath}`\n\n"
+        f"Source: `{epic_ref}`\n\n"
         "Revise the epic contract so each finding resolves - add the machine-checkable "
         "acceptance signal, concrete reference, or forward-created marker the checker asked "
         f"for - then re-run `woof wf --epic {epic_id}`.\n\n"
@@ -1805,21 +1709,21 @@ def _readiness_gate_body(epic_id: int, epic_relpath: str, result: ReadinessResul
 def contract_readiness_node(inp: NodeInput) -> NodeOutput:
     if inp.work_unit_id:
         raise ValueError("contract_readiness does not accept work_unit_id")
-    directory = epic_dir(inp.repo_root, inp.epic_id)
+    directory = epic_dir(inp.project_key, inp.epic_id)
     epic_path = directory / "EPIC.md"
-    epic_relpath = _relpath(inp.repo_root, epic_path)
+    epic_ref = str(epic_path)
     result_path = directory / "readiness-result.json"
-    result_relpath = _relpath(inp.repo_root, result_path)
+    result_ref = str(result_path)
 
     if not epic_path.exists():
         return _planning_halt(
             inp,
             stage=2,
-            message=f"Required Stage-2.5 input missing: {epic_relpath}",
+            message=f"Required Stage-2.5 input missing: {epic_ref}",
             triggered_by=["incomplete_stage_state"],
             check_count=1,
             failed_check_count=1,
-            paths=[epic_relpath],
+            paths=[epic_ref],
         )
 
     epic_ok, epic_message = _validate_epic(inp.repo_root, epic_path)
@@ -1831,7 +1735,7 @@ def contract_readiness_node(inp: NodeInput) -> NodeOutput:
             triggered_by=["schema_validation_failed"],
             check_count=1,
             failed_check_count=1,
-            paths=[epic_relpath],
+            paths=[epic_ref],
         )
 
     result = evaluate_readiness(inp.repo_root, inp.epic_id, epic_path)
@@ -1846,18 +1750,18 @@ def contract_readiness_node(inp: NodeInput) -> NodeOutput:
             triggered_by=["schema_validation_failed"],
             check_count=1,
             failed_check_count=1,
-            paths=[result_relpath],
+            paths=[result_ref],
         )
 
     if result.ok:
         append_epic_event(
-            inp.repo_root,
+            inp.project_key,
             inp.epic_id,
             {
                 "event": "readiness_passed",
                 "at": _now(),
                 "epic_id": inp.epic_id,
-                "paths": [result_relpath],
+                "paths": [result_ref],
             },
         )
         return NodeOutput(
@@ -1871,19 +1775,20 @@ def contract_readiness_node(inp: NodeInput) -> NodeOutput:
                 check_count=len(result.checks),
                 failed_check_count=0,
             ),
-            paths=[result_relpath],
+            paths=[result_ref],
         )
 
-    cycles = failed_readiness_cycles(inp.repo_root, inp.epic_id)
+    cycles = failed_readiness_cycles(inp.project_key, inp.epic_id)
     threshold = _readiness_escalation_threshold()
     trigger = "readiness_escalation" if cycles >= threshold else "readiness_unready"
-    gate = graph_gate_path(inp.repo_root, inp.epic_id)
+    gate = graph_gate_path(inp.project_key, inp.epic_id)
     if not gate.exists():
         write_gate(
-            epic_dir=directory,
+            project_key=inp.project_key,
+            epic_id=inp.epic_id,
             work_unit_id=None,
             triggered_by=[trigger],
-            position_text=_readiness_gate_body(inp.epic_id, epic_relpath, result),
+            position_text=_readiness_gate_body(inp.epic_id, epic_ref, result),
             schema_path=schema_dir() / "gate.schema.json",
             validate=True,
             gate_type="readiness_gate",
@@ -1893,7 +1798,7 @@ def contract_readiness_node(inp: NodeInput) -> NodeOutput:
         node_type=inp.node_type,
         status=NodeStatus.GATE_OPENED,
         epic_id=inp.epic_id,
-        gate_path=_gate_path(inp.epic_id),
+        gate_path=_gate_path(inp.project_key, inp.epic_id),
         validation_summary=_planning_validation(
             ok=False,
             stage=2,
@@ -1903,28 +1808,28 @@ def contract_readiness_node(inp: NodeInput) -> NodeOutput:
         ),
         triggered_by=[trigger],
         message="contract readiness gate opened: EPIC.md is not ready for planning",
-        paths=[epic_relpath, result_relpath, _gate_path(inp.epic_id)],
+        paths=[epic_ref, result_ref, _gate_path(inp.project_key, inp.epic_id)],
     )
 
 
 def breakdown_planning_node(inp: NodeInput) -> NodeOutput:
     if inp.work_unit_id:
         raise ValueError("breakdown_planning does not accept work_unit_id")
-    directory = epic_dir(inp.repo_root, inp.epic_id)
+    directory = epic_dir(inp.project_key, inp.epic_id)
     epic_path = directory / "EPIC.md"
     plan_path = directory / "plan.json"
-    plan_md_path = plan_markdown_path(inp.repo_root, inp.epic_id)
-    paths = [_relpath(inp.repo_root, plan_path), _relpath(inp.repo_root, plan_md_path)]
+    plan_md_path = plan_markdown_path(inp.project_key, inp.epic_id)
+    paths = [str(plan_path), str(plan_md_path)]
 
     if not epic_path.exists():
         return _planning_halt(
             inp,
             stage=3,
-            message=f"Required Stage-3 input missing: {_relpath(inp.repo_root, epic_path)}",
+            message=f"Required Stage-3 input missing: {epic_path!s}",
             triggered_by=["incomplete_stage_state"],
             check_count=1,
             failed_check_count=1,
-            paths=[_relpath(inp.repo_root, epic_path)],
+            paths=[str(epic_path)],
         )
 
     epic_ok, epic_message = _validate_epic(inp.repo_root, epic_path)
@@ -1936,23 +1841,24 @@ def breakdown_planning_node(inp: NodeInput) -> NodeOutput:
             triggered_by=["schema_validation_failed"],
             check_count=1,
             failed_check_count=1,
-            paths=[_relpath(inp.repo_root, epic_path)],
+            paths=[str(epic_path)],
         )
 
     if not plan_path.exists():
         carto_refs = _require_cartography_docs(
-            inp.repo_root, _BREAKDOWN_PLANNING_CARTOGRAPHY_DOCS, "plan_gate"
+            inp.project_key, _BREAKDOWN_PLANNING_CARTOGRAPHY_DOCS, "plan_gate"
         )
         proc = _run_dispatch(
+            inp.project_key,
             inp.repo_root,
             role="primary",
             epic_id=inp.epic_id,
             work_unit_id=None,
             prompt=_breakdown_planning_prompt(
-                inp.repo_root, inp.epic_id, cartography_refs=carto_refs
+                inp.project_key, inp.repo_root, inp.epic_id, cartography_refs=carto_refs
             ),
             artefacts_loaded=[
-                *_breakdown_planning_artefacts(inp.repo_root, inp.epic_id),
+                *_breakdown_planning_artefacts(inp.project_key, inp.epic_id),
                 *carto_refs,
             ],
             route_key="planning",
@@ -1981,7 +1887,7 @@ def breakdown_planning_node(inp: NodeInput) -> NodeOutput:
         )
 
     try:
-        ensure_epic_plan_context(inp.repo_root, inp.epic_id, plan_path)
+        ensure_epic_plan_context(inp.project_key, inp.epic_id, plan_path)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         return _planning_halt(
             inp,
@@ -1993,7 +1899,9 @@ def breakdown_planning_node(inp: NodeInput) -> NodeOutput:
             paths=paths,
         )
 
-    plan_ok, plan_message, _plan_cache_hit = _validate_plan(inp.repo_root, inp.epic_id, plan_path)
+    plan_ok, plan_message, _plan_cache_hit = _validate_plan(
+        inp.project_key, inp.repo_root, inp.epic_id, plan_path
+    )
     if not plan_ok:
         return _planning_halt(
             inp,
@@ -2017,10 +1925,10 @@ def breakdown_planning_node(inp: NodeInput) -> NodeOutput:
             paths=paths,
         )
 
-    plan = load_plan(inp.repo_root, inp.epic_id)
+    plan = load_plan(inp.project_key, inp.epic_id)
     plan_md_path.write_text(_render_plan_markdown(plan), encoding="utf-8")
     append_epic_event(
-        inp.repo_root,
+        inp.project_key,
         inp.epic_id,
         {
             "event": "breakdown_planned",
@@ -2048,14 +1956,14 @@ def breakdown_planning_node(inp: NodeInput) -> NodeOutput:
 def plan_critique_node(inp: NodeInput) -> NodeOutput:
     if inp.work_unit_id:
         raise ValueError("plan_critique does not accept work_unit_id")
-    directory = epic_dir(inp.repo_root, inp.epic_id)
+    directory = epic_dir(inp.project_key, inp.epic_id)
     plan_path = directory / "plan.json"
-    plan_md_path = plan_markdown_path(inp.repo_root, inp.epic_id)
-    critique_path = plan_critique_path(inp.repo_root, inp.epic_id)
-    critique_relpath = _relpath(inp.repo_root, critique_path)
+    plan_md_path = plan_markdown_path(inp.project_key, inp.epic_id)
+    critique_path = plan_critique_path(inp.project_key, inp.epic_id)
+    critique_ref = str(critique_path)
 
     required = [plan_path, plan_md_path]
-    missing = [_relpath(inp.repo_root, path) for path in required if not path.exists()]
+    missing = [str(path) for path in required if not path.exists()]
     if missing:
         return _planning_halt(
             inp,
@@ -2064,10 +1972,12 @@ def plan_critique_node(inp: NodeInput) -> NodeOutput:
             triggered_by=["incomplete_stage_state"],
             check_count=len(required),
             failed_check_count=len(missing),
-            paths=[_relpath(inp.repo_root, path) for path in required],
+            paths=[str(path) for path in required],
         )
 
-    plan_ok, plan_message, plan_cache_hit = _validate_plan(inp.repo_root, inp.epic_id, plan_path)
+    plan_ok, plan_message, plan_cache_hit = _validate_plan(
+        inp.project_key, inp.repo_root, inp.epic_id, plan_path
+    )
     if not plan_ok:
         return _planning_halt(
             inp,
@@ -2076,7 +1986,7 @@ def plan_critique_node(inp: NodeInput) -> NodeOutput:
             triggered_by=["schema_validation_failed"],
             check_count=1,
             failed_check_count=1,
-            paths=[_relpath(inp.repo_root, plan_path)],
+            paths=[str(plan_path)],
         )
 
     plan_contract_failures = validate_stage3_plan_contract(
@@ -2090,22 +2000,25 @@ def plan_critique_node(inp: NodeInput) -> NodeOutput:
             triggered_by=["schema_validation_failed"],
             check_count=2,
             failed_check_count=len(plan_contract_failures),
-            paths=[_relpath(inp.repo_root, plan_path)],
+            paths=[str(plan_path)],
         )
 
     if not critique_path.exists():
         carto_refs = _require_cartography_docs(
-            inp.repo_root, _PLAN_CRITIQUE_CARTOGRAPHY_DOCS, "plan_gate"
+            inp.project_key, _PLAN_CRITIQUE_CARTOGRAPHY_DOCS, "plan_gate"
         )
         critique_path.parent.mkdir(parents=True, exist_ok=True)
         proc = _run_dispatch(
+            inp.project_key,
             inp.repo_root,
             role="reviewer",
             epic_id=inp.epic_id,
             work_unit_id=None,
-            prompt=_plan_critique_prompt(inp.repo_root, inp.epic_id, cartography_refs=carto_refs),
+            prompt=_plan_critique_prompt(
+                inp.project_key, inp.repo_root, inp.epic_id, cartography_refs=carto_refs
+            ),
             artefacts_loaded=[
-                *_plan_critique_artefacts(inp.repo_root, inp.epic_id),
+                *_plan_critique_artefacts(inp.project_key, inp.epic_id),
                 *carto_refs,
             ],
             route_key="planning",
@@ -2119,18 +2032,18 @@ def plan_critique_node(inp: NodeInput) -> NodeOutput:
                 triggered_by=["reviewer_unreachable"],
                 check_count=1,
                 failed_check_count=1,
-                paths=[critique_relpath],
+                paths=[critique_ref],
             )
 
     if not critique_path.exists():
         return _planning_halt(
             inp,
             stage=3,
-            message=f"Plan critique did not produce required file: {critique_relpath}",
+            message=f"Plan critique did not produce required file: {critique_ref}",
             triggered_by=["schema_validation_failed"],
             check_count=1,
             failed_check_count=1,
-            paths=[critique_relpath],
+            paths=[critique_ref],
         )
 
     plan_dict = Plan.model_validate_json(plan_path.read_text()).model_dump(exclude_none=True)
@@ -2145,14 +2058,14 @@ def plan_critique_node(inp: NodeInput) -> NodeOutput:
             triggered_by=["schema_validation_failed"],
             check_count=1,
             failed_check_count=1,
-            paths=[critique_relpath],
+            paths=[critique_ref],
         )
 
     critique = read_markdown_front_matter(critique_path)
     severity = critique_severity(critique.front) or "info"
     finding_count = len(critique_findings(critique.front))
     append_epic_event(
-        inp.repo_root,
+        inp.project_key,
         inp.epic_id,
         {
             "event": "plan_critiqued",
@@ -2161,7 +2074,7 @@ def plan_critique_node(inp: NodeInput) -> NodeOutput:
             "severity": severity,
             "finding_count": finding_count,
             "plan_validate_cache_hit": plan_cache_hit,
-            "paths": [critique_relpath],
+            "paths": [critique_ref],
         },
     )
     return NodeOutput(
@@ -2175,15 +2088,15 @@ def plan_critique_node(inp: NodeInput) -> NodeOutput:
             check_count=1,
             failed_check_count=0,
         ),
-        paths=[critique_relpath],
+        paths=[critique_ref],
     )
 
 
 def _plan_gate_body(
     *,
     epic_id: int,
-    plan_relpath: str,
-    critique_relpath: str,
+    plan_ref: str,
+    critique_ref: str,
     critique: MarkdownFrontMatter,
 ) -> str:
     front = critique.front
@@ -2204,13 +2117,13 @@ def _plan_gate_body(
     return (
         "## Context\n\n"
         f"Stage 4 plan gate for E{epic_id}. "
-        f"`{plan_relpath}` and `{critique_relpath}` are present and valid. "
+        f"`{plan_ref}` and `{critique_ref}` are present and valid. "
         "Woof always opens this gate before work-unit execution.\n\n"
         "## Findings\n\n" + "\n".join(finding_lines) + "\n\n## Primary position\n\n"
-        f"Source: `{plan_relpath}`\n\n"
+        f"Source: `{plan_ref}`\n\n"
         "The primary plan is ready for human review before Stage 5 starts.\n\n"
         "## Reviewer position\n\n"
-        f"Source: `{critique_relpath}`\n\n"
+        f"Source: `{critique_ref}`\n\n"
         f"{reviewer_body}\n"
     )
 
@@ -2218,22 +2131,18 @@ def _plan_gate_body(
 def plan_gate_open_node(inp: NodeInput) -> NodeOutput:
     if inp.work_unit_id:
         raise ValueError("plan_gate_open does not accept work_unit_id")
-    directory = epic_dir(inp.repo_root, inp.epic_id)
+    directory = epic_dir(inp.project_key, inp.epic_id)
     plan_path = directory / "plan.json"
-    plan_md_path = plan_markdown_path(inp.repo_root, inp.epic_id)
-    critique_path = plan_critique_path(inp.repo_root, inp.epic_id)
-    gate = graph_gate_path(inp.repo_root, inp.epic_id)
-    plan_relpath = _relpath(inp.repo_root, plan_path)
-    plan_md_relpath = _relpath(inp.repo_root, plan_md_path)
-    critique_relpath = _relpath(inp.repo_root, critique_path)
-    gate_relpath = _gate_path(inp.epic_id)
-    paths = [plan_relpath, plan_md_relpath, critique_relpath, gate_relpath]
+    plan_md_path = plan_markdown_path(inp.project_key, inp.epic_id)
+    critique_path = plan_critique_path(inp.project_key, inp.epic_id)
+    gate = graph_gate_path(inp.project_key, inp.epic_id)
+    plan_ref = str(plan_path)
+    plan_md_ref = str(plan_md_path)
+    critique_ref = str(critique_path)
+    gate_ref = _gate_path(inp.project_key, inp.epic_id)
+    paths = [plan_ref, plan_md_ref, critique_ref, gate_ref]
 
-    missing = [
-        _relpath(inp.repo_root, path)
-        for path in (plan_path, plan_md_path, critique_path)
-        if not path.exists()
-    ]
+    missing = [str(path) for path in (plan_path, plan_md_path, critique_path) if not path.exists()]
     if missing:
         return _planning_halt(
             inp,
@@ -2245,7 +2154,9 @@ def plan_gate_open_node(inp: NodeInput) -> NodeOutput:
             paths=paths,
         )
 
-    plan_ok, plan_message, _ = _validate_plan(inp.repo_root, inp.epic_id, plan_path)
+    plan_ok, plan_message, _ = _validate_plan(
+        inp.project_key, inp.repo_root, inp.epic_id, plan_path
+    )
     if not plan_ok:
         return _planning_halt(
             inp,
@@ -2254,7 +2165,7 @@ def plan_gate_open_node(inp: NodeInput) -> NodeOutput:
             triggered_by=["schema_validation_failed"],
             check_count=1,
             failed_check_count=1,
-            paths=[plan_relpath],
+            paths=[plan_ref],
         )
 
     plan_contract_failures = validate_stage3_plan_contract(
@@ -2268,7 +2179,7 @@ def plan_gate_open_node(inp: NodeInput) -> NodeOutput:
             triggered_by=["schema_validation_failed"],
             check_count=2,
             failed_check_count=len(plan_contract_failures),
-            paths=[plan_relpath],
+            paths=[plan_ref],
         )
 
     plan_dict = Plan.model_validate_json(plan_path.read_text()).model_dump(exclude_none=True)
@@ -2283,19 +2194,20 @@ def plan_gate_open_node(inp: NodeInput) -> NodeOutput:
             triggered_by=["schema_validation_failed"],
             check_count=1,
             failed_check_count=1,
-            paths=[critique_relpath],
+            paths=[critique_ref],
         )
 
     if not gate.exists():
         critique = read_markdown_front_matter(critique_path)
         write_gate(
-            epic_dir=directory,
+            project_key=inp.project_key,
+            epic_id=inp.epic_id,
             work_unit_id=None,
             triggered_by=["plan_review"],
             position_text=_plan_gate_body(
                 epic_id=inp.epic_id,
-                plan_relpath=plan_md_relpath,
-                critique_relpath=critique_relpath,
+                plan_ref=plan_md_ref,
+                critique_ref=critique_ref,
                 critique=critique,
             ),
             schema_path=schema_dir() / "gate.schema.json",
@@ -2307,7 +2219,7 @@ def plan_gate_open_node(inp: NodeInput) -> NodeOutput:
         node_type=inp.node_type,
         status=NodeStatus.GATE_OPENED,
         epic_id=inp.epic_id,
-        gate_path=gate_relpath,
+        gate_path=gate_ref,
         validation_summary=_planning_validation(
             ok=True,
             stage=4,
@@ -2325,18 +2237,20 @@ def executor_dispatch_node(inp: NodeInput) -> NodeOutput:
     if not inp.work_unit_id:
         raise ValueError("executor_dispatch requires work_unit_id")
     carto_refs = _require_cartography_docs(
-        inp.repo_root, _EXECUTOR_CARTOGRAPHY_DOCS, "work_unit_gate", work_unit_id=inp.work_unit_id
+        inp.project_key, _EXECUTOR_CARTOGRAPHY_DOCS, "work_unit_gate", work_unit_id=inp.work_unit_id
     )
-    plan = load_plan(inp.repo_root, inp.epic_id)
+    plan = load_plan(inp.project_key, inp.epic_id)
     work_unit = work_unit_by_id(plan, inp.work_unit_id)
-    files_txt_slice = _work_unit_files_txt_slice(inp.repo_root, work_unit)
-    mark_work_unit_state(inp.repo_root, inp.epic_id, inp.work_unit_id, "in_progress")
+    files_txt_slice = _work_unit_files_txt_slice(inp.project_key, inp.repo_root, work_unit)
+    mark_work_unit_state(inp.project_key, inp.epic_id, inp.work_unit_id, "in_progress")
     proc = _run_dispatch(
+        inp.project_key,
         inp.repo_root,
         role="primary",
         epic_id=inp.epic_id,
         work_unit_id=inp.work_unit_id,
         prompt=_executor_dispatch_prompt(
+            inp.project_key,
             inp.repo_root,
             inp.epic_id,
             inp.work_unit_id,
@@ -2344,9 +2258,9 @@ def executor_dispatch_node(inp: NodeInput) -> NodeOutput:
             files_txt_slice=files_txt_slice,
         ),
         artefacts_loaded=[
-            *_work_unit_context_artefacts(inp.repo_root, inp.epic_id),
+            *_work_unit_context_artefacts(inp.project_key, inp.repo_root, inp.epic_id),
             *carto_refs,
-            *([_codebase_doc_relpath("files.txt")] if files_txt_slice is not None else []),
+            *([_codebase_doc_name("files.txt")] if files_txt_slice is not None else []),
         ],
         route_key="execution",
         session_mode="warm-producer",
@@ -2355,7 +2269,8 @@ def executor_dispatch_node(inp: NodeInput) -> NodeOutput:
     if not dispatch.ok:
         write_gate_for_trigger(
             trigger="subprocess_crash",
-            epic_dir=epic_dir(inp.repo_root, inp.epic_id),
+            project_key=inp.project_key,
+            epic_id=inp.epic_id,
             work_unit_id=inp.work_unit_id,
             exit_code=dispatch.gate_exit_code,
             schema_path=schema_dir() / "gate.schema.json",
@@ -2365,7 +2280,7 @@ def executor_dispatch_node(inp: NodeInput) -> NodeOutput:
             status=NodeStatus.GATE_OPENED,
             epic_id=inp.epic_id,
             work_unit_id=inp.work_unit_id,
-            gate_path=_gate_path(inp.epic_id),
+            gate_path=_gate_path(inp.project_key, inp.epic_id),
             triggered_by=["subprocess_crash"],
             message=dispatch.message,
         )
@@ -2382,13 +2297,15 @@ def critique_dispatch_node(inp: NodeInput) -> NodeOutput:
     if not inp.work_unit_id:
         raise ValueError("critique_dispatch requires work_unit_id")
     carto_refs = _require_cartography_docs(
-        inp.repo_root,
+        inp.project_key,
         _CRITIQUE_DISPATCH_CARTOGRAPHY_DOCS,
         "work_unit_gate",
         work_unit_id=inp.work_unit_id,
     )
     try:
-        _stage_changed_work_unit_paths(inp.repo_root, inp.epic_id, inp.work_unit_id)
+        _stage_changed_work_unit_paths(
+            inp.project_key, inp.repo_root, inp.epic_id, inp.work_unit_id
+        )
     except (subprocess.CalledProcessError, StageStateError, ValueError) as exc:
         return _write_position_gate(
             inp,
@@ -2396,16 +2313,17 @@ def critique_dispatch_node(inp: NodeInput) -> NodeOutput:
             position=f"Work-unit paths could not be staged before reviewer critique: {exc}",
         )
     prompt = _work_unit_critique_prompt(
-        inp.repo_root, inp.epic_id, inp.work_unit_id, cartography_refs=carto_refs
+        inp.project_key, inp.repo_root, inp.epic_id, inp.work_unit_id, cartography_refs=carto_refs
     )
     proc = _run_dispatch(
+        inp.project_key,
         inp.repo_root,
         role="reviewer",
         epic_id=inp.epic_id,
         work_unit_id=inp.work_unit_id,
         prompt=prompt,
         artefacts_loaded=[
-            *_work_unit_context_artefacts(inp.repo_root, inp.epic_id),
+            *_work_unit_context_artefacts(inp.project_key, inp.repo_root, inp.epic_id),
             *carto_refs,
         ],
         route_key="execution",
@@ -2414,7 +2332,8 @@ def critique_dispatch_node(inp: NodeInput) -> NodeOutput:
     if not dispatch.ok:
         write_gate_for_trigger(
             trigger="reviewer_unreachable",
-            epic_dir=epic_dir(inp.repo_root, inp.epic_id),
+            project_key=inp.project_key,
+            epic_id=inp.epic_id,
             work_unit_id=inp.work_unit_id,
             exit_code=None,
             schema_path=schema_dir() / "gate.schema.json",
@@ -2424,7 +2343,7 @@ def critique_dispatch_node(inp: NodeInput) -> NodeOutput:
             status=NodeStatus.GATE_OPENED,
             epic_id=inp.epic_id,
             work_unit_id=inp.work_unit_id,
-            gate_path=_gate_path(inp.epic_id),
+            gate_path=_gate_path(inp.project_key, inp.epic_id),
             triggered_by=["reviewer_unreachable"],
             message=dispatch.message,
         )
@@ -2438,12 +2357,13 @@ def critique_dispatch_node(inp: NodeInput) -> NodeOutput:
 
 
 def _write_position_gate(inp: NodeInput, *, trigger: str, position: str) -> NodeOutput:
-    position_path = epic_dir(inp.repo_root, inp.epic_id) / "gate-position.md"
+    position_path = epic_dir(inp.project_key, inp.epic_id) / "gate-position.md"
     position_path.write_text(position)
     try:
         write_gate_for_trigger(
             trigger=trigger,
-            epic_dir=epic_dir(inp.repo_root, inp.epic_id),
+            project_key=inp.project_key,
+            epic_id=inp.epic_id,
             work_unit_id=inp.work_unit_id,
             position_path=position_path,
             schema_path=schema_dir() / "gate.schema.json",
@@ -2455,7 +2375,7 @@ def _write_position_gate(inp: NodeInput, *, trigger: str, position: str) -> Node
         status=NodeStatus.GATE_OPENED,
         epic_id=inp.epic_id,
         work_unit_id=inp.work_unit_id,
-        gate_path=_gate_path(inp.epic_id),
+        gate_path=_gate_path(inp.project_key, inp.epic_id),
         triggered_by=[trigger],
         message=position,
     )
@@ -2476,7 +2396,7 @@ def _write_disposition_incomplete_gate(inp: NodeInput, message: str) -> NodeOutp
 def review_disposition_node(inp: NodeInput) -> NodeOutput:
     if not inp.work_unit_id:
         raise ValueError("review_disposition requires work_unit_id")
-    directory = epic_dir(inp.repo_root, inp.epic_id)
+    directory = epic_dir(inp.project_key, inp.epic_id)
     critique_path = work_unit_critique_path(directory, inp.work_unit_id)
 
     try:
@@ -2491,7 +2411,7 @@ def review_disposition_node(inp: NodeInput) -> NodeOutput:
             "Reviewer critique severity must be info, minor, or blocker.",
         )
 
-    plan_path = epic_dir(inp.repo_root, inp.epic_id) / "plan.json"
+    plan_path = epic_dir(inp.project_key, inp.epic_id) / "plan.json"
     try:
         plan_dict = Plan.model_validate_json(plan_path.read_text()).model_dump(exclude_none=True)
     except (OSError, ValueError):
@@ -2500,7 +2420,7 @@ def review_disposition_node(inp: NodeInput) -> NodeOutput:
         critique.front,
         repo_root=inp.repo_root,
         plan=plan_dict,
-        epic_dir=epic_dir(inp.repo_root, inp.epic_id),
+        epic_dir=directory,
     )
     if invariant_errors:
         return _write_disposition_incomplete_gate(inp, "\n".join(invariant_errors))
@@ -2509,18 +2429,19 @@ def review_disposition_node(inp: NodeInput) -> NodeOutput:
         blocker_signature = _blocker_signature(critique)
         budget = _fix_round_budget()
         rounds_used = _fix_rounds_used(
-            inp.repo_root, inp.epic_id, inp.work_unit_id, blocker_signature
+            inp.project_key, inp.epic_id, inp.work_unit_id, blocker_signature
         )
         if rounds_used < budget:
             carto_refs = _require_cartography_docs(
-                inp.repo_root,
+                inp.project_key,
                 _EXECUTOR_CARTOGRAPHY_DOCS,
                 "work_unit_gate",
                 work_unit_id=inp.work_unit_id,
             )
-            work_unit = work_unit_by_id(load_plan(inp.repo_root, inp.epic_id), inp.work_unit_id)
-            files_txt_slice = _work_unit_files_txt_slice(inp.repo_root, work_unit)
+            work_unit = work_unit_by_id(load_plan(inp.project_key, inp.epic_id), inp.work_unit_id)
+            files_txt_slice = _work_unit_files_txt_slice(inp.project_key, inp.repo_root, work_unit)
             base_prompt = _executor_dispatch_prompt(
+                inp.project_key,
                 inp.repo_root,
                 inp.epic_id,
                 inp.work_unit_id,
@@ -2529,6 +2450,7 @@ def review_disposition_node(inp: NodeInput) -> NodeOutput:
             )
             round_number = rounds_used + 1
             prompt = _fix_round_prompt(
+                inp.project_key,
                 inp.repo_root,
                 inp.epic_id,
                 inp.work_unit_id,
@@ -2536,7 +2458,7 @@ def review_disposition_node(inp: NodeInput) -> NodeOutput:
                 base_prompt=base_prompt,
             )
             append_epic_event(
-                inp.repo_root,
+                inp.project_key,
                 inp.epic_id,
                 {
                     "event": "work_unit_fix_round_started",
@@ -2551,17 +2473,18 @@ def review_disposition_node(inp: NodeInput) -> NodeOutput:
                     .as_posix(),
                 },
             )
-            _clear_fix_round_artefacts(inp.repo_root, inp.epic_id, inp.work_unit_id)
+            _clear_fix_round_artefacts(inp.project_key, inp.epic_id, inp.work_unit_id)
             proc = _run_dispatch(
+                inp.project_key,
                 inp.repo_root,
                 role="primary",
                 epic_id=inp.epic_id,
                 work_unit_id=inp.work_unit_id,
                 prompt=prompt,
                 artefacts_loaded=[
-                    *_work_unit_context_artefacts(inp.repo_root, inp.epic_id),
+                    *_work_unit_context_artefacts(inp.project_key, inp.repo_root, inp.epic_id),
                     *carto_refs,
-                    _codebase_doc_relpath("files.txt"),
+                    _codebase_doc_name("files.txt"),
                 ],
                 route_key="execution",
                 session_mode="warm-producer",
@@ -2570,7 +2493,8 @@ def review_disposition_node(inp: NodeInput) -> NodeOutput:
             if not dispatch.ok:
                 write_gate_for_trigger(
                     trigger="subprocess_crash",
-                    epic_dir=directory,
+                    project_key=inp.project_key,
+                    epic_id=inp.epic_id,
                     work_unit_id=inp.work_unit_id,
                     exit_code=dispatch.gate_exit_code,
                     schema_path=schema_dir() / "gate.schema.json",
@@ -2580,13 +2504,13 @@ def review_disposition_node(inp: NodeInput) -> NodeOutput:
                     status=NodeStatus.GATE_OPENED,
                     epic_id=inp.epic_id,
                     work_unit_id=inp.work_unit_id,
-                    gate_path=_gate_path(inp.epic_id),
+                    gate_path=_gate_path(inp.project_key, inp.epic_id),
                     triggered_by=["subprocess_crash"],
                     message=dispatch.message,
                 )
             work_unit_critique_path(directory, inp.work_unit_id).unlink(missing_ok=True)
             append_epic_event(
-                inp.repo_root,
+                inp.project_key,
                 inp.epic_id,
                 {
                     "event": "work_unit_fix_round_completed",
@@ -2610,7 +2534,6 @@ def review_disposition_node(inp: NodeInput) -> NodeOutput:
                 ),
             )
         body = reviewer_blocker_gate_body(
-            epic_id=inp.epic_id,
             work_unit_id=inp.work_unit_id,
             critique=critique,
         )
@@ -2624,22 +2547,20 @@ def review_disposition_node(inp: NodeInput) -> NodeOutput:
     if not disposition_path.exists():
         write_deterministic_work_unit_disposition(
             epic_dir=directory,
-            epic_id=inp.epic_id,
             work_unit_id=inp.work_unit_id,
             critique=critique,
             timestamp=_now(),
         )
 
-    validation = validate_work_unit_disposition(directory, inp.epic_id, inp.work_unit_id)
+    validation = validate_work_unit_disposition(directory, inp.work_unit_id)
     if not validation.ok:
         write_deterministic_work_unit_disposition(
             epic_dir=directory,
-            epic_id=inp.epic_id,
             work_unit_id=inp.work_unit_id,
             critique=critique,
             timestamp=_now(),
         )
-        validation = validate_work_unit_disposition(directory, inp.epic_id, inp.work_unit_id)
+        validation = validate_work_unit_disposition(directory, inp.work_unit_id)
         if not validation.ok:
             return _write_disposition_incomplete_gate(
                 inp,
@@ -2652,18 +2573,30 @@ def review_disposition_node(inp: NodeInput) -> NodeOutput:
         epic_id=inp.epic_id,
         work_unit_id=inp.work_unit_id,
         next_node=NodeType.VERIFICATION,
-        paths=[work_unit_disposition_relpath(inp.epic_id, inp.work_unit_id)],
+        paths=[str(work_unit_disposition_path(directory, inp.work_unit_id))],
     )
 
 
-def _stage_changed_work_unit_paths(repo_root: Path, epic_id: int, work_unit_id: str) -> list[str]:
+def _has_audit_trail(project_key: str, epic_id: int) -> bool:
+    """Return whether the dispatch wrote any audit file for this epic."""
+
+    directory = state.audit_dir(project_key, epic_id)
+    if not directory.is_dir():
+        return False
+    return any(path.is_file() for path in directory.rglob("*"))
+
+
+def _stage_changed_work_unit_paths(
+    project_key: str, repo_root: Path, epic_id: int, work_unit_id: str
+) -> list[str]:
     """Stage changed files that belong to the active work-unit path scope."""
 
-    plan = load_plan(repo_root, epic_id)
+    plan = load_plan(project_key, epic_id)
     work_unit = work_unit_by_id(plan, work_unit_id)
-    candidate_paths = [path for path in changed_paths(repo_root) if not path.startswith(".woof/")]
     try:
-        work_unit_paths = filter_paths_matching(repo_root, candidate_paths, list(work_unit.paths))
+        work_unit_paths = filter_paths_matching(
+            repo_root, changed_paths(repo_root), list(work_unit.paths)
+        )
     except PathspecEvaluationError as exc:
         raise StageStateError(f"work-unit pathspec evaluation failed: {exc}") from exc
     if work_unit_paths:
@@ -2672,35 +2605,30 @@ def _stage_changed_work_unit_paths(repo_root: Path, epic_id: int, work_unit_id: 
 
 
 def _stage_work_unit_transaction_paths(
-    repo_root: Path, epic_id: int, work_unit_id: str
+    project_key: str, repo_root: Path, epic_id: int, work_unit_id: str
 ) -> list[str]:
-    """Stage work-unit and graph-owned files before Stage-5 commit-readiness checks.
+    """Stage the work unit's delivery paths before the Stage-5 commit-readiness checks.
 
-    The producer owns work-unit content. The graph owns the transaction boundary:
-    changed files within `work_unit.paths[]`, durable `.woof` state, dispatch audit
-    files, critiques, dispositions, and JSONL events must be staged together so
-    deterministic checks and reviewer critique inspect the same candidate diff.
+    The producer owns work-unit content; the graph owns the transaction boundary. Since
+    ADR-017 that boundary is only the delivery diff: engine state lives in the operator
+    home, so there is nothing engine-owned to stage alongside it.
     """
 
-    plan = load_plan(repo_root, epic_id)
-    work_unit = work_unit_by_id(plan, work_unit_id)
-    work_unit_paths = _stage_changed_work_unit_paths(repo_root, epic_id, work_unit_id)
-    manifest = build_work_unit_manifest(repo_root, epic_id, work_unit)
-    graph_paths = [path for path in manifest.expected_paths if path.startswith(".woof/")]
-    if graph_paths:
-        git(repo_root, "add", "--", *graph_paths)
-    return sorted(set(work_unit_paths + graph_paths))
+    return _stage_changed_work_unit_paths(project_key, repo_root, epic_id, work_unit_id)
 
 
 def verification_node(inp: NodeInput) -> NodeOutput:
     if not inp.work_unit_id:
         raise ValueError("verification requires work_unit_id")
-    directory = epic_dir(inp.repo_root, inp.epic_id)
-    result_path = epic_dir(inp.repo_root, inp.epic_id) / "check-result.json"
+    result_path = state.check_result_path(inp.project_key, inp.epic_id)
     try:
-        _stage_work_unit_transaction_paths(inp.repo_root, inp.epic_id, inp.work_unit_id)
-        prepare_commit_audit(inp.repo_root, directory)
-        _stage_work_unit_transaction_paths(inp.repo_root, inp.epic_id, inp.work_unit_id)
+        _stage_work_unit_transaction_paths(
+            inp.project_key, inp.repo_root, inp.epic_id, inp.work_unit_id
+        )
+        redact_audit_artefacts(inp.project_key, inp.epic_id, repo_root=inp.repo_root)
+        _stage_work_unit_transaction_paths(
+            inp.project_key, inp.repo_root, inp.epic_id, inp.work_unit_id
+        )
     except (subprocess.CalledProcessError, StageStateError, ValueError) as exc:
         return _write_position_gate(
             inp,
@@ -2732,14 +2660,16 @@ def verification_node(inp: NodeInput) -> NodeOutput:
             write_gate_from_check_result(
                 check_result_path=result_path,
                 position_path=None,
-                epic_dir=epic_dir(inp.repo_root, inp.epic_id),
+                project_key=inp.project_key,
+                epic_id=inp.epic_id,
                 work_unit_id=inp.work_unit_id,
                 schema_path=schema_dir() / "gate.schema.json",
             )
         else:
             write_gate_for_trigger(
                 trigger="schema_validation_failed",
-                epic_dir=epic_dir(inp.repo_root, inp.epic_id),
+                project_key=inp.project_key,
+                epic_id=inp.epic_id,
                 work_unit_id=inp.work_unit_id,
                 schema_path=schema_dir() / "gate.schema.json",
             )
@@ -2748,7 +2678,7 @@ def verification_node(inp: NodeInput) -> NodeOutput:
             status=NodeStatus.GATE_OPENED,
             epic_id=inp.epic_id,
             work_unit_id=inp.work_unit_id,
-            gate_path=_gate_path(inp.epic_id),
+            gate_path=_gate_path(inp.project_key, inp.epic_id),
             validation_summary=validation_summary,
             triggered_by=validation_summary.triggered_by if validation_summary else [],
             message=proc.stderr.strip(),
@@ -2772,8 +2702,8 @@ def verification_node(inp: NodeInput) -> NodeOutput:
     )
 
 
-def _executor_result(repo_root: Path, epic_id: int) -> dict:
-    path = epic_dir(repo_root, epic_id) / "executor_result.json"
+def _executor_result(project_key: str, epic_id: int) -> dict:
+    path = epic_dir(project_key, epic_id) / "executor_result.json"
     return json.loads(path.read_text())
 
 
@@ -2819,10 +2749,10 @@ def _profile_a_publish_settings(
     )
 
 
-def _profile_a_review_passed(repo_root: Path, epic_id: int, work_unit_id: str) -> bool:
+def _profile_a_review_passed(project_key: str, epic_id: int, work_unit_id: str) -> bool:
     try:
         critique = read_markdown_front_matter(
-            work_unit_critique_path(epic_dir(repo_root, epic_id), work_unit_id)
+            work_unit_critique_path(epic_dir(project_key, epic_id), work_unit_id)
         )
     except (OSError, FrontMatterError):
         return False
@@ -2830,10 +2760,10 @@ def _profile_a_review_passed(repo_root: Path, epic_id: int, work_unit_id: str) -
 
 
 def _profile_a_merge_eligible(
-    repo_root: Path, epic_id: int, work_unit_id: str, check_result: dict
+    project_key: str, epic_id: int, work_unit_id: str, check_result: dict
 ) -> bool:
     return check_result.get("ok") is True and _profile_a_review_passed(
-        repo_root, epic_id, work_unit_id
+        project_key, epic_id, work_unit_id
     )
 
 
@@ -2980,10 +2910,10 @@ def _publish_profile_a_transaction(
             )
 
         merge_eligible = _profile_a_merge_eligible(
-            inp.repo_root, inp.epic_id, work_unit.id, check_result
+            inp.project_key, inp.epic_id, work_unit.id, check_result
         )
         append_epic_event(
-            inp.repo_root,
+            inp.project_key,
             inp.epic_id,
             {
                 "event": "profile_a_published",
@@ -3000,15 +2930,6 @@ def _publish_profile_a_transaction(
                 "verified_paths": verified_paths,
                 "merge_eligible": merge_eligible,
             },
-        )
-        git(inp.repo_root, "add", "--", f".woof/epics/E{inp.epic_id}/epic.jsonl")
-        git(inp.repo_root, "commit", "--amend", "--no-edit")
-        git(
-            inp.repo_root,
-            "push",
-            f"--force-with-lease={settings.head_branch}:{published_head}",
-            settings.remote,
-            f"HEAD:{settings.head_branch}",
         )
         if merge_eligible:
             gh_add_label(settings.github_repo, pr_number, settings.ready_label)
@@ -3081,7 +3002,7 @@ def commit_node(inp: NodeInput) -> NodeOutput:
 
     # Drift check: verify HEAD/branch haven't moved since the last dispatch.
     # subprocess_returned events live in dispatch.jsonl, not epic.jsonl.
-    dispatch_jsonl = epic_dir(inp.repo_root, inp.epic_id) / "dispatch.jsonl"
+    dispatch_jsonl = epic_dir(inp.project_key, inp.epic_id) / "dispatch.jsonl"
     dispatch_events = _read_appended_dispatch_events(dispatch_jsonl, 0)
     last_returned = next(
         (
@@ -3102,7 +3023,8 @@ def commit_node(inp: NodeInput) -> NodeOutput:
         if drift:
             write_gate_for_trigger(
                 trigger="head_branch_drift",
-                epic_dir=epic_dir(inp.repo_root, inp.epic_id),
+                project_key=inp.project_key,
+                epic_id=inp.epic_id,
                 work_unit_id=inp.work_unit_id,
                 schema_path=schema_dir() / "gate.schema.json",
             )
@@ -3111,25 +3033,26 @@ def commit_node(inp: NodeInput) -> NodeOutput:
                 status=NodeStatus.GATE_OPENED,
                 epic_id=inp.epic_id,
                 work_unit_id=inp.work_unit_id,
-                gate_path=_gate_path(inp.epic_id),
+                gate_path=_gate_path(inp.project_key, inp.epic_id),
                 triggered_by=["head_branch_drift"],
                 message=drift_desc,
             )
 
-    plan = load_plan(inp.repo_root, inp.epic_id)
+    plan = load_plan(inp.project_key, inp.epic_id)
     work_unit = work_unit_by_id(plan, inp.work_unit_id)
-    result = _executor_result(inp.repo_root, inp.epic_id)
-    directory = epic_dir(inp.repo_root, inp.epic_id)
+    result = _executor_result(inp.project_key, inp.epic_id)
+    directory = epic_dir(inp.project_key, inp.epic_id)
 
     try:
-        prepare_commit_audit(inp.repo_root, directory)
+        redact_audit_artefacts(inp.project_key, inp.epic_id, repo_root=inp.repo_root)
     except (OSError, ValueError) as exc:
         position = f"Audit preparation failed before commit: {exc}\n"
         pos_path = directory / "audit-position.md"
         pos_path.write_text(position)
         write_gate_for_trigger(
             trigger="audit_redaction",
-            epic_dir=directory,
+            project_key=inp.project_key,
+            epic_id=inp.epic_id,
             work_unit_id=inp.work_unit_id,
             position_path=pos_path,
             schema_path=schema_dir() / "gate.schema.json",
@@ -3140,7 +3063,7 @@ def commit_node(inp: NodeInput) -> NodeOutput:
             status=NodeStatus.GATE_OPENED,
             epic_id=inp.epic_id,
             work_unit_id=inp.work_unit_id,
-            gate_path=_gate_path(inp.epic_id),
+            gate_path=_gate_path(inp.project_key, inp.epic_id),
             triggered_by=["audit_redaction"],
             message=position,
         )
@@ -3157,20 +3080,14 @@ def commit_node(inp: NodeInput) -> NodeOutput:
         pin_error = f"check-result.json could not be read for verified transaction pins: {exc}"
     else:
         pin_error = _check_verified_index(inp.repo_root, check_result)
-        if pin_error is not None and _completed_resume_delta_is_graph_owned(
-            inp.repo_root,
-            inp.epic_id,
-            inp.work_unit_id,
-            check_result,
-        ):
-            pin_error = None
     if pin_error is not None:
         position = f"Verified transaction changed before commit: {pin_error}\n"
-        pos_path = epic_dir(inp.repo_root, inp.epic_id) / "verified-index-position.md"
+        pos_path = epic_dir(inp.project_key, inp.epic_id) / "verified-index-position.md"
         pos_path.write_text(position)
         write_gate_for_trigger(
             trigger="check_7_commit_transaction",
-            epic_dir=epic_dir(inp.repo_root, inp.epic_id),
+            project_key=inp.project_key,
+            epic_id=inp.epic_id,
             work_unit_id=inp.work_unit_id,
             position_path=pos_path,
             schema_path=schema_dir() / "gate.schema.json",
@@ -3181,16 +3098,20 @@ def commit_node(inp: NodeInput) -> NodeOutput:
             status=NodeStatus.GATE_OPENED,
             epic_id=inp.epic_id,
             work_unit_id=inp.work_unit_id,
-            gate_path=_gate_path(inp.epic_id),
+            gate_path=_gate_path(inp.project_key, inp.epic_id),
             triggered_by=["check_7_commit_transaction"],
             message=position,
         )
 
-    manifest = build_work_unit_manifest(inp.repo_root, inp.epic_id, work_unit)
-    if not manifest.audit_paths:
+    manifest = build_work_unit_manifest(inp.repo_root, work_unit)
+    # A work unit only commits if its dispatch left an audit trail. That trail used to
+    # be proved by its presence in the staged set; the engine no longer stages anything
+    # of its own, so the guard now reads the audit tree where it actually lives.
+    if not _has_audit_trail(inp.project_key, inp.epic_id):
         write_gate_for_trigger(
             trigger="check_7_commit_transaction",
-            epic_dir=epic_dir(inp.repo_root, inp.epic_id),
+            project_key=inp.project_key,
+            epic_id=inp.epic_id,
             work_unit_id=inp.work_unit_id,
             schema_path=schema_dir() / "gate.schema.json",
         )
@@ -3199,9 +3120,9 @@ def commit_node(inp: NodeInput) -> NodeOutput:
             status=NodeStatus.GATE_OPENED,
             epic_id=inp.epic_id,
             work_unit_id=inp.work_unit_id,
-            gate_path=_gate_path(inp.epic_id),
+            gate_path=_gate_path(inp.project_key, inp.epic_id),
             triggered_by=["check_7_commit_transaction"],
-            message="transaction manifest has no audit files",
+            message="dispatch left no audit trail for this work unit",
         )
 
     staged_extra = [
@@ -3209,11 +3130,12 @@ def commit_node(inp: NodeInput) -> NodeOutput:
     ]
     if staged_extra:
         position = f"Transaction manifest mismatch.\n\nUnexpected staged paths: {staged_extra}\n"
-        pos_path = epic_dir(inp.repo_root, inp.epic_id) / "manifest-position.md"
+        pos_path = epic_dir(inp.project_key, inp.epic_id) / "manifest-position.md"
         pos_path.write_text(position)
         write_gate_for_trigger(
             trigger="check_7_commit_transaction",
-            epic_dir=epic_dir(inp.repo_root, inp.epic_id),
+            project_key=inp.project_key,
+            epic_id=inp.epic_id,
             work_unit_id=inp.work_unit_id,
             position_path=pos_path,
             schema_path=schema_dir() / "gate.schema.json",
@@ -3224,7 +3146,7 @@ def commit_node(inp: NodeInput) -> NodeOutput:
             status=NodeStatus.GATE_OPENED,
             epic_id=inp.epic_id,
             work_unit_id=inp.work_unit_id,
-            gate_path=_gate_path(inp.epic_id),
+            gate_path=_gate_path(inp.project_key, inp.epic_id),
             triggered_by=["check_7_commit_transaction"],
             message=position,
         )
@@ -3237,9 +3159,9 @@ def commit_node(inp: NodeInput) -> NodeOutput:
     state_snapshot = _snapshot_transaction_state(directory)
     commit_landed = False
     try:
-        mark_work_unit_state(inp.repo_root, inp.epic_id, inp.work_unit_id, "done")
+        mark_work_unit_state(inp.project_key, inp.epic_id, inp.work_unit_id, "done")
         append_epic_event_once(
-            inp.repo_root,
+            inp.project_key,
             inp.epic_id,
             {
                 "event": "work_unit_completed",
@@ -3260,11 +3182,12 @@ def commit_node(inp: NodeInput) -> NodeOutput:
                 f"Missing staged paths: {verification.missing_paths}\n"
                 f"Unexpected staged paths: {verification.extra_paths}\n"
             )
-            pos_path = epic_dir(inp.repo_root, inp.epic_id) / "manifest-position.md"
+            pos_path = epic_dir(inp.project_key, inp.epic_id) / "manifest-position.md"
             pos_path.write_text(position)
             write_gate_for_trigger(
                 trigger="check_7_commit_transaction",
-                epic_dir=epic_dir(inp.repo_root, inp.epic_id),
+                project_key=inp.project_key,
+                epic_id=inp.epic_id,
                 work_unit_id=inp.work_unit_id,
                 position_path=pos_path,
                 schema_path=schema_dir() / "gate.schema.json",
@@ -3275,13 +3198,13 @@ def commit_node(inp: NodeInput) -> NodeOutput:
                 status=NodeStatus.GATE_OPENED,
                 epic_id=inp.epic_id,
                 work_unit_id=inp.work_unit_id,
-                gate_path=_gate_path(inp.epic_id),
+                gate_path=_gate_path(inp.project_key, inp.epic_id),
                 triggered_by=["check_7_commit_transaction"],
                 message=position,
             )
 
         append_epic_event_once(
-            inp.repo_root,
+            inp.project_key,
             inp.epic_id,
             {
                 "event": "transaction_manifest_verified",
@@ -3293,12 +3216,12 @@ def commit_node(inp: NodeInput) -> NodeOutput:
             event="transaction_manifest_verified",
             work_unit_id=inp.work_unit_id,
         )
-        completed_plan = load_plan(inp.repo_root, inp.epic_id)
+        completed_plan = load_plan(inp.project_key, inp.epic_id)
         if all(
             candidate.state in TERMINAL_WORK_UNIT_STATES for candidate in completed_plan.work_units
         ):
             append_epic_event_once(
-                inp.repo_root,
+                inp.project_key,
                 inp.epic_id,
                 {
                     "event": "epic_completed",
@@ -3307,7 +3230,6 @@ def commit_node(inp: NodeInput) -> NodeOutput:
                 },
                 event="epic_completed",
             )
-        git(inp.repo_root, "add", "--", f".woof/epics/E{inp.epic_id}/epic.jsonl")
         git(inp.repo_root, *args)
         commit_landed = True
         _publish_profile_a_transaction(
@@ -3322,8 +3244,8 @@ def commit_node(inp: NodeInput) -> NodeOutput:
             git(inp.repo_root, "reset", "--soft", "HEAD~1")
         _restore_transaction_state(inp.repo_root, state_snapshot)
         raise
-    (epic_dir(inp.repo_root, inp.epic_id) / "executor_result.json").unlink(missing_ok=True)
-    (epic_dir(inp.repo_root, inp.epic_id) / "check-result.json").unlink(missing_ok=True)
+    (epic_dir(inp.project_key, inp.epic_id) / "executor_result.json").unlink(missing_ok=True)
+    (epic_dir(inp.project_key, inp.epic_id) / "check-result.json").unlink(missing_ok=True)
     return NodeOutput(
         node_type=inp.node_type,
         status=NodeStatus.COMPLETED,
@@ -3337,7 +3259,8 @@ def gate_open_node(inp: NodeInput) -> NodeOutput:
     if not inp.work_unit_id:
         write_gate_for_trigger(
             trigger=inp.reason or "manual",
-            epic_dir=epic_dir(inp.repo_root, inp.epic_id),
+            project_key=inp.project_key,
+            epic_id=inp.epic_id,
             work_unit_id=None,
             schema_path=schema_dir() / "gate.schema.json",
         )
@@ -3345,11 +3268,11 @@ def gate_open_node(inp: NodeInput) -> NodeOutput:
             node_type=inp.node_type,
             status=NodeStatus.GATE_OPENED,
             epic_id=inp.epic_id,
-            gate_path=_gate_path(inp.epic_id),
+            gate_path=_gate_path(inp.project_key, inp.epic_id),
             triggered_by=[inp.reason or "manual"],
         )
 
-    directory = epic_dir(inp.repo_root, inp.epic_id)
+    directory = epic_dir(inp.project_key, inp.epic_id)
     result_path = directory / "executor_result.json"
     check_result_path = directory / "check-result.json"
     trigger = inp.reason or "manual"
@@ -3387,7 +3310,8 @@ def gate_open_node(inp: NodeInput) -> NodeOutput:
             write_gate_from_check_result(
                 check_result_path=check_result_path,
                 position_path=None,
-                epic_dir=directory,
+                project_key=inp.project_key,
+                epic_id=inp.epic_id,
                 work_unit_id=inp.work_unit_id,
                 schema_path=schema_dir() / "gate.schema.json",
             )
@@ -3396,7 +3320,7 @@ def gate_open_node(inp: NodeInput) -> NodeOutput:
                 status=NodeStatus.GATE_OPENED,
                 epic_id=inp.epic_id,
                 work_unit_id=inp.work_unit_id,
-                gate_path=_gate_path(inp.epic_id),
+                gate_path=_gate_path(inp.project_key, inp.epic_id),
                 validation_summary=_validation_summary(check_result),
                 triggered_by=check_result.get("triggered_by") or ["schema_validation_failed"],
             )
@@ -3413,7 +3337,8 @@ def gate_open_node(inp: NodeInput) -> NodeOutput:
 
     write_gate_for_trigger(
         trigger=trigger,
-        epic_dir=directory,
+        project_key=inp.project_key,
+        epic_id=inp.epic_id,
         work_unit_id=inp.work_unit_id,
         position_path=position_path,
         schema_path=schema_dir() / "gate.schema.json",
@@ -3425,13 +3350,13 @@ def gate_open_node(inp: NodeInput) -> NodeOutput:
         status=NodeStatus.GATE_OPENED,
         epic_id=inp.epic_id,
         work_unit_id=inp.work_unit_id,
-        gate_path=_gate_path(inp.epic_id),
+        gate_path=_gate_path(inp.project_key, inp.epic_id),
         triggered_by=[trigger],
     )
 
 
 def _write_incomplete_stage_gate(inp: NodeInput, position: str) -> NodeOutput:
-    position_path = epic_dir(inp.repo_root, inp.epic_id) / "gate-position.md"
+    position_path = epic_dir(inp.project_key, inp.epic_id) / "gate-position.md"
     position_path.write_text(
         f"{position}\n\n"
         "The graph cannot safely infer or recreate this state. "
@@ -3441,7 +3366,8 @@ def _write_incomplete_stage_gate(inp: NodeInput, position: str) -> NodeOutput:
     try:
         write_gate_for_trigger(
             trigger="incomplete_stage_state",
-            epic_dir=epic_dir(inp.repo_root, inp.epic_id),
+            project_key=inp.project_key,
+            epic_id=inp.epic_id,
             work_unit_id=inp.work_unit_id,
             position_path=position_path,
             schema_path=schema_dir() / "gate.schema.json",
@@ -3453,7 +3379,7 @@ def _write_incomplete_stage_gate(inp: NodeInput, position: str) -> NodeOutput:
         status=NodeStatus.GATE_OPENED,
         epic_id=inp.epic_id,
         work_unit_id=inp.work_unit_id,
-        gate_path=_gate_path(inp.epic_id),
+        gate_path=_gate_path(inp.project_key, inp.epic_id),
         triggered_by=["incomplete_stage_state"],
         message=position,
     )
@@ -3465,8 +3391,8 @@ def human_review_node(inp: NodeInput) -> NodeOutput:
         status=NodeStatus.HALTED,
         epic_id=inp.epic_id,
         work_unit_id=inp.work_unit_id,
-        gate_path=_gate_path(inp.epic_id),
-        message=_gate_operator_message(inp.repo_root, inp.epic_id),
+        gate_path=_gate_path(inp.project_key, inp.epic_id),
+        message=_gate_operator_message(inp.project_key, inp.epic_id),
     )
 
 

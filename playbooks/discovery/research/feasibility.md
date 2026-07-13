@@ -21,7 +21,7 @@ external constraints?
 
 ## Output
 
-Write the artefact as `feasibility.md` into the `.woof/epics/E<N>/discovery/research/` bucket directory declared in
+Write the artefact as `feasibility.md` into the `discovery/research/` bucket directory declared in
 the graph-owned input. Use this shape:
 
 ```

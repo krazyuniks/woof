@@ -1,9 +1,14 @@
 """Issue-tracker abstraction — protocol, errors, result records, helpers.
 
 Woof keeps the epic-level contract in an external issue tracker and the
-per-epic runtime under ``.woof/epics/E<N>/``. ADR-003 records the boundary.
-A :class:`Tracker` adapter owns every interaction with that external system;
-the graph, CLI, and gate code depend on this protocol, not on a provider.
+per-epic runtime in the operator home under ``state.epic_dir(project_key,
+epic_id)`` (ADR-003, ADR-017). A :class:`Tracker` adapter owns every
+interaction with that external system; the graph, CLI, and gate code depend on
+this protocol, not on a provider.
+
+An adapter is keyed by the project key, which is what selects its durable
+state. The repository checkout is a separate, independent input, taken only by
+an adapter that genuinely works against a git remote.
 """
 
 from __future__ import annotations
@@ -14,6 +19,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
+
+from woof.state import atomic_write_json
 
 
 class TrackerError(RuntimeError):
@@ -82,6 +89,7 @@ class Tracker(Protocol):
     """
 
     kind: str
+    project_key: str
 
     def assert_runtime_reachable(self) -> None:
         """Fail loud when a workflow invocation cannot reach the tracker."""
@@ -140,22 +148,6 @@ def sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def epic_directory(repo_root: Path, epic_id: int) -> Path:
-    return repo_root / ".woof" / "epics" / f"E{epic_id}"
-
-
-def append_jsonl(path: Path, event: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(event, separators=(",", ":")) + "\n")
-
-
-def atomic_write_text(path: Path, text: str) -> None:
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
-    tmp.replace(path)
-
-
 def read_last_sync(path: Path) -> dict[str, Any] | None:
     if not path.is_file():
         return None
@@ -169,9 +161,7 @@ def read_last_sync(path: Path) -> dict[str, Any] | None:
 
 
 def write_last_sync(path: Path, payload: dict[str, Any]) -> None:
-    tmp = path.with_suffix(".last-sync.tmp")
-    tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    tmp.replace(path)
+    atomic_write_json(path, payload)
 
 
 def last_sync_text(last_sync: dict[str, Any], field: str) -> str:

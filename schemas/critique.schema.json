@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://woof.dev/schemas/critique.schema.json",
   "title": "woof critique front-matter",
-  "description": "YAML front-matter of .woof/epics/E<N>/critique/<artefact>.md. Used at planning critique/plan.md and work-unit critique/work-unit-<id>.md. Top-level severity drives the gate-asymmetry rule: plan-gate always opens; work-unit gates open when severity=blocker. Findings list is advisory and unconstrained in count.",
+  "description": "YAML front-matter of epics/E<N>/critique/<artefact>.md within the project state root in the operator home, ~/.woof/state/projects/<project-key>/ (ADR-017). Used at planning critique/plan.md and work-unit critique/work-unit-<id>.md. Top-level severity drives the gate-asymmetry rule: plan-gate always opens; work-unit gates open when severity=blocker. Findings list is advisory and unconstrained in count.",
   "type": "object",
   "additionalProperties": false,
   "required": ["target", "target_id", "severity", "timestamp", "harness"],
@@ -36,7 +36,7 @@
     "session_ref": {
       "type": "string",
       "minLength": 1,
-      "description": "Audit pointer to the agent's session: CC session UUID for claude harnesses, audit-file path under .woof/epics/E<N>/audit/ for codex. Optional but recommended."
+      "description": "Audit pointer to the agent's session: CC session UUID for claude harnesses, audit-file path under the epic's audit/ directory in the project state root for codex. Optional but recommended."
     },
     "findings": {
       "type": "array",

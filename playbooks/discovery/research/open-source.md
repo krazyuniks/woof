@@ -24,7 +24,7 @@ the spark describes, so the epic does not rebuild what already exists.
 
 ## Output
 
-Write the artefact as `open-source.md` into the `.woof/epics/E<N>/discovery/research/` bucket directory declared in
+Write the artefact as `open-source.md` into the `discovery/research/` bucket directory declared in
 the graph-owned input. Use this shape:
 
 ```

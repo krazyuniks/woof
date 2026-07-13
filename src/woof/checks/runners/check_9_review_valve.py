@@ -22,12 +22,6 @@ from woof.graph.state import TERMINAL_WORK_UNIT_STATES
 from woof.project_config import ProjectConfigError, load_project_config
 
 CHECK_ID = "check_9_review_valve"
-KNOWN_GENERATED_PATHS = {
-    ".woof/codebase/files.txt",
-    ".woof/codebase/freshness.json",
-    ".woof/codebase/tags",
-}
-KNOWN_GENERATED_PREFIXES = (".woof/codebase/structural/",)
 
 
 @dataclass(frozen=True)
@@ -160,11 +154,7 @@ def check_9_review_valve_runner(ctx: CheckContext) -> CheckOutcome:
             for finding in minor_findings
         ),
         paths=[
-            str(
-                (ctx.epic_dir / "critique" / f"work-unit-{finding.work_unit_id}.md").relative_to(
-                    ctx.repo_root
-                )
-            )
+            str(ctx.epic_dir / "critique" / f"work-unit-{finding.work_unit_id}.md")
             for finding in minor_findings
         ],
     )
@@ -339,8 +329,6 @@ def _linguist_generated_paths(repo_root: Path, paths: list[str]) -> set[str] | C
 def _generated_reason(repo_root: Path, path: str, linguist_generated: set[str]) -> str | None:
     if path in linguist_generated:
         return "linguist-generated"
-    if path in KNOWN_GENERATED_PATHS or path.startswith(KNOWN_GENERATED_PREFIXES):
-        return "known generated artefact"
     if _has_generated_header(repo_root, path):
         return "generated header"
     return None
@@ -470,7 +458,7 @@ def _minor_findings_since(
                 ok=False,
                 severity="blocker",
                 summary=f"critique/work-unit-{work_unit_id}.md front-matter unreadable: {exc}",
-                paths=[str(critique_path.relative_to(ctx.repo_root))],
+                paths=[str(critique_path)],
             )
         for finding in front.get("findings") or []:
             if not isinstance(finding, dict) or finding.get("severity") != "minor":

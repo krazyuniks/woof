@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://woof.dev/schemas/epic.schema.json",
   "title": "woof EPIC.md front-matter",
-  "description": "YAML front-matter of .woof/epics/E<N>/EPIC.md. Captures Definition-stage commitments: observable outcomes (user-facing acceptance) and contract decisions (technical contracts realising those outcomes). Free-form prose may follow the front-matter; only the structured header is validated. After Definition closes, outcome IDs and contract-decision IDs are append-only; ID removal requires gate-driven deprecation. Contract decisions reference standard contract artefacts (OpenAPI documents, Pydantic models, JSON Schema files); Stage 5 Check 4 verifies that those references resolve under their native tooling before commit.",
+  "description": "YAML front-matter of epics/E<N>/EPIC.md within the project state root in the operator home, ~/.woof/state/projects/<project-key>/ (ADR-017). Captures Definition-stage commitments: observable outcomes (user-facing acceptance) and contract decisions (technical contracts realising those outcomes). Free-form prose may follow the front-matter; only the structured header is validated. After Definition closes, outcome IDs and contract-decision IDs are append-only; ID removal requires gate-driven deprecation. Contract decisions reference standard contract artefacts (OpenAPI documents, Pydantic models, JSON Schema files); Stage 5 Check 4 verifies that those references resolve under their native tooling before commit.",
   "type": "object",
   "additionalProperties": false,
   "required": [

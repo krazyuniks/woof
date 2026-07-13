@@ -14,6 +14,7 @@ from typing import Any, Literal, Protocol, Self
 from woof.gate.write import iso_utc, write_gate
 from woof.graph.git import git, git_env, head_sha
 from woof.project_config import load_project_config
+from woof.state import append_jsonl, gate_path, sibling_conflicts_path
 
 MergeAction = Literal[
     "merged",
@@ -430,7 +431,7 @@ class SerialMergeCoordinator:
     def __init__(
         self,
         *,
-        repo_root: Path,
+        project_key: str,
         epic_id: int,
         repo_slug: str,
         base_branch: str,
@@ -449,7 +450,7 @@ class SerialMergeCoordinator:
         check_interval_s: float | None = None,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
-        self.repo_root = repo_root
+        self.project_key = project_key
         self.epic_id = epic_id
         self.repo_slug = repo_slug
         self.base_branch = base_branch
@@ -476,7 +477,7 @@ class SerialMergeCoordinator:
     def from_policy(
         cls,
         *,
-        repo_root: Path,
+        project_key: str,
         epic_id: int,
         gate: Callable[[ReadyPullRequest], bool],
         mark_done: Callable[[str], None],
@@ -489,7 +490,7 @@ class SerialMergeCoordinator:
         if policy is None:
             raise ValueError("Profile A merge coordinator requires delivery.profile=A policy")
         return cls(
-            repo_root=repo_root,
+            project_key=project_key,
             epic_id=epic_id,
             repo_slug=policy.github_repo,
             base_branch=policy.base_branch,
@@ -906,13 +907,12 @@ class SerialMergeCoordinator:
         return sorted(overlap)
 
     def _open_sibling_conflict_gate(self, outcome: MergeOutcome, detection_trigger: str) -> None:
-        epic_dir = self.repo_root / ".woof" / "epics" / f"E{self.epic_id}"
-        gate_path = epic_dir / "gate.md"
-        if self._same_sibling_conflict_gate_is_open(gate_path, outcome):
+        path = gate_path(self.project_key, self.epic_id)
+        if self._same_sibling_conflict_gate_is_open(path, outcome):
             return
-        epic_dir.mkdir(parents=True, exist_ok=True)
         write_gate(
-            epic_dir=epic_dir,
+            project_key=self.project_key,
+            epic_id=self.epic_id,
             work_unit_id=outcome.work_unit_id,
             triggered_by=[_SIBLING_CONFLICT_TRIGGER],
             position_text=(
@@ -940,7 +940,7 @@ class SerialMergeCoordinator:
         merged_siblings: list[ReadyPullRequest],
         overlapping_paths: list[str],
     ) -> None:
-        corpus_path = self.repo_root / ".woof" / "sibling-conflicts.jsonl"
+        corpus_path = sibling_conflicts_path(self.project_key)
         event = {
             "event": "sibling_conflict_detected",
             "at": iso_utc(),
@@ -958,9 +958,7 @@ class SerialMergeCoordinator:
         }
         if self._sibling_conflict_record_exists(corpus_path, event):
             return
-        corpus_path.parent.mkdir(parents=True, exist_ok=True)
-        with corpus_path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(event, separators=(",", ":")) + "\n")
+        append_jsonl(corpus_path, event)
 
     def _sibling_conflict_record_exists(self, corpus_path: Path, event: dict) -> bool:
         if not corpus_path.exists():

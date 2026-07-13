@@ -21,7 +21,7 @@ then rebuild understanding from those.
 
 ## Output
 
-Write the artefact as `first-principles.md` into the `.woof/epics/E<N>/discovery/thinking/` bucket directory declared
+Write the artefact as `first-principles.md` into the `discovery/thinking/` bucket directory declared
 in the graph-owned input. Use this shape:
 
 ```

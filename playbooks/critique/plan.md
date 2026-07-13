@@ -4,23 +4,24 @@ You are the reviewer role, dispatched by the Woof skill from a graph contract to
 
 ## Context documents — read these first
 
-When repo policy supplies cartography, the graph prepends a "Graph-owned input" block with `inputs.cartography_paths`. Read the supplied paths before reviewing:
+When repo policy supplies cartography, the graph prepends a "Graph-owned input" block with `inputs.cartography_paths`, naming cartography documents in the project's cartography directory in the operator home. Read them before reviewing:
 
-- `.woof/codebase/CURRENT-ARCHITECTURE.md`
-- `.woof/codebase/STRUCTURE.md`
-- `.woof/codebase/CONCERNS.md`
-- `.woof/codebase/TARGET-ARCHITECTURE.md`
+- `CURRENT-ARCHITECTURE.md`
+- `STRUCTURE.md`
+- `CONCERNS.md`
+- `TARGET-ARCHITECTURE.md`
 
 ## Inputs
 
-- `.woof/epics/E<N>/EPIC.md` — the epic contract (front-matter is canonical)
-- `.woof/epics/E<N>/plan.json` — the plan to critique
+- Graph-owned input JSON — prepended by the graph. It names the absolute engine-state paths for this epic: `inputs.epic_path`, `inputs.plan_path`, `inputs.plan_markdown_path`, and the `inputs.critique_path` you must write.
+- `inputs.epic_path` (`EPIC.md`) — the epic contract (front-matter is canonical)
+- `inputs.plan_path` (`plan.json`) — the plan to critique
 - `woof/schemas/plan.schema.json` — the plan's contract
 - `CLAUDE.md` / `AGENTS.md` — project conventions
 
 ## Output
 
-Write `.woof/epics/E<N>/critique/plan.md` with YAML front-matter conforming to `woof/schemas/critique.schema.json` plus a prose body.
+Write the declared `inputs.critique_path` with YAML front-matter conforming to `woof/schemas/critique.schema.json` plus a prose body.
 
 Front-matter:
 

@@ -13,9 +13,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
-from woof.graph.transitions import append_epic_event, epic_dir
-
-LOCK_FILENAME = ".wf.lock"
+from woof import state
+from woof.graph.transitions import append_epic_event
 
 
 class WorkflowLockError(RuntimeError):
@@ -101,14 +100,14 @@ def _release_lock(lock: _OwnedLock) -> None:
 
 @contextmanager
 def epic_workflow_lock(
-    repo_root: Path,
+    project_key: str,
     epic_id: int,
     *,
     command: Sequence[str] | None = None,
 ) -> Iterator[None]:
-    """Acquire `.woof/epics/E<N>/.wf.lock` for graph-owned mutation."""
+    """Acquire the epic's workflow lock in the operator home for graph-owned mutation."""
 
-    lock_path = epic_dir(repo_root, epic_id) / LOCK_FILENAME
+    lock_path = state.lock_path(project_key, epic_id)
     hostname = socket.gethostname()
     command = tuple(command or sys.argv)
     stale_events: list[dict] = []
@@ -131,13 +130,13 @@ def epic_workflow_lock(
                     "epic_id": epic_id,
                     "pid": stale["pid"],
                     "reason": "pid_not_running",
-                    "paths": [f".woof/epics/E{epic_id}/{LOCK_FILENAME}"],
+                    "paths": [str(lock_path)],
                     "hostname": hostname,
                 }
             )
     try:
         for event in stale_events:
-            append_epic_event(repo_root, epic_id, event)
+            append_epic_event(project_key, epic_id, event)
         yield
     finally:
         _release_lock(lock)

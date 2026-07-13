@@ -21,7 +21,7 @@ are, what tools exist, where the space is heading, and where the gaps are.
 
 ## Output
 
-Write the artefact as `landscape.md` into the `.woof/epics/E<N>/discovery/research/` bucket directory declared in the
+Write the artefact as `landscape.md` into the `discovery/research/` bucket directory declared in the
 graph-owned input. Use this shape:
 
 ```

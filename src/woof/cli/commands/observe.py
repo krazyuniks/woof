@@ -12,6 +12,7 @@ from typing import Any, get_args
 
 import yaml
 
+from woof import state
 from woof.cli.dispatcher import (
     trusted_runtime_policy,
 )
@@ -25,8 +26,6 @@ from woof.graph.dispositions import (
     critique_severity,
     read_markdown_front_matter,
     validate_work_unit_disposition,
-    work_unit_critique_path,
-    work_unit_disposition_path,
 )
 from woof.graph.state import TERMINAL_WORK_UNIT_STATES, Plan, WorkUnitSpec
 from woof.graph.transitions import (
@@ -41,7 +40,7 @@ from woof.graph.transitions import (
     plan_gate_resolved,
 )
 from woof.lib.audit import load_project_audit_config
-from woof.paths import ProjectKeyError, repo_root_from_git
+from woof.paths import ProjectKeyError, resolve_project_key
 from woof.project_config import (
     AuditConfig,
     ProjectConfigError,
@@ -86,9 +85,9 @@ class JsonlRecord:
 
 def cmd_observe(args: argparse.Namespace) -> int:
     try:
-        repo_root = repo_root_from_git()
-        report = build_observe_report(repo_root, args.epic)
-    except (FileNotFoundError, ObserveError) as exc:
+        project_key = resolve_project_key(getattr(args, "project", None))
+        report = build_observe_report(project_key, args.epic)
+    except (ProjectKeyError, ObserveError) as exc:
         sys.stderr.write(f"woof observe: {exc}\n")
         return 2
 
@@ -125,30 +124,32 @@ def setup_observe_parser(
     observe.set_defaults(func=cmd_observe)
 
 
-def build_observe_report(repo_root: Path, epic_id: int) -> dict[str, Any]:
-    directory = repo_root / ".woof" / "epics" / f"E{epic_id}"
+def build_observe_report(project_key: str, epic_id: int) -> dict[str, Any]:
+    directory = state.epic_dir(project_key, epic_id)
     if not directory.is_dir():
-        raise ObserveError(f"{_display_path(repo_root, directory)} not found")
+        raise ObserveError(f"{directory} not found")
 
-    current_epic = _current_epic_summary(repo_root, selected_epic_id=epic_id)
-    epic_records, epic_warnings = _read_jsonl(directory / "epic.jsonl", "epic")
-    dispatch_records, dispatch_warnings = _read_jsonl(directory / "dispatch.jsonl", "dispatch")
-    gate = _gate_summary(repo_root, directory)
-    plan_summary, plan = _plan_summary(repo_root, directory)
+    current_epic = _current_epic_summary(project_key, selected_epic_id=epic_id)
+    epic_records, epic_warnings = _read_jsonl(state.epic_events_path(project_key, epic_id), "epic")
+    dispatch_records, dispatch_warnings = _read_jsonl(
+        state.dispatch_events_path(project_key, epic_id), "dispatch"
+    )
+    gate = _gate_summary(project_key, epic_id)
+    plan_summary, plan = _plan_summary(project_key, epic_id)
     timeline = _timeline([*epic_records, *dispatch_records])
     dispatch_events = [record.payload for record in dispatch_records]
-    audit_pointers = _audit_pointers(repo_root, directory, dispatch_events)
+    audit_pointers = _audit_pointers(project_key, epic_id, dispatch_events)
     returned_events = [
         event for event in dispatch_events if event.get("event") == "subprocess_returned"
     ]
     usage = _usage_summary(returned_events)
     telemetry = _telemetry_summary(returned_events)
-    audit = _audit_summary(repo_root, directory, dispatch_events, usage, telemetry, audit_pointers)
-    checks = _check_summary(repo_root, directory)
-    dispatch_routes = _dispatch_routes_summary(repo_root)
+    audit = _audit_summary(project_key, epic_id, dispatch_events, usage, telemetry, audit_pointers)
+    checks = _check_summary(project_key, epic_id)
+    dispatch_routes = _dispatch_routes_summary(project_key)
     runtime_policy = trusted_runtime_policy()
     status = _status_summary(
-        repo_root,
+        project_key,
         epic_id,
         directory,
         plan=plan,
@@ -166,7 +167,7 @@ def build_observe_report(repo_root: Path, epic_id: int) -> dict[str, Any]:
 
     return {
         "epic_id": epic_id,
-        "epic_dir": _display_path(repo_root, directory),
+        "epic_dir": str(directory),
         "current_epic": current_epic,
         "status": status,
         "timeline": timeline,
@@ -179,12 +180,12 @@ def build_observe_report(repo_root: Path, epic_id: int) -> dict[str, Any]:
     }
 
 
-def build_operator_state_summary(repo_root: Path) -> dict[str, Any]:
+def build_operator_state_summary(project_key: str) -> dict[str, Any]:
     """Build the preflight operator-state summary without mutating workflow state."""
 
-    current_epic = _current_epic_summary(repo_root)
-    repo_policy = _repo_policy_summary(repo_root)
-    dispatch_routes = _dispatch_routes_summary(repo_root)
+    current_epic = _current_epic_summary(project_key)
+    repo_policy = _repo_policy_summary(project_key)
+    dispatch_routes = _dispatch_routes_summary(project_key)
     runtime_policy = trusted_runtime_policy()
     selected = current_epic.get("epic_id")
     summary: dict[str, Any] = {
@@ -196,7 +197,7 @@ def build_operator_state_summary(repo_root: Path) -> dict[str, Any]:
     }
     if isinstance(selected, int):
         try:
-            report = build_observe_report(repo_root, selected)
+            report = build_observe_report(project_key, selected)
         except ObserveError as exc:
             summary["epic"] = {
                 "epic_id": selected,
@@ -226,7 +227,7 @@ def _select_view(report: dict[str, Any], view: str) -> dict[str, Any] | list[dic
 
 
 def _status_summary(
-    repo_root: Path,
+    project_key: str,
     epic_id: int,
     directory: Path,
     *,
@@ -242,10 +243,10 @@ def _status_summary(
     runtime_policy: dict[str, Any],
     audit_pointers: dict[str, Any],
 ) -> dict[str, Any]:
-    next_step = _derive_next_step(repo_root, epic_id, directory, plan, gate)
+    next_step = _derive_next_step(project_key, epic_id, directory, plan, gate)
     return {
         "epic_id": epic_id,
-        "epic_dir": _display_path(repo_root, directory),
+        "epic_dir": str(directory),
         "current_epic": current_epic,
         "next": next_step,
         "next_action": _next_action(epic_id, next_step, gate),
@@ -270,7 +271,7 @@ def _status_summary(
 
 
 def _derive_next_step(
-    repo_root: Path,
+    project_key: str,
     epic_id: int,
     directory: Path,
     plan: Plan | None,
@@ -279,59 +280,59 @@ def _derive_next_step(
     # Mirror transitions.next_node: an abandoned epic is unconditionally terminal
     # and short-circuits before any gate or plan read, so observe agrees with the
     # graph instead of reporting a lingering gate/plan as the next step (E17 P4 / D-AB).
-    if epic_abandoned(repo_root, epic_id):
+    if epic_abandoned(project_key, epic_id):
         return {"node": "epic_abandoned", "work_unit_id": None}
     if gate["open"]:
         return {"node": "human_review", "work_unit_id": None, "reason": "gate_open"}
 
-    plan_path = directory / "plan.json"
+    plan_path = state.plan_path(project_key, epic_id)
     if not plan_path.exists():
-        if (directory / "EPIC.md").exists():
+        if state.epic_contract_path(project_key, epic_id).exists():
             if epic_event_exists(
-                repo_root, epic_id, event="definition_closed"
-            ) and not definition_revision_requested(repo_root, epic_id):
+                project_key, epic_id, event="definition_closed"
+            ) and not definition_revision_requested(project_key, epic_id):
                 return {"node": "breakdown_planning", "work_unit_id": None}
             return {"node": "epic_definition", "work_unit_id": None}
-        if discovery_synthesis_complete(repo_root, epic_id):
+        if discovery_synthesis_complete(project_key, epic_id):
             return {"node": "epic_definition", "work_unit_id": None}
-        if (directory / "spark.md").exists():
-            if interactive_brainstorm_bundle_present(repo_root, epic_id):
+        if state.spark_path(project_key, epic_id).exists():
+            if interactive_brainstorm_bundle_present(project_key, epic_id):
                 return {"node": "discovery_synthesis", "work_unit_id": None}
             for bucket in ("research", "thinking", "ideate"):
-                if not discovery_bucket_complete(repo_root, epic_id, bucket):
+                if not discovery_bucket_complete(project_key, epic_id, bucket):
                     return {"node": f"discovery_{bucket}", "work_unit_id": None}
             return {"node": "discovery_synthesis", "work_unit_id": None}
         return {
             "node": "incomplete_stage_state",
             "work_unit_id": None,
-            "reason": f"required planning artefact missing: {_display_path(repo_root, plan_path)}",
+            "reason": f"required planning artefact missing: {plan_path}",
         }
 
     if plan is None:
         return {
             "node": "incomplete_stage_state",
             "work_unit_id": None,
-            "reason": f"required planning artefact is malformed: {_display_path(repo_root, plan_path)}",
+            "reason": f"required planning artefact is malformed: {plan_path}",
         }
 
     in_progress = next((unit for unit in plan.work_units if unit.state == "in_progress"), None)
+    executor_result_path = state.executor_result_path(project_key, epic_id)
+    check_result_path = state.check_result_path(project_key, epic_id)
     if all(unit.state in TERMINAL_WORK_UNIT_STATES for unit in plan.work_units):
-        if (directory / "executor_result.json").exists() and (
-            directory / "check-result.json"
-        ).exists():
+        if executor_result_path.exists() and check_result_path.exists():
             return {"node": "commit", "work_unit_id": None, "reason": "commit_resume_candidate"}
         return {"node": "epic_complete", "work_unit_id": None}
 
     if in_progress is None:
-        critique_path = plan_critique_path(repo_root, epic_id)
-        if (directory / "EPIC.md").exists() and not critique_path.exists():
+        critique_path = plan_critique_path(project_key, epic_id)
+        if state.epic_contract_path(project_key, epic_id).exists() and not critique_path.exists():
             return {"node": "plan_critique", "work_unit_id": None}
-        if epic_event_exists(repo_root, epic_id, event="breakdown_planned"):
-            if not epic_event_exists(repo_root, epic_id, event="plan_critiqued"):
+        if epic_event_exists(project_key, epic_id, event="breakdown_planned"):
+            if not epic_event_exists(project_key, epic_id, event="plan_critiqued"):
                 return {"node": "plan_critique", "work_unit_id": None}
-            if not plan_gate_resolved(repo_root, epic_id):
+            if not plan_gate_resolved(project_key, epic_id):
                 return {"node": "plan_gate_open", "work_unit_id": None}
-        if critique_path.exists() and not plan_gate_resolved(repo_root, epic_id):
+        if critique_path.exists() and not plan_gate_resolved(project_key, epic_id):
             return {"node": "plan_gate_open", "work_unit_id": None}
         ready = next_ready_work_unit(plan)
         if ready is not None:
@@ -343,8 +344,7 @@ def _derive_next_step(
         }
 
     work_unit_id = in_progress.id
-    result_path = directory / "executor_result.json"
-    result = _load_json(result_path)
+    result = _load_json(executor_result_path)
     if result is None:
         return {
             "node": "gate_open",
@@ -362,7 +362,7 @@ def _derive_next_step(
             "reason": "invalid_executor_result",
         }
 
-    critique_path = work_unit_critique_path(directory, work_unit_id)
+    critique_path = state.work_unit_critique_path(project_key, epic_id, work_unit_id)
     if not critique_path.exists():
         return {"node": "critique_dispatch", "work_unit_id": work_unit_id}
     try:
@@ -379,13 +379,13 @@ def _derive_next_step(
             "work_unit_id": work_unit_id,
             "reason": "reviewer_blocker",
         }
-    if not work_unit_disposition_path(directory, work_unit_id).exists():
+    if not state.work_unit_disposition_path(project_key, epic_id, work_unit_id).exists():
         return {
             "node": "review_disposition",
             "work_unit_id": work_unit_id,
             "reason": "missing_disposition",
         }
-    disposition = validate_work_unit_disposition(directory, epic_id, work_unit_id)
+    disposition = validate_work_unit_disposition(directory, work_unit_id)
     if not disposition.ok:
         return {
             "node": "review_disposition",
@@ -393,7 +393,7 @@ def _derive_next_step(
             "reason": "invalid_disposition",
         }
 
-    check_result = _load_json(directory / "check-result.json")
+    check_result = _load_json(check_result_path)
     if check_result is None:
         return {"node": "verification", "work_unit_id": work_unit_id}
     if not check_result.get("ok", False):
@@ -427,13 +427,13 @@ def _next_action(epic_id: int, next_step: dict[str, Any], gate: dict[str, Any]) 
 
 
 def _current_epic_summary(
-    repo_root: Path,
+    project_key: str,
     *,
     selected_epic_id: int | None = None,
 ) -> dict[str, Any]:
-    marker = repo_root / ".woof" / ".current-epic"
+    marker = state.current_epic_path(project_key)
     summary: dict[str, Any] = {
-        "path": _display_path(repo_root, marker),
+        "path": str(marker),
         "exists": marker.is_file(),
         "value": None,
         "epic_id": None,
@@ -450,11 +450,11 @@ def _current_epic_summary(
         summary["error"] = "current epic marker must contain E<N>"
         return summary
     epic_id = int(value[1:])
-    epic_dir = repo_root / ".woof" / "epics" / value
+    epic_dir = state.epic_dir(project_key, epic_id)
     summary.update(
         {
             "epic_id": epic_id,
-            "epic_dir": _display_path(repo_root, epic_dir),
+            "epic_dir": str(epic_dir),
             "epic_dir_exists": epic_dir.is_dir(),
             "selected": selected_epic_id == epic_id if selected_epic_id is not None else True,
             "valid": True,
@@ -463,7 +463,7 @@ def _current_epic_summary(
     return summary
 
 
-def _dispatch_routes_summary(repo_root: Path) -> dict[str, Any]:
+def _dispatch_routes_summary(project_key: str) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "path": None,
         "exists": False,
@@ -472,7 +472,7 @@ def _dispatch_routes_summary(repo_root: Path) -> dict[str, Any]:
         "model_profile": None,
     }
     try:
-        config = load_project_config()
+        config = load_project_config(project_key)
     except (ProjectConfigError, ProjectKeyError) as exc:
         summary["error"] = str(exc)
         for role_name in ("producer", "reviewer"):
@@ -498,9 +498,9 @@ def _dispatch_routes_summary(repo_root: Path) -> dict[str, Any]:
     return summary
 
 
-def _repo_policy_summary(repo_root: Path) -> dict[str, Any]:
+def _repo_policy_summary(project_key: str) -> dict[str, Any]:
     try:
-        config = load_project_config()
+        config = load_project_config(project_key)
     except (ProjectConfigError, ProjectKeyError) as exc:
         return {"path": None, "exists": False, "ok": False, "error": str(exc)}
 
@@ -567,13 +567,13 @@ def _dispatch_route_summary(
     }
 
 
-def _check_summary(repo_root: Path, directory: Path) -> dict[str, Any]:
-    path = directory / "check-result.json"
+def _check_summary(project_key: str, epic_id: int) -> dict[str, Any]:
+    path = state.check_result_path(project_key, epic_id)
     if not path.exists():
         return {
             "exists": False,
             "valid": False,
-            "path": _display_path(repo_root, path),
+            "path": str(path),
         }
 
     payload, error = _load_json_object(path)
@@ -581,7 +581,7 @@ def _check_summary(repo_root: Path, directory: Path) -> dict[str, Any]:
         return {
             "exists": True,
             "valid": False,
-            "path": _display_path(repo_root, path),
+            "path": str(path),
             "error": error,
         }
 
@@ -592,7 +592,7 @@ def _check_summary(repo_root: Path, directory: Path) -> dict[str, Any]:
     return {
         "exists": True,
         "valid": True,
-        "path": _display_path(repo_root, path),
+        "path": str(path),
         "ok": bool(payload.get("ok", False)),
         "stage": payload.get("stage"),
         "work_unit_id": payload.get("work_unit_id"),
@@ -617,17 +617,17 @@ def _check_entry_summary(check: dict[str, Any]) -> dict[str, Any]:
     return item
 
 
-def _plan_summary(repo_root: Path, directory: Path) -> tuple[dict[str, Any], Plan | None]:
-    path = directory / "plan.json"
+def _plan_summary(project_key: str, epic_id: int) -> tuple[dict[str, Any], Plan | None]:
+    path = state.plan_path(project_key, epic_id)
     if not path.exists():
-        return {"exists": False, "valid": False, "path": _display_path(repo_root, path)}, None
+        return {"exists": False, "valid": False, "path": str(path)}, None
     try:
         plan = Plan.model_validate_json(path.read_text(encoding="utf-8"))
     except ValueError as exc:
         return {
             "exists": True,
             "valid": False,
-            "path": _display_path(repo_root, path),
+            "path": str(path),
             "error": str(exc),
         }, None
     counts = {status: 0 for status in WORK_UNIT_STATES}
@@ -646,17 +646,17 @@ def _plan_summary(repo_root: Path, directory: Path) -> tuple[dict[str, Any], Pla
     return {
         "exists": True,
         "valid": True,
-        "path": _display_path(repo_root, path),
+        "path": str(path),
         "goal": plan.goal,
         "work_unit_counts": counts,
         "work_units": work_units,
     }, plan
 
 
-def _gate_summary(repo_root: Path, directory: Path) -> dict[str, Any]:
-    gate_path = directory / "gate.md"
+def _gate_summary(project_key: str, epic_id: int) -> dict[str, Any]:
+    gate_path = state.gate_path(project_key, epic_id)
     if not gate_path.exists():
-        return {"open": False, "path": _display_path(repo_root, gate_path), "cause": "none"}
+        return {"open": False, "path": str(gate_path), "cause": "none"}
     text = gate_path.read_text(encoding="utf-8")
     front: dict[str, Any] = {}
     body = text
@@ -671,7 +671,7 @@ def _gate_summary(repo_root: Path, directory: Path) -> dict[str, Any]:
     triggered_by: list[Any] = _triggered_val if isinstance(_triggered_val, list) else []
     return {
         "open": True,
-        "path": _display_path(repo_root, gate_path),
+        "path": str(gate_path),
         "type": front.get("type"),
         "stage": front.get("stage"),
         "work_unit_id": front.get("work_unit_id"),
@@ -690,16 +690,16 @@ def _gate_cause(gate: dict[str, Any]) -> str:
 
 
 def _audit_summary(
-    repo_root: Path,
-    directory: Path,
+    project_key: str,
+    epic_id: int,
     dispatch_events: list[dict[str, Any]],
     usage: dict[str, Any],
     telemetry: dict[str, Any],
     audit_pointers: dict[str, Any],
 ) -> dict[str, Any]:
-    audit_dir = directory / "audit"
-    config, config_error = _audit_config(repo_root)
-    files = _audit_files(repo_root, audit_dir)
+    audit_dir = state.audit_dir(project_key, epic_id)
+    config, config_error = _audit_config(project_key)
+    files = _audit_files(audit_dir)
     commit_bound = [item for item in files if not item["raw_overflow"]]
     raw = [item for item in files if item["raw_overflow"]]
     dispatch_returned = [
@@ -708,7 +708,7 @@ def _audit_summary(
         if event.get("event") == "subprocess_returned"
     ]
     summary = {
-        "audit_dir": _display_path(repo_root, audit_dir),
+        "audit_dir": str(audit_dir),
         "exists": audit_dir.is_dir(),
         "config": {
             "enabled": config.enabled,
@@ -722,7 +722,7 @@ def _audit_summary(
         "raw_overflow_bytes": sum(int(item["bytes"]) for item in raw),
         "redacted_file_count": sum(1 for item in commit_bound if item["redacted_markers"]),
         "truncated_file_count": sum(1 for item in commit_bound if item["truncated_footer"]),
-        "raw_overflow_path": _display_path(repo_root, audit_dir / "raw"),
+        "raw_overflow_path": str(state.audit_raw_dir(project_key, epic_id)),
         "retention_archive": {
             "implemented": False,
             "mode": "not_implemented",
@@ -747,17 +747,17 @@ def _audit_summary(
 
 
 def _audit_pointers(
-    repo_root: Path,
-    directory: Path,
+    project_key: str,
+    epic_id: int,
     dispatch_events: list[dict[str, Any]],
 ) -> dict[str, Any]:
     latest_codex = _latest_event_field(dispatch_events, "codex_audit_path")
     latest_claude = _latest_event_field(dispatch_events, "claude_transcript_path")
     return {
-        "epic_jsonl": _display_path(repo_root, directory / "epic.jsonl"),
-        "dispatch_jsonl": _display_path(repo_root, directory / "dispatch.jsonl"),
-        "audit_dir": _display_path(repo_root, directory / "audit"),
-        "raw_overflow_dir": _display_path(repo_root, directory / "audit" / "raw"),
+        "epic_jsonl": str(state.epic_events_path(project_key, epic_id)),
+        "dispatch_jsonl": str(state.dispatch_events_path(project_key, epic_id)),
+        "audit_dir": str(state.audit_dir(project_key, epic_id)),
+        "raw_overflow_dir": str(state.audit_raw_dir(project_key, epic_id)),
         "latest_codex_audit_path": latest_codex,
         "latest_claude_transcript_path": latest_claude,
     }
@@ -771,14 +771,14 @@ def _latest_event_field(events: list[dict[str, Any]], field: str) -> Any:
     return None
 
 
-def _audit_config(repo_root: Path) -> tuple[AuditConfig, str | None]:
+def _audit_config(project_key: str) -> tuple[AuditConfig, str | None]:
     try:
-        return load_project_audit_config(), None
-    except (OSError, tomllib.TOMLDecodeError, ValueError) as exc:
+        return load_project_audit_config(project_key), None
+    except (OSError, tomllib.TOMLDecodeError, ValueError, ProjectKeyError) as exc:
         return AuditConfig(), str(exc)
 
 
-def _audit_files(repo_root: Path, audit_dir: Path) -> list[dict[str, Any]]:
+def _audit_files(audit_dir: Path) -> list[dict[str, Any]]:
     if not audit_dir.is_dir():
         return []
     items: list[dict[str, Any]] = []
@@ -787,7 +787,7 @@ def _audit_files(repo_root: Path, audit_dir: Path) -> list[dict[str, Any]]:
         text = path.read_text(encoding="utf-8", errors="replace")
         items.append(
             {
-                "path": _display_path(repo_root, path),
+                "path": str(path),
                 "bytes": path.stat().st_size,
                 "raw_overflow": "raw" in rel_parts,
                 "redacted_markers": "[REDACTED:" in text,
@@ -991,16 +991,6 @@ def _load_json(path: Path) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
-def _load_toml(path: Path) -> dict[str, Any] | str:
-    try:
-        with path.open("rb") as fh:
-            return tomllib.load(fh)
-    except FileNotFoundError:
-        return f"{_display_path(path.parent, path)} not found"
-    except tomllib.TOMLDecodeError as exc:
-        return f"{path}: TOML parse error: {exc}"
-
-
 def _load_json_object(path: Path) -> tuple[dict[str, Any] | None, str | None]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -1033,13 +1023,6 @@ def _markdown_sections(body: str) -> dict[str, str]:
         if current is not None:
             sections[current].append(raw)
     return {heading: "\n".join(lines).strip() for heading, lines in sections.items()}
-
-
-def _display_path(repo_root: Path, path: Path) -> str:
-    try:
-        return path.relative_to(repo_root).as_posix()
-    except ValueError:
-        return path.as_posix()
 
 
 def _print_text(payload: dict[str, Any] | list[dict[str, Any]], view: str) -> None:

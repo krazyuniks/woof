@@ -1,7 +1,9 @@
 # Surfacing and resolving gates
 
 A gate is the graph's pause for a human decision. When the graph opens one it stops and writes
-`.woof/epics/E<N>/gate.md`; `woof wf --epic N` then reports `HUMAN_REVIEW` until it is resolved.
+`gate.md` into the epic's state directory in the operator home
+(`~/.woof/state/projects/<project-key>/epics/E<N>/gate.md`); `woof wf --epic N` then reports
+`HUMAN_REVIEW` until it is resolved.
 
 ## Surface it
 

@@ -10,10 +10,10 @@ Graph-owned input:
 
 ## Context documents — read these first
 
-When repo policy supplies cartography, the graph delivers relevant `.woof/codebase/` documents in `inputs.cartography_paths`. Read the supplied paths before beginning work:
+When repo policy supplies cartography, the graph delivers the names of the relevant cartography documents in `inputs.cartography_paths`. The documents live in the project's cartography directory in the operator home. Read them before beginning work:
 
-- `.woof/codebase/CURRENT-ARCHITECTURE.md`
-- `.woof/codebase/STRUCTURE.md`
+- `CURRENT-ARCHITECTURE.md`
+- `STRUCTURE.md`
 
 This is a non-interactive dispatch. Do not ask the operator questions and do not
 wait for confirmation. Where scope is ambiguous, state the assumption you made
@@ -26,6 +26,6 @@ lens; choose the ones that expose real risk or sharpen the framing, and apply
 at least one.
 
 Write one Markdown artefact per lens you apply into the declared `bucket_dir`
-(`.woof/epics/E<N>/discovery/thinking/`). Name each file after its lens, for
+(the epic's `discovery/thinking/` directory). Name each file after its lens, for
 example `first-principles.md`, `inversion.md`, or `second-order.md`. Produce at
 least one non-empty artefact.

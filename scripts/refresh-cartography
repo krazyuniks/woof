@@ -1,14 +1,25 @@
 #!/usr/bin/env sh
 
 # >>> woof:refresh-cartography
-# Managed by `woof init`; regenerates the .woof/codebase mechanical layer
-# (files.txt, tags, freshness.json). Re-run `woof init --language <lang> ...` to
-# recompose. Edits inside this block are overwritten.
+# Managed by `woof init`; regenerates the cartography mechanical layer
+# (files.txt, tags, freshness.json) under the operator home. Re-run
+# `woof init --language <lang> ...` to recompose. Edits inside this block are
+# overwritten.
 set -eu
 
 woof_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 cd "$woof_root"
-woof_codebase=".woof/codebase"
+
+# Cartography is engine state, so it lives in the operator home under the
+# project key, never in the driven repo (ADR-017). The key is baked in by
+# `woof init --project`; WOOF_PROJECT overrides it for a one-off run.
+woof_home="${WOOF_HOME:-$HOME/.woof}"
+woof_project="${WOOF_PROJECT:-woof}"
+if [ -z "$woof_project" ]; then
+  echo "woof refresh-cartography: no project key; set WOOF_PROJECT or re-run \`woof init --project <key>\`" >&2
+  exit 1
+fi
+woof_codebase="$woof_home/state/projects/$woof_project/codebase"
 mkdir -p "$woof_codebase"
 
 # git ls-files -> files.txt

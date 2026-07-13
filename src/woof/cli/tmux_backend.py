@@ -47,20 +47,17 @@ def _import_tmux_harness() -> Any:
 def tmux_transport() -> Any:
     """Return the tmux worker mechanics the seam calls.
 
-    ``deliver_prompt_file`` is narrowed to the seam's two arguments: the full task
-    lives in the prompt file and the worker is pasted a pointer to it, which is the
-    same delivery contract the herdr backend uses.
+    ``deliver_prompt_file`` takes the seam's kickoff and pastes that line, rather
+    than composing one of its own: the kickoff carries the payload file a one-shot
+    worker must write, so an adapter that substituted its own would leave the
+    worker with nowhere to put its answer and no payload would ever appear. The
+    prompt file is already staged by the caller, so no prompt text is passed.
     """
     harness = _import_tmux_harness()
     tmux = harness.tmux
 
-    def deliver_prompt_file(session: str, prompt_path: Path) -> None:
-        harness.deliver_prompt_file(
-            session,
-            prompt_path,
-            harness.read_file_kickoff(prompt_path),
-            prompt=None,
-        )
+    def deliver_prompt_file(session: str, prompt_path: Path, kickoff: str) -> None:
+        harness.deliver_prompt_file(session, prompt_path, kickoff, prompt=None)
 
     return SimpleNamespace(
         has_session=tmux.has_session,

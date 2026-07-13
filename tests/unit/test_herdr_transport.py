@@ -329,6 +329,27 @@ def test_an_idle_without_the_payload_does_not_complete_the_turn(tmp_path: Path) 
     assert result.completed_on == "idle"
 
 
+def test_a_turn_never_completes_until_the_worker_took_the_prompt_up(tmp_path: Path) -> None:
+    """Receipt: an idle before any working means the worker never took the prompt.
+
+    Completing there would trust a worker that had not started, and a stale payload
+    from an earlier round would be read back as this round's answer.
+    """
+    payload = tmp_path / "answer.txt"
+    payload.write_text("STALE ANSWER FROM AN EARLIER ROUND", encoding="utf-8")
+    client = FakeClient(script=["idle", "idle"])  # settles, but never worked
+    session = make_session(client)
+    pane = session.start_worker(worker_name="woof-p1", cwd=str(tmp_path), argv=["cld"])
+    with pytest.raises(WorkerTimeout):
+        session.turn(
+            pane_id=pane,
+            kickoff="go",
+            payload_ready=ready(payload),
+            readiness_timeout_s=5,
+            completion_timeout_s=5,
+        )
+
+
 def test_done_with_the_payload_completes_the_turn(tmp_path: Path) -> None:
     payload = tmp_path / "answer.txt"
     client = FakeClient(script=["working", payload_writer(payload, status="done")])

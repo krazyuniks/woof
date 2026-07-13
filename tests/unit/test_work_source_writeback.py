@@ -73,6 +73,9 @@ survive a writeback byte-for-byte.
 | alpha | first |
 """
 
+# The same document as a Windows-authored file: every line ends CRLF.
+CRLF_BACKLOG = RICH_BACKLOG.replace("\n", "\r\n")
+
 
 def _seed_intake(document: Path, *, set_id: str = SET_ID) -> None:
     directory = state.work_unit_set_dir(KEY, set_id)
@@ -167,6 +170,23 @@ def test_writeback_flips_one_state_line_and_preserves_every_other_byte(tmp_path:
         if old != new
     ]
     assert len(differing) == 1
+
+
+def test_writeback_preserves_crlf_line_endings_byte_for_byte(tmp_path: Path) -> None:
+    """A Windows-authored document keeps every CRLF: the edit is one line, not a reformat."""
+
+    document = tmp_path / "pm" / "backlog.md"
+    document.parent.mkdir(parents=True, exist_ok=True)
+    document.write_bytes(CRLF_BACKLOG.encode("utf-8"))
+
+    result = writeback_unit_state(document, "alpha", "done")
+
+    assert result.previous_state == "todo"
+    assert result.changed is True
+    expected = CRLF_BACKLOG.replace("    state: todo\r\n", "    state: done\r\n", 1)
+    assert document.read_bytes() == expected.encode("utf-8")
+    assert document.read_bytes().count(b"\r\n") == CRLF_BACKLOG.count("\r\n")
+    assert b"\n" not in document.read_bytes().replace(b"\r\n", b"")
 
 
 def test_writeback_preserves_the_quoting_style_and_trailing_comment(tmp_path: Path) -> None:

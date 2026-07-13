@@ -13,8 +13,10 @@ narrow in three ways:
   operator home.
 * Only the one ``state:`` field of the one unit changes. The document is
   human-authored markdown, so the edit is a single-line substitution that
-  preserves key order, quoting, comments, blank lines, and prose byte-for-byte.
-  Round-tripping the document through a YAML dump would reformat an operator's
+  preserves key order, quoting, comments, blank lines, prose, and line endings
+  byte-for-byte. The document is read and written without newline translation, so
+  a CRLF document stays CRLF. Round-tripping the document through a YAML dump, or
+  through Python's universal-newline translation, would reformat an operator's
   file, which is a defect, not a writeback.
 
 The document is resolved explicitly: it is the source the drain was invoked with
@@ -50,7 +52,8 @@ BACKLOG_STATE_BY_ENGINE_STATE = {
     "abandoned": "cancelled",
 }
 
-_FRONT_MATTER_FENCE = "---\n"
+_FRONT_MATTER_OPEN = re.compile(r"\A---\r?\n")
+_FRONT_MATTER_CLOSE = re.compile(r"(?P<break>\r?\n)---\r?\n")
 _WORK_UNITS_KEY = re.compile(r"^work_units:\s*(#.*)?$")
 _TOP_LEVEL_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*:")
 _ITEM = re.compile(r"^(?P<indent>[ \t]*)-[ \t]+(?P<rest>\S.*)$")
@@ -169,7 +172,10 @@ def writeback_unit_state(
 
     with _document_lock(document):
         try:
-            text = document.read_text(encoding="utf-8")
+            # newline="" disables universal-newline translation: a CRLF document is
+            # read, edited, and written back as CRLF rather than silently flattened.
+            with document.open("r", encoding="utf-8", newline="") as handle:
+                text = handle.read()
         except OSError as exc:
             raise WorkSourceError(f"work-source document {document} cannot be read: {exc}") from exc
         if expected_digest is not None and content_digest(text) != expected_digest:
@@ -203,7 +209,9 @@ def writeback_unit_state(
             f"{match.group('prefix')}{quote}{backlog_state}{quote}{match.group('suffix')}{newline}"
         )
         new_text = "".join(lines)
-        _assert_only_the_target_state_changed(document, text, new_text, work_unit_id, backlog_state)
+        _assert_only_the_target_state_changed(
+            document, text, new_text, line_index, work_unit_id, backlog_state
+        )
         _atomic_replace(document, new_text)
 
     return WorkSourceWriteback(
@@ -233,7 +241,8 @@ def _atomic_replace(document: Path, text: str) -> None:
 
     tmp = document.with_name(f".{document.name}.woof-tmp")
     try:
-        tmp.write_text(text, encoding="utf-8")
+        # newline="" writes the line endings the text already carries, unchanged.
+        tmp.write_text(text, encoding="utf-8", newline="")
         os.replace(tmp, document)
     except OSError as exc:
         tmp.unlink(missing_ok=True)
@@ -253,12 +262,17 @@ def _context_payload(context: Mapping | object | None) -> Mapping | None:
 
 
 def _front_matter(text: str) -> str:
-    if not text.startswith(_FRONT_MATTER_FENCE):
+    """Return the YAML between the fences, with the document's own line endings intact."""
+
+    opening = _FRONT_MATTER_OPEN.match(text)
+    if opening is None:
         raise WorkSourceError("work-source document must start with YAML front matter")
-    end = text.find("\n" + _FRONT_MATTER_FENCE, len(_FRONT_MATTER_FENCE) - 1)
-    if end < 0:
+    # The search starts inside the opening fence's line break, so an empty front
+    # matter - the closing fence on the very next line - is still terminated.
+    closing = _FRONT_MATTER_CLOSE.search(text, max(opening.end() - 2, 0))
+    if closing is None:
         raise WorkSourceError("work-source document has unterminated YAML front matter")
-    return text[len(_FRONT_MATTER_FENCE) : end + 1]
+    return text[opening.end() : closing.start() + len(closing.group("break"))]
 
 
 def _state_line_index(text: str, work_unit_id: str, document: Path) -> int:
@@ -334,10 +348,26 @@ def _assert_only_the_target_state_changed(
     document: Path,
     before: str,
     after: str,
+    line_index: int,
     work_unit_id: str,
     backlog_state: str,
 ) -> None:
-    """Fail closed unless the edit changed exactly the one state the engine meant."""
+    """Fail closed unless the edit changed exactly the one line the engine meant.
+
+    The invariant is byte-level, not YAML-level: every byte outside the target line
+    survives, its line ending included. A guard that only compared the parsed unit
+    states would be blind to a whole-document reformat - a flattened CRLF, a
+    re-indent, a stripped comment - which is the defect the surgical edit exists to
+    prevent. The parsed check is kept on top of it, so the one line that did change
+    is proved to carry the state the engine meant.
+    """
+
+    if _changed_lines(before, after) != [line_index]:
+        raise WorkSourceError(
+            f"work-source document {document}: writing {work_unit_id}={backlog_state} would "
+            "change bytes outside that unit's state: line; refusing to rewrite the "
+            "operator's document"
+        )
 
     expected = dict(unit_states(before))
     expected[work_unit_id] = backlog_state
@@ -346,3 +376,17 @@ def _assert_only_the_target_state_changed(
             f"work-source document {document}: writing {work_unit_id}={backlog_state} would "
             "change more than that unit's state; refusing to rewrite the operator's document"
         )
+
+
+def _changed_lines(before: str, after: str) -> list[int] | None:
+    """The indexes of the lines whose bytes differ, or ``None`` if the line count moved."""
+
+    before_lines = before.splitlines(keepends=True)
+    after_lines = after.splitlines(keepends=True)
+    if len(before_lines) != len(after_lines):
+        return None
+    return [
+        index
+        for index, (old, new) in enumerate(zip(before_lines, after_lines, strict=True))
+        if old != new
+    ]

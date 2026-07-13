@@ -26,8 +26,6 @@ from woof.graph.state import (
     TERMINAL_WORK_UNIT_STATES,
     GateDecision,
     NodeStatus,
-    Plan,
-    WorkUnitSpec,
 )
 from woof.graph.transitions import (
     StageStateError,
@@ -41,7 +39,6 @@ from woof.graph.transitions import (
     mark_work_unit_state,
     plan_critique_path,
     plan_markdown_path,
-    write_plan,
 )
 from woof.paths import ProjectKeyError, repo_root_from_git, resolve_project_key
 from woof.trackers import (
@@ -116,26 +113,6 @@ def _check_result_ok(check_result_path: Path) -> bool:
     except (FileNotFoundError, json.JSONDecodeError):
         return False
     return isinstance(payload, dict) and payload.get("ok") is True
-
-
-def _update_work_unit(project_key: str, epic_id: int, work_unit_id: str, **updates: object) -> None:
-    plan = load_plan(project_key, epic_id)
-    work_units: list[WorkUnitSpec] = []
-    found = False
-    for work_unit in plan.work_units:
-        if work_unit.id == work_unit_id:
-            data = work_unit.model_dump()
-            data.update(updates)
-            work_units.append(WorkUnitSpec.model_validate(data))
-            found = True
-        else:
-            work_units.append(work_unit)
-    if not found:
-        raise StageStateError(f"work unit {work_unit_id} not found in E{epic_id} plan")
-    write_plan(
-        project_key,
-        Plan(epic_id=plan.epic_id, context=plan.context, goal=plan.goal, work_units=work_units),
-    )
 
 
 def _abandon_epic(project_key: str, epic_id: int, tracker: Tracker) -> list[str]:
@@ -300,7 +277,7 @@ def _apply_gate_resolution_effects(
                         )
                     )
             if work_unit_id and "empty_diff_review" in triggered_by:
-                _update_work_unit(project_key, epic_id, work_unit_id, state="done", empty_diff=True)
+                mark_work_unit_state(project_key, epic_id, work_unit_id, "done", empty_diff=True)
                 changed.append(str(state.plan_path(project_key, epic_id)))
                 changed.extend(_remove_paths(executor_result))
                 append_epic_event_once(
@@ -381,7 +358,7 @@ def _apply_gate_resolution_effects(
             # abandoned work unit as terminal and skips it; the epic still completes
             # on its remaining work units ("skip and continue"). The state is
             # distinct from done so reconstruction never conflates the two.
-            _update_work_unit(project_key, epic_id, work_unit_id, state="abandoned")
+            mark_work_unit_state(project_key, epic_id, work_unit_id, "abandoned")
             changed.append(str(state.plan_path(project_key, epic_id)))
             changed.extend(_remove_paths(check_result, executor_result))
             append_epic_event_once(

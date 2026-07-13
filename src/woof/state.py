@@ -16,6 +16,7 @@ key. Never derive one from the other.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -56,6 +57,7 @@ __all__ = [
     "spark_path",
     "usage_path",
     "woof_home",
+    "work_source_lock_path",
     "work_unit_critique_path",
     "work_unit_disposition_path",
     "work_unit_set_dir",
@@ -191,6 +193,18 @@ def work_unit_sets_root(project_key: str) -> Path:
 
 def work_unit_set_dir(project_key: str, set_id: str) -> Path:
     return work_unit_sets_root(project_key) / set_id
+
+
+def work_source_lock_path(document: Path) -> Path:
+    """Serialise writeback to one work-source document, keyed by its absolute path.
+
+    The lock is engine state, so it lives in the operator home rather than beside
+    the document: the document's repository takes the unit-state edit and nothing
+    else - no engine directory, no artefact, no sidecar (ADR-017).
+    """
+
+    digest = hashlib.sha256(str(document).encode("utf-8")).hexdigest()[:32]
+    return woof_home() / "locks" / "work-source" / f"{digest}.lock"
 
 
 def preflight_cache_dir(project_key: str) -> Path:

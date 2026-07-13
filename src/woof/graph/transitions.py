@@ -18,6 +18,7 @@ from woof.graph.dispositions import (
 from woof.graph.git import changed_paths, staged_paths
 from woof.graph.manifest import build_work_unit_manifest
 from woof.graph.state import TERMINAL_WORK_UNIT_STATES, NodeStatus, NodeType, Plan, WorkUnitSpec
+from woof.graph.work_source import WorkSourceError, publish_unit_state
 from woof.state import epic_dir
 from woof.trackers.base import CONFLICT_TRIGGERS, NON_APPROVING_TRIGGERS
 
@@ -203,7 +204,22 @@ def next_ready_work_unit(plan: Plan) -> WorkUnitSpec | None:
     return None
 
 
-def mark_work_unit_state(project_key: str, epic_id: int, work_unit_id: str, state: str) -> None:
+def mark_work_unit_state(
+    project_key: str,
+    epic_id: int,
+    work_unit_id: str,
+    state: str,
+    **updates: object,
+) -> None:
+    """The engine's one writer of a work unit's state.
+
+    It writes the durable plan in the operator home and, when the aggregate was
+    drained from a work-source PM document, writes the same state back to that
+    document (ADR-017). ``updates`` carries the other fields a state flip records
+    alongside it, such as ``empty_diff``. Nothing else in the engine, and no
+    producer, may flip a work unit's state.
+    """
+
     plan = load_plan(project_key, epic_id)
     if all(work_unit.id != work_unit_id for work_unit in plan.work_units):
         raise StageStateError(f"work unit {work_unit_id} not found in E{epic_id} plan")
@@ -211,14 +227,22 @@ def mark_work_unit_state(project_key: str, epic_id: int, work_unit_id: str, stat
     for work_unit in plan.work_units:
         if work_unit.id == work_unit_id:
             data = work_unit.model_dump()
+            data.update(updates)
             data["state"] = state
             work_units.append(WorkUnitSpec.model_validate(data))
         else:
             work_units.append(work_unit)
-    write_plan(
-        project_key,
-        Plan(epic_id=plan.epic_id, context=plan.context, goal=plan.goal, work_units=work_units),
+    updated = Plan(
+        epic_id=plan.epic_id, context=plan.context, goal=plan.goal, work_units=work_units
     )
+    # The document is written first: it is the one target outside the operator home
+    # and the only one that can fail closed (a concurrent drain, a unit the operator
+    # removed), and a repeat flip to a state the document already carries is a no-op.
+    try:
+        publish_unit_state(project_key, updated, work_unit_id, state)
+    except WorkSourceError as exc:
+        raise StageStateError(str(exc), operator_recoverable=True) from exc
+    write_plan(project_key, updated)
 
 
 def append_epic_event(project_key: str, epic_id: int, event: dict) -> None:

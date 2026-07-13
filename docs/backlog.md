@@ -355,27 +355,42 @@ work_units:
       - Commit and publish boundaries pin the verified tree and expected paths.
       - Dead state-mutation surfaces are removed rather than mirrored.
   - id: gate-environment-channel
-    title: Operator authorisation declared once, reaching the gate, the publish guard, and CI
+    title: Operator authorisation declared once, reaching the producer, the gate, the
+      publish guard, CI, and the merge queue
     kind: build
     state: todo
     priority: high
-    summary: "Every gate invocation -- deterministic gate, review gate, and the
-      publish-time guard -- receives the work unit's identity, its declared change
-      targets, and an operator-declared authorisation, so a gate can be pre-authorised
-      per unit without editing engine or repo source; and the same authorisation reaches
-      CI as pull request labels, so a locally-authorised unit does not fail the same
-      guard in CI by construction. Carries VaultForeman's
-      gate-environment-authorisation-channel (the per-unit pre-authorisation half,
-      delivered VF af42d0f0), gate-environment-unit-context-export (unit-context), and
-      unit-authorisation-reaches-both-the-gate-and-ci (the CI-parity half). Motivating
-      context is the delivered Freeflo #895 preflight guard, the #897 post-mortem, and
-      the freeflo wording-migration lane (unit issue-884, PR
+    summary: "One operator declaration on one work unit clears a guard, and the producer
+      runs under it. Woof adopts the position recorded in VaultForeman ADR-011. The
+      declaration carries the environment the guard reads, the labels the pull request must
+      be born with, and the reason; all three are mandatory and indivisible, because an
+      authorisation reaching only one of the places the guard is enforced is the defect the
+      declaration exists to remove, and a cleared guard with no recorded reason is not
+      auditable. The engine projects that one declaration to every place the guard is
+      enforced: the producer's session environment, the produce prompt, the decisive gate
+      subprocess, the publish-time re-gate, the pull request it opens, and the merge
+      coordinator's re-gate, which resolves the environment back from the labels because it
+      cannot map a queued pull request to a work unit. Every gate invocation also receives
+      the work unit's identity and its declared change targets. Clearing a guard rests on
+      authorship, not on ignorance: the producer may not author the declaration, and a
+      producer diff that edits it parks the unit. That is the whole of the protection.
+      Withholding the declaration from the producer protects nothing further, because a
+      producer that wanted to self-authorise would have to edit the backlog to do it, which
+      parks the slice either way -- and withholding it is what parked five Freeflo
+      module-relocation slices, each of which ran the project's verification command itself,
+      saw the guard red, and could not tell a guard the operator had already cleared from a
+      guard nobody had cleared. Carries VaultForeman's
+      gate-environment-authorisation-channel (the per-unit pre-authorisation half, VF
+      03fa393), gate-environment-unit-context-export (unit context),
+      unit-authorisation-reaches-both-the-gate-and-ci (the one declaration projected to the
+      gate, the pull request, and the merge queue, VF 337a437), and
+      guard-authorisation-reaches-the-producer (the producer-facing half, VF 755cabf).
+      Motivating context is the delivered Freeflo #895 preflight guard, the #897
+      post-mortem, and the freeflo wording-migration lane (unit issue-884, PR
       freeflosg/freeflo.freefloAgent#971): gate green, review clear, CI failed, run
       stopped, because the PR carried no labels and the CI workflow resolves its
-      override from the labels frozen in the pull_request event payload. A producer
-      holding repo-edit access could self-authorise an in-repo gate, so the
-      authorisation channel must live outside anything the producer can touch. Woof
-      today is behind VaultForeman on both halves: the quality gate runs the project
+      override from the labels frozen in the pull_request event payload. Woof
+      today is behind VaultForeman on all of it: the quality gate runs the project
       command with no env= argument at all (checks/runners/check_1_quality_gates.py:319-328),
       so it silently inherits the ambient environment of the woof process rather than a
       declared channel; and graph.git.gh_open_pr (graph/git.py:121-152) passes no
@@ -388,23 +403,42 @@ work_units:
       - The engine exports the work-unit id and its declared change targets to every
         gate invocation, including the publish-time re-gate; declared targets are a
         work-unit schema field, not inferred from the diff.
-      - An operator declares an authorisation once, as one typed declaration carrying a
-        mandatory reason, the gate environment variables, and the pull request labels
-        that express the same authorisation to CI. There is one declaration shape, not a
-        gate-environment dict beside a separate label list.
+      - An operator declares an authorisation once, as one typed declaration on the work
+        unit carrying a mandatory reason, the gate environment variables, and the pull
+        request labels that express the same authorisation to CI. There is one declaration
+        shape, not a gate-environment dict beside a separate label list, and a declaration
+        missing any of the three is rejected when the backlog loads.
       - The engine passes the declared environment to gate invocations explicitly, with an
-        env argument rather than by ambient inheritance, and a producer diff can never
-        populate or alter it. The quality-gate runner stops inheriting the woof process
-        environment implicitly.
+        env argument rather than by ambient inheritance. The quality-gate runner stops
+        inheriting the woof process environment implicitly.
       - A gate guard reads its pre-authorisation only from the operator channel; a value
         the producer could write into repo source never satisfies it.
+      - The producer runs under the declaration. The declared environment is exported into
+        the producer's session, so a check the producer runs itself agrees with the decisive
+        gate; and the produce prompt names the guard, the reason, the environment, and the
+        labels, alongside the standing instruction that guard source, guard tests, and the
+        declaration itself are not the producer's to edit.
+      - A producer diff that adds or alters an authorisation declaration parks the unit.
+        This is the protection, and the engine does not rely on the producer being unaware
+        that a declaration exists.
       - The engine creates the pull request carrying the declared labels, so the labels are
         present in the pull_request event payload of the first CI run and a CI guard
         resolves the override on its first attempt. The engine never opens a pull request
         it knows CI will refuse, and the labels do not depend on merge eligibility.
-      - A test proves an operator pre-authorisation reaches the gate, that a
-        producer-authored in-repo value does not, and that the same declaration reaches
-        pull request creation as a label.
+      - The merge coordinator re-gates a queued pull request under the environment it
+        resolves back from that pull request's labels, since it cannot map the pull request
+        to a work unit.
+      - A unit that declares no authorisation gates, produces, and opens its pull request
+        with the engine environment and no labels. An undeclared guard is not a cleared
+        guard.
+      - An authorisation is unit-scoped. A lane-wide authorisation is declared on every unit
+        of the lane, and two units that declare the same label must agree on what it
+        authorises, or the backlog fails closed rather than let the environment a pull
+        request is gated under depend on which unit was read last.
+      - A test proves the declaration reaches the producer's session and the produce prompt,
+        reaches the gate, reaches pull request creation as a label, and is resolved back from
+        the labels at the merge re-gate; that a producer-authored in-repo value never
+        satisfies a guard; and that a producer diff editing the declaration parks the unit.
   - id: publish-protected-content-guard
     title: Publish-time guard rejects producer diffs that forge protected content
     kind: build
@@ -585,7 +619,7 @@ The `How` value controls execution mechanics:
 | 2 | `policy-model`, `dispatch-swap`, `run-lineage-immutable-attempts` | hand-build + vf-drain | Hand-build the repo-local policy schema/spine first. In `dispatch-swap`, consolidate VaultForeman's harness/model/effort registry into Woof's dispatcher before any produce/review logic is absorbed. |
 | 3 | `execution-shape-unification`, `config-routing-ssot` | hand-build | Foundational convergence. Collapse the runtime to one `work_units[]` shape (retire the `status`/`state` dual lifecycle and legacy id mirrors; rename checks, gates, and playbooks onto work-unit language) and make `policy.toml` the single routing/run-profile authority (retire `agents.toml` routing, single-source the registry vocab, delete dead headless builders). Hand-build because the vf-drain waves fold runner logic into this kernel; draining them first deepens the mirror. |
 | 4 | `warm-session-seam`, `cartography-continuity`, `intake-predecomposed` | vf-drain | Drain after the kernel runs one shape and the dispatch registry is single-sourced, so warm producer and fresh reviewer sessions use one adapter contract and one unit shape. `intake-predecomposed` is already delivered. |
-| 5 | `runner-loop-absorption`, `deploy-aware-merge-coordinator`, `profile-a-worktree-contract`, `engine-neutral-consumer-policy`, `operator-home-config-and-state`, `gate-environment-channel`, `publish-protected-content-guard`, `produce-prompt-commit-discipline`, `dispatch-failure-classification-honesty`, `drain-liveness-status`, `vaultforeman-fix-parity` | hand-build + vf-drain | Absorb Profile A/B drain, review cache, and usage/run telemetry. Drain sub-backlogs in order: `docs/backlogs/wave-5-shakedown.md` (`profile-a-worktree-contract` shakedown first), then `docs/backlogs/wave-5.md` (the decomposed absorption). `deploy-aware-merge-coordinator` is a native new-build (no VaultForeman source asset) and is hand-build with operator review, not an unattended vf-drain. `operator-home-config-and-state` implements ADR-017 (engine config/state under `~/.woof`; no engine files in driven repos) and must land before the flights so the proven engine is the operator-home one. `gate-environment-channel` carries VaultForeman's gate-environment channel (unit context, declared targets, operator pre-authorisation) and is the pre-authorisation seam `publish-protected-content-guard` reads. `dispatch-failure-classification-honesty` joins the guard-unit drain (its dep is already done). `drain-liveness-status` depends on `herdr-kept-alive-dispatch` and drains only after wave 6 lands. `vaultforeman-fix-parity` re-baselines the absorption against a pinned VaultForeman engine-repo commit (the tip once VaultForeman's `review-resume-and-publish-defects` set lands, recorded at decomposition time, not a moving HEAD); decompose it after its deps land. Shared-file sibling conflicts fail closed to a human gate. Producer reads the runner-asset source map. |
+| 5 | `runner-loop-absorption`, `deploy-aware-merge-coordinator`, `profile-a-worktree-contract`, `engine-neutral-consumer-policy`, `operator-home-config-and-state`, `gate-environment-channel`, `publish-protected-content-guard`, `produce-prompt-commit-discipline`, `dispatch-failure-classification-honesty`, `drain-liveness-status`, `vaultforeman-fix-parity` | hand-build + vf-drain | Absorb Profile A/B drain, review cache, and usage/run telemetry. Drain sub-backlogs in order: `docs/backlogs/wave-5-shakedown.md` (`profile-a-worktree-contract` shakedown first), then `docs/backlogs/wave-5.md` (the decomposed absorption). `deploy-aware-merge-coordinator` is a native new-build (no VaultForeman source asset) and is hand-build with operator review, not an unattended vf-drain. `operator-home-config-and-state` implements ADR-017 (engine config/state under `~/.woof`; no engine files in driven repos) and must land before the flights so the proven engine is the operator-home one. `gate-environment-channel` carries VaultForeman's gate-environment channel (unit context, declared targets, and one operator authorisation projected to the producer, the gate, the pull request, and the merge re-gate, per VaultForeman ADR-011) and is the pre-authorisation seam `publish-protected-content-guard` reads. `dispatch-failure-classification-honesty` joins the guard-unit drain (its dep is already done). `drain-liveness-status` depends on `herdr-kept-alive-dispatch` and drains only after wave 6 lands. `vaultforeman-fix-parity` re-baselines the absorption against a pinned VaultForeman engine-repo commit (the tip once VaultForeman's `review-resume-and-publish-defects` set lands, recorded at decomposition time, not a moving HEAD); decompose it after its deps land. Shared-file sibling conflicts fail closed to a human gate. Producer reads the runner-asset source map. |
 | 6 | `herdr-kept-alive-dispatch` | hand-build | Consume Agent Toolkit's backend-neutral retained-session seam, remove tmux-only public shapes, and prove herdr plus explicit tmux fallback before a flight. |
 | 7 | `flight-1`, `flight-2` | manual | Flight 1 proves the kernel on a disposable repo with deploy decoupled. Flight 2 proves a guarded real-deploy slice and is the go/no-go for trusting Woof with prod-deploying consumers. Operator run-sheets: `docs/flight/flight-1-induction.md`, `docs/flight/flight-2-audit-evidence.md`. |
 | 8 | `conformance-audit`, `eval-instrumentation`, `intake-epic-enrichment` | vf-drain | Post-flight richness. Structural cartography is the deferred structural scope of `cartography-continuity`, not a separate unit. |

@@ -13,6 +13,8 @@ This glossary defines Woof's project-specific terms. Architecture, ADRs, and bac
 - **Work unit** - the executable unit Woof produces, checks, reviews, fixes, publishes, and merges. Avoid: story.
 - **Work unit ID** - the stable local identity of a work unit inside one work-unit aggregate. It is human-readable and unique within that aggregate.
 - **Qualified work-unit reference** - the structured reference Woof uses outside an aggregate boundary: a discriminated aggregate context (an epic context of `project_ref` + `epic_id`, or a work-unit-set context of `project_ref` + `set_id` + optional `source_ref`) plus the local `work_unit_id`. `set_id` is a stable identity assigned once at intake, never a run UUID.
+- **Work-source document** - the PM document a drain was invoked with: an epic, or a `work_units[]` backlog. It is an input, not engine state, and lives where the project's PM convention puts it.
+- **Backlog unit-state writeback** - the engine flipping a work unit's `state:` in the work-source document it was given. It is the one deliberate case where the engine writes outside the operator home, it is engine-exclusive (a producer that mutates unit state is rejected before publish), and it changes that one field and nothing else in the document.
 - **Work-unit aggregate** - the ordered executable collection that owns work-unit identity, dependency closure, dependency acyclicity, and dependency order.
 - **Contract-trace fields** - optional work-unit fields that link executable work to epic outcomes, contract decisions, path scope, and test expectations.
 - **Run metadata** - source, repo, policy, upstream issue links, run identity, and other non-executable facts needed for audit and orchestration.

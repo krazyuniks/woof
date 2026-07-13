@@ -96,6 +96,7 @@ from woof.paths import tool_root
 
 consumer = Path(sys.argv[1])
 forbidden = json.loads(sys.argv[2])
+project_key = sys.argv[3]
 epic_id = 1
 
 
@@ -126,14 +127,14 @@ def paths_resolve(text):
 
 result = {"tool_root": str(tool_root()), "buckets": {}}
 for bucket in ("research", "thinking", "ideate"):
-    prompt = _discovery_bucket_prompt(consumer, epic_id, bucket)
+    prompt = _discovery_bucket_prompt(project_key, consumer, epic_id, bucket)
     result["buckets"][bucket] = {
         "length": len(prompt),
         "playbook_stems": playbook_stems(prompt),
         "playbook_paths_resolve": paths_resolve(prompt),
         "forbidden_hits": forbidden_hits(prompt),
     }
-synthesis = _discovery_synthesis_prompt(consumer, epic_id)
+synthesis = _discovery_synthesis_prompt(project_key, consumer, epic_id)
 result["synthesis"] = {
     "length": len(synthesis),
     "forbidden_hits": forbidden_hits(synthesis),
@@ -246,7 +247,13 @@ def test_release_smoke(tmp_path: Path) -> None:
     probe_file = tmp_path / "stage1_probe.py"
     probe_file.write_text(STAGE1_PROBE)
     probe = subprocess.run(
-        [str(python), str(probe_file), str(consumer), json.dumps(FORBIDDEN_PROMPT_TOKENS)],
+        [
+            str(python),
+            str(probe_file),
+            str(consumer),
+            json.dumps(FORBIDDEN_PROMPT_TOKENS),
+            project_key,
+        ],
         cwd=str(tmp_path),
         capture_output=True,
         text=True,

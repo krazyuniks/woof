@@ -2576,14 +2576,8 @@ def test_critique_dispatch_stages_changed_work_unit_paths_before_review(
 
 def test_verification_stages_changed_work_unit_paths_before_stage5_checks(tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
-    woof_dir = tmp_path / ".woof"
-    woof_dir.mkdir(exist_ok=True)
     (tmp_path / ".gitignore").write_text(
-        ".woof/epics/*/executor_result.json\n"
-        ".woof/epics/*/check-result.json\n"
-        "__pycache__/\n"
-        "tests/__pycache__/\n"
-        "*.pyc\n"
+        "__pycache__/\ntests/__pycache__/\n*.pyc\n",
     )
     _seed_config(
         {
@@ -2752,7 +2746,7 @@ def test_review_disposition_repairs_invalid_non_blocking_timestamp(
     disposition_dir.mkdir()
     (disposition_dir / "work-unit-S1.md").write_text(
         "---\ntarget: work_unit\ntarget_id: S1\n"
-        "critique_path: .woof/epics/E1/critique/work-unit-S1.md\n"
+        "critique_path: critique/work-unit-S1.md\n"
         "severity: info\n"
         "timestamp: ''\n"
         "harness: test-primary\n"
@@ -4622,7 +4616,7 @@ class _RecordingTracker:
             epic_id=epic_id,
             body="",
             updated_at="2026-01-01T00:00:00Z",
-            last_sync_path=Path(f".woof/epics/E{epic_id}/.last-sync"),
+            last_sync_path=epic_dir(DEFAULT_PROJECT_KEY, epic_id) / ".last-sync",
             changed=True,
             closed=True,
         )

@@ -4,7 +4,7 @@ target_id: S2
 severity: blocker
 timestamp: "2026-04-27T05:46:49Z"
 harness: codex-gpt-5.3-codex
-session_ref: ".woof/epics/E181/audit/cod-critiquer-20260427T054309Z"
+session_ref: "audit/cod-critiquer-20260427T054309Z"
 findings:
   - id: F1
     severity: blocker

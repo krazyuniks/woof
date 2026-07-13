@@ -2468,9 +2468,7 @@ def review_disposition_node(inp: NodeInput) -> NodeOutput:
                     "round": round_number,
                     "max_rounds_per_blocker": budget,
                     "blocker_signature": blocker_signature,
-                    "critique_path": work_unit_critique_path(directory, inp.work_unit_id)
-                    .relative_to(inp.repo_root)
-                    .as_posix(),
+                    "critique_path": str(work_unit_critique_path(directory, inp.work_unit_id)),
                 },
             )
             _clear_fix_round_artefacts(inp.project_key, inp.epic_id, inp.work_unit_id)
@@ -2698,7 +2696,7 @@ def verification_node(inp: NodeInput) -> NodeOutput:
         work_unit_id=inp.work_unit_id,
         next_node=NodeType.COMMIT,
         validation_summary=validation_summary,
-        paths=[str(result_path.relative_to(inp.repo_root))],
+        paths=[str(result_path)],
     )
 
 
@@ -2979,21 +2977,19 @@ def _snapshot_transaction_state(directory: Path) -> dict[Path, str | None]:
     return snapshot
 
 
-def _restore_transaction_state(repo_root: Path, snapshot: dict[Path, str | None]) -> None:
-    restored: list[str] = []
-    removed: list[str] = []
+def _restore_transaction_state(snapshot: dict[Path, str | None]) -> None:
+    """Roll the epic's durable state back to its pre-commit snapshot.
+
+    That state lives in the operator home (ADR-017), so a rollback is a file
+    restore and nothing more. The engine stages none of its own artefacts, so
+    there is no index entry to undo alongside it.
+    """
+
     for path, text in snapshot.items():
-        relpath = path.relative_to(repo_root).as_posix()
         if text is None:
             path.unlink(missing_ok=True)
-            removed.append(relpath)
         else:
             path.write_text(text)
-            restored.append(relpath)
-    if restored:
-        git(repo_root, "add", "--", *restored)
-    if removed:
-        git(repo_root, "rm", "--cached", "--ignore-unmatch", "--", *removed)
 
 
 def commit_node(inp: NodeInput) -> NodeOutput:
@@ -3176,7 +3172,7 @@ def commit_node(inp: NodeInput) -> NodeOutput:
         git(inp.repo_root, "add", "--", *manifest.expected_paths)
         verification = verify_staged_manifest(inp.repo_root, manifest)
         if not verification.ok:
-            _restore_transaction_state(inp.repo_root, state_snapshot)
+            _restore_transaction_state(state_snapshot)
             position = (
                 "Transaction manifest mismatch.\n\n"
                 f"Missing staged paths: {verification.missing_paths}\n"
@@ -3242,7 +3238,7 @@ def commit_node(inp: NodeInput) -> NodeOutput:
     except Exception:
         if commit_landed:
             git(inp.repo_root, "reset", "--soft", "HEAD~1")
-        _restore_transaction_state(inp.repo_root, state_snapshot)
+        _restore_transaction_state(state_snapshot)
         raise
     (epic_dir(inp.project_key, inp.epic_id) / "executor_result.json").unlink(missing_ok=True)
     (epic_dir(inp.project_key, inp.epic_id) / "check-result.json").unlink(missing_ok=True)
@@ -3281,7 +3277,7 @@ def gate_open_node(inp: NodeInput) -> NodeOutput:
     if not result_path.exists():
         return _write_incomplete_stage_gate(
             inp,
-            f"Required Stage-5 artefact missing: {result_path.relative_to(inp.repo_root)}",
+            f"Required Stage-5 artefact missing: {result_path}",
         )
 
     try:
@@ -3289,7 +3285,7 @@ def gate_open_node(inp: NodeInput) -> NodeOutput:
     except json.JSONDecodeError:
         return _write_incomplete_stage_gate(
             inp,
-            f"Required Stage-5 artefact is malformed JSON: {result_path.relative_to(inp.repo_root)}",
+            f"Required Stage-5 artefact is malformed JSON: {result_path}",
         )
 
     outcome = result.get("outcome")
@@ -3303,8 +3299,7 @@ def gate_open_node(inp: NodeInput) -> NodeOutput:
         except json.JSONDecodeError:
             return _write_incomplete_stage_gate(
                 inp,
-                "Required Stage-5 artefact is malformed JSON: "
-                f"{check_result_path.relative_to(inp.repo_root)}",
+                f"Required Stage-5 artefact is malformed JSON: {check_result_path}",
             )
         if not check_result.get("ok", False):
             write_gate_from_check_result(
@@ -3328,7 +3323,7 @@ def gate_open_node(inp: NodeInput) -> NodeOutput:
         return _write_incomplete_stage_gate(
             inp,
             "Required Stage-5 artefact has an unsupported executor outcome: "
-            f"{result_path.relative_to(inp.repo_root)} outcome={outcome!r}",
+            f"{result_path} outcome={outcome!r}",
         )
 
     if result.get("position"):

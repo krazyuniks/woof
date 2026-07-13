@@ -13,13 +13,14 @@ from typing import Any, cast
 import pytest
 import yaml
 
-from tests.support import seed_project_config
+from tests.support import DEFAULT_PROJECT_KEY, seed_project_config
+from woof import state
 from woof.cli.commands.wf import _resolve_gate
 from woof.graph import nodes, transitions
 from woof.graph.git import git_env
-from woof.graph.lock import LOCK_FILENAME, WorkflowLockError
+from woof.graph.lock import WorkflowLockError
 from woof.graph.manifest import build_work_unit_manifest, verify_staged_manifest
-from woof.graph.runner import drain_status, run_graph
+from woof.graph.runner import GraphNoProgressError, drain_status, run_graph
 from woof.graph.state import NodeInput, NodeOutput, NodeStatus, NodeType, Plan, WorkUnitSpec
 from woof.graph.transitions import (
     StageStateError,
@@ -30,10 +31,12 @@ from woof.graph.transitions import (
     plan_gate_resolved,
     readiness_satisfied,
 )
+from woof.state import LOCK_FILENAME
 from woof.trackers.base import LifecycleSyncResult, Tracker
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WOOF_BIN = REPO_ROOT / "bin" / "woof"
+KEY = DEFAULT_PROJECT_KEY
 
 
 def _dispatch_result(
@@ -48,8 +51,8 @@ def _dispatch_result(
     )
 
 
-def _write_plan(root: Path, epic_id: int = 1) -> Path:
-    directory = root / ".woof" / "epics" / f"E{epic_id}"
+def _write_plan(epic_id: int = 1) -> Path:
+    directory = state.epic_dir(KEY, epic_id)
     directory.mkdir(parents=True)
     plan = {
         "epic_id": epic_id,
@@ -122,8 +125,8 @@ def _seed_config(overrides: dict[str, Any]) -> None:
     seed_project_config(_CONFIG_OVERRIDES)
 
 
-def _write_plan_units(root: Path, epic_id: int, work_units: list[dict[str, Any]]) -> Path:
-    directory = root / ".woof" / "epics" / f"E{epic_id}"
+def _write_plan_units(epic_id: int, work_units: list[dict[str, Any]]) -> Path:
+    directory = state.epic_dir(KEY, epic_id)
     directory.mkdir(parents=True)
     (directory / "plan.json").write_text(
         json.dumps({"epic_id": epic_id, "goal": "test graph", "work_units": work_units}) + "\n"
@@ -132,22 +135,22 @@ def _write_plan_units(root: Path, epic_id: int, work_units: list[dict[str, Any]]
     return directory
 
 
-def _write_tracker_prerequisites(root: Path) -> None:
+def _write_tracker_prerequisites() -> None:
     _seed_config({"tracker": {"kind": "github", "repo": "acme/widgets"}})
 
 
 def test_mark_work_unit_state_raises_for_unknown_work_unit(tmp_path: Path) -> None:
-    directory = _write_plan(tmp_path, 1)
+    directory = _write_plan(1)
 
     with pytest.raises(StageStateError, match="work unit S404 not found"):
-        mark_work_unit_state(tmp_path, 1, "S404", "done")
+        mark_work_unit_state(KEY, 1, "S404", "done")
 
     plan = json.loads((directory / "plan.json").read_text(encoding="utf-8"))
     assert plan["work_units"][0]["state"] == "pending"
 
 
 def test_work_unit_prompt_is_portable_playbook_prompt() -> None:
-    prompt = nodes._work_unit_prompt(7, "S3")
+    prompt = nodes._work_unit_prompt(KEY, 7, "S3")
 
     assert "/wf:execute-work-unit" not in prompt
     assert '"node_type": "executor_dispatch"' in prompt
@@ -160,9 +163,9 @@ def test_work_unit_prompt_is_portable_playbook_prompt() -> None:
 def test_executor_dispatch_uses_portable_prompt_with_stub_adapter(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    directory = _write_plan(tmp_path, 1)
-    _write_codebase_docs(tmp_path)
-    (tmp_path / ".woof" / ".current-epic").write_text("E1")
+    directory = _write_plan(1)
+    _write_codebase_docs()
+    state.current_epic_path(KEY).write_text("E1")
     _seed_config(
         {
             "default_run_profile": "test",
@@ -186,6 +189,7 @@ def test_executor_dispatch_uses_portable_prompt_with_stub_adapter(
     captured: dict[str, Any] = {}
 
     def fake_dispatch(
+        project_key: str,
         repo_root: Path,
         role: str,
         epic_id: int,
@@ -222,6 +226,7 @@ def test_executor_dispatch_uses_portable_prompt_with_stub_adapter(
             node_type=NodeType.EXECUTOR_DISPATCH,
             epic_id=1,
             work_unit_id="S1",
+            project_key=KEY,
             repo_root=tmp_path,
         )
     )
@@ -241,10 +246,11 @@ def test_executor_dispatch_uses_portable_prompt_with_stub_adapter(
 def test_executor_dispatch_completed_lingering_advances(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _write_plan(tmp_path, 1)
-    _write_codebase_docs(tmp_path)
+    _write_plan(1)
+    _write_codebase_docs()
 
     def fake_dispatch(
+        project_key: str,
         repo_root: Path,
         role: str,
         epic_id: int,
@@ -262,11 +268,11 @@ def test_executor_dispatch_completed_lingering_advances(
         assert session_mode == "warm-producer"
         assert artefacts_loaded == [
             ".woof/epics/E1/plan.json",
-            ".woof/codebase/STRUCTURE.md",
-            ".woof/codebase/CONVENTIONS.md",
-            ".woof/codebase/TARGET-ARCHITECTURE.md",
-            ".woof/codebase/PRINCIPLES.md",
-            ".woof/codebase/files.txt",
+            "STRUCTURE.md",
+            "CONVENTIONS.md",
+            "TARGET-ARCHITECTURE.md",
+            "PRINCIPLES.md",
+            "files.txt",
         ]
         return _dispatch_result("completed_lingering")
 
@@ -277,6 +283,7 @@ def test_executor_dispatch_completed_lingering_advances(
             node_type=NodeType.EXECUTOR_DISPATCH,
             epic_id=1,
             work_unit_id="S1",
+            project_key=KEY,
             repo_root=tmp_path,
         )
     )
@@ -300,10 +307,11 @@ def test_executor_dispatch_failure_exit_types_open_existing_crash_gate(
     exit_type: str,
     returncode: int,
 ) -> None:
-    _write_plan(tmp_path, 1)
-    _write_codebase_docs(tmp_path)
+    _write_plan(1)
+    _write_codebase_docs()
 
     def fake_dispatch(
+        project_key: str,
         repo_root: Path,
         role: str,
         epic_id: int,
@@ -323,6 +331,7 @@ def test_executor_dispatch_failure_exit_types_open_existing_crash_gate(
             node_type=NodeType.EXECUTOR_DISPATCH,
             epic_id=1,
             work_unit_id="S1",
+            project_key=KEY,
             repo_root=tmp_path,
         )
     )
@@ -330,7 +339,7 @@ def test_executor_dispatch_failure_exit_types_open_existing_crash_gate(
     assert output.status == NodeStatus.GATE_OPENED
     assert output.triggered_by == ["subprocess_crash"]
     assert output.message == f"{exit_type} failed"
-    gate_fm = _read_gate_fm(tmp_path / ".woof" / "epics" / "E1" / "gate.md")
+    gate_fm = _read_gate_fm(state.gate_path(KEY, 1))
     assert gate_fm["triggered_by"] == ["subprocess_crash"]
 
 
@@ -361,8 +370,8 @@ def _make_gh_rate_limit_stub(bin_dir: Path) -> dict[str, str]:
     }
 
 
-def _write_spark(root: Path, epic_id: int = 1) -> Path:
-    directory = root / ".woof" / "epics" / f"E{epic_id}"
+def _write_spark(epic_id: int = 1) -> Path:
+    directory = state.epic_dir(KEY, epic_id)
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "spark.md").write_text("Build a useful thing.\n")
     (directory / "epic.jsonl").write_text("")
@@ -430,12 +439,12 @@ def _init_git_repo(root: Path) -> None:
     _git(root, "init", check=True, capture_output=True)
     _git(root, "config", "user.email", "test@example.com", check=True)
     _git(root, "config", "user.name", "Test", check=True)
-    (root / ".gitignore").write_text(".woof/.current-epic\n")
+    (root / ".gitignore").write_text("*.tmp\n")
     _git(root, "add", ".gitignore", check=True, capture_output=True)
     _git(root, "commit", "-m", "chore: test repo setup", check=True, capture_output=True)
 
 
-def _write_profile_b_policy(root: Path, *, base_branch: str, push: bool = True) -> None:
+def _write_profile_b_policy(*, base_branch: str, push: bool = True) -> None:
     _seed_config(
         {
             "delivery": {"profile": "B", "base_branch": base_branch},
@@ -446,7 +455,7 @@ def _write_profile_b_policy(root: Path, *, base_branch: str, push: bool = True) 
     )
 
 
-def _write_profile_a_policy(root: Path, *, base_branch: str, ready_label: str = "ready") -> None:
+def _write_profile_a_policy(*, base_branch: str, ready_label: str = "ready") -> None:
     _seed_config(
         {
             "delivery": {"profile": "A", "base_branch": base_branch},
@@ -465,8 +474,8 @@ def _write_profile_a_policy(root: Path, *, base_branch: str, ready_label: str = 
     )
 
 
-def _write_codebase_docs(root: Path) -> None:
-    codebase_dir = root / ".woof" / "codebase"
+def _write_codebase_docs() -> None:
+    codebase_dir = state.codebase_dir(KEY)
     codebase_dir.mkdir(parents=True, exist_ok=True)
     for name in [
         "CURRENT-ARCHITECTURE.md",
@@ -483,7 +492,7 @@ def _write_codebase_docs(root: Path) -> None:
     (codebase_dir / "files.txt").write_text("")
 
 
-def _write_fix_round_budget(root: Path, max_rounds: int) -> None:
+def _write_fix_round_budget(max_rounds: int) -> None:
     _seed_config({"fix_rounds": {"max_rounds_per_blocker": max_rounds}})
 
 
@@ -622,7 +631,14 @@ def _write_last_sync(directory: Path, epic_id: int, *, body: str = "<previous>")
     )
 
 
-def _write_disposition(directory: Path, epic_id: int, work_unit_id: str = "S1") -> Path:
+def _write_disposition(directory: Path, work_unit_id: str = "S1") -> Path:
+    """Write a disposition the engine will validate.
+
+    ``critique_path`` is epic-relative (``work_unit_critique_ref``): the epic
+    directory is the operator home's, so a path anchored on the driven repo would
+    not match what the validator expects.
+    """
+
     disposition_dir = directory / "dispositions"
     disposition_dir.mkdir(exist_ok=True)
     path = disposition_dir / f"work-unit-{work_unit_id}.md"
@@ -630,7 +646,7 @@ def _write_disposition(directory: Path, epic_id: int, work_unit_id: str = "S1") 
         f"""---
 target: work_unit
 target_id: {work_unit_id}
-critique_path: .woof/epics/E{epic_id}/critique/work-unit-{work_unit_id}.md
+critique_path: critique/work-unit-{work_unit_id}.md
 severity: info
 timestamp: '2026-01-01T00:00:00Z'
 harness: test-primary
@@ -712,7 +728,7 @@ def _make_gh_completion_stub(bin_dir: Path) -> dict[str, str]:
 def _write_ready_commit_state(
     root: Path, epic_id: int = 1, commit_subject: str | None = None
 ) -> Path:
-    directory = _write_plan(root, epic_id)
+    directory = _write_plan(epic_id)
     plan = json.loads((directory / "plan.json").read_text())
     plan["work_units"][0]["state"] = "done"
     (directory / "plan.json").write_text(json.dumps(plan))
@@ -746,7 +762,7 @@ def _write_ready_commit_state(
         "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
         "findings: []\n---\n"
     )
-    _write_disposition(directory, epic_id, "S1")
+    _write_disposition(directory, "S1")
     audit_dir = directory / "audit"
     audit_dir.mkdir()
     (audit_dir / "cod-critiquer-1.prompt").write_text("prompt")
@@ -758,7 +774,7 @@ def _write_ready_commit_state(
 
 def _pin_ready_commit_verified_tree(root: Path, directory: Path, epic_id: int = 1) -> None:
     plan = Plan.model_validate_json((directory / "plan.json").read_text())
-    manifest = build_work_unit_manifest(root, epic_id, plan.work_units[0])
+    manifest = build_work_unit_manifest(root, plan.work_units[0])
     _git(root, "add", "--", *manifest.expected_paths, check=True, capture_output=True)
     check_result = json.loads((directory / "check-result.json").read_text())
     check_result["verified_tree"] = _git(
@@ -781,13 +797,13 @@ def _pin_ready_commit_verified_tree(root: Path, directory: Path, epic_id: int = 
 
 
 def test_graph_runs_executor_then_critique_then_verification_then_commit(tmp_path: Path) -> None:
-    _write_plan(tmp_path, 1)
+    _write_plan(1)
     seen: list[NodeType] = []
 
     def executor(inp: NodeInput) -> NodeOutput:
         seen.append(inp.node_type)
-        mark_work_unit_state(inp.repo_root, inp.epic_id, inp.work_unit_id or "", "in_progress")
-        (epic_dir(inp.repo_root, inp.epic_id) / "executor_result.json").write_text(
+        mark_work_unit_state(inp.project_key, inp.epic_id, inp.work_unit_id or "", "in_progress")
+        (epic_dir(inp.project_key, inp.epic_id) / "executor_result.json").write_text(
             json.dumps(
                 {
                     "epic_id": inp.epic_id,
@@ -807,7 +823,7 @@ def test_graph_runs_executor_then_critique_then_verification_then_commit(tmp_pat
 
     def critique(inp: NodeInput) -> NodeOutput:
         seen.append(inp.node_type)
-        critique_dir = epic_dir(inp.repo_root, inp.epic_id) / "critique"
+        critique_dir = epic_dir(inp.project_key, inp.epic_id) / "critique"
         critique_dir.mkdir()
         (critique_dir / f"work-unit-{inp.work_unit_id}.md").write_text(
             "---\ntarget: work_unit\ntarget_id: S1\nseverity: info\n"
@@ -822,9 +838,7 @@ def test_graph_runs_executor_then_critique_then_verification_then_commit(tmp_pat
 
     def disposition(inp: NodeInput) -> NodeOutput:
         seen.append(inp.node_type)
-        _write_disposition(
-            epic_dir(inp.repo_root, inp.epic_id), inp.epic_id, inp.work_unit_id or ""
-        )
+        _write_disposition(epic_dir(inp.project_key, inp.epic_id), inp.work_unit_id or "")
         return NodeOutput(
             node_type=inp.node_type,
             status=NodeStatus.COMPLETED,
@@ -834,7 +848,7 @@ def test_graph_runs_executor_then_critique_then_verification_then_commit(tmp_pat
 
     def verify(inp: NodeInput) -> NodeOutput:
         seen.append(inp.node_type)
-        (epic_dir(inp.repo_root, inp.epic_id) / "check-result.json").write_text(
+        (epic_dir(inp.project_key, inp.epic_id) / "check-result.json").write_text(
             json.dumps(
                 {
                     "ok": True,
@@ -855,8 +869,8 @@ def test_graph_runs_executor_then_critique_then_verification_then_commit(tmp_pat
 
     def commit(inp: NodeInput) -> NodeOutput:
         seen.append(inp.node_type)
-        mark_work_unit_state(inp.repo_root, inp.epic_id, inp.work_unit_id or "", "done")
-        directory = epic_dir(inp.repo_root, inp.epic_id)
+        mark_work_unit_state(inp.project_key, inp.epic_id, inp.work_unit_id or "", "done")
+        directory = epic_dir(inp.project_key, inp.epic_id)
         (directory / "executor_result.json").unlink(missing_ok=True)
         (directory / "check-result.json").unlink(missing_ok=True)
         return NodeOutput(
@@ -867,6 +881,7 @@ def test_graph_runs_executor_then_critique_then_verification_then_commit(tmp_pat
         )
 
     outputs = run_graph(
+        KEY,
         tmp_path,
         1,
         registry={
@@ -889,7 +904,7 @@ def test_graph_runs_executor_then_critique_then_verification_then_commit(tmp_pat
 
 
 def test_run_graph_refuses_live_workflow_lock(tmp_path: Path) -> None:
-    directory = _write_plan(tmp_path, 21)
+    directory = _write_plan(21)
     lock = directory / LOCK_FILENAME
     lock.write_text(
         json.dumps(
@@ -905,14 +920,14 @@ def test_run_graph_refuses_live_workflow_lock(tmp_path: Path) -> None:
     )
 
     with pytest.raises(WorkflowLockError) as exc:
-        run_graph(tmp_path, 21, once=True)
+        run_graph(KEY, tmp_path, 21, once=True)
 
     assert "E21 is already locked" in str(exc.value)
     assert lock.exists()
 
 
 def test_run_graph_removes_stale_workflow_lock_and_records_event(tmp_path: Path) -> None:
-    directory = _write_plan(tmp_path, 22)
+    directory = _write_plan(22)
     dead_process = subprocess.Popen(["true"])
     dead_process.wait(timeout=5)
     lock = directory / LOCK_FILENAME
@@ -938,6 +953,7 @@ def test_run_graph_removes_stale_workflow_lock_and_records_event(tmp_path: Path)
         )
 
     outputs = run_graph(
+        KEY,
         tmp_path,
         22,
         once=True,
@@ -956,7 +972,6 @@ def test_run_graph_removes_stale_workflow_lock_and_records_event(tmp_path: Path)
 
 def test_run_graph_drains_one_work_unit_per_cycle_in_topological_order(tmp_path: Path) -> None:
     _write_plan_units(
-        tmp_path,
         24,
         [
             _work_unit("S1"),
@@ -967,8 +982,8 @@ def test_run_graph_drains_one_work_unit_per_cycle_in_topological_order(tmp_path:
 
     def executor(inp: NodeInput) -> NodeOutput:
         seen.append((inp.node_type, inp.work_unit_id))
-        directory = epic_dir(inp.repo_root, inp.epic_id)
-        mark_work_unit_state(inp.repo_root, inp.epic_id, inp.work_unit_id or "", "in_progress")
+        directory = epic_dir(inp.project_key, inp.epic_id)
+        mark_work_unit_state(inp.project_key, inp.epic_id, inp.work_unit_id or "", "in_progress")
         (directory / "executor_result.json").write_text(
             json.dumps(
                 {
@@ -990,7 +1005,7 @@ def test_run_graph_drains_one_work_unit_per_cycle_in_topological_order(tmp_path:
     def complete_node(inp: NodeInput) -> NodeOutput:
         seen.append((inp.node_type, inp.work_unit_id))
         if inp.node_type == NodeType.CRITIQUE_DISPATCH:
-            critique_dir = epic_dir(inp.repo_root, inp.epic_id) / "critique"
+            critique_dir = epic_dir(inp.project_key, inp.epic_id) / "critique"
             critique_dir.mkdir(exist_ok=True)
             (critique_dir / f"work-unit-{inp.work_unit_id}.md").write_text(
                 "---\n"
@@ -1004,18 +1019,14 @@ def test_run_graph_drains_one_work_unit_per_cycle_in_topological_order(tmp_path:
                 "Looks good.\n"
             )
         elif inp.node_type == NodeType.REVIEW_DISPOSITION:
-            _write_disposition(
-                epic_dir(inp.repo_root, inp.epic_id),
-                inp.epic_id,
-                inp.work_unit_id or "",
-            )
+            _write_disposition(epic_dir(inp.project_key, inp.epic_id), inp.work_unit_id or "")
         elif inp.node_type == NodeType.VERIFICATION:
-            (epic_dir(inp.repo_root, inp.epic_id) / "check-result.json").write_text(
+            (epic_dir(inp.project_key, inp.epic_id) / "check-result.json").write_text(
                 json.dumps({"ok": True})
             )
         elif inp.node_type == NodeType.COMMIT:
-            mark_work_unit_state(inp.repo_root, inp.epic_id, inp.work_unit_id or "", "done")
-            directory = epic_dir(inp.repo_root, inp.epic_id)
+            mark_work_unit_state(inp.project_key, inp.epic_id, inp.work_unit_id or "", "done")
+            directory = epic_dir(inp.project_key, inp.epic_id)
             (directory / "executor_result.json").unlink(missing_ok=True)
             (directory / "check-result.json").unlink(missing_ok=True)
         return NodeOutput(
@@ -1026,6 +1037,7 @@ def test_run_graph_drains_one_work_unit_per_cycle_in_topological_order(tmp_path:
         )
 
     outputs = run_graph(
+        KEY,
         tmp_path,
         24,
         registry={
@@ -1051,7 +1063,6 @@ def test_run_graph_drains_one_work_unit_per_cycle_in_topological_order(tmp_path:
 
 def test_run_graph_reports_blocked_downstream_after_commit(tmp_path: Path) -> None:
     directory = _write_plan_units(
-        tmp_path,
         25,
         [
             _work_unit("S0", state="abandoned"),
@@ -1084,13 +1095,13 @@ def test_run_graph_reports_blocked_downstream_after_commit(tmp_path: Path) -> No
         "---\n"
         "Looks good.\n"
     )
-    _write_disposition(directory, 25, "S1")
+    _write_disposition(directory, "S1")
     (directory / "check-result.json").write_text(json.dumps({"ok": True}))
 
     def commit(inp: NodeInput) -> NodeOutput:
-        mark_work_unit_state(inp.repo_root, inp.epic_id, inp.work_unit_id or "", "done")
-        (epic_dir(inp.repo_root, inp.epic_id) / "executor_result.json").unlink(missing_ok=True)
-        (epic_dir(inp.repo_root, inp.epic_id) / "check-result.json").unlink(missing_ok=True)
+        mark_work_unit_state(inp.project_key, inp.epic_id, inp.work_unit_id or "", "done")
+        (epic_dir(inp.project_key, inp.epic_id) / "executor_result.json").unlink(missing_ok=True)
+        (epic_dir(inp.project_key, inp.epic_id) / "check-result.json").unlink(missing_ok=True)
         return NodeOutput(
             node_type=inp.node_type,
             status=NodeStatus.COMPLETED,
@@ -1098,13 +1109,57 @@ def test_run_graph_reports_blocked_downstream_after_commit(tmp_path: Path) -> No
             work_unit_id=inp.work_unit_id,
         )
 
-    outputs = run_graph(tmp_path, 25, registry={NodeType.COMMIT: commit})
+    outputs = run_graph(KEY, tmp_path, 25, registry={NodeType.COMMIT: commit})
 
     assert [output.node_type for output in outputs] == [NodeType.COMMIT, NodeType.PLAN_GATE_OPEN]
     assert outputs[-1].status == NodeStatus.GATE_OPENED
     assert "blocked work units: S2 (deps not done: S0)" in outputs[-1].message
     assert "downstream pending: S2 -> S3" in outputs[-1].message
     assert (directory / "gate.md").is_file()
+
+
+def test_run_graph_halts_when_a_node_leaves_the_state_it_reads_unchanged(tmp_path: Path) -> None:
+    """A node whose write lands outside the state root must halt the run, not spin it.
+
+    ``next_node`` is a pure function of the epic state plus the delivery checkout, so
+    a handler that writes somewhere neither of them covers leaves the graph re-entering
+    the same node forever. Here the executor writes its result into a directory outside
+    the state root, standing for any write that misses the path the reader resolves.
+    """
+
+    _write_plan(30)
+    stale_dir = tmp_path / "outside-the-state-root"
+    stale_dir.mkdir()
+    dispatched: list[str] = []
+
+    def executor(inp: NodeInput) -> NodeOutput:
+        dispatched.append(inp.work_unit_id or "")
+        (stale_dir / "executor_result.json").write_text(
+            json.dumps(
+                {
+                    "epic_id": inp.epic_id,
+                    "work_unit_id": inp.work_unit_id,
+                    "outcome": "staged_for_verification",
+                    "position": None,
+                }
+            )
+        )
+        return NodeOutput(
+            node_type=inp.node_type,
+            status=NodeStatus.COMPLETED,
+            epic_id=inp.epic_id,
+            work_unit_id=inp.work_unit_id,
+        )
+
+    with pytest.raises(GraphNoProgressError) as exc:
+        run_graph(KEY, tmp_path, 30, registry={NodeType.EXECUTOR_DISPATCH: executor})
+
+    message = str(exc.value)
+    assert "E30 made no progress" in message
+    assert "executor_dispatch" in message
+    assert "work unit S1" in message
+    # The runner halts before re-entering the node, rather than dispatching it forever.
+    assert dispatched == ["S1"]
 
 
 def test_drain_status_reports_blocked_and_downstream_from_validated_order() -> None:
@@ -1131,8 +1186,8 @@ def test_drain_status_reports_blocked_and_downstream_from_validated_order() -> N
 def test_profile_a_worktree_preflight_failure_blocks_dispatch_without_mutation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _write_plan_units(tmp_path, 27, [_work_unit("S1")])
-    _write_profile_a_policy(tmp_path, base_branch="main")
+    _write_plan_units(27, [_work_unit("S1")])
+    _write_profile_a_policy(base_branch="main")
     dispatched = False
 
     def executor(inp: NodeInput) -> NodeOutput:
@@ -1148,6 +1203,7 @@ def test_profile_a_worktree_preflight_failure_blocks_dispatch_without_mutation(
     monkeypatch.setattr(nodes, "_require_cartography_docs", lambda *args, **kwargs: [])
 
     outputs = run_graph(
+        KEY,
         tmp_path,
         27,
         registry={NodeType.EXECUTOR_DISPATCH: executor},
@@ -1164,8 +1220,8 @@ def test_profile_a_worktree_preflight_failure_blocks_dispatch_without_mutation(
 
 def test_wf_reports_live_workflow_lock(tmp_path: Path) -> None:
     _init_git_checkout(tmp_path)
-    _write_tracker_prerequisites(tmp_path)
-    directory = _write_plan(tmp_path, 23)
+    _write_tracker_prerequisites()
+    directory = _write_plan(23)
     _write_last_sync(directory, 23)
     lock = directory / LOCK_FILENAME
     lock.write_text(
@@ -1231,6 +1287,7 @@ def test_dispatch_helper_uses_role_route_without_provider_target(
     monkeypatch.setattr(nodes.subprocess, "run", fake_run)
 
     result = nodes._run_dispatch(
+        KEY,
         tmp_path,
         role="primary",
         epic_id=1,
@@ -1290,6 +1347,7 @@ def test_run_dispatch_appends_route_key_to_argv(
     monkeypatch.setattr(nodes.subprocess, "run", fake_run)
 
     nodes._run_dispatch(
+        KEY,
         tmp_path,
         role="primary",
         epic_id=1,
@@ -1338,6 +1396,7 @@ def test_run_dispatch_appends_session_mode_to_argv(
     monkeypatch.setattr(nodes.subprocess, "run", fake_run)
 
     nodes._run_dispatch(
+        KEY,
         tmp_path,
         role="primary",
         epic_id=1,
@@ -1387,6 +1446,7 @@ def test_run_dispatch_omits_route_key_from_argv_when_none(
     monkeypatch.setattr(nodes.subprocess, "run", fake_run)
 
     nodes._run_dispatch(
+        KEY,
         tmp_path,
         role="primary",
         epic_id=1,
@@ -1477,21 +1537,21 @@ def test_dispatch_consumers_route_results_through_shared_classifier() -> None:
 
 
 def test_pre_plan_transition_enters_discovery_when_spark_exists(tmp_path: Path) -> None:
-    _write_spark(tmp_path, 21)
+    _write_spark(21)
 
-    assert next_node(tmp_path, 21) == (NodeType.DISCOVERY_RESEARCH, None)
+    assert next_node(KEY, tmp_path, 21) == (NodeType.DISCOVERY_RESEARCH, None)
 
 
 def test_pre_plan_transition_walks_discovery_buckets_before_synthesis(tmp_path: Path) -> None:
-    directory = _write_spark(tmp_path, 210)
+    directory = _write_spark(210)
 
-    assert next_node(tmp_path, 210) == (NodeType.DISCOVERY_RESEARCH, None)
+    assert next_node(KEY, tmp_path, 210) == (NodeType.DISCOVERY_RESEARCH, None)
     _write_discovery_bucket(directory, "research")
-    assert next_node(tmp_path, 210) == (NodeType.DISCOVERY_THINKING, None)
+    assert next_node(KEY, tmp_path, 210) == (NodeType.DISCOVERY_THINKING, None)
     _write_discovery_bucket(directory, "thinking")
-    assert next_node(tmp_path, 210) == (NodeType.DISCOVERY_IDEATE, None)
+    assert next_node(KEY, tmp_path, 210) == (NodeType.DISCOVERY_IDEATE, None)
     _write_discovery_bucket(directory, "ideate")
-    assert next_node(tmp_path, 210) == (NodeType.DISCOVERY_SYNTHESIS, None)
+    assert next_node(KEY, tmp_path, 210) == (NodeType.DISCOVERY_SYNTHESIS, None)
 
 
 def test_pre_plan_transition_skips_headless_chain_when_accepted_bundle_present(
@@ -1499,9 +1559,9 @@ def test_pre_plan_transition_skips_headless_chain_when_accepted_bundle_present(
 ) -> None:
     # An accepted interactive brainstorm bundle (the woof-brainstorm skill) stands in
     # for the headless research/thinking/ideate chain; the graph goes to synthesis.
-    directory = _write_spark(tmp_path, 211)
+    directory = _write_spark(211)
     _write_brainstorm_bundle(directory, status="accepted")
-    assert next_node(tmp_path, 211) == (NodeType.DISCOVERY_SYNTHESIS, None)
+    assert next_node(KEY, tmp_path, 211) == (NodeType.DISCOVERY_SYNTHESIS, None)
 
 
 def test_pre_plan_transition_does_not_skip_on_unaccepted_brainstorm_bucket(
@@ -1509,12 +1569,12 @@ def test_pre_plan_transition_does_not_skip_on_unaccepted_brainstorm_bucket(
 ) -> None:
     # A partial write (no front-matter) or a rejected back-edge bundle must NOT
     # short-circuit the headless chain; only a resolved status: accepted bundle does.
-    directory = _write_spark(tmp_path, 212)
+    directory = _write_spark(212)
     _write_discovery_bucket(directory, "brainstorm")  # plain markdown, no front-matter
-    assert next_node(tmp_path, 212) == (NodeType.DISCOVERY_RESEARCH, None)
+    assert next_node(KEY, tmp_path, 212) == (NodeType.DISCOVERY_RESEARCH, None)
 
     _write_brainstorm_bundle(directory, status="rejected")  # back-edge, not accepted
-    assert next_node(tmp_path, 212) == (NodeType.DISCOVERY_RESEARCH, None)
+    assert next_node(KEY, tmp_path, 212) == (NodeType.DISCOVERY_RESEARCH, None)
 
 
 def test_brainstorm_bundle_is_a_synthesis_source(tmp_path: Path) -> None:
@@ -1524,20 +1584,21 @@ def test_brainstorm_bundle_is_a_synthesis_source(tmp_path: Path) -> None:
     # definition -> breakdown chain rather than mechanically carrying work_units[].
     from woof.graph.nodes import _discovery_source_paths
 
-    directory = _write_spark(tmp_path, 213)
+    directory = _write_spark(213)
     _write_brainstorm_bundle(directory, status="accepted")
-    sources = _discovery_source_paths(tmp_path, 213)
+    sources = _discovery_source_paths(KEY, 213)
     assert any(path.endswith("discovery/brainstorm/DESIGN.md") for path in sources)
 
 
 def test_discovery_research_node_dispatches_primary_and_bundles_playbooks(
     tmp_path: Path, monkeypatch
 ) -> None:
-    directory = _write_spark(tmp_path, 220)
-    _write_codebase_docs(tmp_path)
+    directory = _write_spark(220)
+    _write_codebase_docs()
     captured: dict[str, Any] = {}
 
     def fake_dispatch(
+        project_key: str,
         repo_root: Path,
         role: str,
         epic_id: int,
@@ -1555,7 +1616,12 @@ def test_discovery_research_node_dispatches_primary_and_bundles_playbooks(
     monkeypatch.setattr(nodes, "_run_dispatch", fake_dispatch)
 
     output = nodes.discovery_research_node(
-        NodeInput(node_type=NodeType.DISCOVERY_RESEARCH, epic_id=220, repo_root=tmp_path)
+        NodeInput(
+            node_type=NodeType.DISCOVERY_RESEARCH,
+            epic_id=220,
+            project_key=KEY,
+            repo_root=tmp_path,
+        )
     )
 
     assert captured["role"] == "primary"
@@ -1567,16 +1633,16 @@ def test_discovery_research_node_dispatches_primary_and_bundles_playbooks(
     assert "AskUserQuestion" not in captured["prompt"]
     assert captured["artefacts_loaded"] == [
         ".woof/epics/E220/spark.md",
-        ".woof/codebase/STACK.md",
-        ".woof/codebase/INTEGRATIONS.md",
-        ".woof/codebase/CONCERNS.md",
+        "STACK.md",
+        "INTEGRATIONS.md",
+        "CONCERNS.md",
     ]
     assert output.status == NodeStatus.COMPLETED
     assert output.next_node == NodeType.DISCOVERY_THINKING
     assert output.validation_summary and output.validation_summary.stage == 1
     assert output.paths == [".woof/epics/E220/discovery/research/research.md"]
     _assert_planning_node_input_schema(
-        tmp_path, nodes._discovery_bucket_payload(tmp_path, 220, "research")
+        tmp_path, nodes._discovery_bucket_payload(KEY, tmp_path, 220, "research")
     )
     _assert_node_output_schema(tmp_path, json.loads(output.model_dump_json()))
     events = [json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines()]
@@ -1587,10 +1653,11 @@ def test_discovery_research_node_dispatches_primary_and_bundles_playbooks(
 def test_discovery_dispatch_completed_lingering_advances(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    directory = _write_spark(tmp_path, 225)
-    _write_codebase_docs(tmp_path)
+    directory = _write_spark(225)
+    _write_codebase_docs()
 
     def fake_dispatch(
+        project_key: str,
         repo_root: Path,
         role: str,
         epic_id: int,
@@ -1606,9 +1673,9 @@ def test_discovery_dispatch_completed_lingering_advances(
         assert '"node_type": "discovery_research"' in prompt
         assert artefacts_loaded == [
             ".woof/epics/E225/spark.md",
-            ".woof/codebase/STACK.md",
-            ".woof/codebase/INTEGRATIONS.md",
-            ".woof/codebase/CONCERNS.md",
+            "STACK.md",
+            "INTEGRATIONS.md",
+            "CONCERNS.md",
         ]
         _write_discovery_bucket(directory, "research")
         return _dispatch_result("completed_lingering")
@@ -1616,7 +1683,12 @@ def test_discovery_dispatch_completed_lingering_advances(
     monkeypatch.setattr(nodes, "_run_dispatch", fake_dispatch)
 
     output = nodes.discovery_research_node(
-        NodeInput(node_type=NodeType.DISCOVERY_RESEARCH, epic_id=225, repo_root=tmp_path)
+        NodeInput(
+            node_type=NodeType.DISCOVERY_RESEARCH,
+            epic_id=225,
+            project_key=KEY,
+            repo_root=tmp_path,
+        )
     )
 
     assert output.status == NodeStatus.COMPLETED
@@ -1625,12 +1697,13 @@ def test_discovery_dispatch_completed_lingering_advances(
 
 
 def test_discovery_thinking_node_passes_prior_bucket_artefacts(tmp_path: Path, monkeypatch) -> None:
-    directory = _write_spark(tmp_path, 224)
+    directory = _write_spark(224)
     _write_discovery_bucket(directory, "research")
-    _write_codebase_docs(tmp_path)
+    _write_codebase_docs()
     captured: dict[str, Any] = {}
 
     def fake_dispatch(
+        project_key: str,
         repo_root: Path,
         role: str,
         epic_id: int,
@@ -1646,14 +1719,19 @@ def test_discovery_thinking_node_passes_prior_bucket_artefacts(tmp_path: Path, m
     monkeypatch.setattr(nodes, "_run_dispatch", fake_dispatch)
 
     output = nodes.discovery_thinking_node(
-        NodeInput(node_type=NodeType.DISCOVERY_THINKING, epic_id=224, repo_root=tmp_path)
+        NodeInput(
+            node_type=NodeType.DISCOVERY_THINKING,
+            epic_id=224,
+            project_key=KEY,
+            repo_root=tmp_path,
+        )
     )
 
     assert captured["artefacts_loaded"] == [
         ".woof/epics/E224/spark.md",
         ".woof/epics/E224/discovery/research/research.md",
-        ".woof/codebase/CURRENT-ARCHITECTURE.md",
-        ".woof/codebase/STRUCTURE.md",
+        "CURRENT-ARCHITECTURE.md",
+        "STRUCTURE.md",
     ]
     assert output.status == NodeStatus.COMPLETED
     assert output.next_node == NodeType.DISCOVERY_IDEATE
@@ -1662,7 +1740,7 @@ def test_discovery_thinking_node_passes_prior_bucket_artefacts(tmp_path: Path, m
 def test_discovery_bucket_node_skips_dispatch_when_already_populated(
     tmp_path: Path, monkeypatch
 ) -> None:
-    directory = _write_spark(tmp_path, 221)
+    directory = _write_spark(221)
     _write_discovery_bucket(directory, "thinking")
 
     def fail_dispatch(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -1671,7 +1749,12 @@ def test_discovery_bucket_node_skips_dispatch_when_already_populated(
     monkeypatch.setattr(nodes, "_run_dispatch", fail_dispatch)
 
     output = nodes.discovery_thinking_node(
-        NodeInput(node_type=NodeType.DISCOVERY_THINKING, epic_id=221, repo_root=tmp_path)
+        NodeInput(
+            node_type=NodeType.DISCOVERY_THINKING,
+            epic_id=221,
+            project_key=KEY,
+            repo_root=tmp_path,
+        )
     )
 
     assert output.status == NodeStatus.COMPLETED
@@ -1681,8 +1764,8 @@ def test_discovery_bucket_node_skips_dispatch_when_already_populated(
 def test_discovery_bucket_node_halts_when_no_artefacts_produced(
     tmp_path: Path, monkeypatch
 ) -> None:
-    _write_spark(tmp_path, 222)
-    _write_codebase_docs(tmp_path)
+    _write_spark(222)
+    _write_codebase_docs()
 
     def empty_dispatch(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess([], 0, "", "")
@@ -1690,7 +1773,12 @@ def test_discovery_bucket_node_halts_when_no_artefacts_produced(
     monkeypatch.setattr(nodes, "_run_dispatch", empty_dispatch)
 
     output = nodes.discovery_ideate_node(
-        NodeInput(node_type=NodeType.DISCOVERY_IDEATE, epic_id=222, repo_root=tmp_path)
+        NodeInput(
+            node_type=NodeType.DISCOVERY_IDEATE,
+            epic_id=222,
+            project_key=KEY,
+            repo_root=tmp_path,
+        )
     )
 
     assert output.status == NodeStatus.HALTED
@@ -1698,11 +1786,12 @@ def test_discovery_bucket_node_halts_when_no_artefacts_produced(
 
 
 def test_discovery_ideate_node_bundles_no_building_blocks(tmp_path: Path, monkeypatch) -> None:
-    directory = _write_spark(tmp_path, 223)
-    _write_codebase_docs(tmp_path)
+    directory = _write_spark(223)
+    _write_codebase_docs()
     captured: dict[str, Any] = {}
 
     def fake_dispatch(
+        project_key: str,
         repo_root: Path,
         role: str,
         epic_id: int,
@@ -1718,7 +1807,12 @@ def test_discovery_ideate_node_bundles_no_building_blocks(tmp_path: Path, monkey
     monkeypatch.setattr(nodes, "_run_dispatch", fake_dispatch)
 
     output = nodes.discovery_ideate_node(
-        NodeInput(node_type=NodeType.DISCOVERY_IDEATE, epic_id=223, repo_root=tmp_path)
+        NodeInput(
+            node_type=NodeType.DISCOVERY_IDEATE,
+            epic_id=223,
+            project_key=KEY,
+            repo_root=tmp_path,
+        )
     )
 
     assert '"node_type": "discovery_ideate"' in captured["prompt"]
@@ -1730,11 +1824,12 @@ def test_discovery_ideate_node_bundles_no_building_blocks(tmp_path: Path, monkey
 def test_discovery_synthesis_node_dispatches_primary_and_validates_outputs(
     tmp_path: Path, monkeypatch
 ) -> None:
-    directory = _write_spark(tmp_path, 22)
-    _write_codebase_docs(tmp_path)
+    directory = _write_spark(22)
+    _write_codebase_docs()
     captured: dict[str, Any] = {}
 
     def fake_dispatch(
+        project_key: str,
         repo_root: Path,
         role: str,
         epic_id: int,
@@ -1758,6 +1853,7 @@ def test_discovery_synthesis_node_dispatches_primary_and_validates_outputs(
         NodeInput(
             node_type=NodeType.DISCOVERY_SYNTHESIS,
             epic_id=22,
+            project_key=KEY,
             repo_root=tmp_path,
         )
     )
@@ -1769,22 +1865,22 @@ def test_discovery_synthesis_node_dispatches_primary_and_validates_outputs(
     assert '"node_type": "discovery_synthesis"' in captured["prompt"]
     assert captured["artefacts_loaded"] == [
         ".woof/epics/E22/spark.md",
-        ".woof/codebase/CURRENT-ARCHITECTURE.md",
-        ".woof/codebase/STACK.md",
-        ".woof/codebase/INTEGRATIONS.md",
-        ".woof/codebase/STRUCTURE.md",
-        ".woof/codebase/CONVENTIONS.md",
-        ".woof/codebase/TESTING.md",
-        ".woof/codebase/CONCERNS.md",
-        ".woof/codebase/TARGET-ARCHITECTURE.md",
-        ".woof/codebase/PRINCIPLES.md",
+        "CURRENT-ARCHITECTURE.md",
+        "STACK.md",
+        "INTEGRATIONS.md",
+        "STRUCTURE.md",
+        "CONVENTIONS.md",
+        "TESTING.md",
+        "CONCERNS.md",
+        "TARGET-ARCHITECTURE.md",
+        "PRINCIPLES.md",
     ]
     from woof.graph.epilogue import DISPATCH_DENIAL_EPILOGUE
 
     assert DISPATCH_DENIAL_EPILOGUE.strip() in captured["prompt"]
     _assert_planning_node_input_schema(
         tmp_path,
-        nodes._discovery_synthesis_payload(tmp_path, 22),
+        nodes._discovery_synthesis_payload(KEY, tmp_path, 22),
     )
     assert output.status == NodeStatus.COMPLETED
     assert output.next_node == NodeType.EPIC_DEFINITION
@@ -1803,7 +1899,7 @@ def test_discovery_synthesis_node_dispatches_primary_and_validates_outputs(
 def test_discovery_synthesis_node_validates_existing_outputs_without_dispatch(
     tmp_path: Path, monkeypatch
 ) -> None:
-    directory = _write_spark(tmp_path, 23)
+    directory = _write_spark(23)
     _write_discovery_synthesis(directory)
 
     def fail_dispatch(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -1815,6 +1911,7 @@ def test_discovery_synthesis_node_validates_existing_outputs_without_dispatch(
         NodeInput(
             node_type=NodeType.DISCOVERY_SYNTHESIS,
             epic_id=23,
+            project_key=KEY,
             repo_root=tmp_path,
         )
     )
@@ -1824,7 +1921,7 @@ def test_discovery_synthesis_node_validates_existing_outputs_without_dispatch(
 
 
 def test_discovery_synthesis_node_rejects_missing_problem_framing(tmp_path: Path) -> None:
-    directory = _write_spark(tmp_path, 230)
+    directory = _write_spark(230)
     _write_discovery_synthesis(directory)
     (directory / "discovery" / "synthesis" / "CONCEPT.md").write_text(
         "# Concept\n\nUseful but missing the required section.\n"
@@ -1834,6 +1931,7 @@ def test_discovery_synthesis_node_rejects_missing_problem_framing(tmp_path: Path
         NodeInput(
             node_type=NodeType.DISCOVERY_SYNTHESIS,
             epic_id=230,
+            project_key=KEY,
             repo_root=tmp_path,
         )
     )
@@ -1846,7 +1944,7 @@ def test_discovery_synthesis_node_rejects_missing_problem_framing(tmp_path: Path
 def test_discovery_synthesis_node_rejects_open_question_without_deferral_reason(
     tmp_path: Path,
 ) -> None:
-    directory = _write_spark(tmp_path, 231)
+    directory = _write_spark(231)
     _write_discovery_synthesis(directory)
     (directory / "discovery" / "synthesis" / "OPEN_QUESTIONS.md").write_text(
         "# Open Questions\n\n## OQ1 - Which rollout path should be used?\n\n"
@@ -1856,6 +1954,7 @@ def test_discovery_synthesis_node_rejects_open_question_without_deferral_reason(
         NodeInput(
             node_type=NodeType.DISCOVERY_SYNTHESIS,
             epic_id=231,
+            project_key=KEY,
             repo_root=tmp_path,
         )
     )
@@ -1869,12 +1968,13 @@ def test_discovery_synthesis_node_rejects_open_question_without_deferral_reason(
 def test_epic_definition_node_dispatches_primary_validates_epic_and_continues(
     tmp_path: Path, monkeypatch
 ) -> None:
-    directory = _write_spark(tmp_path, 24)
+    directory = _write_spark(24)
     _write_discovery_synthesis(directory)
-    _write_codebase_docs(tmp_path)
+    _write_codebase_docs()
     captured: dict[str, Any] = {}
 
     def fake_dispatch(
+        project_key: str,
         repo_root: Path,
         role: str,
         epic_id: int,
@@ -1898,6 +1998,7 @@ def test_epic_definition_node_dispatches_primary_validates_epic_and_continues(
         NodeInput(
             node_type=NodeType.EPIC_DEFINITION,
             epic_id=24,
+            project_key=KEY,
             repo_root=tmp_path,
         )
     )
@@ -1912,15 +2013,15 @@ def test_epic_definition_node_dispatches_primary_validates_epic_and_continues(
         ".woof/epics/E24/discovery/synthesis/PRINCIPLES.md",
         ".woof/epics/E24/discovery/synthesis/ARCHITECTURE.md",
         ".woof/epics/E24/discovery/synthesis/OPEN_QUESTIONS.md",
-        ".woof/codebase/CURRENT-ARCHITECTURE.md",
-        ".woof/codebase/STRUCTURE.md",
-        ".woof/codebase/CONCERNS.md",
-        ".woof/codebase/TARGET-ARCHITECTURE.md",
-        ".woof/codebase/PRINCIPLES.md",
+        "CURRENT-ARCHITECTURE.md",
+        "STRUCTURE.md",
+        "CONCERNS.md",
+        "TARGET-ARCHITECTURE.md",
+        "PRINCIPLES.md",
     ]
     _assert_planning_node_input_schema(
         tmp_path,
-        nodes._epic_definition_payload(tmp_path, 24),
+        nodes._epic_definition_payload(KEY, tmp_path, 24),
     )
     assert output.status == NodeStatus.COMPLETED
     assert output.next_node == NodeType.CONTRACT_READINESS
@@ -1933,7 +2034,7 @@ def test_epic_definition_node_dispatches_primary_validates_epic_and_continues(
 
 
 def test_epic_definition_node_rechecks_existing_discovery_contract(tmp_path: Path) -> None:
-    directory = _write_spark(tmp_path, 239)
+    directory = _write_spark(239)
     _write_discovery_synthesis(directory)
     (directory / "discovery" / "synthesis" / "CONCEPT.md").write_text("# Concept\n")
 
@@ -1941,6 +2042,7 @@ def test_epic_definition_node_rechecks_existing_discovery_contract(tmp_path: Pat
         NodeInput(
             node_type=NodeType.EPIC_DEFINITION,
             epic_id=239,
+            project_key=KEY,
             repo_root=tmp_path,
         )
     )
@@ -1951,7 +2053,7 @@ def test_epic_definition_node_rechecks_existing_discovery_contract(tmp_path: Pat
 
 
 def test_epic_definition_node_requires_open_question_resolution(tmp_path: Path) -> None:
-    directory = _write_spark(tmp_path, 240)
+    directory = _write_spark(240)
     _write_discovery_synthesis_with_open_question(directory)
     _write_minimal_epic(directory, 240)
 
@@ -1959,6 +2061,7 @@ def test_epic_definition_node_requires_open_question_resolution(tmp_path: Path) 
         NodeInput(
             node_type=NodeType.EPIC_DEFINITION,
             epic_id=240,
+            project_key=KEY,
             repo_root=tmp_path,
         )
     )
@@ -1970,7 +2073,7 @@ def test_epic_definition_node_requires_open_question_resolution(tmp_path: Path) 
 
 
 def test_epic_definition_node_accepts_resolved_open_question(tmp_path: Path) -> None:
-    directory = _write_spark(tmp_path, 241)
+    directory = _write_spark(241)
     _write_discovery_synthesis_with_open_question(directory)
     _write_epic_with_resolved_open_question(directory, 241)
 
@@ -1978,6 +2081,7 @@ def test_epic_definition_node_accepts_resolved_open_question(tmp_path: Path) -> 
         NodeInput(
             node_type=NodeType.EPIC_DEFINITION,
             epic_id=241,
+            project_key=KEY,
             repo_root=tmp_path,
         )
     )
@@ -1987,13 +2091,14 @@ def test_epic_definition_node_accepts_resolved_open_question(tmp_path: Path) -> 
 
 
 def test_epic_definition_node_halts_on_invalid_existing_epic(tmp_path: Path) -> None:
-    directory = _write_spark(tmp_path, 25)
+    directory = _write_spark(25)
     directory.joinpath("EPIC.md").write_text("---\nepic_id: 25\n---\n")
 
     output = nodes.epic_definition_node(
         NodeInput(
             node_type=NodeType.EPIC_DEFINITION,
             epic_id=25,
+            project_key=KEY,
             repo_root=tmp_path,
         )
     )
@@ -2007,12 +2112,13 @@ def test_epic_definition_node_halts_on_invalid_existing_epic(tmp_path: Path) -> 
 def test_breakdown_planning_node_dispatches_primary_validates_plan_and_renders_markdown(
     tmp_path: Path, monkeypatch
 ) -> None:
-    directory = _write_spark(tmp_path, 26)
+    directory = _write_spark(26)
     _write_minimal_epic(directory, 26)
-    _write_codebase_docs(tmp_path)
+    _write_codebase_docs()
     captured: dict[str, Any] = {}
 
     def fake_dispatch(
+        project_key: str,
         repo_root: Path,
         role: str,
         epic_id: int,
@@ -2036,6 +2142,7 @@ def test_breakdown_planning_node_dispatches_primary_validates_plan_and_renders_m
         NodeInput(
             node_type=NodeType.BREAKDOWN_PLANNING,
             epic_id=26,
+            project_key=KEY,
             repo_root=tmp_path,
         )
     )
@@ -2047,16 +2154,16 @@ def test_breakdown_planning_node_dispatches_primary_validates_plan_and_renders_m
     assert '"node_type": "breakdown_planning"' in captured["prompt"]
     assert captured["artefacts_loaded"] == [
         ".woof/epics/E26/EPIC.md",
-        ".woof/codebase/CURRENT-ARCHITECTURE.md",
-        ".woof/codebase/STRUCTURE.md",
-        ".woof/codebase/TARGET-ARCHITECTURE.md",
-        ".woof/codebase/PRINCIPLES.md",
+        "CURRENT-ARCHITECTURE.md",
+        "STRUCTURE.md",
+        "TARGET-ARCHITECTURE.md",
+        "PRINCIPLES.md",
     ]
     assert "Right-sized work units" in captured["prompt"]
     assert "Do not author `PLAN.md`" in captured["prompt"]
     _assert_planning_node_input_schema(
         tmp_path,
-        nodes._breakdown_planning_payload(tmp_path, 26),
+        nodes._breakdown_planning_payload(KEY, tmp_path, 26),
     )
     assert output.status == NodeStatus.COMPLETED
     assert output.next_node == NodeType.PLAN_CRITIQUE
@@ -2072,12 +2179,13 @@ def test_breakdown_planning_node_dispatches_primary_validates_plan_and_renders_m
 def test_breakdown_planning_node_rejects_crossref_invalid_plan_before_critique(
     tmp_path: Path, monkeypatch
 ) -> None:
-    directory = _write_spark(tmp_path, 260)
+    directory = _write_spark(260)
     _write_minimal_epic(directory, 260)
-    _write_codebase_docs(tmp_path)
+    _write_codebase_docs()
     captured: dict[str, Any] = {}
 
     def fake_dispatch(
+        project_key: str,
         repo_root: Path,
         role: str,
         epic_id: int,
@@ -2099,6 +2207,7 @@ def test_breakdown_planning_node_rejects_crossref_invalid_plan_before_critique(
         NodeInput(
             node_type=NodeType.BREAKDOWN_PLANNING,
             epic_id=260,
+            project_key=KEY,
             repo_root=tmp_path,
         )
     )
@@ -2113,14 +2222,15 @@ def test_breakdown_planning_node_rejects_crossref_invalid_plan_before_critique(
 def test_plan_critique_node_dispatches_reviewer_validates_critique_and_halts(
     tmp_path: Path, monkeypatch
 ) -> None:
-    directory = _write_spark(tmp_path, 27)
+    directory = _write_spark(27)
     _write_minimal_epic(directory, 27)
     _write_stage3_plan(directory, 27)
-    _write_codebase_docs(tmp_path)
-    (directory / "PLAN.md").write_text(nodes._render_plan_markdown(nodes.load_plan(tmp_path, 27)))
+    _write_codebase_docs()
+    (directory / "PLAN.md").write_text(nodes._render_plan_markdown(nodes.load_plan(KEY, 27)))
     captured: dict[str, Any] = {}
 
     def fake_dispatch(
+        project_key: str,
         repo_root: Path,
         role: str,
         epic_id: int,
@@ -2144,6 +2254,7 @@ def test_plan_critique_node_dispatches_reviewer_validates_critique_and_halts(
         NodeInput(
             node_type=NodeType.PLAN_CRITIQUE,
             epic_id=27,
+            project_key=KEY,
             repo_root=tmp_path,
         )
     )
@@ -2157,14 +2268,14 @@ def test_plan_critique_node_dispatches_reviewer_validates_critique_and_halts(
         ".woof/epics/E27/EPIC.md",
         ".woof/epics/E27/plan.json",
         ".woof/epics/E27/PLAN.md",
-        ".woof/codebase/CURRENT-ARCHITECTURE.md",
-        ".woof/codebase/STRUCTURE.md",
-        ".woof/codebase/CONCERNS.md",
-        ".woof/codebase/TARGET-ARCHITECTURE.md",
+        "CURRENT-ARCHITECTURE.md",
+        "STRUCTURE.md",
+        "CONCERNS.md",
+        "TARGET-ARCHITECTURE.md",
     ]
     _assert_planning_node_input_schema(
         tmp_path,
-        nodes._plan_critique_payload(tmp_path, 27),
+        nodes._plan_critique_payload(KEY, tmp_path, 27),
     )
     assert output.status == NodeStatus.COMPLETED
     assert output.next_node == NodeType.PLAN_GATE_OPEN
@@ -2180,10 +2291,11 @@ def test_plan_critique_node_dispatches_reviewer_validates_critique_and_halts(
 def test_graph_runs_discovery_definition_breakdown_and_opens_plan_gate(
     tmp_path: Path, monkeypatch
 ) -> None:
-    directory = _write_spark(tmp_path, 28)
-    _write_codebase_docs(tmp_path)
+    directory = _write_spark(28)
+    _write_codebase_docs()
 
     def fake_dispatch(
+        project_key: str,
         repo_root: Path,
         role: str,
         epic_id: int,
@@ -2223,7 +2335,7 @@ def test_graph_runs_discovery_definition_breakdown_and_opens_plan_gate(
 
     monkeypatch.setattr(nodes, "_run_dispatch", fake_dispatch)
 
-    outputs = run_graph(tmp_path, 28)
+    outputs = run_graph(KEY, tmp_path, 28)
 
     assert [output.node_type for output in outputs] == [
         NodeType.DISCOVERY_RESEARCH,
@@ -2257,18 +2369,19 @@ def test_graph_runs_discovery_definition_breakdown_and_opens_plan_gate(
 def test_plan_gate_open_node_reconstitutes_missing_gate_after_valid_critique(
     tmp_path: Path,
 ) -> None:
-    directory = _write_spark(tmp_path, 29)
+    directory = _write_spark(29)
     _write_minimal_epic(directory, 29)
     _write_stage3_plan(directory, 29)
-    (directory / "PLAN.md").write_text(nodes._render_plan_markdown(nodes.load_plan(tmp_path, 29)))
+    (directory / "PLAN.md").write_text(nodes._render_plan_markdown(nodes.load_plan(KEY, 29)))
     _write_plan_critique(directory, "blocker")
 
-    assert next_node(tmp_path, 29) == (NodeType.PLAN_GATE_OPEN, None)
+    assert next_node(KEY, tmp_path, 29) == (NodeType.PLAN_GATE_OPEN, None)
 
     output = nodes.plan_gate_open_node(
         NodeInput(
             node_type=NodeType.PLAN_GATE_OPEN,
             epic_id=29,
+            project_key=KEY,
             repo_root=tmp_path,
         )
     )
@@ -2279,7 +2392,7 @@ def test_plan_gate_open_node_reconstitutes_missing_gate_after_valid_critique(
     assert output.validation_summary.stage == 4
     assert output.validation_summary.ok is True
     _assert_node_output_schema(tmp_path, json.loads(output.model_dump_json()))
-    _assert_planning_node_input_schema(tmp_path, nodes._plan_gate_open_payload(tmp_path, 29))
+    _assert_planning_node_input_schema(tmp_path, nodes._plan_gate_open_payload(KEY, tmp_path, 29))
     gate = directory / "gate.md"
     gate_fm = _read_gate_fm(gate)
     assert gate_fm["type"] == "plan_gate"
@@ -2289,14 +2402,14 @@ def test_plan_gate_open_node_reconstitutes_missing_gate_after_valid_critique(
     gate_text = gate.read_text()
     assert "F1 [blocker]: tighten work-unit scope" in gate_text
     assert "Plan critique body." in gate_text
-    assert next_node(tmp_path, 29) == (NodeType.HUMAN_REVIEW, None)
+    assert next_node(KEY, tmp_path, 29) == (NodeType.HUMAN_REVIEW, None)
 
 
 def test_plan_gate_resolution_unblocks_stage_5_work_unit_execution(tmp_path: Path) -> None:
-    directory = _write_spark(tmp_path, 30)
+    directory = _write_spark(30)
     _write_minimal_epic(directory, 30)
     _write_stage3_plan(directory, 30)
-    (directory / "PLAN.md").write_text(nodes._render_plan_markdown(nodes.load_plan(tmp_path, 30)))
+    (directory / "PLAN.md").write_text(nodes._render_plan_markdown(nodes.load_plan(KEY, 30)))
     _write_plan_critique(directory, "info")
     (directory / "epic.jsonl").write_text(
         json.dumps(
@@ -2311,16 +2424,17 @@ def test_plan_gate_resolution_unblocks_stage_5_work_unit_execution(tmp_path: Pat
         + "\n"
     )
 
-    assert next_node(tmp_path, 30) == (NodeType.EXECUTOR_DISPATCH, "S1")
+    assert next_node(KEY, tmp_path, 30) == (NodeType.EXECUTOR_DISPATCH, "S1")
 
 
 def test_critique_dispatch_failure_opens_reviewer_gate(tmp_path: Path, monkeypatch) -> None:
     _init_git_repo(tmp_path)
-    directory = _write_plan(tmp_path, 1)
-    _write_codebase_docs(tmp_path)
+    directory = _write_plan(1)
+    _write_codebase_docs()
     (directory / "EPIC.md").write_text("---\nepic_id: 1\n---\n")
 
     def fake_dispatch(
+        project_key: str,
         repo_root: Path,
         role: str,
         epic_id: int,
@@ -2340,9 +2454,9 @@ def test_critique_dispatch_failure_opens_reviewer_gate(tmp_path: Path, monkeypat
         assert artefacts_loaded == [
             ".woof/epics/E1/plan.json",
             ".woof/epics/E1/EPIC.md",
-            ".woof/codebase/CONVENTIONS.md",
-            ".woof/codebase/TESTING.md",
-            ".woof/codebase/CONCERNS.md",
+            "CONVENTIONS.md",
+            "TESTING.md",
+            "CONCERNS.md",
         ]
         return subprocess.CompletedProcess([], 2, "", "reviewer failed")
 
@@ -2353,13 +2467,14 @@ def test_critique_dispatch_failure_opens_reviewer_gate(tmp_path: Path, monkeypat
             node_type=NodeType.CRITIQUE_DISPATCH,
             epic_id=1,
             work_unit_id="S1",
+            project_key=KEY,
             repo_root=tmp_path,
         )
     )
 
     assert output.status == NodeStatus.GATE_OPENED
     assert output.triggered_by == ["reviewer_unreachable"]
-    gate_fm = _read_gate_fm(tmp_path / ".woof" / "epics" / "E1" / "gate.md")
+    gate_fm = _read_gate_fm(state.gate_path(KEY, 1))
     assert gate_fm["triggered_by"] == ["reviewer_unreachable"]
 
 
@@ -2367,8 +2482,8 @@ def test_critique_dispatch_stages_changed_work_unit_paths_before_review(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _init_git_repo(tmp_path)
-    directory = _write_plan(tmp_path, 1)
-    _write_codebase_docs(tmp_path)
+    directory = _write_plan(1)
+    _write_codebase_docs()
     (directory / "EPIC.md").write_text("---\nepic_id: 1\n---\n")
     src = tmp_path / "src"
     src.mkdir()
@@ -2376,6 +2491,7 @@ def test_critique_dispatch_stages_changed_work_unit_paths_before_review(
     (tmp_path / "scratch.txt").write_text("outside work-unit scope\n")
 
     def fake_dispatch(
+        project_key: str,
         repo_root: Path,
         role: str,
         epic_id: int,
@@ -2407,6 +2523,7 @@ def test_critique_dispatch_stages_changed_work_unit_paths_before_review(
             node_type=NodeType.CRITIQUE_DISPATCH,
             epic_id=1,
             work_unit_id="S1",
+            project_key=KEY,
             repo_root=tmp_path,
         )
     )
@@ -2446,7 +2563,7 @@ def test_verification_stages_changed_work_unit_paths_before_stage5_checks(tmp_pa
     _git(tmp_path, "add", "--", ".gitignore", check=True)
     _git(tmp_path, "commit", "-m", "test: initialise consumer config", check=True)
 
-    directory = _write_plan(tmp_path, 1)
+    directory = _write_plan(1)
     plan = json.loads((directory / "plan.json").read_text())
     plan["work_units"][0]["paths"] = ["src/*.py", "tests/*.py"]
     plan["work_units"][0]["state"] = "in_progress"
@@ -2471,7 +2588,7 @@ def test_verification_stages_changed_work_unit_paths_before_stage5_checks(tmp_pa
         "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
         "findings: []\n---\n"
     )
-    _write_disposition(directory, 1, "S1")
+    _write_disposition(directory, "S1")
     src = tmp_path / "src"
     tests = tmp_path / "tests"
     src.mkdir()
@@ -2486,6 +2603,7 @@ def test_verification_stages_changed_work_unit_paths_before_stage5_checks(tmp_pa
             node_type=NodeType.VERIFICATION,
             epic_id=1,
             work_unit_id="S1",
+            project_key=KEY,
             repo_root=tmp_path,
         )
     )
@@ -2509,9 +2627,9 @@ def test_verification_stages_changed_work_unit_paths_before_stage5_checks(tmp_pa
 def test_review_disposition_writes_deterministic_non_blocking_disposition(
     tmp_path: Path, monkeypatch
 ) -> None:
-    directory = _write_plan(tmp_path, 1)
+    directory = _write_plan(1)
     (directory / "EPIC.md").write_text("---\nepic_id: 1\n---\n")
-    mark_work_unit_state(tmp_path, 1, "S1", "in_progress")
+    mark_work_unit_state(KEY, 1, "S1", "in_progress")
     (directory / "executor_result.json").write_text(
         json.dumps(
             {
@@ -2536,12 +2654,13 @@ def test_review_disposition_writes_deterministic_non_blocking_disposition(
 
     monkeypatch.setattr(nodes, "_run_dispatch", fail_dispatch)
 
-    assert next_node(tmp_path, 1) == (NodeType.REVIEW_DISPOSITION, "S1")
+    assert next_node(KEY, tmp_path, 1) == (NodeType.REVIEW_DISPOSITION, "S1")
     output = nodes.review_disposition_node(
         NodeInput(
             node_type=NodeType.REVIEW_DISPOSITION,
             epic_id=1,
             work_unit_id="S1",
+            project_key=KEY,
             repo_root=tmp_path,
         )
     )
@@ -2568,8 +2687,8 @@ def test_review_disposition_writes_deterministic_non_blocking_disposition(
 def test_review_disposition_repairs_invalid_non_blocking_timestamp(
     tmp_path: Path, monkeypatch
 ) -> None:
-    directory = _write_plan(tmp_path, 1)
-    mark_work_unit_state(tmp_path, 1, "S1", "in_progress")
+    directory = _write_plan(1)
+    mark_work_unit_state(KEY, 1, "S1", "in_progress")
     (directory / "executor_result.json").write_text(
         json.dumps(
             {
@@ -2604,12 +2723,13 @@ def test_review_disposition_repairs_invalid_non_blocking_timestamp(
 
     monkeypatch.setattr(nodes, "_run_dispatch", fail_dispatch)
 
-    assert next_node(tmp_path, 1) == (NodeType.REVIEW_DISPOSITION, "S1")
+    assert next_node(KEY, tmp_path, 1) == (NodeType.REVIEW_DISPOSITION, "S1")
     output = nodes.review_disposition_node(
         NodeInput(
             node_type=NodeType.REVIEW_DISPOSITION,
             epic_id=1,
             work_unit_id="S1",
+            project_key=KEY,
             repo_root=tmp_path,
         )
     )
@@ -2622,9 +2742,9 @@ def test_review_disposition_repairs_invalid_non_blocking_timestamp(
 
 
 def test_reviewer_blocker_opens_gate_without_primary_debate(tmp_path: Path, monkeypatch) -> None:
-    directory = _write_plan(tmp_path, 1)
-    _write_fix_round_budget(tmp_path, 0)
-    mark_work_unit_state(tmp_path, 1, "S1", "in_progress")
+    directory = _write_plan(1)
+    _write_fix_round_budget(0)
+    mark_work_unit_state(KEY, 1, "S1", "in_progress")
     (directory / "executor_result.json").write_text(
         json.dumps(
             {
@@ -2651,12 +2771,13 @@ def test_reviewer_blocker_opens_gate_without_primary_debate(tmp_path: Path, monk
 
     monkeypatch.setattr(nodes, "_run_dispatch", fail_dispatch)
 
-    assert next_node(tmp_path, 1) == (NodeType.REVIEW_DISPOSITION, "S1")
+    assert next_node(KEY, tmp_path, 1) == (NodeType.REVIEW_DISPOSITION, "S1")
     output = nodes.review_disposition_node(
         NodeInput(
             node_type=NodeType.REVIEW_DISPOSITION,
             epic_id=1,
             work_unit_id="S1",
+            project_key=KEY,
             repo_root=tmp_path,
         )
     )
@@ -2674,9 +2795,9 @@ def test_reviewer_blocker_opens_gate_without_primary_debate(tmp_path: Path, monk
 def test_reviewer_blocker_dispatches_warm_fix_round_and_requeues_fresh_review(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    directory = _write_plan(tmp_path, 101)
-    _write_codebase_docs(tmp_path)
-    mark_work_unit_state(tmp_path, 101, "S1", "in_progress")
+    directory = _write_plan(101)
+    _write_codebase_docs()
+    mark_work_unit_state(KEY, 101, "S1", "in_progress")
     (directory / "executor_result.json").write_text(
         json.dumps(
             {
@@ -2701,6 +2822,7 @@ def test_reviewer_blocker_dispatches_warm_fix_round_and_requeues_fresh_review(
     captured: dict[str, Any] = {}
 
     def fake_dispatch(
+        project_key: str,
         repo_root: Path,
         role: str,
         epic_id: int,
@@ -2740,6 +2862,7 @@ def test_reviewer_blocker_dispatches_warm_fix_round_and_requeues_fresh_review(
             node_type=NodeType.REVIEW_DISPOSITION,
             epic_id=101,
             work_unit_id="S1",
+            project_key=KEY,
             repo_root=tmp_path,
         )
     )
@@ -2752,7 +2875,7 @@ def test_reviewer_blocker_dispatches_warm_fix_round_and_requeues_fresh_review(
     assert "Reviewer Blocker Evidence" in captured["prompt"]
     assert "missing assertion" in captured["prompt"]
     assert not critique_path.exists()
-    assert next_node(tmp_path, 101) == (NodeType.CRITIQUE_DISPATCH, "S1")
+    assert next_node(KEY, tmp_path, 101) == (NodeType.CRITIQUE_DISPATCH, "S1")
     events = [json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines()]
     assert [event["event"] for event in events[-2:]] == [
         "work_unit_fix_round_started",
@@ -2763,8 +2886,8 @@ def test_reviewer_blocker_dispatches_warm_fix_round_and_requeues_fresh_review(
 
 
 def test_missing_executor_result_with_blocker_critique_resumes_fix_round(tmp_path: Path) -> None:
-    directory = _write_plan(tmp_path, 102)
-    mark_work_unit_state(tmp_path, 102, "S1", "in_progress")
+    directory = _write_plan(102)
+    mark_work_unit_state(KEY, 102, "S1", "in_progress")
     critique_dir = directory / "critique"
     critique_dir.mkdir()
     (critique_dir / "work-unit-S1.md").write_text(
@@ -2774,19 +2897,19 @@ def test_missing_executor_result_with_blocker_critique_resumes_fix_round(tmp_pat
         "    evidence: 'S1 does not implement the required contract'\n---\n"
     )
 
-    assert next_node(tmp_path, 102) == (NodeType.REVIEW_DISPOSITION, "S1")
+    assert next_node(KEY, tmp_path, 102) == (NodeType.REVIEW_DISPOSITION, "S1")
 
 
 def test_fix_round_budget_defaults_to_two_and_can_be_disabled(tmp_path: Path) -> None:
     assert nodes._fix_round_budget() == 2
-    _write_fix_round_budget(tmp_path, 0)
+    _write_fix_round_budget(0)
     assert nodes._fix_round_budget() == 0
 
 
 def test_reviewer_blocker_without_evidence_opens_incomplete_gate(tmp_path: Path) -> None:
     """P1 regression: blocker finding with no evidence opens incomplete gate, not reviewer-blocker gate."""
-    directory = _write_plan(tmp_path, 1)
-    mark_work_unit_state(tmp_path, 1, "S1", "in_progress")
+    directory = _write_plan(1)
+    mark_work_unit_state(KEY, 1, "S1", "in_progress")
     (directory / "executor_result.json").write_text(
         json.dumps(
             {
@@ -2812,6 +2935,7 @@ def test_reviewer_blocker_without_evidence_opens_incomplete_gate(tmp_path: Path)
             node_type=NodeType.REVIEW_DISPOSITION,
             epic_id=1,
             work_unit_id="S1",
+            project_key=KEY,
             repo_root=tmp_path,
         )
     )
@@ -2824,8 +2948,8 @@ def test_reviewer_blocker_without_evidence_opens_incomplete_gate(tmp_path: Path)
 
 def test_reviewer_blocker_with_unresolvable_evidence_opens_incomplete_gate(tmp_path: Path) -> None:
     """P1 regression: blocker finding with prose-only evidence (no resolvable ref) opens incomplete gate."""
-    directory = _write_plan(tmp_path, 1)
-    mark_work_unit_state(tmp_path, 1, "S1", "in_progress")
+    directory = _write_plan(1)
+    mark_work_unit_state(KEY, 1, "S1", "in_progress")
     (directory / "executor_result.json").write_text(
         json.dumps(
             {
@@ -2852,6 +2976,7 @@ def test_reviewer_blocker_with_unresolvable_evidence_opens_incomplete_gate(tmp_p
             node_type=NodeType.REVIEW_DISPOSITION,
             epic_id=1,
             work_unit_id="S1",
+            project_key=KEY,
             repo_root=tmp_path,
         )
     )
@@ -2868,9 +2993,9 @@ def test_graph_resumes_interrupted_commit_transaction(tmp_path: Path) -> None:
         json.dumps({"event": "work_unit_completed", "epic_id": 1, "work_unit_id": "S1"}) + "\n"
     )
 
-    assert next_node(tmp_path, 1) == (NodeType.COMMIT, "S1")
+    assert next_node(KEY, tmp_path, 1) == (NodeType.COMMIT, "S1")
 
-    outputs = run_graph(tmp_path, 1)
+    outputs = run_graph(KEY, tmp_path, 1)
 
     assert outputs[0].node_type == NodeType.COMMIT
     assert outputs[-1].status == NodeStatus.EPIC_COMPLETE
@@ -2903,8 +3028,8 @@ def test_graph_resumes_interrupted_commit_transaction(tmp_path: Path) -> None:
 def test_commit_gates_when_verified_staged_tree_changes(tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     directory = _write_ready_commit_state(tmp_path, 1)
-    work_unit = transitions.load_plan(tmp_path, 1).work_units[0]
-    manifest = build_work_unit_manifest(tmp_path, 1, work_unit)
+    work_unit = transitions.load_plan(KEY, 1).work_units[0]
+    manifest = build_work_unit_manifest(tmp_path, work_unit)
     _git(tmp_path, "add", "--", *manifest.expected_paths, check=True)
     verified_tree = _git(
         tmp_path,
@@ -2931,7 +3056,7 @@ def test_commit_gates_when_verified_staged_tree_changes(tmp_path: Path) -> None:
     (tmp_path / "src" / "app.py").write_text("print('tampered after verification')\n")
     _git(tmp_path, "add", "--", "src/app.py", check=True)
 
-    outputs = run_graph(tmp_path, 1, once=True)
+    outputs = run_graph(KEY, tmp_path, 1, once=True)
 
     assert outputs[0].status == NodeStatus.GATE_OPENED
     assert outputs[0].triggered_by == ["check_7_commit_transaction"]
@@ -2961,6 +3086,7 @@ def test_profile_b_commit_failure_does_not_mark_work_unit_done(
                 node_type=NodeType.COMMIT,
                 epic_id=1,
                 work_unit_id="S1",
+                project_key=KEY,
                 repo_root=tmp_path,
             )
         )
@@ -3002,6 +3128,7 @@ def test_profile_b_completion_event_failure_rolls_back_done_state(
                 node_type=NodeType.COMMIT,
                 epic_id=1,
                 work_unit_id="S1",
+                project_key=KEY,
                 repo_root=tmp_path,
             )
         )
@@ -3037,13 +3164,13 @@ def test_profile_b_policy_pushes_committed_transaction_before_done_state_lands(
     _git(tmp_path, "init", "--bare", str(remote), check=True, capture_output=True)
     _git(tmp_path, "remote", "add", "origin", str(remote), check=True, capture_output=True)
     _git(tmp_path, "push", "-u", "origin", f"HEAD:{branch}", check=True, capture_output=True)
-    _write_profile_b_policy(tmp_path, base_branch=branch, push=True)
+    _write_profile_b_policy(base_branch=branch, push=True)
     directory = _write_ready_commit_state(tmp_path, 1)
     plan = json.loads((directory / "plan.json").read_text())
     plan["work_units"][0]["state"] = "in_progress"
     (directory / "plan.json").write_text(json.dumps(plan))
 
-    outputs = run_graph(tmp_path, 1)
+    outputs = run_graph(KEY, tmp_path, 1)
 
     assert outputs[0].node_type == NodeType.COMMIT
     assert outputs[-1].status == NodeStatus.EPIC_COMPLETE
@@ -3089,7 +3216,7 @@ def test_profile_b_push_disabled_commits_done_state_without_git_push(
         capture_output=True,
         text=True,
     ).stdout.strip()
-    _write_profile_b_policy(tmp_path, base_branch=branch, push=False)
+    _write_profile_b_policy(base_branch=branch, push=False)
     directory = _write_ready_commit_state(tmp_path, 1)
     plan = json.loads((directory / "plan.json").read_text())
     plan["work_units"][0]["state"] = "in_progress"
@@ -3113,7 +3240,7 @@ def test_profile_b_push_disabled_commits_done_state_without_git_push(
 
     monkeypatch.setattr(nodes, "git", record_push)
 
-    outputs = run_graph(tmp_path, 1)
+    outputs = run_graph(KEY, tmp_path, 1)
 
     head_after = _git(
         tmp_path,
@@ -3159,7 +3286,7 @@ def test_profile_a_publish_pushes_branch_opens_pr_labels_ready_and_records_metad
     _git(tmp_path, "remote", "add", "origin", str(remote), check=True, capture_output=True)
     _git(tmp_path, "push", "-u", "origin", f"HEAD:{base_branch}", check=True, capture_output=True)
     _git(tmp_path, "checkout", "-b", "S1", check=True, capture_output=True)
-    _write_profile_a_policy(tmp_path, base_branch=base_branch, ready_label="ready-to-merge")
+    _write_profile_a_policy(base_branch=base_branch, ready_label="ready-to-merge")
     directory = _write_ready_commit_state(
         tmp_path,
         1,
@@ -3205,6 +3332,7 @@ def test_profile_a_publish_pushes_branch_opens_pr_labels_ready_and_records_metad
             node_type=NodeType.COMMIT,
             epic_id=1,
             work_unit_id="S1",
+            project_key=KEY,
             repo_root=tmp_path,
         )
     )
@@ -3273,7 +3401,7 @@ def test_profile_a_publish_withholds_ready_label_when_gate_is_not_green(
     _git(tmp_path, "remote", "add", "origin", str(remote), check=True, capture_output=True)
     _git(tmp_path, "push", "-u", "origin", f"HEAD:{base_branch}", check=True, capture_output=True)
     _git(tmp_path, "checkout", "-b", "S1", check=True, capture_output=True)
-    _write_profile_a_policy(tmp_path, base_branch=base_branch)
+    _write_profile_a_policy(base_branch=base_branch)
     directory = _write_ready_commit_state(tmp_path, 1)
     check_result = json.loads((directory / "check-result.json").read_text())
     check_result["ok"] = False
@@ -3302,6 +3430,7 @@ def test_profile_a_publish_withholds_ready_label_when_gate_is_not_green(
             node_type=NodeType.COMMIT,
             epic_id=1,
             work_unit_id="S1",
+            project_key=KEY,
             repo_root=tmp_path,
         )
     )
@@ -3326,7 +3455,7 @@ def test_profile_a_publish_failure_deletes_new_remote_branch_and_rolls_back_done
     _git(tmp_path, "remote", "add", "origin", str(remote), check=True, capture_output=True)
     _git(tmp_path, "push", "-u", "origin", f"HEAD:{base_branch}", check=True, capture_output=True)
     _git(tmp_path, "checkout", "-b", "S1", check=True, capture_output=True)
-    _write_profile_a_policy(tmp_path, base_branch=base_branch)
+    _write_profile_a_policy(base_branch=base_branch)
     directory = _write_ready_commit_state(tmp_path, 1)
     plan = json.loads((directory / "plan.json").read_text())
     plan["work_units"][0]["state"] = "in_progress"
@@ -3354,6 +3483,7 @@ def test_profile_a_publish_failure_deletes_new_remote_branch_and_rolls_back_done
                 node_type=NodeType.COMMIT,
                 epic_id=1,
                 work_unit_id="S1",
+                project_key=KEY,
                 repo_root=tmp_path,
             )
         )
@@ -3399,7 +3529,7 @@ def test_profile_b_push_failure_rolls_back_landed_commit_and_done_state(
         capture_output=True,
         text=True,
     ).stdout.strip()
-    _write_profile_b_policy(tmp_path, base_branch=branch, push=True)
+    _write_profile_b_policy(base_branch=branch, push=True)
     directory = _write_ready_commit_state(tmp_path, 1)
     plan = json.loads((directory / "plan.json").read_text())
     plan["work_units"][0]["state"] = "in_progress"
@@ -3427,6 +3557,7 @@ def test_profile_b_push_failure_rolls_back_landed_commit_and_done_state(
                 node_type=NodeType.COMMIT,
                 epic_id=1,
                 work_unit_id="S1",
+                project_key=KEY,
                 repo_root=tmp_path,
             )
         )
@@ -3462,9 +3593,9 @@ def test_commit_writes_epic_completed_into_commit_for_mixed_done_abandoned_epic(
     ]
     (directory / "plan.json").write_text(json.dumps(plan))
 
-    assert next_node(tmp_path, 1) == (NodeType.COMMIT, "S1")
+    assert next_node(KEY, tmp_path, 1) == (NodeType.COMMIT, "S1")
 
-    outputs = run_graph(tmp_path, 1)
+    outputs = run_graph(KEY, tmp_path, 1)
 
     assert outputs[0].node_type == NodeType.COMMIT
     assert outputs[-1].status == NodeStatus.EPIC_COMPLETE
@@ -3518,7 +3649,7 @@ def test_commit_resume_git_failure_preserves_resume_artefacts(
     monkeypatch.setattr(transitions, "build_work_unit_manifest", fail_manifest)
 
     with pytest.raises(StageStateError) as exc:
-        next_node(tmp_path, 1)
+        next_node(KEY, tmp_path, 1)
 
     assert "could not inspect interrupted commit state" in str(exc.value)
     assert "preserving executor_result.json and check-result.json" in str(exc.value)
@@ -3534,7 +3665,7 @@ def test_commit_uses_executor_commit_subject(tmp_path: Path) -> None:
         commit_subject="fix: E1 S1 - repair consumer checkout bootstrap",
     )
 
-    outputs = run_graph(tmp_path, 1)
+    outputs = run_graph(KEY, tmp_path, 1)
 
     assert outputs[-1].status == NodeStatus.EPIC_COMPLETE
     subject = _git(
@@ -3556,7 +3687,7 @@ def test_commit_redacts_audit_before_staging_transaction(tmp_path: Path) -> None
     audit_file = directory / "audit" / "cod-critiquer-1.prompt"
     audit_file.write_text("call API with Bearer live-oauth-token\n")
 
-    outputs = run_graph(tmp_path, 1)
+    outputs = run_graph(KEY, tmp_path, 1)
 
     assert outputs[0].node_type == NodeType.COMMIT
     assert outputs[-1].status == NodeStatus.EPIC_COMPLETE
@@ -3591,7 +3722,7 @@ def test_complete_epic_cleans_stale_transient_files(tmp_path: Path) -> None:
     )
     _git(tmp_path, "commit", "-m", "seed", check=True, capture_output=True)
 
-    outputs = run_graph(tmp_path, 1)
+    outputs = run_graph(KEY, tmp_path, 1)
 
     assert outputs[-1].status == NodeStatus.EPIC_COMPLETE
     assert not (directory / "executor_result.json").exists()
@@ -3601,12 +3732,12 @@ def test_complete_epic_cleans_stale_transient_files(tmp_path: Path) -> None:
 def test_in_progress_work_unit_missing_executor_result_opens_incomplete_state_gate(
     tmp_path: Path,
 ) -> None:
-    directory = _write_plan(tmp_path, 1)
-    mark_work_unit_state(tmp_path, 1, "S1", "in_progress")
+    directory = _write_plan(1)
+    mark_work_unit_state(KEY, 1, "S1", "in_progress")
 
-    assert next_node(tmp_path, 1) == (NodeType.GATE_OPEN, "S1")
+    assert next_node(KEY, tmp_path, 1) == (NodeType.GATE_OPEN, "S1")
 
-    outputs = run_graph(tmp_path, 1)
+    outputs = run_graph(KEY, tmp_path, 1)
 
     assert outputs == [
         NodeOutput(
@@ -3626,13 +3757,13 @@ def test_in_progress_work_unit_missing_executor_result_opens_incomplete_state_ga
 def test_in_progress_work_unit_malformed_executor_result_opens_incomplete_state_gate(
     tmp_path: Path,
 ) -> None:
-    directory = _write_plan(tmp_path, 1)
-    mark_work_unit_state(tmp_path, 1, "S1", "in_progress")
+    directory = _write_plan(1)
+    mark_work_unit_state(KEY, 1, "S1", "in_progress")
     (directory / "executor_result.json").write_text("{")
 
-    assert next_node(tmp_path, 1) == (NodeType.GATE_OPEN, "S1")
+    assert next_node(KEY, tmp_path, 1) == (NodeType.GATE_OPEN, "S1")
 
-    outputs = run_graph(tmp_path, 1)
+    outputs = run_graph(KEY, tmp_path, 1)
 
     assert outputs[0].status == NodeStatus.GATE_OPENED
     assert outputs[0].triggered_by == ["incomplete_stage_state"]
@@ -3642,8 +3773,8 @@ def test_in_progress_work_unit_malformed_executor_result_opens_incomplete_state_
 
 
 def test_malformed_check_result_opens_incomplete_state_gate(tmp_path: Path) -> None:
-    directory = _write_plan(tmp_path, 1)
-    mark_work_unit_state(tmp_path, 1, "S1", "in_progress")
+    directory = _write_plan(1)
+    mark_work_unit_state(KEY, 1, "S1", "in_progress")
     (directory / "executor_result.json").write_text(
         json.dumps(
             {
@@ -3662,12 +3793,12 @@ def test_malformed_check_result_opens_incomplete_state_gate(tmp_path: Path) -> N
         "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
         "findings: []\n---\n"
     )
-    _write_disposition(directory, 1, "S1")
+    _write_disposition(directory, "S1")
     (directory / "check-result.json").write_text("{")
 
-    assert next_node(tmp_path, 1) == (NodeType.GATE_OPEN, "S1")
+    assert next_node(KEY, tmp_path, 1) == (NodeType.GATE_OPEN, "S1")
 
-    outputs = run_graph(tmp_path, 1)
+    outputs = run_graph(KEY, tmp_path, 1)
 
     assert outputs[0].status == NodeStatus.GATE_OPENED
     assert outputs[0].triggered_by == ["incomplete_stage_state"]
@@ -3677,9 +3808,9 @@ def test_malformed_check_result_opens_incomplete_state_gate(tmp_path: Path) -> N
 
 
 def test_failed_check_result_reopens_structured_gate_on_reentry(tmp_path: Path) -> None:
-    directory = _write_plan(tmp_path, 1)
-    _write_fix_round_budget(tmp_path, 0)
-    mark_work_unit_state(tmp_path, 1, "S1", "in_progress")
+    directory = _write_plan(1)
+    _write_fix_round_budget(0)
+    mark_work_unit_state(KEY, 1, "S1", "in_progress")
     (directory / "executor_result.json").write_text(
         json.dumps(
             {
@@ -3723,9 +3854,9 @@ def test_failed_check_result_reopens_structured_gate_on_reentry(tmp_path: Path) 
         )
     )
 
-    assert next_node(tmp_path, 1) == (NodeType.REVIEW_DISPOSITION, "S1")
+    assert next_node(KEY, tmp_path, 1) == (NodeType.REVIEW_DISPOSITION, "S1")
 
-    outputs = run_graph(tmp_path, 1)
+    outputs = run_graph(KEY, tmp_path, 1)
 
     assert outputs[0].status == NodeStatus.GATE_OPENED
     assert outputs[0].node_type == NodeType.REVIEW_DISPOSITION
@@ -3735,7 +3866,7 @@ def test_failed_check_result_reopens_structured_gate_on_reentry(tmp_path: Path) 
 
 
 def test_successor_selection_respects_dependency_closure(tmp_path: Path) -> None:
-    directory = _write_plan(tmp_path, 12)
+    directory = _write_plan(12)
     plan = json.loads((directory / "plan.json").read_text())
     plan["work_units"] = [
         {
@@ -3755,18 +3886,18 @@ def test_successor_selection_respects_dependency_closure(tmp_path: Path) -> None
     ]
     (directory / "plan.json").write_text(json.dumps(plan))
 
-    assert next_node(tmp_path, 12) == (NodeType.EXECUTOR_DISPATCH, "S2")
+    assert next_node(KEY, tmp_path, 12) == (NodeType.EXECUTOR_DISPATCH, "S2")
 
 
 def test_run_graph_opens_recoverable_gate_when_plan_dependencies_are_malformed(
     tmp_path: Path,
 ) -> None:
-    directory = _write_plan(tmp_path, 13)
+    directory = _write_plan(13)
     plan = json.loads((directory / "plan.json").read_text())
     plan["work_units"][0]["deps"] = ["S99"]
     (directory / "plan.json").write_text(json.dumps(plan))
 
-    outputs = run_graph(tmp_path, 13)
+    outputs = run_graph(KEY, tmp_path, 13)
 
     assert outputs[0].node_type == NodeType.PLAN_GATE_OPEN
     assert outputs[0].status == NodeStatus.GATE_OPENED
@@ -3779,10 +3910,10 @@ def test_run_graph_opens_recoverable_gate_when_plan_dependencies_are_malformed(
 
 
 def test_run_graph_opens_recoverable_gate_for_malformed_plan_json(tmp_path: Path) -> None:
-    directory = _write_plan(tmp_path, 24)
+    directory = _write_plan(24)
     (directory / "plan.json").write_text("{")
 
-    outputs = run_graph(tmp_path, 24)
+    outputs = run_graph(KEY, tmp_path, 24)
 
     assert outputs[0].node_type == NodeType.PLAN_GATE_OPEN
     assert outputs[0].status == NodeStatus.GATE_OPENED
@@ -3795,12 +3926,12 @@ def test_run_graph_opens_recoverable_gate_for_malformed_plan_json(tmp_path: Path
 
 
 def test_gate_reentry_halts_at_human_review_with_gate_path(tmp_path: Path) -> None:
-    directory = _write_plan(tmp_path, 14)
+    directory = _write_plan(14)
     (directory / "gate.md").write_text("---\ntype: work_unit_gate\n---\n")
 
-    assert next_node(tmp_path, 14) == (NodeType.HUMAN_REVIEW, None)
+    assert next_node(KEY, tmp_path, 14) == (NodeType.HUMAN_REVIEW, None)
 
-    outputs = run_graph(tmp_path, 14)
+    outputs = run_graph(KEY, tmp_path, 14)
 
     assert outputs == [
         NodeOutput(
@@ -3814,8 +3945,8 @@ def test_gate_reentry_halts_at_human_review_with_gate_path(tmp_path: Path) -> No
 
 
 def test_empty_diff_executor_result_opens_review_gate(tmp_path: Path) -> None:
-    directory = _write_plan(tmp_path, 15)
-    mark_work_unit_state(tmp_path, 15, "S1", "in_progress")
+    directory = _write_plan(15)
+    mark_work_unit_state(KEY, 15, "S1", "in_progress")
     (directory / "executor_result.json").write_text(
         json.dumps(
             {
@@ -3828,9 +3959,9 @@ def test_empty_diff_executor_result_opens_review_gate(tmp_path: Path) -> None:
         )
     )
 
-    assert next_node(tmp_path, 15) == (NodeType.GATE_OPEN, "S1")
+    assert next_node(KEY, tmp_path, 15) == (NodeType.GATE_OPEN, "S1")
 
-    outputs = run_graph(tmp_path, 15)
+    outputs = run_graph(KEY, tmp_path, 15)
 
     assert outputs[0].status == NodeStatus.GATE_OPENED
     assert outputs[0].gate_path == ".woof/epics/E15/gate.md"
@@ -3842,7 +3973,7 @@ def test_empty_diff_executor_result_opens_review_gate(tmp_path: Path) -> None:
 def test_wf_epic_reports_complete_epic_as_json(tmp_path: Path) -> None:
     _init_git_checkout(tmp_path)
     _seed_config({"tracker": {"kind": "github", "repo": "acme/widgets"}})
-    directory = _write_plan(tmp_path, 7)
+    directory = _write_plan(7)
     plan = json.loads((directory / "plan.json").read_text())
     plan["work_units"][0]["state"] = "done"
     (directory / "plan.json").write_text(json.dumps(plan))
@@ -3874,7 +4005,7 @@ def test_wf_epic_reports_complete_epic_as_json(tmp_path: Path) -> None:
 
 def test_wf_opens_gate_for_recoverable_missing_plan_state(tmp_path: Path) -> None:
     _init_git_checkout(tmp_path)
-    _write_tracker_prerequisites(tmp_path)
+    _write_tracker_prerequisites()
     directory = tmp_path / ".woof" / "epics" / "E10"
     directory.mkdir(parents=True)
     _write_last_sync(directory, 10)
@@ -3895,8 +4026,8 @@ def test_wf_opens_gate_for_recoverable_missing_plan_state(tmp_path: Path) -> Non
 
 def test_wf_epic_halts_when_gate_is_open(tmp_path: Path) -> None:
     _init_git_checkout(tmp_path)
-    _write_tracker_prerequisites(tmp_path)
-    directory = _write_plan(tmp_path, 8)
+    _write_tracker_prerequisites()
+    directory = _write_plan(8)
     _write_last_sync(directory, 8)
     (directory / "gate.md").write_text("---\ntype: work_unit_gate\n---\n")
     env = _make_gh_rate_limit_stub(tmp_path / "bin")
@@ -3909,11 +4040,11 @@ def test_wf_epic_halts_when_gate_is_open(tmp_path: Path) -> None:
 
 def test_wf_gate_case_reports_stable_json_contract(tmp_path: Path) -> None:
     _seed_config({"cartography": {"floor": "none"}})
-    _write_fix_round_budget(tmp_path, 0)
+    _write_fix_round_budget(0)
     _init_git_checkout(tmp_path)
-    _write_tracker_prerequisites(tmp_path)
-    directory = _write_plan(tmp_path, 11)
-    mark_work_unit_state(tmp_path, 11, "S1", "in_progress")
+    _write_tracker_prerequisites()
+    directory = _write_plan(11)
+    mark_work_unit_state(KEY, 11, "S1", "in_progress")
     (directory / "executor_result.json").write_text(
         json.dumps(
             {
@@ -3995,8 +4126,8 @@ def test_wf_gate_case_reports_stable_json_contract(tmp_path: Path) -> None:
 
 def test_wf_resolve_records_gate_decision_and_removes_gate(tmp_path: Path) -> None:
     _init_git_checkout(tmp_path)
-    _write_tracker_prerequisites(tmp_path)
-    directory = _write_plan(tmp_path, 9)
+    _write_tracker_prerequisites()
+    directory = _write_plan(9)
     _write_last_sync(directory, 9)
     gate = directory / "gate.md"
     gate.write_text("---\ntype: work_unit_gate\n---\n")
@@ -4017,8 +4148,8 @@ def test_wf_resolve_records_gate_decision_and_removes_gate(tmp_path: Path) -> No
 def test_wf_resolve_reviewer_blocker_approval_requeues_critique(tmp_path: Path) -> None:
     _init_git_checkout(tmp_path)
     _seed_config({"tracker": {"kind": "local", "repo": None}})
-    directory = _write_plan(tmp_path, 33)
-    mark_work_unit_state(tmp_path, 33, "S1", "in_progress")
+    directory = _write_plan(33)
+    mark_work_unit_state(KEY, 33, "S1", "in_progress")
     (directory / "executor_result.json").write_text(
         json.dumps(
             {
@@ -4058,7 +4189,7 @@ def test_wf_resolve_reviewer_blocker_approval_requeues_critique(tmp_path: Path) 
         "    summary: stale staged diff\n"
         "---\n"
     )
-    disposition_path = _write_disposition(directory, 33)
+    disposition_path = _write_disposition(directory)
     gate = directory / "gate.md"
     gate.write_text(
         "---\n"
@@ -4079,7 +4210,7 @@ def test_wf_resolve_reviewer_blocker_approval_requeues_critique(tmp_path: Path) 
     assert not critique_path.exists()
     assert not disposition_path.exists()
     assert (directory / "executor_result.json").exists()
-    assert next_node(tmp_path, 33) == (NodeType.CRITIQUE_DISPATCH, "S1")
+    assert next_node(KEY, tmp_path, 33) == (NodeType.CRITIQUE_DISPATCH, "S1")
     events = [json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines()]
     work_unit_event = next(event for event in events if event["event"] == "work_unit_gate_resolved")
     assert work_unit_event["decision"] == "approve"
@@ -4094,8 +4225,8 @@ def test_wf_resolve_commit_transaction_gate_preserves_ok_check_result(
 ) -> None:
     _init_git_repo(tmp_path)
     _seed_config({"tracker": {"kind": "local", "repo": None}})
-    directory = _write_plan(tmp_path, 34)
-    mark_work_unit_state(tmp_path, 34, "S1", "done")
+    directory = _write_plan(34)
+    mark_work_unit_state(KEY, 34, "S1", "done")
     (directory / "executor_result.json").write_text(
         json.dumps(
             {
@@ -4132,7 +4263,7 @@ def test_wf_resolve_commit_transaction_gate_preserves_ok_check_result(
         "findings: []\n"
         "---\n"
     )
-    _write_disposition(directory, 34)
+    _write_disposition(directory)
     src = tmp_path / "src"
     src.mkdir()
     (src / "app.py").write_text("print('O1')\n")
@@ -4154,16 +4285,16 @@ def test_wf_resolve_commit_transaction_gate_preserves_ok_check_result(
     assert not gate.exists()
     assert (directory / "check-result.json").exists()
     assert (directory / "executor_result.json").exists()
-    assert next_node(tmp_path, 34) == (NodeType.COMMIT, "S1")
+    assert next_node(KEY, tmp_path, 34) == (NodeType.COMMIT, "S1")
 
 
 def test_wf_resolve_revise_plan_reenters_breakdown(tmp_path: Path) -> None:
     _init_git_checkout(tmp_path)
-    _write_tracker_prerequisites(tmp_path)
-    directory = _write_spark(tmp_path, 31)
+    _write_tracker_prerequisites()
+    directory = _write_spark(31)
     _write_minimal_epic(directory, 31)
     _write_stage3_plan(directory, 31)
-    (directory / "PLAN.md").write_text(nodes._render_plan_markdown(nodes.load_plan(tmp_path, 31)))
+    (directory / "PLAN.md").write_text(nodes._render_plan_markdown(nodes.load_plan(KEY, 31)))
     _write_plan_critique(directory, "info")
     _write_last_sync(directory, 31)
     (directory / "epic.jsonl").write_text(
@@ -4223,15 +4354,15 @@ def test_wf_resolve_revise_plan_reenters_breakdown(tmp_path: Path) -> None:
     assert not (directory / "plan.json").exists()
     assert not (directory / "PLAN.md").exists()
     assert not (directory / "critique" / "plan.md").exists()
-    assert next_node(tmp_path, 31) == (NodeType.BREAKDOWN_PLANNING, None)
+    assert next_node(KEY, tmp_path, 31) == (NodeType.BREAKDOWN_PLANNING, None)
 
 
 def test_wf_resolve_approve_clears_stale_failed_check_result(tmp_path: Path) -> None:
     _init_git_checkout(tmp_path)
-    _write_tracker_prerequisites(tmp_path)
-    directory = _write_plan(tmp_path, 32)
+    _write_tracker_prerequisites()
+    directory = _write_plan(32)
     _write_last_sync(directory, 32)
-    mark_work_unit_state(tmp_path, 32, "S1", "in_progress")
+    mark_work_unit_state(KEY, 32, "S1", "in_progress")
     (directory / "executor_result.json").write_text(
         json.dumps(
             {
@@ -4250,7 +4381,7 @@ def test_wf_resolve_approve_clears_stale_failed_check_result(tmp_path: Path) -> 
         "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
         "findings: []\n---\n"
     )
-    _write_disposition(directory, 32, "S1")
+    _write_disposition(directory, "S1")
     (directory / "check-result.json").write_text(
         json.dumps(
             {
@@ -4289,15 +4420,15 @@ def test_wf_resolve_approve_clears_stale_failed_check_result(tmp_path: Path) -> 
 
     assert proc.returncode == 0, proc.stderr
     assert not (directory / "check-result.json").exists()
-    assert next_node(tmp_path, 32) == (NodeType.VERIFICATION, "S1")
+    assert next_node(KEY, tmp_path, 32) == (NodeType.VERIFICATION, "S1")
 
 
 def test_wf_resolve_revise_work_unit_scope_clears_stale_failed_check_result(tmp_path: Path) -> None:
     _init_git_checkout(tmp_path)
-    _write_tracker_prerequisites(tmp_path)
-    directory = _write_plan(tmp_path, 33)
+    _write_tracker_prerequisites()
+    directory = _write_plan(33)
     _write_last_sync(directory, 33)
-    mark_work_unit_state(tmp_path, 33, "S1", "in_progress")
+    mark_work_unit_state(KEY, 33, "S1", "in_progress")
     (directory / "executor_result.json").write_text(
         json.dumps(
             {
@@ -4344,8 +4475,8 @@ def test_wf_resolve_revise_work_unit_scope_clears_stale_failed_check_result(tmp_
 
 def test_wf_resolve_abandon_work_unit_skips_to_next_ready_work_unit(tmp_path: Path) -> None:
     _init_git_checkout(tmp_path)
-    _write_tracker_prerequisites(tmp_path)
-    directory = _write_plan(tmp_path, 34)
+    _write_tracker_prerequisites()
+    directory = _write_plan(34)
     _write_last_sync(directory, 34)
     plan = json.loads((directory / "plan.json").read_text())
     plan["work_units"] = [
@@ -4392,15 +4523,15 @@ def test_wf_resolve_abandon_work_unit_skips_to_next_ready_work_unit(tmp_path: Pa
     assert any(e["event"] == "work_unit_abandoned" and e["work_unit_id"] == "S1" for e in events)
     assert not any(e["event"] == "work_unit_completed" for e in events)
     # The abandoned work unit is skipped; the graph advances to the next ready work unit.
-    assert next_node(tmp_path, 34) == (NodeType.EXECUTOR_DISPATCH, "S2")
+    assert next_node(KEY, tmp_path, 34) == (NodeType.EXECUTOR_DISPATCH, "S2")
 
 
 def test_wf_resolve_retry_work_unit_resets_and_re_dispatches_without_redoing_siblings(
     tmp_path: Path,
 ) -> None:
     _init_git_checkout(tmp_path)
-    _write_tracker_prerequisites(tmp_path)
-    directory = _write_plan(tmp_path, 36)
+    _write_tracker_prerequisites()
+    directory = _write_plan(36)
     _write_last_sync(directory, 36)
     plan = json.loads((directory / "plan.json").read_text())
     plan["work_units"] = [
@@ -4420,8 +4551,8 @@ def test_wf_resolve_retry_work_unit_resets_and_re_dispatches_without_redoing_sib
             f"---\ntarget: work_unit\ntarget_id: {work_unit_id}\nseverity: info\n"
             "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\nfindings: []\n---\n"
         )
-    sibling_disposition = _write_disposition(directory, 36, "S1")
-    target_disposition = _write_disposition(directory, 36, "S2")
+    sibling_disposition = _write_disposition(directory, "S1")
+    target_disposition = _write_disposition(directory, "S2")
     (directory / "gate.md").write_text(
         "---\n"
         "type: review_gate\n"
@@ -4458,7 +4589,7 @@ def test_wf_resolve_retry_work_unit_resets_and_re_dispatches_without_redoing_sib
     ]
     assert any(e["event"] == "work_unit_retried" and e["work_unit_id"] == "S2" for e in events)
     # next_node re-dispatches the reset work unit, not the done sibling.
-    assert next_node(tmp_path, 36) == (NodeType.EXECUTOR_DISPATCH, "S2")
+    assert next_node(KEY, tmp_path, 36) == (NodeType.EXECUTOR_DISPATCH, "S2")
 
 
 class _RecordingTracker:
@@ -4503,7 +4634,7 @@ def _write_work_unit_gate(
 
 
 def test_wf_resolve_abandon_epic_closes_tracker_and_is_terminal(tmp_path: Path) -> None:
-    directory = _write_plan(tmp_path, 40)
+    directory = _write_plan(40)
     plan = json.loads((directory / "plan.json").read_text())
     plan["work_units"] = [
         {**plan["work_units"][0], "id": "S1", "state": "in_progress"},
@@ -4523,7 +4654,7 @@ def test_wf_resolve_abandon_epic_closes_tracker_and_is_terminal(tmp_path: Path) 
     _write_work_unit_gate(directory, "S1")
     tracker = _RecordingTracker()
 
-    rc = _resolve_gate(tmp_path, 40, "abandon_epic", cast(Tracker, tracker))
+    rc = _resolve_gate(KEY, 40, "abandon_epic", cast(Tracker, tracker))
 
     assert rc == 0
     assert not (directory / "gate.md").exists()
@@ -4544,9 +4675,9 @@ def test_wf_resolve_abandon_epic_closes_tracker_and_is_terminal(tmp_path: Path) 
     assert plan_after["work_units"][0]["state"] == "in_progress"
 
     # next_node returns the abandoned-terminal outcome, distinct from EPIC_COMPLETE.
-    assert transitions.epic_abandoned(tmp_path, 40) is True
-    assert next_node(tmp_path, 40) == (NodeStatus.EPIC_ABANDONED, None)
-    outputs = run_graph(tmp_path, 40)
+    assert transitions.epic_abandoned(KEY, 40) is True
+    assert next_node(KEY, tmp_path, 40) == (NodeStatus.EPIC_ABANDONED, None)
+    outputs = run_graph(KEY, tmp_path, 40)
     assert outputs[-1].status == NodeStatus.EPIC_ABANDONED
     assert outputs[-1].status != NodeStatus.EPIC_COMPLETE
 
@@ -4554,7 +4685,7 @@ def test_wf_resolve_abandon_epic_closes_tracker_and_is_terminal(tmp_path: Path) 
 def test_abandon_epic_keeps_gate_when_tracker_close_fails(tmp_path: Path) -> None:
     # The tracker close runs before the epic_abandoned marker: if it fails, the
     # gate stays open and the epic is never marked abandoned.
-    directory = _write_plan(tmp_path, 44)
+    directory = _write_plan(44)
     plan = json.loads((directory / "plan.json").read_text())
     plan["work_units"][0]["state"] = "in_progress"
     (directory / "plan.json").write_text(json.dumps(plan))
@@ -4566,11 +4697,11 @@ def test_abandon_epic_keeps_gate_when_tracker_close_fails(tmp_path: Path) -> Non
 
             raise TrackerError("remote unreachable")
 
-    rc = _resolve_gate(tmp_path, 44, "abandon_epic", cast(Tracker, _FailingTracker()))
+    rc = _resolve_gate(KEY, 44, "abandon_epic", cast(Tracker, _FailingTracker()))
 
     assert rc == 2
     assert (directory / "gate.md").exists()
-    assert transitions.epic_abandoned(tmp_path, 44) is False
+    assert transitions.epic_abandoned(KEY, 44) is False
     events_path = directory / "epic.jsonl"
     events = (
         [json.loads(line) for line in events_path.read_text().splitlines() if line.strip()]
@@ -4581,7 +4712,7 @@ def test_abandon_epic_keeps_gate_when_tracker_close_fails(tmp_path: Path) -> Non
 
 
 def test_reconstruction_distinguishes_abandoned_work_unit_from_done(tmp_path: Path) -> None:
-    directory = _write_plan(tmp_path, 41)
+    directory = _write_plan(41)
     plan = json.loads((directory / "plan.json").read_text())
     plan["work_units"] = [
         {**plan["work_units"][0], "id": "S1", "state": "done"},
@@ -4590,15 +4721,15 @@ def test_reconstruction_distinguishes_abandoned_work_unit_from_done(tmp_path: Pa
     (directory / "plan.json").write_text(json.dumps(plan))
 
     # The plan reloads with distinct statuses: abandoned is not coerced to done.
-    reloaded = transitions.load_plan(tmp_path, 41)
+    reloaded = transitions.load_plan(KEY, 41)
     assert {s.id: s.state for s in reloaded.work_units} == {"S1": "done", "S2": "abandoned"}
 
     # Every work unit is terminal (one done, one abandoned) and there is no
     # epic_abandoned marker: the epic completes - the abandoned work unit neither
     # strands it nor turns it into the abandoned-epic terminal.
-    assert transitions.epic_abandoned(tmp_path, 41) is False
-    assert next_node(tmp_path, 41) == (None, None)
-    outputs = run_graph(tmp_path, 41)
+    assert transitions.epic_abandoned(KEY, 41) is False
+    assert next_node(KEY, tmp_path, 41) == (None, None)
+    outputs = run_graph(KEY, tmp_path, 41)
     assert outputs[-1].status == NodeStatus.EPIC_COMPLETE
 
 
@@ -4606,7 +4737,7 @@ def test_transaction_manifest_requires_audit_and_rejects_extra_staged_file(tmp_p
     _git(tmp_path, "init", check=True, capture_output=True)
     _git(tmp_path, "config", "user.email", "test@example.com", check=True)
     _git(tmp_path, "config", "user.name", "Test", check=True)
-    directory = _write_plan(tmp_path, 1)
+    directory = _write_plan(1)
     (directory / "dispatch.jsonl").write_text("{}\n")
     critique_dir = directory / "critique"
     critique_dir.mkdir()
@@ -4615,7 +4746,7 @@ def test_transaction_manifest_requires_audit_and_rejects_extra_staged_file(tmp_p
         "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
         "findings: []\n---\n"
     )
-    _write_disposition(directory, 1, "S1")
+    _write_disposition(directory, "S1")
     audit_dir = directory / "audit"
     audit_dir.mkdir()
     (audit_dir / "cod-critiquer-1.prompt").write_text("prompt")
@@ -4631,7 +4762,7 @@ def test_transaction_manifest_requires_audit_and_rejects_extra_staged_file(tmp_p
         satisfies=["O1"],
         state="in_progress",
     )
-    manifest = build_work_unit_manifest(tmp_path, 1, work_unit)
+    manifest = build_work_unit_manifest(tmp_path, work_unit)
 
     assert ".woof/epics/E1/audit/cod-critiquer-1.prompt" in manifest.expected_paths
     assert ".woof/epics/E1/critique/work-unit-S1.md" in manifest.expected_paths
@@ -4647,7 +4778,7 @@ def test_transaction_manifest_requires_audit_and_rejects_extra_staged_file(tmp_p
 
 def test_transaction_manifest_reports_missing_expected_index_paths(tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
-    directory = _write_plan(tmp_path, 16)
+    directory = _write_plan(16)
     (directory / "dispatch.jsonl").write_text("{}\n")
     critique_dir = directory / "critique"
     critique_dir.mkdir()
@@ -4656,7 +4787,7 @@ def test_transaction_manifest_reports_missing_expected_index_paths(tmp_path: Pat
         "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
         "findings: []\n---\n"
     )
-    _write_disposition(directory, 16, "S1")
+    _write_disposition(directory, "S1")
     audit_dir = directory / "audit"
     audit_dir.mkdir()
     (audit_dir / "cod-critiquer-1.prompt").write_text("prompt")
@@ -4671,7 +4802,7 @@ def test_transaction_manifest_reports_missing_expected_index_paths(tmp_path: Pat
         satisfies=["O1"],
         state="in_progress",
     )
-    manifest = build_work_unit_manifest(tmp_path, 16, work_unit)
+    manifest = build_work_unit_manifest(tmp_path, work_unit)
     staged_subset = [
         path for path in manifest.expected_paths if not path.endswith("dispatch.jsonl")
     ]
@@ -4685,7 +4816,7 @@ def test_transaction_manifest_reports_missing_expected_index_paths(tmp_path: Pat
 
 def test_transaction_manifest_excludes_committed_prior_epic_artifacts(tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
-    directory = _write_plan(tmp_path, 17)
+    directory = _write_plan(17)
     (directory / "EPIC.md").write_text("---\nepic_id: 17\n---\n")
     (directory / "PLAN.md").write_text("# Plan\n")
     (directory / "dispatch.jsonl").write_text("{}\n")
@@ -4697,7 +4828,7 @@ def test_transaction_manifest_excludes_committed_prior_epic_artifacts(tmp_path: 
         "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
         "findings: []\n---\n"
     )
-    _write_disposition(directory, 17, "S1")
+    _write_disposition(directory, "S1")
     audit_dir = directory / "audit"
     audit_dir.mkdir()
     (audit_dir / "old-work-unit.prompt").write_text("old prompt")
@@ -4744,7 +4875,7 @@ def test_transaction_manifest_excludes_committed_prior_epic_artifacts(tmp_path: 
         "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
         "findings: []\n---\n"
     )
-    _write_disposition(directory, 17, "S2")
+    _write_disposition(directory, "S2")
     (audit_dir / "new-work-unit.prompt").write_text("new prompt")
     (tmp_path / "README.md").write_text("manual work-unit docs\n")
 
@@ -4756,7 +4887,7 @@ def test_transaction_manifest_excludes_committed_prior_epic_artifacts(tmp_path: 
         state="in_progress",
         tests={"count": 0, "types": ["documentation", "manual"]},
     )
-    manifest = build_work_unit_manifest(tmp_path, 17, work_unit)
+    manifest = build_work_unit_manifest(tmp_path, work_unit)
 
     assert ".woof/epics/E17/critique/work-unit-S1.md" not in manifest.expected_paths
     assert ".woof/epics/E17/audit/old-work-unit.prompt" not in manifest.expected_paths
@@ -4768,7 +4899,7 @@ def test_transaction_manifest_excludes_committed_prior_epic_artifacts(tmp_path: 
 
 def test_transaction_manifest_honours_recursive_pathspec(tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
-    directory = _write_plan(tmp_path, 23)
+    directory = _write_plan(23)
     (directory / "dispatch.jsonl").write_text("{}\n")
     critique_dir = directory / "critique"
     critique_dir.mkdir()
@@ -4777,7 +4908,7 @@ def test_transaction_manifest_honours_recursive_pathspec(tmp_path: Path) -> None
         "timestamp: '2026-01-01T00:00:00Z'\nharness: test-reviewer\n"
         "findings: []\n---\n"
     )
-    _write_disposition(directory, 23, "S1")
+    _write_disposition(directory, "S1")
     nested = tmp_path / "src" / "pkg" / "subpkg"
     nested.mkdir(parents=True)
     (nested / "deep.py").write_text("print('O1')\n")
@@ -4789,7 +4920,7 @@ def test_transaction_manifest_honours_recursive_pathspec(tmp_path: Path) -> None
         satisfies=["O1"],
         state="in_progress",
     )
-    manifest = build_work_unit_manifest(tmp_path, 23, work_unit)
+    manifest = build_work_unit_manifest(tmp_path, work_unit)
 
     assert "src/pkg/subpkg/deep.py" in manifest.work_unit_paths
     assert "src/pkg/subpkg/deep.py" in manifest.expected_paths
@@ -4838,11 +4969,11 @@ def _seed_pending_contract_revision(directory: Path, epic_id: int) -> dict[str, 
 
 
 def test_epic_definition_payload_declares_prior_contract_revision_inputs(tmp_path: Path) -> None:
-    directory = _write_spark(tmp_path, 70)
+    directory = _write_spark(70)
     _write_discovery_synthesis(directory)
     _seed_pending_contract_revision(directory, 70)
 
-    payload = nodes._epic_definition_payload(tmp_path, 70)
+    payload = nodes._epic_definition_payload(KEY, tmp_path, 70)
 
     assert payload["inputs"]["prior_epic_path"] == ".woof/epics/E70/definition/EPIC.1.archived.md"
     assert (
@@ -4856,13 +4987,14 @@ def test_epic_definition_payload_declares_prior_contract_revision_inputs(tmp_pat
 def test_epic_definition_node_redispatches_revision_with_prior_contract_and_findings(
     tmp_path: Path, monkeypatch
 ) -> None:
-    directory = _write_spark(tmp_path, 71)
+    directory = _write_spark(71)
     _write_discovery_synthesis(directory)
     _seed_pending_contract_revision(directory, 71)
-    _write_codebase_docs(tmp_path)
+    _write_codebase_docs()
     captured: dict[str, Any] = {}
 
     def fake_dispatch(
+        project_key: str,
         repo_root: Path,
         role: str,
         epic_id: int,
@@ -4881,10 +5013,15 @@ def test_epic_definition_node_redispatches_revision_with_prior_contract_and_find
     # next_node re-enters definition while the revision is pending and EPIC.md is
     # archived (absent), forbidding a hand-edit.
     assert not (directory / "EPIC.md").exists()
-    assert next_node(tmp_path, 71) == (NodeType.EPIC_DEFINITION, None)
+    assert next_node(KEY, tmp_path, 71) == (NodeType.EPIC_DEFINITION, None)
 
     output = nodes.epic_definition_node(
-        NodeInput(node_type=NodeType.EPIC_DEFINITION, epic_id=71, repo_root=tmp_path)
+        NodeInput(
+            node_type=NodeType.EPIC_DEFINITION,
+            epic_id=71,
+            project_key=KEY,
+            repo_root=tmp_path,
+        )
     )
 
     assert output.status == NodeStatus.COMPLETED, output.message
@@ -4903,7 +5040,7 @@ def test_epic_definition_node_redispatches_revision_with_prior_contract_and_find
     assert (directory / "EPIC.md").exists()
     events = [json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines()]
     assert events[-1]["event"] == "definition_closed"
-    assert transitions.definition_revision_requested(tmp_path, 71) is False
+    assert transitions.definition_revision_requested(KEY, 71) is False
 
 
 def test_epic_definition_node_redispatches_cold_start_revision_without_synthesis(
@@ -4912,13 +5049,14 @@ def test_epic_definition_node_redispatches_cold_start_revision_without_synthesis
     # A cold-start tracker epic: EPIC.md was authored directly with no
     # discovery/synthesis/*, so a pending revision archives the only contract and
     # leaves no synthesis inputs behind.
-    directory = _write_spark(tmp_path, 72)
+    directory = _write_spark(72)
     _seed_pending_contract_revision(directory, 72)
-    _write_codebase_docs(tmp_path)
-    assert not nodes.discovery_synthesis_complete(tmp_path, 72)
+    _write_codebase_docs()
+    assert not nodes.discovery_synthesis_complete(KEY, 72)
     captured: dict[str, Any] = {}
 
     def fake_dispatch(
+        project_key: str,
         repo_root: Path,
         role: str,
         epic_id: int,
@@ -4935,10 +5073,15 @@ def test_epic_definition_node_redispatches_cold_start_revision_without_synthesis
     monkeypatch.setattr(nodes, "_run_dispatch", fake_dispatch)
 
     assert not (directory / "EPIC.md").exists()
-    assert next_node(tmp_path, 72) == (NodeType.EPIC_DEFINITION, None)
+    assert next_node(KEY, tmp_path, 72) == (NodeType.EPIC_DEFINITION, None)
 
     output = nodes.epic_definition_node(
-        NodeInput(node_type=NodeType.EPIC_DEFINITION, epic_id=72, repo_root=tmp_path)
+        NodeInput(
+            node_type=NodeType.EPIC_DEFINITION,
+            epic_id=72,
+            project_key=KEY,
+            repo_root=tmp_path,
+        )
     )
 
     # The pending revision dispatches from the archived contract + findings instead
@@ -4955,16 +5098,21 @@ def test_epic_definition_node_redispatches_cold_start_revision_without_synthesis
     )
     assert ".woof/epics/E72/definition/EPIC.1.archived.md" in captured["artefacts_loaded"]
     assert ".woof/epics/E72/definition/EPIC.1.findings.md" in captured["artefacts_loaded"]
-    assert transitions.definition_revision_requested(tmp_path, 72) is False
+    assert transitions.definition_revision_requested(KEY, 72) is False
 
 
 def test_epic_definition_node_halts_cold_discovery_without_revision(tmp_path: Path) -> None:
     # Regression: a genuine cold-discovery epic that has not produced synthesis and
     # has NO pending revision still halts on the missing-synthesis precondition.
-    _write_spark(tmp_path, 74)
+    _write_spark(74)
 
     output = nodes.epic_definition_node(
-        NodeInput(node_type=NodeType.EPIC_DEFINITION, epic_id=74, repo_root=tmp_path)
+        NodeInput(
+            node_type=NodeType.EPIC_DEFINITION,
+            epic_id=74,
+            project_key=KEY,
+            repo_root=tmp_path,
+        )
     )
 
     assert output.status == NodeStatus.HALTED
@@ -4973,11 +5121,11 @@ def test_epic_definition_node_halts_cold_discovery_without_revision(tmp_path: Pa
 
 
 def test_wf_resolve_revise_epic_contract_reenters_definition_from_plan_gate(tmp_path: Path) -> None:
-    directory = _write_spark(tmp_path, 73)
+    directory = _write_spark(73)
     _write_discovery_synthesis(directory)
     _write_minimal_epic(directory, 73)
     _write_stage3_plan(directory, 73)
-    (directory / "PLAN.md").write_text(nodes._render_plan_markdown(nodes.load_plan(tmp_path, 73)))
+    (directory / "PLAN.md").write_text(nodes._render_plan_markdown(nodes.load_plan(KEY, 73)))
     _write_plan_critique(directory, "info")
     (directory / "epic.jsonl").write_text(
         "\n".join(
@@ -5002,7 +5150,7 @@ def test_wf_resolve_revise_epic_contract_reenters_definition_from_plan_gate(tmp_
         "## Reviewer position\n\nReviewer agrees.\n"
     )
 
-    rc = _resolve_gate(tmp_path, 73, "revise_epic_contract", cast(Tracker, _RecordingTracker()))
+    rc = _resolve_gate(KEY, 73, "revise_epic_contract", cast(Tracker, _RecordingTracker()))
 
     assert rc == 0
     assert not (directory / "gate.md").exists()
@@ -5021,7 +5169,7 @@ def test_wf_resolve_revise_epic_contract_reenters_definition_from_plan_gate(tmp_
     events = [json.loads(line) for line in (directory / "epic.jsonl").read_text().splitlines()]
     resolved = [e for e in events if e["event"] == "gate_resolved"]
     assert resolved and resolved[-1]["decision"] == "revise_epic_contract"
-    assert transitions.definition_revision_requested(tmp_path, 73) is True
+    assert transitions.definition_revision_requested(KEY, 73) is True
 
 
 # ---------------------------------------------------------------------------
@@ -5031,10 +5179,10 @@ def test_wf_resolve_revise_epic_contract_reenters_definition_from_plan_gate(tmp_
 
 def test_plan_gate_resolved_false_for_stage_state_halt_approve(tmp_path: Path) -> None:
     """An 'approve' on a cartography halt plan_gate must not satisfy the mandatory plan gate."""
-    _write_plan(tmp_path, 74)
+    _write_plan(74)
     # Simulate operator approving the cartography-halt gate with incomplete_stage_state.
     append_epic_event(
-        tmp_path,
+        KEY,
         74,
         {
             "event": "gate_resolved",
@@ -5045,15 +5193,15 @@ def test_plan_gate_resolved_false_for_stage_state_halt_approve(tmp_path: Path) -
             "triggered_by": ["incomplete_stage_state"],
         },
     )
-    assert plan_gate_resolved(tmp_path, 74) is False
+    assert plan_gate_resolved(KEY, 74) is False
 
 
 def test_work_unit_gate_stage_state_halt_approve_leaves_work_unit_pending(tmp_path: Path) -> None:
     """An 'approve' on a cartography halt work_unit_gate must not mark the work unit done."""
-    _write_plan(tmp_path, 75)
+    _write_plan(75)
     # Simulate operator approving the cartography-halt gate with incomplete_stage_state.
     append_epic_event(
-        tmp_path,
+        KEY,
         75,
         {
             "event": "gate_resolved",
@@ -5065,7 +5213,7 @@ def test_work_unit_gate_stage_state_halt_approve_leaves_work_unit_pending(tmp_pa
             "triggered_by": ["incomplete_stage_state"],
         },
     )
-    plan = transitions.load_plan(tmp_path, 75)
+    plan = transitions.load_plan(KEY, 75)
     work_unit = next(s for s in plan.work_units if s.id == "S1")
     assert work_unit.state == "pending"
 
@@ -5079,10 +5227,10 @@ def test_plan_gate_resolved_false_for_specific_event_with_stage_state_trigger(
     tmp_path: Path,
 ) -> None:
     """Exact Codex repro: both specific and generic events written; plan_gate_resolved still False."""
-    _write_plan(tmp_path, 76)
+    _write_plan(76)
     # Write the specific plan_gate_resolved event (pre-R2 source behaviour) with non-approving trigger.
     append_epic_event(
-        tmp_path,
+        KEY,
         76,
         {
             "event": "plan_gate_resolved",
@@ -5095,7 +5243,7 @@ def test_plan_gate_resolved_false_for_specific_event_with_stage_state_trigger(
     )
     # Also write the generic event (as _resolve_gate always does).
     append_epic_event(
-        tmp_path,
+        KEY,
         76,
         {
             "event": "gate_resolved",
@@ -5106,14 +5254,14 @@ def test_plan_gate_resolved_false_for_specific_event_with_stage_state_trigger(
             "triggered_by": ["incomplete_stage_state"],
         },
     )
-    assert plan_gate_resolved(tmp_path, 76) is False
+    assert plan_gate_resolved(KEY, 76) is False
 
 
 def test_plan_gate_resolved_true_for_genuine_approval(tmp_path: Path) -> None:
     """A genuine plan-gate approval (no non-approving trigger) must still return True."""
-    _write_plan(tmp_path, 77)
+    _write_plan(77)
     append_epic_event(
-        tmp_path,
+        KEY,
         77,
         {
             "event": "plan_gate_resolved",
@@ -5125,7 +5273,7 @@ def test_plan_gate_resolved_true_for_genuine_approval(tmp_path: Path) -> None:
         },
     )
     append_epic_event(
-        tmp_path,
+        KEY,
         77,
         {
             "event": "gate_resolved",
@@ -5136,21 +5284,21 @@ def test_plan_gate_resolved_true_for_genuine_approval(tmp_path: Path) -> None:
             "triggered_by": [],
         },
     )
-    assert plan_gate_resolved(tmp_path, 77) is True
+    assert plan_gate_resolved(KEY, 77) is True
 
 
 def test_readiness_satisfied_false_for_stage_state_specific_event(tmp_path: Path) -> None:
     """A readiness_gate_resolved event with a non-approving trigger must not satisfy readiness."""
-    _write_plan(tmp_path, 78)
+    _write_plan(78)
     # Need a definition_closed event for readiness_satisfied to scan past it.
     append_epic_event(
-        tmp_path,
+        KEY,
         78,
         {"event": "definition_closed", "at": "2026-01-01T00:00:00Z", "epic_id": 78},
     )
     # Write the specific readiness_gate_resolved event with a non-approving trigger.
     append_epic_event(
-        tmp_path,
+        KEY,
         78,
         {
             "event": "readiness_gate_resolved",
@@ -5161,19 +5309,19 @@ def test_readiness_satisfied_false_for_stage_state_specific_event(tmp_path: Path
             "triggered_by": ["incomplete_stage_state"],
         },
     )
-    assert readiness_satisfied(tmp_path, 78) is False
+    assert readiness_satisfied(KEY, 78) is False
 
 
 def test_readiness_satisfied_true_for_genuine_approval(tmp_path: Path) -> None:
     """A genuine readiness approval (no non-approving trigger) must still satisfy readiness."""
-    _write_plan(tmp_path, 79)
+    _write_plan(79)
     append_epic_event(
-        tmp_path,
+        KEY,
         79,
         {"event": "definition_closed", "at": "2026-01-01T00:00:00Z", "epic_id": 79},
     )
     append_epic_event(
-        tmp_path,
+        KEY,
         79,
         {
             "event": "readiness_gate_resolved",
@@ -5184,4 +5332,4 @@ def test_readiness_satisfied_true_for_genuine_approval(tmp_path: Path) -> None:
             "triggered_by": [],
         },
     )
-    assert readiness_satisfied(tmp_path, 79) is True
+    assert readiness_satisfied(KEY, 79) is True

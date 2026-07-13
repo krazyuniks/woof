@@ -7,6 +7,7 @@ operator home.
 
 from __future__ import annotations
 
+import inspect
 import json
 from collections.abc import Mapping
 from pathlib import Path
@@ -18,9 +19,7 @@ from woof import state
 from woof.graph.state import Plan
 from woof.graph.transitions import mark_work_unit_state, write_plan
 from woof.graph.work_source import (
-    WorkSourceConflictError,
     WorkSourceError,
-    content_digest,
     publish_unit_state,
     resolve_work_source,
     unit_states,
@@ -248,20 +247,34 @@ def test_writeback_writes_no_sidecar_into_the_documents_repository(tmp_path: Pat
     assert [path.name for path in sorted(document.parent.iterdir())] == ["backlog.md"]
 
 
-def test_writeback_fails_closed_when_the_document_changed_since_it_was_read(
-    tmp_path: Path,
-) -> None:
+def test_the_writeback_takes_no_optimistic_concurrency_precondition() -> None:
+    """The engine makes no promise it does not keep.
+
+    The writeback reads, edits, and replaces the document under one exclusive lock,
+    and the state it writes comes from the plan, not from an earlier read of the
+    document. There is nothing for a caller to be optimistic about, so the surface
+    offers no digest precondition to pass.
+    """
+
+    assert list(inspect.signature(writeback_unit_state).parameters) == [
+        "document",
+        "work_unit_id",
+        "engine_state",
+    ]
+
+
+def test_writeback_edits_the_document_as_it_stands_at_write_time(tmp_path: Path) -> None:
+    """An operator edit made after intake survives the writeback rather than blocking it."""
+
     document = _write_document(tmp_path)
-    stale_digest = content_digest(RICH_BACKLOG)
-    document.write_text(
-        RICH_BACKLOG.replace("status: active", "status: archived"), encoding="utf-8"
+    edited = RICH_BACKLOG.replace("status: active", "status: archived")
+    document.write_text(edited, encoding="utf-8")
+
+    writeback_unit_state(document, "alpha", "done")
+
+    assert document.read_text(encoding="utf-8") == edited.replace(
+        "    state: todo\n", "    state: done\n", 1
     )
-    current = document.read_text(encoding="utf-8")
-
-    with pytest.raises(WorkSourceConflictError):
-        writeback_unit_state(document, "alpha", "done", expected_digest=stale_digest)
-
-    assert document.read_text(encoding="utf-8") == current
 
 
 def test_writeback_fails_closed_when_the_unit_is_not_in_the_document(tmp_path: Path) -> None:
@@ -273,13 +286,11 @@ def test_writeback_fails_closed_when_the_unit_is_not_in_the_document(tmp_path: P
     assert document.read_text(encoding="utf-8") == RICH_BACKLOG
 
 
-def test_concurrent_writebacks_to_one_document_both_land(tmp_path: Path) -> None:
+def test_serialised_writebacks_to_one_document_both_land(tmp_path: Path) -> None:
     document = _write_document(tmp_path)
 
-    first = writeback_unit_state(document, "alpha", "done")
-    second = writeback_unit_state(
-        document, "beta", "done", expected_digest=content_digest(first.text)
-    )
+    writeback_unit_state(document, "alpha", "done")
+    second = writeback_unit_state(document, "beta", "done")
 
     states = unit_states(second.text)
     assert states["alpha"] == "done"

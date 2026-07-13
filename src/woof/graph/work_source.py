@@ -28,7 +28,6 @@ writes back nothing, which is a no-op rather than an error.
 from __future__ import annotations
 
 import fcntl
-import hashlib
 import json
 import os
 import re
@@ -71,10 +70,6 @@ class WorkSourceError(RuntimeError):
     """The work-source document cannot take the engine's unit-state edit."""
 
 
-class WorkSourceConflictError(WorkSourceError):
-    """The document changed underneath the engine; fail closed rather than clobber."""
-
-
 @dataclass(frozen=True)
 class WorkSourceWriteback:
     """What the engine wrote to the work-source document, and what it replaced."""
@@ -85,12 +80,6 @@ class WorkSourceWriteback:
     state: str
     changed: bool
     text: str
-
-
-def content_digest(text: str) -> str:
-    """Digest a document's content, so a caller can prove it has not moved on."""
-
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def resolve_work_source(project_key: str, context: Mapping | object | None) -> Path | None:
@@ -154,15 +143,14 @@ def writeback_unit_state(
     document: Path,
     work_unit_id: str,
     engine_state: str,
-    *,
-    expected_digest: str | None = None,
 ) -> WorkSourceWriteback:
     """Flip one unit's ``state:`` in ``document``, preserving every other byte.
 
     The read, the edit, and the replace happen under an exclusive lock, so two
     concurrent drains sharing one document serialise instead of clobbering each
-    other. ``expected_digest`` is the digest of the content the caller acted on:
-    if the document has moved on since, the writeback fails closed.
+    other. The state written comes from the engine's plan, not from an earlier read
+    of the document, so the writeback edits the document as it stands at write time:
+    an operator's edit made since intake survives it rather than blocking it.
     """
 
     backlog_state = BACKLOG_STATE_BY_ENGINE_STATE.get(engine_state)
@@ -180,11 +168,6 @@ def writeback_unit_state(
                 text = handle.read()
         except OSError as exc:
             raise WorkSourceError(f"work-source document {document} cannot be read: {exc}") from exc
-        if expected_digest is not None and content_digest(text) != expected_digest:
-            raise WorkSourceConflictError(
-                f"work-source document {document} changed since the engine read it; "
-                "refusing to overwrite another writer's edit"
-            )
 
         line_index = _state_line_index(text, work_unit_id, document)
         lines = text.splitlines(keepends=True)
